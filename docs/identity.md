@@ -79,8 +79,14 @@ development builds, which share the human key, agent keys and plugin storage
 with each other whatever their identifier. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data.
 
-Every running instance takes a shared lock beside app data before it looks for a
-pending sign-out. The native `sign_out` command deletes nothing: it admits one
+Every running instance, debug or release under any identifier, takes one fixed
+shared lock in the user data folder (`.dev.local.buzz.foundation.instance.lock`)
+before it looks for a pending sign-out. The lock is named for the storage all
+builds share, the default plugin folder and the agent key service, not for the
+app identifier. Whenever an instance takes the lock shared again (after finishing
+a pending sign-out, or after a refused sign-out), it looks for the marker again:
+at launch a new marker is finished in turn; in a running instance it means
+another process committed a sign-out, and the user is asked to reopen Buzz. The native `sign_out` command deletes nothing: it admits one
 sign-out per instance, refuses unless it can hold the lock alone (no other Buzz
 window is open), writes a marker beside (not inside) app data recording the wipe
 and agent choices, stops agents as Quit does, and restarts. The marker is named
@@ -102,7 +108,8 @@ webview storage, service or identity read:
    marker.
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
-registry no longer in place means its keys are already gone. If renaming or the key delete fails, the renames are rolled back. On any failure
+registry confirmed absent means its keys are already gone; failing to check it
+stops before anything moves. If renaming or the key delete fails, the renames are rolled back. On any failure
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in

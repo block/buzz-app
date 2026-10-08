@@ -5,7 +5,7 @@ use std::future::Future;
 fn paths_for(root: &Path, service: &str) -> Paths {
     Paths {
         marker: root.join(marker_name("app", service)),
-        lock: root.join(".app.instance.lock"),
+        lock: root.join(LOCK),
         app_data: root.join("app"),
         others: vec![root.join("webkit")],
     }
@@ -216,6 +216,11 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
     );
 }
 
+/// A child process another test is spawning holds inherited lock handles until
+/// it execs, so a dropped instance's lock can take a moment to free.
+fn admitted_once_free(instance: &Instance) -> bool {
+    wait_for(|| instance.begin())
+}
 #[test]
 fn instances_share_the_lock_and_sign_out_needs_it_alone() {
     let (_dir, paths) = fixture();
@@ -227,13 +232,13 @@ fn instances_share_the_lock_and_sign_out_needs_it_alone() {
         .unwrap();
     assert!(first.begin().is_err());
     drop(second);
-    first.begin().unwrap();
+    assert!(admitted_once_free(&first));
     // While one instance signs out, a new launch neither runs nor waits forever.
     assert_eq!(
         boot(&paths, no_agents, || panic!("no marker")).err(),
         Some(SIGNING_OUT.into())
     );
-    first.abort();
+    assert_eq!(first.abort(refuse("withdrawn")), refuse("withdrawn"));
     assert!(boot(&paths, no_agents, || panic!("no marker")).is_ok());
 }
 
@@ -246,7 +251,7 @@ fn a_second_sign_out_in_the_same_instance_is_refused() {
     instance.begin().unwrap();
     assert_eq!(instance.begin(), Err(refuse(ALREADY)));
     // Concurrent calls race for the same guard; exactly one is admitted.
-    instance.abort();
+    instance.abort(refuse("withdrawn"));
     let admitted = std::thread::scope(|scope| {
         let calls: Vec<_> = (0..8)
             .map(|_| scope.spawn(|| instance.begin().is_ok()))
@@ -286,7 +291,8 @@ fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
 }
 
 const CHILD: &str = "BUZZ_SIGN_OUT_TEST_CHILD";
-/// Another Buzz process: boots, tries to sign out, then holds on briefly and exits.
+/// Another Buzz process: boots, then on "go" tries to sign out and, if admitted,
+/// holds on until the parent says (or closes its input).
 #[test]
 fn child_instance() {
     let Some(root) = std::env::var_os(CHILD) else {
@@ -296,33 +302,63 @@ fn child_instance() {
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
+    println!("child: booted");
+    let mut input = std::io::stdin().lines();
+    input.next();
     match instance.begin() {
         Err(_) => println!("child: refused"),
         Ok(()) => {
             mark(&paths, true, false);
             println!("child: signing out");
-            std::thread::sleep(Duration::from_millis(300));
+            input.next();
         }
     }
 }
-/// Run `child_instance` in a separate process and return once it reports.
-fn spawn_child(root: &Path) -> (std::process::Child, String) {
-    use std::io::BufRead;
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["sign_out::tests::child_instance", "--exact", "--nocapture"])
-        .env(CHILD, root)
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
-    let report = lines
-        .by_ref()
-        .map(Result::unwrap)
-        .find(|line| line.starts_with("child: "))
-        .unwrap();
-    // Keep reading, so the child never fails writing the rest of its output.
-    std::thread::spawn(move || lines.for_each(drop));
-    (child, report)
+/// `child_instance` in a separate process, driven line by line.
+struct Child {
+    process: std::process::Child,
+    input: Option<std::process::ChildStdin>,
+    output: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+}
+impl Child {
+    fn spawn(root: &Path) -> Self {
+        use std::io::BufRead;
+        let mut process = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["sign_out::tests::child_instance", "--exact", "--nocapture"])
+            .env(CHILD, root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = process.stdin.take();
+        let output = std::io::BufReader::new(process.stdout.take().unwrap()).lines();
+        let mut child = Self {
+            process,
+            input,
+            output,
+        };
+        assert_eq!(child.report(), "child: booted");
+        child
+    }
+    fn report(&mut self) -> String {
+        self.output
+            .by_ref()
+            .map(Result::unwrap)
+            .find(|line| line.starts_with("child: "))
+            .unwrap()
+    }
+    /// Let it try to sign out and return what it reports.
+    fn go(&mut self) -> String {
+        use std::io::Write;
+        writeln!(self.input.as_mut().unwrap(), "go").unwrap();
+        self.report()
+    }
+    /// Let it exit, reading the rest of its output so it never fails writing.
+    fn finish(mut self) {
+        drop(self.input.take());
+        self.output.by_ref().for_each(drop);
+        assert!(self.process.wait().unwrap().success());
+    }
 }
 
 #[test]
@@ -332,34 +368,139 @@ fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finish
     let running = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let (mut child, report) = spawn_child(dir.path());
-    assert_eq!(report, "child: refused");
-    assert!(child.wait().unwrap().success());
+    let mut child = Child::spawn(dir.path());
+    assert_eq!(child.go(), "child: refused");
+    child.finish();
     assert!(!paths.marker.exists());
     drop(running);
-    // A launch that starts while the other process signs out waits, then finishes it.
-    let (mut child, report) = spawn_child(dir.path());
-    assert_eq!(report, "child: signing out");
+    // A launch that starts while the other process signs out waits until the
+    // parent lets the child go, then finishes it.
+    let mut child = Child::spawn(dir.path());
+    assert_eq!(child.go(), "child: signing out");
+    let input = child.input.take();
     let removed = Cell::new(false);
-    assert!(boot(&paths, no_agents, || {
-        removed.set(true);
-        Ok(())
-    })
-    .is_ok());
-    assert!(child.wait().unwrap().success());
+    let started = Instant::now();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(input);
+        });
+        assert!(boot(&paths, no_agents, || {
+            removed.set(true);
+            Ok(())
+        })
+        .is_ok());
+    });
+    assert!(started.elapsed() >= Duration::from_millis(200));
+    child.finish();
     assert!(removed.get());
     assert!(!paths.marker.exists());
     assert_eq!(
-        listing(dir.path())
-            .into_iter()
-            .filter(|path| !path.ends_with("instance.lock"))
-            .collect::<Vec<_>>(),
+        data(dir.path()),
         [
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json"
         ]
     );
+}
+
+#[test]
+fn a_sign_out_committed_while_recovery_hands_the_lock_back_is_finished_too() {
+    let (dir, paths) = fixture();
+    mark(&paths, false, false);
+    // In the gap after recovery lets go of the lock, another process launches
+    // and commits a new sign-out.
+    let root = dir.path().to_path_buf();
+    HANDOFF.set(Some(Box::new(move || {
+        let mut child = Child::spawn(&root);
+        assert_eq!(child.go(), "child: signing out");
+        child.finish();
+    })));
+    let removed = Cell::new(0);
+    assert!(boot(&paths, no_agents, || {
+        removed.set(removed.get() + 1);
+        Ok(())
+    })
+    .is_ok());
+    assert_eq!(removed.get(), 2);
+    assert!(!paths.marker.exists());
+}
+
+#[test]
+fn a_sign_out_committed_while_a_refused_one_lets_go_requires_reopening() {
+    let (dir, paths) = fixture();
+    let instance = boot(&paths, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    let mut child = Child::spawn(dir.path());
+    // Our upgrade is refused (the child shares); while we let go, it commits.
+    HANDOFF.set(Some(Box::new(move || {
+        assert_eq!(child.go(), "child: signing out");
+        child.finish();
+    })));
+    assert_eq!(instance.begin(), Err(reopen()));
+    assert!(paths.marker.exists());
+    // Not a usable retry: the guard stays taken.
+    assert_eq!(instance.begin(), Err(refuse(ALREADY)));
+}
+
+#[test]
+fn one_lock_covers_every_identifier() {
+    let (debug, release) = (
+        Paths::resolve("dev.local.buzz.custom").unwrap(),
+        Paths::resolve("dev.local.buzz.foundation").unwrap(),
+    );
+    assert_eq!(debug.lock, release.lock);
+    assert_ne!(debug.marker, release.marker);
+
+    let (dir, release) = fixture();
+    let other = Paths {
+        marker: dir.path().join(marker_name("custom", "identity.debug")),
+        lock: release.lock.clone(),
+        app_data: dir.path().join("custom"),
+        others: Vec::new(),
+    };
+    let running = boot(&other, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    let signing_out = boot(&release, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    assert!(signing_out.begin().is_err());
+    drop(running);
+    assert!(admitted_once_free(&signing_out));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_registry_moves_nothing_and_the_retry_removes_agent_keys() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, paths) = fixture();
+    mark(&paths, true, true);
+    let before = listing(dir.path());
+    let mode =
+        |mode| fs::set_permissions(&paths.app_data, fs::Permissions::from_mode(mode)).unwrap();
+    mode(0o000);
+    let result = finish_pending(&paths, no_agents, || panic!("the human key stays"));
+    mode(0o755);
+    assert_eq!(result, Err(FAILED.into()));
+    assert_eq!(listing(dir.path()), before);
+
+    let removed = Cell::new(false);
+    assert_eq!(
+        finish_pending(
+            &paths,
+            |_| {
+                removed.set(true);
+                Ok(())
+            },
+            || Ok(())
+        ),
+        Ok(())
+    );
+    assert!(removed.get());
+    assert!(listing(dir.path()).is_empty());
 }
 
 #[test]

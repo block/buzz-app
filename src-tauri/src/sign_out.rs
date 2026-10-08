@@ -1,6 +1,6 @@
 //! Sign out of Buzz. The command only records intent in a marker outside app
-//! data, stops agents and restarts. The next launch, holding the instance lock
-//! alone, does every deletion before any window, service or identity read:
+//! data, stops agents and restarts. The next launch, holding the shared instance
+//! lock alone, does every deletion before any window, service or identity read:
 //! agent keys (when asked), the wipe, then the human key. Each step is safe to
 //! repeat; any failure keeps the marker and Buzz exits, so the next launch retries.
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,9 @@ const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try 
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
 const ALREADY: &str = "Buzz is already signing out.";
 const KEPT: &str = "agent-controller";
+/// Named for the storage every Buzz shares whatever its identifier: the default
+/// plugin folder and the fixed agent key service. It is the release app's name too.
+const LOCK: &str = ".dev.local.buzz.foundation.instance.lock";
 /// How long a launch waits for an exiting or signing-out instance to let go.
 const WAIT: Duration = if cfg!(test) {
     Duration::from_secs(1)
@@ -35,7 +38,7 @@ struct Choices {
     remove_agents: bool,
 }
 
-/// The marker, the instance lock and the folders a wipe clears, resolved like Tauri's app paths.
+/// The marker, the shared instance lock and the folders a wipe clears, resolved like Tauri's app paths.
 pub(crate) struct Paths {
     marker: PathBuf,
     lock: PathBuf,
@@ -64,7 +67,7 @@ impl Paths {
                 identifier,
                 buzz_credential_store::HUMAN_SERVICE,
             )),
-            lock: data.join(format!(".{identifier}.instance.lock")),
+            lock: data.join(LOCK),
             app_data,
             others,
         })
@@ -84,6 +87,7 @@ impl Paths {
 /// or must be reopened, so it is never cleared.
 pub(crate) struct Instance {
     lock: Mutex<File>,
+    marker: PathBuf,
     started: AtomicBool,
 }
 // `File` locking is Rust 1.89; credential-store and plugin-manager already need it.
@@ -95,22 +99,50 @@ impl Instance {
             return Err(refuse(ALREADY));
         }
         let file = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = file.unlock();
+        if let Err(error) = file.unlock() {
+            return Err(lost(error));
+        }
         if file.try_lock().is_ok() {
             return Ok(());
         }
-        let _ = file.lock_shared();
-        self.started.store(false, Ordering::SeqCst);
-        Err(refuse(
+        handoff();
+        Err(self.share(
+            &file,
             "Quit every other Buzz window, then sign out again. Nothing was removed.",
         ))
     }
-    /// Withdraw a sign-out that committed nothing.
-    fn abort(&self) {
+    /// Withdraw a sign-out that committed nothing, returning why.
+    fn abort(&self, failure: Failure) -> Failure {
         let file = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = file.unlock();
-        let _ = file.lock_shared();
-        self.started.store(false, Ordering::SeqCst);
+        match file.unlock() {
+            Ok(()) => self.share(&file, &failure.message),
+            Err(error) => lost(error),
+        }
+    }
+    /// Share the unlocked lock again. Another process may have committed a
+    /// sign-out meanwhile; only with none pending can this instance carry on.
+    fn share(&self, file: &File, message: &str) -> Failure {
+        match file.lock_shared().and_then(|()| self.marker.try_exists()) {
+            Ok(false) => {
+                self.started.store(false, Ordering::SeqCst);
+                refuse(message)
+            }
+            Ok(true) => reopen(),
+            Err(error) => lost(error),
+        }
+    }
+}
+fn lost(error: std::io::Error) -> Failure {
+    eprintln!("buzz: instance lock: {error}");
+    reopen()
+}
+// Test seam: runs wherever ownership is briefly let go.
+#[cfg(test)]
+thread_local!(static HANDOFF: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default());
+fn handoff() {
+    #[cfg(test)]
+    if let Some(gap) = HANDOFF.take() {
+        gap();
     }
 }
 fn wait_for<E>(mut attempt: impl FnMut() -> Result<(), E>) -> bool {
@@ -131,8 +163,8 @@ fn wait_for<E>(mut attempt: impl FnMut() -> Result<(), E>) -> bool {
 #[allow(clippy::incompatible_msrv)] // `File` locking; see `Instance`.
 pub(crate) fn boot(
     paths: &Paths,
-    remove_agent_keys: impl FnOnce(&Path) -> Result<(), String>,
-    remove_key: impl FnOnce() -> Result<(), String>,
+    mut remove_agent_keys: impl FnMut(&Path) -> Result<(), String>,
+    mut remove_key: impl FnMut() -> Result<(), String>,
 ) -> Result<Instance, String> {
     let file = OpenOptions::new()
         .create(true)
@@ -143,25 +175,32 @@ pub(crate) fn boot(
             eprintln!("buzz: could not open instance lock: {error}");
             FAILED.to_owned()
         })?;
+    let failed = |error: std::io::Error| {
+        eprintln!("buzz: instance lock: {error}");
+        FAILED.to_owned()
+    };
     // Shared first, then look: a sign-out that commits after this sees our lock.
-    if !wait_for(|| file.try_lock_shared()) {
-        return Err(SIGNING_OUT.into());
-    }
-    if paths.marker.exists() {
+    // Every time it is taken again, look again.
+    loop {
+        if !wait_for(|| file.try_lock_shared()) {
+            return Err(SIGNING_OUT.into());
+        }
+        if !paths.marker.try_exists().map_err(failed)? {
+            break;
+        }
         // A restarting instance may still be exiting; wait for it to let go.
-        let _ = file.unlock();
+        file.unlock().map_err(failed)?;
         if !wait_for(|| file.try_lock()) {
             return Err(BUSY.into());
         }
         // Read again under exclusive ownership; another launch may have finished it.
-        finish_pending(paths, remove_agent_keys, remove_key)?;
-        let _ = file.unlock();
-        if !wait_for(|| file.try_lock_shared()) {
-            return Err(SIGNING_OUT.into());
-        }
+        finish_pending(paths, &mut remove_agent_keys, &mut remove_key)?;
+        file.unlock().map_err(failed)?;
+        handoff();
     }
     Ok(Instance {
         lock: Mutex::new(file),
+        marker: paths.marker.clone(),
         started: AtomicBool::new(false),
     })
 }
@@ -270,9 +309,14 @@ fn finish(
     remove_key: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     // Agent keys go first, while their registry is still in place; nothing is
-    // moved until every key is gone, so a registry not in place means it's done.
+    // moved until every key is gone, so a registry confirmed absent means it's done.
+    // Failing to look is not absence: stop before moving anything.
     let registry = paths.app_data.join(KEPT);
-    if choices.remove_agents && registry.exists() {
+    if choices.remove_agents
+        && registry
+            .try_exists()
+            .map_err(|error| format!("check agent registry: {error}"))?
+    {
         remove_agent_keys(&registry).map_err(|error| format!("remove agent keys: {error}"))?;
     }
     let targets = if choices.wipe {
@@ -331,6 +375,12 @@ fn refuse(message: &str) -> Failure {
         reopen: false,
     }
 }
+fn reopen() -> Failure {
+    Failure {
+        message: REOPEN.into(),
+        reopen: true,
+    }
+}
 
 /// Commit intent, then stop agents. Deleting is left to the next launch.
 async fn prepare<S>(
@@ -347,10 +397,7 @@ where
     })?;
     shutdown().await.map_err(|error| {
         eprintln!("buzz: agents did not stop: {error}");
-        Failure {
-            message: REOPEN.into(),
-            reopen: true,
-        }
+        reopen()
     })
 }
 
@@ -418,10 +465,7 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
     )
     .await;
     match result {
-        Err(failure) if !failure.reopen => {
-            instance.abort();
-            Err(failure)
-        }
+        Err(failure) if !failure.reopen => Err(instance.abort(failure)),
         Err(failure) => Err(failure),
         Ok(()) => {
             app.request_restart();

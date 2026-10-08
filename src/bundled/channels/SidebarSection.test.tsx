@@ -126,6 +126,7 @@ it("offers confirmed removal for custom sections", async () => {
       open
       onToggle={() => {}}
       onRemove={remove}
+      channelCount={1}
     >
       <button type="button">General</button>
     </SidebarSection>,
@@ -138,7 +139,7 @@ it("offers confirmed removal for custom sections", async () => {
   );
   const confirmation = screen.getByRole("dialog", { name: "Remove Work?" });
   expect(confirmation).toHaveAccessibleDescription(
-    "Assigned channels will move back to Channels. This does not delete any channels or saved templates.",
+    "1 channel will move back to Channels. This does not delete any channels or saved templates.",
   );
   expect(remove).not.toHaveBeenCalled();
   await user.click(
@@ -279,3 +280,33 @@ it("never offers removal for built-in sections even when a callback is supplied"
   expect(screen.queryByRole("menuitem", { name: "Remove section" })).toBeNull();
   expect(remove).not.toHaveBeenCalled();
 });
+
+it.each([0, 2])(
+  "describes %s channels in removal confirmation",
+  async (count) => {
+    const user = userEvent.setup();
+    render(
+      <SidebarSection
+        sectionKey="group:work"
+        title="Work"
+        open
+        onToggle={() => {}}
+        onRemove={() => {}}
+        channelCount={count}
+      >
+        <span>Rows</span>
+      </SidebarSection>,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove section" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Remove Work?" }),
+    ).toHaveAccessibleDescription(
+      `${count} channels will move back to Channels. This does not delete any channels or saved templates.`,
+    );
+  },
+);

@@ -381,3 +381,43 @@ it("rejects stale-source removal even when both stores use the same section ID",
     f.dispose();
   }
 });
+
+it("explains same-second personal section removal without enqueuing, then permits explicit retry", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    vi.mocked(Date.now).mockReturnValue(1_700_000_000_000);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "This section was just saved. Wait a second, then choose Remove section again.",
+    );
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    vi.mocked(Date.now).mockReturnValue(1_700_000_001_000);
+    await f.preferences.removeSection("work");
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.preferences.snapshot().data?.sections).toEqual([]);
+  } finally {
+    f.dispose();
+  }
+});
+it("names the personal section's exact-event recovery path and fences a fresh retry after failed delivery", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    f.publish.mockRejectedValue(new Error("offline"));
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "Channel settings → Diagnostics → Outbox",
+    );
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    expect(f.prepare).toHaveBeenCalledOnce();
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "A section removal or other personal-group save is unresolved.",
+    );
+    expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.session.outbox?.snapshot()).toHaveLength(1);
+    expect(f.removal).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});

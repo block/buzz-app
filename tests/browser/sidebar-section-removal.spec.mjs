@@ -35,6 +35,9 @@ for (const personal of [false, true]) {
         .getByRole("menuitem", { name: "Remove section", exact: true })
         .click();
       const dialog = page.getByRole("dialog", { name: `Remove ${title}?` });
+      await expect(dialog).toHaveAccessibleDescription(
+        "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+      );
       await expect(
         dialog.getByRole("button", { name: "Cancel" }),
       ).toBeFocused();
@@ -45,12 +48,44 @@ for (const personal of [false, true]) {
       ).toBeFocused();
       expect(app.report.sidebarPublications ?? []).toHaveLength(0);
       await expect(group).toBeVisible();
+      await group.locator("summary").click();
+      await expect(group.locator("details")).not.toHaveAttribute("open");
       await page
         .getByRole("button", { name: `More actions for ${title}` })
         .click();
       await page
         .getByRole("menuitem", { name: "Remove section", exact: true })
         .click();
+      if (personal) {
+        // Fail before enqueue through the real ChannelKit preparation boundary.
+        await page.route(
+          "**/channel-kit-prepare",
+          async (route) => {
+            app.report.sidebarRemovalFailures ??= [];
+            app.report.sidebarRemovalFailures.push(route.request().url());
+            await route.fulfill({
+              status: 502,
+              contentType: "application/json",
+              body: JSON.stringify({ error: "Preparation unavailable" }),
+            });
+          },
+          { times: 1 },
+        );
+        await dialog
+          .getByRole("button", { name: "Remove section", exact: true })
+          .click();
+        await expect(dialog.getByRole("alert")).toContainText(
+          "Section removal could not be confirmed",
+        );
+        await expect(dialog.getByRole("alert")).toContainText(
+          "Channel settings → Diagnostics → Outbox",
+        );
+        await expect(group).toHaveCount(1);
+        await expect(group.locator("details")).not.toHaveAttribute("open");
+        await expect(
+          dialog.getByRole("button", { name: "Remove section", exact: true }),
+        ).toBeEnabled();
+      }
       await dialog
         .getByRole("button", { name: "Remove section", exact: true })
         .click();
@@ -72,7 +107,7 @@ for (const personal of [false, true]) {
       expect(reset.coordinate).toBe("channel-sort");
       expect(reset.blob.meta.g[`section:${id}`][2]).toBeNull();
       expect(reset.blob.groups).toEqual({ channels: "recent" });
-      const { coordinate, blob } = app.report.sidebarPublications[1];
+      const { coordinate, blob } = app.report.sidebarPublications.at(-1);
       if (personal) {
         expect(coordinate).toContain("buzz-channel-kit-v1:");
         expect(blob.deleted).toBe(false);
@@ -83,6 +118,21 @@ for (const personal of [false, true]) {
         expect(blob.meta.s.work.live[2]).toBe(false);
         expect(blob.meta.a.beta[2]).toBeNull();
       }
+      // Persist view intent through the production pagehide owner, then reload.
+      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+      const savedViews = await page.evaluate(() =>
+        Object.entries(localStorage)
+          .filter(
+            ([key]) =>
+              key.startsWith("buzz-view.v1:") &&
+              JSON.parse(key.slice("buzz-view.v1:".length))[1] ===
+                "channel-sidebar",
+          )
+          .map(([, value]) => JSON.parse(value)),
+      );
+      expect(savedViews.length).toBeGreaterThan(0);
+      for (const view of savedViews)
+        expect(view.collapsed).not.toContain(`group:${id}`);
       await page.reload();
       await openPage(page, "Messages");
       await expect(group).toHaveCount(0);

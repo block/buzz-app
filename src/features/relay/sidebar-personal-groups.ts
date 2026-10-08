@@ -75,7 +75,30 @@ export function activeSidebarSectionRemoval(
         ),
       ),
     };
-    await kit.save(next, entry.eventId, false, signal);
+    try {
+      await kit.save(next, entry.eventId, false, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === "Please wait a second before saving this recipe again")
+        throw new Error(
+          "This section was just saved. Wait a second, then choose Remove section again.",
+          { cause: error },
+        );
+      if (
+        message ===
+        "A save for this recipe is unresolved. Inspect Outbox and refresh before replacing it."
+      )
+        throw new Error(
+          "A section removal or other personal-group save is unresolved. Open Channel settings → Diagnostics → Outbox to inspect or retry the existing operation, then reload the app to check the result before removing this section again.",
+          { cause: error },
+        );
+      throw new Error(
+        `Section removal could not be confirmed: ${message} Open Channel settings → Diagnostics → Outbox to inspect any pending operation before retrying.`,
+        { cause: error },
+      );
+    }
     signal.throwIfAborted();
     const confirmed = personalGroups(kit.snapshot().entries)?.record.value;
     if (

@@ -1184,10 +1184,16 @@ function ReadySidebar({
                     session={queries}
                     open={!sidebar.collapsed.includes(section.key)}
                     onToggle={(open) => sidebar.toggle(section.key, open)}
+                    channelCount={section.rows.length}
                     onRemove={
                       preferences.removeSectionWritable &&
                       section.key.startsWith("group:")
-                        ? () => preferences.removeSection(section.key.slice(6))
+                        ? async () => {
+                            await preferences.removeSection(
+                              section.key.slice(6),
+                            );
+                            sidebar.toggle(section.key, true);
+                          }
                         : undefined
                     }
                     removalFocus={() =>

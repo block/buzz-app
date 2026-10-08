@@ -63,7 +63,6 @@ function fixture() {
   const delivered = vi.fn(async () => {});
   const canWrite = vi.fn(() => true);
   const host = {
-    reconcileTeams: vi.fn(async () => {}),
     prepare: vi.fn(
       async (value: KitRecord | PayloadRecord, _signal: AbortSignal) =>
         JSON.stringify(value),
@@ -853,16 +852,12 @@ it("resumes interrupted payload publication without replacing the previous team"
   expect(f.capability.snapshot().entries).toHaveLength(1);
 });
 
-it("keeps private catalog ready when native binding reconciliation is unavailable", async () => {
+it("keeps private catalog refresh and saves independent of native bindings", async () => {
   const f = fixture();
   const id = await f.capability.save(record.value, undefined);
-  f.host.reconcileTeams.mockRejectedValue(
-    new Error("Native bindings unavailable"),
-  );
   await f.capability.refresh();
   expect(f.capability.snapshot().status).toBe("ready");
   expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
-  expect(f.host.reconcileTeams).not.toHaveBeenCalled();
   await expect(
     f.capability.save(
       { type: "team", id: "team", name: "Updated", agents: [] },

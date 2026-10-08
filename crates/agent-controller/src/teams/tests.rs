@@ -604,3 +604,73 @@ fn late_catalog_removal_cannot_erase_a_newer_live_binding_even_after_reopen() {
         .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
         .is_err());
 }
+
+#[test]
+fn maximal_native_member_settings_survive_the_creation_receipt_and_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    let mut snapshot = member();
+    snapshot.definition.name = "N".repeat(256);
+    snapshot.profile.display_name = snapshot.definition.name.clone();
+    snapshot.profile.about = Some("é\"\\\n".repeat(1024));
+    snapshot.definition.system_prompt = Some("é".repeat(64 * 1024));
+    snapshot.definition.respond_to = Some("allowlist".into());
+    snapshot.definition.respond_to_allowlist = (0..2000).map(|n| format!("{n:064x}")).collect();
+    snapshot.definition.name_pool = vec!["N".repeat(256); 256];
+    snapshot.definition.parallelism = Some(32);
+    snapshot.definition.idle_timeout_seconds = Some(86400);
+    snapshot.definition.max_turn_duration_seconds = Some(86400);
+    snapshot.definition.model = Some("M".repeat(512));
+    snapshot.definition.provider = Some("P".repeat(128));
+    snapshot.profile.avatar_url = Some("https://example.test/picture?size=2#avatar".into());
+    let bundle = BundleMember {
+        team: "maximal-team".into(),
+        member: snapshot.clone(),
+        instructions: "S".repeat(128 * 1024),
+        keep_allowlist: true,
+    };
+    let mut mapped = edit(root.path());
+    mapped.name = snapshot.profile.display_name.clone();
+    mapped.system_prompt = snapshot.definition.system_prompt.clone().unwrap();
+    mapped.harness.model = snapshot.definition.model.clone().unwrap();
+    mapped.harness.provider = snapshot.definition.provider.clone().unwrap();
+    mapped.picture = snapshot.profile.avatar_url.clone();
+    control
+        .create_bundle_member(
+            &prepared,
+            mapped,
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "maximal-request",
+            &bundle,
+        )
+        .unwrap();
+    drop(control);
+    let control = controller(root.path());
+    let agent = control.store.agents().unwrap().remove(0);
+    assert_eq!(
+        agent.system_prompt,
+        snapshot.definition.system_prompt.unwrap()
+    );
+    assert_eq!(agent.harness.model, snapshot.definition.model.unwrap());
+    assert_eq!(
+        agent.harness.provider,
+        snapshot.definition.provider.unwrap()
+    );
+    assert_eq!(agent.picture, snapshot.profile.avatar_url);
+    assert_eq!(agent.imported["teamInstructions"], bundle.instructions);
+    let record = &agent.imported["record"];
+    assert_eq!(record["respond_to"], "allowlist");
+    assert_eq!(
+        record["respond_to_allowlist"],
+        json!(snapshot.definition.respond_to_allowlist)
+    );
+    assert_eq!(record["name_pool"], json!(snapshot.definition.name_pool));
+    assert_eq!(record["parallelism"], 32);
+    assert_eq!(record["idle_timeout_seconds"], 86400);
+    assert_eq!(record["max_turn_duration_seconds"], 86400);
+    assert_eq!(record["profile"]["about"], json!(snapshot.profile.about));
+    assert_eq!(agent.extra["bundleRequest"], "maximal-request");
+    assert!(!agent.enabled);
+    assert!(!agent.starts_on_launch());
+}

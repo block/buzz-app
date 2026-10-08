@@ -211,6 +211,91 @@ it("rejects unsupported selector and worker semantics before native creation", (
   ).toThrow("Pi provider requires a model");
 });
 
+it("validates full team members at native collection and memory budgets without weakening standalone", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const member = (count: number) => ({
+    ...source,
+    definition: {
+      ...source.definition,
+      respondTo: "allowlist",
+      respondToAllowlist: Array.from({ length: count }, (_, n) =>
+        n.toString(16).padStart(64, "0"),
+      ),
+      namePool: Array.from(
+        { length: Math.min(count, 256) },
+        (_, n) => `agent-${n}`,
+      ),
+    },
+    memory: {
+      level: "everything",
+      entries: Array.from({ length: Math.min(count, 257) }, (_, n) => ({
+        slug: `mem/entry-${n}`,
+        body: "x",
+      })),
+    },
+  });
+  for (const count of [129, 255, 256]) {
+    const bytes = utf8.encode(JSON.stringify(member(count)));
+    expect(() => parseAgentSnapshot(bytes)).toThrow(
+      "Invalid snapshot manifest",
+    );
+    const parsed = parseAgentSnapshot(bytes, { teamMember: true });
+    expect(parsed.memory.entries).toHaveLength(count);
+    expect(
+      snapshotImportEdit(parsed, { ...destination, teamMember: true })
+        .environment,
+    ).toEqual({});
+  }
+  expect(() =>
+    parseAgentSnapshot(utf8.encode(JSON.stringify(member(257))), {
+      teamMember: true,
+    }),
+  ).toThrow("Invalid snapshot manifest");
+  const allowlist = (count: number) => ({
+    ...member(1),
+    definition: {
+      ...member(1).definition,
+      respondToAllowlist: Array.from({ length: count }, (_, n) =>
+        n.toString(16).padStart(64, "0"),
+      ),
+    },
+  });
+  expect(
+    parseAgentSnapshot(utf8.encode(JSON.stringify(allowlist(2000))), {
+      teamMember: true,
+    }).definition.respondToAllowlist,
+  ).toHaveLength(2000);
+  expect(() =>
+    parseAgentSnapshot(utf8.encode(JSON.stringify(allowlist(2001))), {
+      teamMember: true,
+    }),
+  ).toThrow("Invalid snapshot manifest");
+  const large = {
+    ...member(1),
+    memory: {
+      level: "everything",
+      entries: [{ slug: "mem/notes", body: "x".repeat(64 * 1024 + 1) }],
+    },
+  };
+  expect(() => parseAgentSnapshot(utf8.encode(JSON.stringify(large)))).toThrow(
+    "Invalid snapshot manifest",
+  );
+  expect(
+    parseAgentSnapshot(utf8.encode(JSON.stringify(large)), { teamMember: true })
+      .memory.entries[0]?.body,
+  ).toHaveLength(64 * 1024 + 1);
+  const over = {
+    ...large,
+    memory: {
+      level: "everything",
+      entries: [{ slug: "mem/notes", body: "x".repeat(1024 * 1024) }],
+    },
+  };
+  expect(() =>
+    parseAgentSnapshot(utf8.encode(JSON.stringify(over)), { teamMember: true }),
+  ).toThrow("Invalid snapshot manifest");
+});
+
 it("rejects unsupported explicit values instead of silently downgrading", () => {
   const source = buildAgentSnapshot(portableAgent());
   for (const definition of [

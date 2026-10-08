@@ -111,8 +111,22 @@ const keys = (record: Record<string, unknown>, allowed: string[]) =>
   Object.keys(record).every((key) => allowed.includes(key));
 
 /** Fail closed on unknown fields: a future writer cannot smuggle credentials as "config". */
-export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
-  if (bytes.length > snapshotFileLimit(bytes))
+export function parseAgentSnapshot(
+  bytes: Uint8Array,
+  options: { teamMember?: boolean } = {},
+): AgentSnapshot {
+  if (
+    options.teamMember &&
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])
+  )
+    throw new Error(
+      "Team members must be decoded from a validated team envelope.",
+    );
+  if (
+    bytes.length >
+    (options.teamMember ? 8 * 1024 * 1024 : snapshotFileLimit(bytes))
+  )
     throw new Error("Snapshot exceeds the size limit.");
   const raw =
     bytes.length >= 8 &&
@@ -205,12 +219,20 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
     ) ||
     (d.respondToAllowlist !== undefined &&
       (!Array.isArray(d.respondToAllowlist) ||
-        d.respondToAllowlist.length > 128 ||
-        !d.respondToAllowlist.every((v: unknown) => text(v, 256)))) ||
+        d.respondToAllowlist.length > (options.teamMember ? 2000 : 128) ||
+        !d.respondToAllowlist.every((v: unknown) =>
+          options.teamMember
+            ? typeof v === "string" && /^[0-9a-f]{64}$/.test(v)
+            : text(v, 256),
+        ))) ||
     (d.namePool !== undefined &&
       (!Array.isArray(d.namePool) ||
-        d.namePool.length > 128 ||
-        !d.namePool.every((v: unknown) => text(v, 256)))) ||
+        d.namePool.length > (options.teamMember ? 256 : 128) ||
+        !d.namePool.every((v: unknown) =>
+          options.teamMember
+            ? text(v, 256) && !!(v as string).length
+            : text(v, 256),
+        ))) ||
     (d.parallelism !== undefined &&
       (!Number.isSafeInteger(d.parallelism) ||
         (d.parallelism as number) < 1 ||
@@ -236,19 +258,29 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
     !["none", "core", "everything"].includes(m.level as string) ||
     (m.entries !== undefined && !Array.isArray(m.entries)) ||
     (Array.isArray(m.entries) &&
-      (m.entries.length > 128 ||
+      (m.entries.length > (options.teamMember ? 256 : 128) ||
         !m.entries.every(
           (e) =>
             isRecord(e) &&
             keys(e, ["slug", "body"]) &&
             memorySlug(e.slug) &&
-            text(e.body, 64 * 1024) &&
-            encoder.encode(e.body as string).length <= 64 * 1024,
+            (options.teamMember
+              ? typeof e.body === "string"
+              : text(e.body, 64 * 1024)),
         ) ||
         (m.level === "none" && m.entries.length !== 0) ||
         (m.level === "core" && m.entries.some((e) => e.slug !== "core")) ||
         new Set(m.entries.map((e) => e.slug)).size !== m.entries.length ||
-        encoder.encode(JSON.stringify(m.entries)).length > 1024 * 1024))
+        (options.teamMember
+          ? m.entries.reduce(
+              (sum: number, e) =>
+                sum +
+                encoder.encode(e.slug).length +
+                encoder.encode(e.body).length,
+              0,
+            )
+          : encoder.encode(JSON.stringify(m.entries)).length) >
+          1024 * 1024))
   )
     throw new Error("Invalid snapshot manifest.");
   return {

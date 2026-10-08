@@ -321,19 +321,32 @@ mod tests {
                     root.path().display(), root.path().display(),
                     if timeout { "/bin/sleep 30" } else { "export PATH=/usr/bin:/bin" },
                 );
-                std::fs::write(
-                    root.path().join(if shell.ends_with("zsh") {
-                        ".zshrc"
-                    } else {
-                        ".bash_profile"
-                    }),
-                    startup,
-                )
-                .unwrap();
+                let startup_file = root.path().join(if shell.ends_with("zsh") {
+                    ".zshrc"
+                } else {
+                    "bash-job-fixture.sh"
+                });
+                std::fs::write(&startup_file, startup).unwrap();
+                let fixture_shell = if shell.ends_with("zsh") {
+                    PathBuf::from(shell)
+                } else {
+                    // Linux /etc/profile may reset HOME before bash reads
+                    // .bash_profile. Source this fixture explicitly, then run
+                    // the actual login_path command in that login shell.
+                    let wrapper = root.path().join("shell");
+                    crate::test_executable::write_executable(
+                        &wrapper,
+                        format!(
+                            "#!/bin/sh\nexec '{shell}' -ilc '. \"$3\"; eval \"$2\"' buzz \"$1\" \"$2\" '{}'\n",
+                            startup_file.display()
+                        ),
+                    );
+                    wrapper
+                };
                 let output = Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "runtime::path::tests::login_probe_retires_real_shell_job_groups_on_success_and_timeout", "--nocapture"])
                     .env(FIXTURE, root.path()).env("HOME", root.path()).env("ZDOTDIR", root.path())
-                    .env("SHELL", shell).env("BUZZ_LOGIN_TIMEOUT", if timeout { "yes" } else { "no" })
+                    .env("SHELL", &fixture_shell).env("BUZZ_LOGIN_TIMEOUT", if timeout { "yes" } else { "no" })
                     .output().unwrap();
                 if !output.status.success() {
                     failures.push(format!(

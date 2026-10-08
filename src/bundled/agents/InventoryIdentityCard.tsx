@@ -17,7 +17,8 @@ import {
   useManagedAgentActions,
 } from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { AgentShareSwitch } from "./CommunityCatalog";
 import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
 import {
   type ArchiveAction,
@@ -238,16 +239,23 @@ export function InventoryIdentityCard({
         }
       >
         {setups.map((agent) => (
-          <ManagedAgentActions
-            action={actions(agent)}
-            key={agent.id}
-            agent={agent}
-            // A section already names its own community; other setups still show theirs.
-            showCommunity={row.localSetups.get(community) !== agent}
-            state={state}
-            control={control}
-            imported={agent.id === importedId}
-          />
+          <Fragment key={agent.id}>
+            <ManagedAgentActions
+              action={actions(agent)}
+              agent={agent}
+              // A section already names its own community; other setups still show theirs.
+              showCommunity={row.localSetups.get(community) !== agent}
+              state={state}
+              control={control}
+              imported={agent.id === importedId}
+            />
+            <AgentShareSwitch
+              session={session}
+              agent={agent}
+              name={row.displayName}
+              defaultSessionPolicy={data?.defaultSettings?.sessionPolicy}
+            />
+          </Fragment>
         ))}
         {row.unconfiguredSetups.map((agent) => (
           <p

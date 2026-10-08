@@ -37,6 +37,7 @@ import {
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { TeamShareDialog } from "../agents/CommunityCatalog";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import type { useTemplateCatalog } from "./useTemplateCatalog";
 import styles from "./TemplateLibrary.module.css";
@@ -66,6 +67,7 @@ export function TemplateLibrary({
   const [deploying, setDeploying] = useState<Team>();
   const [exporting, setExporting] = useState<Team>();
   const [editing, setEditing] = useState<Selection>();
+  const [sharing, setSharing] = useState<Team>();
   const [deleting, setDeleting] = useState<Selection>();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -297,6 +299,13 @@ export function TemplateLibrary({
                         onDelete={(element) =>
                           open({ value, eventId: entry.eventId }, element, true)
                         }
+                        onShare={
+                          control &&
+                          session?.communityCatalog.available() &&
+                          value.type === "team"
+                            ? () => setSharing(value)
+                            : undefined
+                        }
                       />
                     );
                   })}
@@ -358,6 +367,15 @@ export function TemplateLibrary({
             kit={kit}
             community={destination}
             close={() => setExporting(undefined)}
+          />
+        )}
+        {sharing && control && session && (
+          <TeamShareDialog
+            session={session}
+            control={control}
+            kit={kit}
+            team={sharing}
+            onClose={() => setSharing(undefined)}
           />
         )}
         {editing && (
@@ -437,8 +455,10 @@ function LibraryItem({
   onDeploy,
   onExport,
   onDelete,
+  onShare,
 }: {
   value: Team | Template;
+  onShare?: (() => void) | undefined;
   entries: readonly KitEntry[];
   agents: readonly AgentChoice[];
   onDeploy?: (() => void) | undefined;
@@ -496,6 +516,7 @@ function LibraryItem({
         >
           Edit {value.type}
         </MenuItem>
+        {onShare && <MenuItem onClick={onShare}>Share to catalog</MenuItem>}
         {value.type === "template" && (
           <MenuItem
             onClick={() => {

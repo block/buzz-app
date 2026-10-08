@@ -16,6 +16,7 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
+mod catalog;
 mod channel_writes;
 mod kit;
 pub(crate) use channel_writes::{
@@ -243,7 +244,11 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = host.sign(event).await?;
+    let signed = if catalog::is_catalog(event.kind) {
+        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
+    } else {
+        host.sign(event).await?
+    };
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
@@ -287,6 +292,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
     } else if event.kind == 9007 {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+    } else if matches!(event.kind, 30175 | 30178) {
+        if !catalog::valid(event) {
+            return Err("Malformed catalog publication".into());
         }
     } else if event.kind == 40100 {
         if !valid_canvas(event) {

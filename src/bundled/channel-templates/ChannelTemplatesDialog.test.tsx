@@ -174,6 +174,7 @@ it("shows preview rejection beside import and clears it on retry", async () => {
         {
           viewer: "ab".repeat(32),
           scope: `https://relay.example.test:${"ab".repeat(32)}`,
+          communityCatalog: { available: () => false },
         } as RelaySession
       }
     />,

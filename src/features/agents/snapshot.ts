@@ -357,6 +357,15 @@ export function parseAgentSnapshot(
   } as AgentSnapshot;
 }
 
+/** The conversation context an agent runs with: its own choice, else the
+ * agent defaults it inherits. Null while those defaults are unknown. */
+export function effectiveSessionPolicy(
+  agent: Pick<AgentView, "sessionPolicy">,
+  defaultSessionPolicy?: "channel" | "thread",
+): "channel" | "thread" | null {
+  return agent.sessionPolicy ?? defaultSessionPolicy ?? null;
+}
+
 /** Explicit allowlist. In particular args, workspace, environment, imported blobs, and identity are absent. */
 export function buildAgentSnapshot(
   agent: AgentView,
@@ -364,6 +373,7 @@ export function buildAgentSnapshot(
   memories: readonly Pick<MemoryEntry, "slug" | "body">[] = [],
   defaultSessionPolicy?: "channel" | "thread",
 ): AgentSnapshot {
+  const sessionPolicy = effectiveSessionPolicy(agent, defaultSessionPolicy);
   if (
     agent.harness.command !== "buzz-agent" ||
     agent.respondTo !== "owner-only" ||
@@ -378,7 +388,7 @@ export function buildAgentSnapshot(
       (!Number.isInteger(agent.launchParallelism) ||
         agent.launchParallelism < 1 ||
         agent.launchParallelism > 32)) ||
-    (agent.sessionPolicy === null && !defaultSessionPolicy)
+    sessionPolicy === null
   ) {
     throw new Error(
       "This agent has runtime, response, or environment settings that cannot be exported faithfully.",
@@ -437,7 +447,7 @@ export function buildAgentSnapshot(
         : {}),
       runtime: "buzz-agent",
       respondTo: "owner-only",
-      sessionPolicy: agent.sessionPolicy ?? defaultSessionPolicy ?? "thread",
+      sessionPolicy,
     },
     profile: {
       displayName: agent.name,

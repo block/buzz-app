@@ -12,6 +12,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  CatalogSeed,
   CloneSettings,
   ImportSource,
 } from "../../features/agents/control";
@@ -42,9 +43,22 @@ export function AgentControlPanel({
   onOpenHarnesses,
   headerActions,
   session,
+  catalog,
 }: {
   session?: RelaySession | undefined;
   headerActions?: HTMLElement | null;
+  /** A header launcher that may seed the create flow; it owns any relay use. */
+  catalog?:
+    | ((
+        add:
+          | ((
+              settings: CatalogSeed,
+              onCreated: (agent: AgentView) => void,
+            ) => void)
+          | undefined,
+        hasAgent: (id: string) => boolean,
+      ) => ReactNode)
+    | undefined;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -73,7 +87,8 @@ export function AgentControlPanel({
     destination: string;
     owner: string;
     source?: AgentView;
-    initialSettings?: CloneSettings;
+    initialSettings?: CloneSettings | CatalogSeed;
+    onCreated?: (agent: AgentView) => void;
   } | null>(null);
   const [localPending, setLocalPending] = useState(false);
   const [handover, setHandover] = useState<{
@@ -268,6 +283,26 @@ export function AgentControlPanel({
       </Button>
     </div>
   );
+  const headerButtons = (
+    <>
+      {catalog?.(
+        createOwner &&
+          importDestination &&
+          state.data?.createAvailable &&
+          !localPending
+          ? (initialSettings, onCreated) =>
+              setAdding({
+                destination: importDestination,
+                owner: createOwner,
+                initialSettings,
+                onCreated,
+              })
+          : undefined,
+        (id) => !!state.data?.agents.some((agent) => agent.id === id),
+      )}
+      {createButton}
+    </>
+  );
   return (
     <section
       data-buzz-ui=""
@@ -276,9 +311,9 @@ export function AgentControlPanel({
     >
       {state.data &&
         (headerActions ? (
-          createPortal(createButton, headerActions)
+          createPortal(headerButtons, headerActions)
         ) : (
-          <div className="flex justify-end">{createButton}</div>
+          <div className="flex justify-end gap-2">{headerButtons}</div>
         ))}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
@@ -491,6 +526,7 @@ export function AgentControlPanel({
             ? { initialSettings: adding.initialSettings }
             : {})}
           onClose={() => setAdding(null)}
+          onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
         />
       )}

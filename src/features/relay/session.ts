@@ -54,7 +54,11 @@ import { createTyping } from "./typing";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
-import type { IncomingListener, IncomingMessage } from "./incoming";
+import type {
+  IncomingListener,
+  IncomingMessage,
+  LiveListener,
+} from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
@@ -247,6 +251,7 @@ export function createRelaySession(
   );
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
+  const liveEventListeners = new Set<LiveListener>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
@@ -1591,6 +1596,16 @@ export function createRelaySession(
         incomingListeners.delete(listener);
       };
     },
+    /** Verified, access-filtered live-phase events of any kind, after reconciliation.
+     * Never replay, finite reads or local intent. Includes the viewer's own echoes.
+     * Overlapping routes can deliver one event more than once; listeners dedupe by id. */
+    subscribeLive(listener: LiveListener) {
+      if (closed) return () => {};
+      liveEventListeners.add(listener);
+      return () => {
+        liveEventListeners.delete(listener);
+      };
+    },
     typing: typing.capability,
     channelCreation,
     channelKit: channelKit.capability,
@@ -2357,6 +2372,27 @@ export function createRelaySession(
       )
         channelActivity.accept(visible);
       if (
+        provenance?.phase === "live" &&
+        liveEventListeners.size &&
+        visible.length &&
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration
+      ) {
+        const batch = Object.freeze({
+          events: Object.freeze([...visible]),
+          ...(provenance?.channelId ? { channelId: provenance.channelId } : {}),
+        });
+        for (const listener of liveEventListeners) {
+          if (closed || epoch !== accessEpoch) break;
+          try {
+            listener(batch);
+          } catch (error) {
+            console.error("Live listener failed", error);
+          }
+        }
+      }
+      if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
@@ -2613,6 +2649,7 @@ export function createRelaySession(
       traffic?.dispose();
       liveListeners.clear();
       incomingListeners.clear();
+      liveEventListeners.clear();
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();

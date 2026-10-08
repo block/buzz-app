@@ -156,6 +156,31 @@ it("rejects legacy beta filenames with snapshot migration guidance before parsin
     expect(h.create).not.toHaveBeenCalled();
   }
   expect(legacyAgentFileError("worker.agent.json")).toBeUndefined();
+  for (const name of [
+    "worker.agent.png",
+    "worker.json",
+    "worker.png",
+    "my.persona.md.json",
+  ])
+    expect(legacyAgentFileError(name)).toBeUndefined();
+});
+
+it("keeps ordinary markdown files on the normal snapshot parse path", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(new File(["not a snapshot"], "notes.md", { type: "text/markdown" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid snapshot JSON.",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
 });
 
 it("refuses malformed received bytes before import and cannot create", async () => {

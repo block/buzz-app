@@ -823,10 +823,19 @@ impl IdentityHost {
     }
 
     pub(crate) async fn sign(&self, event: EventTemplate) -> Result<serde_json::Value> {
+        self.sign_bounded(event, 64 * 1024).await
+    }
+
+    /// Signs with a caller-validated serialized-event bound, e.g. NIP-AP catalogs.
+    pub(crate) async fn sign_bounded(
+        &self,
+        event: EventTemplate,
+        max_event_bytes: usize,
+    ) -> Result<serde_json::Value> {
         with_identity(self.clone(), move |identity| {
             identity.restore()?;
             match &identity.state {
-                State::Ready(key) => key.sign(event),
+                State::Ready(key) => key.sign_bounded(event, max_event_bytes),
                 _ => Err("Set up your identity first".into()),
             }
         })

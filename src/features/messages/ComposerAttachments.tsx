@@ -111,10 +111,11 @@ function AttachmentItem({
     setSource(url);
     return () => URL.revokeObjectURL(url);
   }, [item.file, item.uploaded, item.voice, image, video, uploadedSource]);
+  const bytes = item.uploaded?.size ?? item.file.size;
   const size =
-    item.file.size < 1024 * 1024
-      ? `${Math.max(1, Math.round(item.file.size / 1024))} KB`
-      : `${(item.file.size / (1024 * 1024)).toFixed(1)} MB`;
+    bytes < 1024 * 1024
+      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+      : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const status = {
     queued: "Queued",
     preparing: "Preparing…",

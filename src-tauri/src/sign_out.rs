@@ -282,16 +282,27 @@ pub(crate) fn boot(
         locks.all.unlock().map_err(failed)?;
         locks.key.unlock().map_err(failed)?;
         let mut busy = BUSY;
+        let mut stuck = None;
         let taken = wait_for(|| {
             busy = BUSY;
             locks.key.try_lock().map_err(drop)?;
             if wipe && locks.all.try_lock().is_err() {
                 busy = BUSY_ALL;
-                // Never wait holding the key lock alone; an unlock error just retries.
-                return locks.key.unlock().map_err(drop).and(Err(()));
+                // Never wait holding the key lock exclusively: if it can't be
+                // let go, stop trying (`Ok` ends the wait) and fail below.
+                return match locks.key.unlock() {
+                    Ok(()) => Err(()),
+                    Err(error) => {
+                        stuck = Some(error);
+                        Ok(())
+                    }
+                };
             }
             Ok(())
         });
+        if let Some(error) = stuck {
+            return Err(failed(error));
+        }
         if !taken {
             return Err(busy.into());
         }

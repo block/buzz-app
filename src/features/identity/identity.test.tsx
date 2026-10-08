@@ -375,12 +375,21 @@ it("keeps wipe disabled while the native answer is pending", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();
   await identity.ready;
-  vi.mocked(invoke).mockReturnValueOnce(new Promise(() => {}));
+  const answer = deferred<string | null>();
+  vi.mocked(invoke).mockReturnValueOnce(answer.promise);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
-  expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
-  expect(
-    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
-  ).toHaveAttribute("aria-disabled", "true");
+  const wipe = screen.getByRole("checkbox", {
+    name: "Also wipe this device’s Buzz data",
+  });
+  try {
+    expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
+    expect(wipe).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    answer.resolve(null);
+  }
+  await waitFor(() =>
+    expect(wipe).not.toHaveAttribute("aria-disabled", "true"),
+  );
   identity.dispose();
 });
 

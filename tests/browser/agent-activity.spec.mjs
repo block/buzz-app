@@ -31,6 +31,9 @@ const agentEntry = (page, agent) =>
   });
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
+// Raw diagnostics sit behind the panel's Raw tab; the transcript is the default.
+const showRaw = (panel) =>
+  panel.getByRole("tab", { name: "Raw", exact: true }).click();
 const activity = (kind, channelId, turnId, payload) => ({
   kind,
   seq: 1,
@@ -225,8 +228,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   const panel = activityPanel(page);
   await expect(panel.locator("code").first()).toHaveText(first);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   // Telemetry supplies keys before any profile or directory facts exist.
   const agentSelect = panel.getByRole("combobox", {
@@ -250,6 +253,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     await choice.click();
     await expect(panel.locator("code").first()).toHaveText(key);
   }
+  await showRaw(panel);
   const unsafeDisclosure = panel.getByRole("button", { name: /turn_liveness/ });
   await unsafeDisclosure.focus();
   await unsafeDisclosure.press("Enter");
@@ -269,6 +273,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(firstEntry).toBeFocused();
   await secondEntry.click();
   await expect(panel.locator("code").first()).toHaveText(second);
+  await showRaw(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toBeVisible();
@@ -329,6 +334,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
   await agentEntry(page, first).click();
+  await showRaw(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toHaveCount(2);
@@ -457,6 +463,7 @@ for (const mode of ["light", "dark"]) {
 
     await entry.click();
     const panel = activityPanel(page);
+    await showRaw(panel);
     await panel.getByRole("button", { name: /acp_read/ }).click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -588,8 +595,9 @@ it("profile activity opens the exact agent and originating channel before its fi
   });
   await expect(panel.locator("code").first()).toHaveText(agent);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(`Alpha · ${profileChannelId}`);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
+  await showRaw(panel);
   await expect(
     panel.getByText(/No captured records for this identity in this channel/),
   ).toBeVisible();
@@ -620,10 +628,12 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
-  await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await panel
+    .getByRole("combobox", { name: "Conversation", exact: true })
+    .click();
   await page
     .getByRole("option", {
-      name: "All channels (including unscoped records)",
+      name: "All conversations (including unscoped records)",
       exact: true,
     })
     .click();
@@ -787,7 +797,7 @@ test.describe("thread activity", () => {
     historyCounts: { alpha: 2, beta: 1 }, // Thread fixtures replace the last two Alpha rows with roots.
   });
 
-  test("thread typing uses the existing route, stays isolated, and opens channel details above the composer", async ({
+  test("thread typing uses the existing route, stays isolated, and opens thread details above the composer", async ({
     page,
     app,
   }, testInfo) => {
@@ -914,7 +924,7 @@ test.describe("thread activity", () => {
     );
     await entry.hover();
     await expect(page.getByRole("tooltip")).toContainText(
-      "Details show channel activity",
+      "Details open this thread's activity.",
     );
     // Same agent, two observer turns, and scoped thread typing. Do not infer
     // that either channel-wide turn belongs to this thread, or hide other work.
@@ -975,10 +985,11 @@ test.describe("thread activity", () => {
     await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
     await expect(
       activityPanel(page).getByRole("combobox", {
-        name: "Channel",
+        name: "Conversation",
         exact: true,
       }),
-    ).toHaveText(/Alpha.*alpha/);
+    ).toHaveText(/^#Alpha › /);
+    // The thread composer opens this thread's scope, not channel-wide details.
     await page
       .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
       .click();
@@ -1236,6 +1247,7 @@ test.describe("host archive durability", () => {
     await expandChannelActivity(page);
     await agentEntry(page, agent).click();
     const panel = activityPanel(page);
+    await showRaw(panel);
     await expect(
       panel.getByText("Saved history loaded.", { exact: true }),
     ).toBeVisible();
@@ -1276,6 +1288,7 @@ test.describe("host archive durability", () => {
     await page
       .getByRole("button", { name: "View activity", exact: true })
       .click();
+    await showRaw(panel);
     await expect(
       panel.getByText("Saved history loaded.", { exact: true }),
     ).toBeVisible();

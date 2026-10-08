@@ -87,6 +87,7 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import { ChannelUsage } from "./ChannelUsage";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
@@ -1774,6 +1775,13 @@ function ChannelWorkspace({
                                 <ThreadPanel
                                   sessionConversation={
                                     current?.channelType === "session"
+                                  }
+                                  aboveHistory={
+                                    <ChannelUsage
+                                      key={`${scope}:${showingThread.channelId}`}
+                                      session={queries}
+                                      channelId={showingThread.channelId}
+                                    />
                                   }
                                   extensions={extensions}
                                   session={queries}

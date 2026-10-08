@@ -53,6 +53,8 @@ export type ThreadPanelProps = {
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   headerActions?: ReactNode | undefined;
+  /** Page-owned content above the scrolling thread history. */
+  aboveHistory?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
@@ -111,6 +113,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
           actions={props.headerActions}
         />
       )}
+      {props.aboveHistory}
       <OwnedThreadPanel key={viewKey} {...props} />
     </aside>
   );

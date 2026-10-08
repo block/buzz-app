@@ -728,3 +728,22 @@ status. Native cards keep their controls. Other known identities appear in a
 read-only section. Each card offers its own Import; the separate installation
 browser appears only for repair.
 No keys, config, memory, membership, or runtime state are changed by discovery.
+
+### Channel session usage
+
+The thread pane reads saved kind-44200 metrics from the current account/community's
+host archive. The strip and in-pane detail are **channel-associated session**
+usage, not thread attribution or context-window capacity. Each signed agent key
+and reported harness session remains separate; missing session IDs are individual
+unidentified records. The latest cumulative snapshot is selected by turn sequence;
+turn deltas are shown only when reliable. Unknown counters are not zero and cache
+counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
+
+The first archive page loads when a positively accessible thread opens. Later
+pages require **Load more**; a page without channel matches does not prove the
+archive has none. **Refresh** re-reads the newest page; neither action fetches
+relay history. The client retains at most 2,000 decoded records while this thread
+view lives and fences late reads on channel/access changes. Saved metrics remain
+subject to the independent 90-day/byte eviction policy above, so loaded history
+is never a completeness guarantee. Restored usage is display-only and cannot
+establish working, typing, or online status.

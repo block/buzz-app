@@ -11,6 +11,7 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import { ChannelUsage } from "./ChannelUsage";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
@@ -77,6 +78,13 @@ export function ConversationTab({
         <MessageManagementStatus />
         {tab.kind === "thread" ? (
           <ThreadPanel
+            aboveHistory={
+              <ChannelUsage
+                key={`${scope}:${channel.id}`}
+                session={session}
+                channelId={channel.id}
+              />
+            }
             active={active}
             session={session}
             scope={scope}

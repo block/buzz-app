@@ -1,0 +1,94 @@
+.owner {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  max-height: 35%;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-caption);
+}
+.strip {
+  display: flex;
+  flex: none;
+  min-inline-size: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-panel-inset);
+  max-height: 5rem;
+  overflow-y: auto;
+}
+.strip > span:first-child {
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.details {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-panel-inset);
+  overflow-wrap: anywhere;
+}
+.details h2,
+.details h3 {
+  font-size: var(--text-label);
+  margin: var(--space-2) 0;
+}
+.heading,
+.turnHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+.sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.breakdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-2);
+  max-width: 24rem;
+}
+.breakdown dd {
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.turnList {
+  max-height: 15rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.turn {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-1) 0;
+}
+.turnHead {
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+.turnHead time {
+  color: var(--text-subtle);
+}
+@media (max-height: 500px) {
+  .owner {
+    max-height: 26%;
+  }
+  .strip {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  .strip > span:first-child {
+    display: none;
+  }
+}
+@media (max-width: 440px) {
+  .turnHead {
+    justify-content: flex-start;
+  }
+}

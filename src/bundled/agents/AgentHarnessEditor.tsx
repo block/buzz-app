@@ -96,6 +96,13 @@ export function AgentHarnessEditor({
                 ? option.configurationPolicy.authentication ===
                   "harnessWithOverrides"
                 : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
+          const wasCodex = draft.integration === "codex";
+          // Rebinding Codex (its option or a custom adapter path) keeps its
+          // saved Default/Advanced settings.
+          if (wasCodex && (!pickedOption || option?.id === "codex")) {
+            onChange({ command });
+            return;
+          }
           onChange({
             command,
             ...(pickedOption
@@ -119,8 +126,12 @@ export function AgentHarnessEditor({
                   model: "",
                   configuration: { mode: "default" },
                 }
-              : pickedOption && draft.integration === "codex"
-                ? { configuration: undefined }
+              : wasCodex
+                ? {
+                    args: JSON.stringify(option?.defaultArgs ?? []),
+                    model: "",
+                    configuration: undefined,
+                  }
                 : {}),
           });
         }}

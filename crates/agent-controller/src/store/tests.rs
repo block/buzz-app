@@ -93,6 +93,37 @@ fn native_codex_configuration_round_trips_through_revision_checked_store() {
 }
 
 #[test]
+fn native_codex_agent_can_switch_to_another_harness() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.harness.integration = Some(crate::HarnessIntegration::Codex);
+    agent.harness.command = "/tools/codex-acp".into();
+    agent.harness.model = "gpt-6".into();
+    agent.harness.provider.clear();
+    agent.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Unsupported,
+    });
+    agent.environment.clear();
+    store.insert(vec![agent.clone()]).unwrap();
+
+    // Leaving Codex must drop its managed configuration with the marker.
+    let mut leaking = edit();
+    leaking.harness.configuration = agent.harness.configuration.clone();
+    assert!(store
+        .save(&agent.id, agent.revision, leaking)
+        .unwrap_err()
+        .contains("requires a native integration"));
+
+    store.save(&agent.id, agent.revision, edit()).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    assert_eq!(saved.harness.integration, None);
+    assert_eq!(saved.harness.configuration, None);
+    assert_eq!(saved.harness.command, "buzz-agent");
+    assert_eq!(saved.harness.model, "test-model");
+}
+
+#[test]
 fn native_codex_structure_rejects_inheritance_custom_args_and_foreign_environment() {
     let mut agent = fixture();
     agent.harness.integration = Some(crate::HarnessIntegration::Codex);

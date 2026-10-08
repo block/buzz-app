@@ -437,11 +437,6 @@ impl Agent {
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
         visible_agent_text(&edit.name, false)?;
         visible_agent_text(&edit.system_prompt, true)?;
-        if self.harness.integration == Some(crate::HarnessIntegration::Codex)
-            && edit.harness.integration != self.harness.integration
-        {
-            return Err("Native Codex integration cannot be removed or changed".into());
-        }
         if let Some(picture) = edit.picture {
             validate_picture(&picture)?;
             if self.picture.as_ref() != Some(&picture) {

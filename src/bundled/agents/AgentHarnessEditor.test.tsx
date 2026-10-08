@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
-import { agentDraft } from "./agent-edit";
+import { agentDraft, type AgentDraft } from "./agent-edit";
 import { controlFixture } from "../../features/agents/control-testing";
 
 afterEach(cleanup);
@@ -473,4 +473,94 @@ it("offers Settings for missing Codex tools without replacing a saved adapter", 
   expect(
     await screen.findByRole("option", { name: "Codex (install first)" }),
   ).toHaveAttribute("aria-disabled", "true");
+});
+
+it("rebinds a saved Codex agent without losing Advanced settings and clears them when leaving Codex", async () => {
+  const f = controlFixture();
+  const user = userEvent.setup();
+  function Example() {
+    const [draft, setDraft] = useState<AgentDraft>({
+      ...agentDraft(f.agent),
+      integration: "codex",
+      command: "/old/codex-acp",
+      args: "[]",
+      provider: "",
+      model: "gpt-5.5-codex",
+      configuration: {
+        mode: "advanced",
+        effort: { kind: "value", value: "high" },
+      },
+    });
+    return (
+      <>
+        <AgentHarnessEditor
+          draft={draft}
+          options={[
+            {
+              command: "buzz-agent",
+              label: "Buzz Agent",
+              defaultArgs: [],
+              providers: [],
+            },
+            {
+              id: "codex",
+              command: "/new/codex-acp",
+              label: "Codex",
+              available: true,
+              status: "ready",
+              defaultArgs: [],
+              providers: [],
+              configurationPolicy: {
+                authentication: "external",
+                provider: "external",
+                supportedModes: ["default", "advanced"],
+                model: "optional",
+                effortDiscovery: "modelSpecific",
+                selectorEnvironment: null,
+              },
+            },
+          ]}
+          onChange={(patch) =>
+            setDraft((current) => ({ ...current, ...patch }))
+          }
+        />
+        <output>{JSON.stringify(draft)}</output>
+      </>
+    );
+  }
+  const draft = () => JSON.parse(screen.getByRole("status").textContent ?? "");
+  const advanced = {
+    integration: "codex",
+    model: "gpt-5.5-codex",
+    configuration: {
+      mode: "advanced",
+      effort: { kind: "value", value: "high" },
+    },
+  };
+  render(<Example />);
+
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Codex" }));
+  expect(draft()).toMatchObject({ ...advanced, command: "/new/codex-acp" });
+
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Custom executable / current value",
+    }),
+  );
+  const executable = screen.getByRole("textbox", { name: "Executable" });
+  await user.clear(executable);
+  await user.type(executable, "/moved/codex-acp");
+  expect(draft()).toMatchObject({ ...advanced, command: "/moved/codex-acp" });
+
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
+  expect(draft()).toMatchObject({
+    command: "buzz-agent",
+    args: "[]",
+    model: "",
+  });
+  expect(draft()).not.toHaveProperty("integration");
+  expect(draft()).not.toHaveProperty("configuration");
 });

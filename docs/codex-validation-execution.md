@@ -26,9 +26,11 @@ to select the user's CLI rather than an adapter-bundled engine.
 
 Save uses the shared compare-and-swap persistence path. Saving a running agent
 uses the shared restart path; restart failure leaves the saved revision intact
-and visible through existing error/retry controls. A saved native Codex record
-cannot remove or change its integration marker to escape its configuration
-contract. Stopped agents stay stopped on Save.
+and visible through existing error/retry controls. Edit may switch a saved
+Codex agent to another harness; that Save clears the Codex marker with its
+Default/Advanced configuration, and a configuration without the marker is
+refused. Re-selecting Codex or editing its adapter path keeps the saved
+configuration. Stopped agents stay stopped on Save.
 
 Start resolves the saved binding and launches it, as for Claude Code; it does
 not probe versions or sign-in and does not send a test prompt. The runtime's

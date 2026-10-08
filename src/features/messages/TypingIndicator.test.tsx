@@ -125,6 +125,67 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   expect(f.ensure).not.toHaveBeenCalled();
 });
 
+it.each([
+  [{ title: "unknown", kind: "__proto__" }, "Running a tool"],
+  [{ title: "unknown", kind: "constructor" }, "Running a tool"],
+  [{ title: "__proto__", kind: "read" }, "Reading"],
+  [{ title: "constructor", kind: "read" }, "Reading"],
+] as const)(
+  "renders the Working now chooser for inherited tool keys: %j",
+  async (tool, label) => {
+    const f = fixture(),
+      user = userEvent.setup();
+    const now = Date.parse("2026-10-08T12:00:00Z");
+    f.update([], {
+      turns: [
+        {
+          agent,
+          channelId: "channel",
+          turnId: "turn",
+          state: "working",
+          timestamp: now,
+        },
+      ],
+      records: [
+        {
+          id: "f".repeat(64),
+          agent,
+          createdAt: now / 1000,
+          receivedAt: now,
+          historical: false,
+          kind: "acp_read",
+          channelIds: ["channel"],
+          plaintext: JSON.stringify({
+            kind: "acp_read",
+            channelId: "channel",
+            turnId: "turn",
+            timestamp: new Date(now).toISOString(),
+            payload: {
+              method: "session/update",
+              params: {
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call",
+                  status: "in_progress",
+                  rawInput: { path: "/private/report.txt" },
+                  ...tool,
+                },
+              },
+            },
+          }),
+        },
+      ],
+    });
+    render(<TypingIndicator session={f.session} channelId="channel" />);
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Working now" });
+    expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    expect(dialog).not.toHaveTextContent("report.txt");
+  },
+);
+
 it("shows stable agent ordering, scopes humans exactly, and clears after work stops", async () => {
   const f = fixture(),
     user = userEvent.setup();

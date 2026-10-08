@@ -141,6 +141,25 @@ it.each([
   expect(project(snapshot(tool)).get(agent)?.label).toBe(expected);
 });
 
+it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
+  "treats inherited dictionary key %s as telemetry, not a label mapping",
+  (key) => {
+    expect(
+      project(snapshot({ title: "unknown", kind: key })).get(agent)?.label,
+    ).toBe("Running a tool");
+    expect(
+      project(snapshot({ title: key, kind: "other" })).get(agent)?.label,
+    ).toBe("Running a tool");
+    // Only an exact local tool name may decode rawInput.path.
+    expect(
+      project(snapshot({ title: key, kind: "read" })).get(agent)?.label,
+    ).toBe("Reading");
+    expect(project(snapshot({ kind: key })).get(agent)?.label).toBe(
+      "Editing index.html",
+    );
+  },
+);
+
 it("does not merge labels or ownership across roots or expired turns", () => {
   const live = snapshot();
   const entries = [

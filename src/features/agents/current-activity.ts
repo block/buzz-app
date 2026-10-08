@@ -25,11 +25,15 @@ function toolLabel(tool: ToolItem): string {
     "buzz-dev-mcp__str_replace": "edit",
     "buzz-dev-mcp__shell": "execute",
   };
-  const kind = localKind[tool.title] ?? tool.kind;
-  const verb = verbs[kind] ?? "Running a tool";
+  const local = Object.hasOwn(localKind, tool.title)
+    ? localKind[tool.title]
+    : undefined;
+  const kind = local ?? tool.kind;
+  const verb =
+    (Object.hasOwn(verbs, kind) ? verbs[kind] : undefined) ?? "Running a tool";
   // Compact UI never displays raw arguments, commands, or full local paths.
   let path = tool.paths[0];
-  if (!path && localKind[tool.title] && kind !== "execute") {
+  if (!path && local && kind !== "execute") {
     try {
       const input: unknown = JSON.parse(tool.input);
       if (

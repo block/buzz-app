@@ -240,20 +240,19 @@ it("partitions primary pages without duplicate links and preserves exact selecti
     ["Sidebar", "Pages"],
     ["Topbar", "Topbar pages"],
     ["Toolbar", "Toolbar pages"],
-  ]) {
+  ] as const) {
     expect(
-      within(
-        screen.getByRole("navigation", { name: landmark, exact: true }),
-      ).getByRole("button", { name }),
+      within(screen.getByRole("navigation", { name: landmark })).getByRole(
+        "button",
+        { name },
+      ),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name, exact: true })).toHaveLength(
-      1,
-    );
+    expect(screen.getAllByRole("button", { name })).toHaveLength(1);
   }
   expect(
     screen.queryByRole("button", { name: "Search only" }),
   ).not.toBeInTheDocument();
-  const toolbar = screen.getByRole("button", { name: "Toolbar", exact: true });
+  const toolbar = screen.getByRole("button", { name: "Toolbar" });
   expect(toolbar).toHaveAttribute("aria-current", "page");
   expect(toolbar).not.toHaveAttribute("aria-expanded");
   expect(toolbar.querySelector("svg")).toBeInTheDocument();

@@ -373,7 +373,9 @@ export function AgentSnapshotImport({
     const preview = async () => {
       try {
         const parsed = parseAgentSnapshot(receivedBytes);
-        const pixels = await snapshotPngArtwork(receivedBytes);
+        const pixels = parsed.profile.avatarDataUrl
+          ? undefined
+          : await snapshotPngArtwork(receivedBytes);
         if (cancelled) return;
         setSnapshot(parsed);
         setArtwork(pixels);
@@ -407,7 +409,9 @@ export function AgentSnapshotImport({
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const parsed = parseAgentSnapshot(bytes);
-      const pixels = await snapshotPngArtwork(bytes);
+      const pixels = parsed.profile.avatarDataUrl
+        ? undefined
+        : await snapshotPngArtwork(bytes);
       if (requestId.current === readId) {
         setSnapshot(parsed);
         setArtwork(pixels);

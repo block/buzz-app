@@ -1327,6 +1327,100 @@ it("uploads portable PNG artwork before creation but gives inline avatar precede
   );
 });
 
+// The container is structurally valid but its animated ICC pixels cannot be
+// sanitized. Only the selected inline avatar should reach the uploader.
+function animatedIccSnapshot(snapshot: ReturnType<typeof buildAgentSnapshot>) {
+  const png = encodeAgentSnapshot(snapshot, "png");
+  const chunk = (kind: string, payload: Uint8Array) => {
+    const bytes = new Uint8Array(payload.length + 12);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, payload.length);
+    bytes.set(new TextEncoder().encode(kind), 4);
+    bytes.set(payload, 8);
+    let crc = 0xffffffff;
+    for (const byte of bytes.subarray(4, -4)) {
+      crc ^= byte;
+      for (let i = 0; i < 8; i++)
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    view.setUint32(payload.length + 8, (crc ^ 0xffffffff) >>> 0);
+    return bytes;
+  };
+  const frame = chunk("acTL", new Uint8Array(8));
+  const icc = chunk("iCCP", new Uint8Array([1]));
+  const headerLength = 8 + 25; // PNG signature and IHDR chunk.
+  return new Uint8Array([
+    ...png.subarray(0, headerLength),
+    ...frame,
+    ...icc,
+    ...png.subarray(headerLength),
+  ]);
+}
+
+it.each(["file", "received"] as const)(
+  "uses inline avatar despite rejected unused animated artwork on %s import",
+  async (source) => {
+    vi.mocked(uploadAvatar).mockReset();
+    vi.mocked(uploadAvatar).mockResolvedValue(
+      "https://relay.example.test/inline.png",
+    );
+    const snapshot = buildAgentSnapshot(portableAgent());
+    snapshot.profile.avatarDataUrl = "data:image/png;base64,aW5saW5l";
+    const bytes = animatedIccSnapshot(snapshot);
+    const h = importControl();
+    const props = {
+      control: h.control,
+      destination: "https://relay.example.test",
+      owner: "ef".repeat(32),
+      onClose: () => {},
+    };
+    render(
+      <AgentSnapshotImport
+        {...props}
+        {...(source === "received" ? { receivedBytes: bytes } : {})}
+      />,
+    );
+    if (source === "file")
+      choose(
+        new File([Uint8Array.from(bytes)], "agent.png", { type: "image/png" }),
+      );
+    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+    expect(uploadAvatar).toHaveBeenCalledOnce();
+    const uploaded = vi.mocked(uploadAvatar).mock.calls[0]?.[0];
+    if (!uploaded) throw new Error("Inline avatar was not uploaded");
+    expect(new TextDecoder().decode(await uploaded.arrayBuffer())).toBe(
+      "inline",
+    );
+    expect(h.create.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        picture: "https://relay.example.test/inline.png",
+      }),
+    );
+    cleanup();
+    vi.mocked(uploadAvatar).mockClear();
+    delete snapshot.profile.avatarDataUrl;
+    const rejected = animatedIccSnapshot(snapshot);
+    const withoutInline = importControl();
+    render(
+      <AgentSnapshotImport
+        {...props}
+        control={withoutInline.control}
+        {...(source === "received" ? { receivedBytes: rejected } : {})}
+      />,
+    );
+    if (source === "file")
+      choose(
+        new File([Uint8Array.from(rejected)], "agent.png", {
+          type: "image/png",
+        }),
+      );
+    expect(await screen.findByRole("alert")).toHaveTextContent("ICC profile");
+    expect(withoutInline.create).not.toHaveBeenCalled();
+    expect(uploadAvatar).not.toHaveBeenCalled();
+  },
+);
+
 it("retains the source avatar URL for a differently compressed transparent PNG", async () => {
   vi.mocked(uploadAvatar).mockClear();
   const snapshot = buildAgentSnapshot({

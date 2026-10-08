@@ -9,12 +9,16 @@ export type WindowPage = Readonly<{
   hasMore: boolean;
 }>;
 export const WINDOW_PAGE_SIZE = 20;
+/** Older pages arrive while the reader is scrolling into history, and each one
+ * re-renders and re-anchors the list. Fewer, larger pages keep that off the
+ * wheel; the head stays small so a channel opens fast. */
+export const WINDOW_OLDER_PAGE_SIZE = 60;
 
 /** NIP-CW window request: top-level rows plus aux closure and thread summaries, paged by the relay's composite cursor. */
 export function windowFilter(
   channelId: string,
   cursor: WindowCursor | null,
-  limit = WINDOW_PAGE_SIZE,
+  limit = cursor ? WINDOW_OLDER_PAGE_SIZE : WINDOW_PAGE_SIZE,
 ): ReadFilter {
   return {
     kinds: [...CHANNEL_ROW_KINDS],

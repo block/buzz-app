@@ -313,13 +313,14 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     expect(pending.channel).toBe("alpha");
     expect(pending.filter.until).toBeDefined();
     expect(pending.filter.before_id).toMatch(/^[a-f0-9]{64}$/);
-    expect(pending.filter.limit).toBe(20);
+    expect(pending.filter.limit).toBe(60);
     const cursor = `${pending.filter.until}:${pending.filter.before_id}`;
     expect(cursors.has(cursor), "each older cursor is requested once").toBe(
       false,
     );
     cursors.add(cursor);
-    expect(pending.events).toHaveLength(20);
+    // Full 60-row pages until the fixture's history runs out.
+    expect(pending.events).toHaveLength(Math.min(60, historySize - loaded));
     pending.release();
     loaded += pending.events.length;
     await expect
@@ -338,10 +339,11 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     await settle(page);
     expect(app.pending.length).toBeLessThanOrEqual(1);
   }
-  expect(cursors.size).toBe(31);
+  // 640 rows: a 20-row head, then 60-row pages.
+  expect(cursors.size).toBe(11);
   expect(
     app.report.queries.filter(({ filter }) => filter.until !== undefined),
-  ).toHaveLength(31);
+  ).toHaveLength(11);
   expect(app.pending).toHaveLength(0);
 
   await edge(page, -1);

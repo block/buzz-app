@@ -276,7 +276,7 @@ it("unread repair observes history without seeding the channel window or consumi
   expect(cursorReads[0]).toMatchObject({
     until: rows[40]?.created_at,
     before_id: rows[40]?.id,
-    limit: 20,
+    limit: 60,
   });
 });
 

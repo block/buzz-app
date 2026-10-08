@@ -144,7 +144,7 @@ describe("channel store", () => {
       top_level: true,
       include_aux: true,
       include_summaries: true,
-      limit: 20,
+      limit: 60,
     });
     // Older rows prepend; the duplicated `newer` row is deduped; alice is already pending so no second profile query.
     page.respond([

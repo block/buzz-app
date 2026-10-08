@@ -19,6 +19,12 @@ describe("channel window bounds", () => {
       limit: 20,
     });
     expect(windowFilter(channel, null)).not.toHaveProperty("until");
+    // Older pages are larger than the head so scrolling into history pages less.
+    expect(windowFilter(channel, { createdAt: 5, eventId: id })).toMatchObject({
+      until: 5,
+      before_id: id,
+      limit: 60,
+    });
     expect(
       windowFilter(channel, { createdAt: 5, eventId: id }, 999),
     ).toMatchObject({ until: 5, before_id: id, limit: 200 });

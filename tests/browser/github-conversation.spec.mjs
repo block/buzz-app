@@ -437,7 +437,9 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect.poll(caretPosition).toEqual(collapsed);
       await expect.poll(baseline).toEqual(collapsedBaseline);
-      await trigger.click();
+      // In narrow/enlarged headers the button's center can be the author link,
+      // which deliberately stays independently clickable. Use the visible caret.
+      await trigger.locator(":scope > svg").click();
       await expect(trigger).toHaveAttribute("aria-expanded", "false");
       await expect.poll(caretPosition).toEqual(collapsed);
     }

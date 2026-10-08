@@ -9,7 +9,14 @@ import { Context } from "@deepseek-ai/cordis";
 import userEvent from "@testing-library/user-event";
 import { PluginRuntime } from "../../plugins/runtime";
 import { createRelaySession } from "../relay/session";
-import { keypair, signed, scriptedTransport } from "../relay/testing";
+import {
+  keypair,
+  signed,
+  scriptedTransport,
+  roster as signedRoster,
+  metadata,
+} from "../relay/testing";
+import { matchesEvent } from "../relay/projection";
 import type { LiveCallbacks } from "../relay/live";
 import { MentionPicker } from "../../bundled/mentions/MentionPicker";
 import { bindNames, IdentityNamesService } from "./service";
@@ -148,158 +155,214 @@ function fixture() {
     },
   };
 }
-it("refreshes message, DM, and mention labels from a live renamed agent profile", async () => {
-  const viewer = keypair();
-  const relay = keypair();
-  const agent = keypair();
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  let live: LiveCallbacks | undefined;
-  const ctx = new Context();
-  const runtime = new PluginRuntime(ctx, async () => ({
-    inject: ["identityNames"],
-    apply: (scope) => scope.identityNames.register(defaultNamingPolicy),
-  }));
-  const identityNames = new IdentityNamesService(ctx);
-  runtime.reconcile([
-    {
-      manifest: { id: "test.agent-names", name: "Agent names", apiVersion: 1 },
-      source: "bundled",
-      enabled: true,
-      reloadable: false,
-      revision: "one",
-      previous: null,
-      error: null,
-    },
-  ]);
-  const writeProfile = (name: string, createdAt: number) =>
-    signed(agent, {
-      kind: 0,
-      created_at: createdAt,
-      content: JSON.stringify({ name }),
-      tags: [["auth", viewer.pubkey, "", "d".repeat(128)]],
-    });
-  let relayProfile = writeProfile("GLM", 1_700_000_000);
-  const owner = createRelaySession(
-    {
-      ...wire.transport,
-      query: async (filters) =>
-        filters.some((filter) => filter.kinds?.includes(30175))
-          ? []
-          : filters.some((filter) => filter.kinds?.includes(0))
-            ? [relayProfile]
-            : [],
-      readAgentLibrary: async () => ({
-        definitions: [],
-        identities: [{ pubkey: agent.pubkey, name: "GLM" }],
-      }),
-      scope: "wss://relay.example",
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
+it.each(["live", "reconnect", "clear-cache"] as const)(
+  "refreshes message, DM, and mention labels after an agent rename (%s)",
+  async (delivery) => {
+    const viewer = keypair();
+    const relay = keypair();
+    const agent = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live: LiveCallbacks | undefined;
+    const ctx = new Context();
+    const runtime = new PluginRuntime(ctx, async () => ({
+      inject: ["identityNames"],
+      apply: (scope) => scope.identityNames.register(defaultNamingPolicy),
+    }));
+    const identityNames = new IdentityNamesService(ctx);
+    runtime.reconcile([
+      {
+        manifest: {
+          id: "test.agent-names",
+          name: "Agent names",
+          apiVersion: 1,
+        },
+        source: "bundled",
+        enabled: true,
+        reloadable: false,
+        revision: "one",
+        previous: null,
+        error: null,
       },
-    },
-    { identityNames },
-  );
-  const stream = {
-    id: "channel",
-    name: "general",
-    channelType: "stream" as const,
-    members: [agent.pubkey],
-    participants: [],
-  };
-  const dm = {
-    id: "dm",
-    name: "DM",
-    channelType: "dm" as const,
-    members: [viewer.pubkey, agent.pubkey],
-    participants: [agent.pubkey],
-  };
-  const roster = { status: "ready" as const, channels: [stream, dm] };
-  const channels = {
-    ...owner.session.channels,
-    list: () => roster,
-    subscribeList: () => () => {},
-    ensureList() {},
-    get: (id: string) => [stream, dm].find((channel) => channel.id === id),
-  };
-  const session = { ...owner.session, channels } as RelaySession;
-  try {
-    await vi.waitFor(() =>
-      expect(session.agentLibrary.snapshot().status).toBe("ready"),
+    ]);
+    const writeProfile = (name: string, createdAt: number) =>
+      signed(agent, {
+        kind: 0,
+        created_at: createdAt,
+        content: JSON.stringify({ name }),
+        tags: [["auth", viewer.pubkey, "", "d".repeat(128)]],
+      });
+    let relayProfile = writeProfile("GLM", 1_700_000_000);
+    let savedName = "GLM";
+    let rosterReads = 0;
+    const rosterEvents = [
+      signedRoster(relay, "channel", [viewer.pubkey, agent.pubkey]),
+      metadata(relay, "channel", "general"),
+      signedRoster(relay, "dm", [viewer.pubkey, agent.pubkey]),
+      metadata(relay, "dm", "DM", 1_700_000_000, [["t", "dm"]]),
+    ];
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        query: async (filters) => {
+          if (filters.some((filter) => filter.kinds?.includes(39002)))
+            rosterReads++;
+          return [relayProfile, ...rosterEvents].filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          );
+        },
+        readAgentLibrary: async () => ({
+          definitions: [],
+          identities: [{ pubkey: agent.pubkey, name: savedName }],
+        }),
+        scope: "wss://relay.example",
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { identityNames },
     );
-    if (!live) throw new Error("Relay live subscription was not installed");
-    act(() => live?.receive([writeProfile("GLM", 1_700_000_000)]));
-
-    function Sidebar() {
-      const labels = useChannelLabels([dm], session.profiles, session.names);
-      return <output aria-label="DM label">{labels.channels[0]?.name}</output>;
-    }
-    const row: ChannelMessage = {
-      id: "message",
-      channelId: stream.id,
-      authorId: agent.pubkey,
-      content: "hello",
-      createdAt: 1_700_000_000,
-      mentions: [],
+    const stream = {
+      id: "channel",
+      name: "general",
+      channelType: "stream" as const,
+      members: [agent.pubkey],
       participants: [],
-      attachments: [],
-      reactions: [],
-      replyCount: 0,
     };
-    const view = render(
-      <>
-        <Sidebar />
-        <MessageRow
-          row={row}
-          session={session}
-          profile={session.profiles.snapshot().get(agent.pubkey)}
-          media={() => undefined}
-          onOpenLink={() => false}
-          day={false}
-          retry={undefined}
-        />
-        <MentionPicker
-          session={session}
-          scope="test"
-          channelId={stream.id}
-          disabled={false}
-          inviteAgents
-          select={() => true}
-        />
-      </>,
-    );
-    expect(screen.getByLabelText("DM label")).toHaveTextContent("GLM");
-    expect(
-      view.container.querySelector('[data-message-id="message"]'),
-    ).toHaveTextContent("GLM");
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Mention a member" }));
-    expect(
-      await screen.findByRole("button", { name: `GLM ${agent.pubkey}` }),
-    ).toBeVisible();
+    const dm = {
+      id: "dm",
+      name: "DM",
+      channelType: "dm" as const,
+      members: [viewer.pubkey, agent.pubkey],
+      participants: [agent.pubkey],
+    };
+    const roster = { status: "ready" as const, channels: [stream, dm] };
+    const channels = {
+      ...owner.session.channels,
+      list: () => roster,
+      subscribeList: () => () => {},
+      ensureList() {},
+      get: (id: string) => [stream, dm].find((channel) => channel.id === id),
+    };
+    const session = { ...owner.session, channels } as RelaySession;
+    try {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() =>
+        expect(owner.session.channels.list().status).toBe("ready"),
+      );
+      await vi.waitFor(() =>
+        expect(session.agentLibrary.snapshot().status).toBe("ready"),
+      );
+      if (!live) throw new Error("Relay live subscription was not installed");
+      act(() => {
+        live?.state({ status: "connected", routes: [] });
+        live?.established();
+      });
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      await act(async () => session.profiles.ensure([agent.pubkey]));
+      expect(session.profiles.snapshot().get(agent.pubkey)?.name).toBe("GLM");
 
-    act(() => {
-      relayProfile = writeProfile("Luna", 1_700_000_001);
-      live?.receive([relayProfile]);
-    });
-    await vi.waitFor(() => {
-      expect(screen.getByLabelText("DM label")).toHaveTextContent("Luna");
+      function Sidebar() {
+        const labels = useChannelLabels([dm], session.profiles, session.names);
+        return (
+          <output aria-label="DM label">{labels.channels[0]?.name}</output>
+        );
+      }
+      const row: ChannelMessage = {
+        id: "message",
+        channelId: stream.id,
+        authorId: agent.pubkey,
+        content: "hello",
+        createdAt: 1_700_000_000,
+        mentions: [],
+        participants: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+      };
+      const view = render(
+        <>
+          <Sidebar />
+          <MessageRow
+            row={row}
+            session={session}
+            profile={session.profiles.snapshot().get(agent.pubkey)}
+            media={() => undefined}
+            onOpenLink={() => false}
+            day={false}
+            retry={undefined}
+          />
+          <MentionPicker
+            session={session}
+            scope="test"
+            channelId={stream.id}
+            disabled={false}
+            inviteAgents
+            select={() => true}
+          />
+        </>,
+      );
+      expect(screen.getByLabelText("DM label")).toHaveTextContent("GLM");
       expect(
         view.container.querySelector('[data-message-id="message"]'),
-      ).toHaveTextContent("Luna");
+      ).toHaveTextContent("GLM");
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByRole("button", { name: "Mention a member" }),
+      );
       expect(
-        screen.getByRole("button", { name: `Luna ${agent.pubkey}` }),
+        await screen.findByRole("button", { name: `GLM ${agent.pubkey}` }),
       ).toBeVisible();
-    });
-    expect(
-      screen.queryByRole("button", { name: `GLM ${agent.pubkey}` }),
-    ).not.toBeInTheDocument();
-  } finally {
-    owner.dispose();
-    await runtime.dispose();
-    await ctx.fiber.dispose();
-  }
-});
+
+      const oldRosterReads = rosterReads;
+      await act(async () => {
+        relayProfile = writeProfile("Luna", 1_700_000_001);
+        savedName = "Luna";
+        if (delivery === "live") live?.receive([relayProfile]);
+        else if (delivery === "clear-cache") await owner.clearCache();
+        else {
+          // No profile replay: publication happened while disconnected and is
+          // older than the live stream's five-minute lookback on reconnect.
+          // The signed roster is unchanged and startup discovery is settled.
+          live?.state({ status: "retrying", routes: [] });
+          live?.state({ status: "connected", routes: [] });
+          live?.established();
+        }
+      });
+      if (delivery === "reconnect") {
+        await vi.waitFor(() =>
+          expect(rosterReads).toBeGreaterThan(oldRosterReads),
+        );
+        await vi.waitFor(() =>
+          expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+        );
+        await vi.waitFor(() =>
+          expect(session.agentLibrary.snapshot().identities[0]?.name).toBe(
+            "Luna",
+          ),
+        );
+      }
+      await vi.waitFor(() => {
+        expect(screen.getByLabelText("DM label")).toHaveTextContent("Luna");
+        expect(
+          view.container.querySelector('[data-message-id="message"]'),
+        ).toHaveTextContent("Luna");
+        expect(
+          screen.getByRole("button", { name: `Luna ${agent.pubkey}` }),
+        ).toBeVisible();
+      });
+      expect(
+        screen.queryByRole("button", { name: `GLM ${agent.pubkey}` }),
+      ).not.toBeInTheDocument();
+    } finally {
+      owner.dispose();
+      await runtime.dispose();
+      await ctx.fiber.dispose();
+    }
+  },
+);
 it("uses channel scope in link previews and activity, and participant scope in sidebar DMs", async () => {
   const f = fixture();
   function Sidebar() {

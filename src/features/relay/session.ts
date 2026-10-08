@@ -2394,6 +2394,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();

@@ -317,6 +317,8 @@ it("keeps the conversation visible and reports a failed archive save", async () 
 it.each(["reply", "unrelated", "mention"] as const)(
   "archive Retry survives an intervening %s projection update",
   async (update) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
     const h = fixture();
     render(h.view);
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -359,6 +361,7 @@ it.each(["reply", "unrelated", "mention"] as const)(
         current.some((item) => item.messageIds.includes(incoming.id)),
       ).toBe(true);
     });
+    vi.setSystemTime(new Date("2030-01-01T00:00:05Z"));
     fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
     if (update === "mention") {
       await waitFor(() =>

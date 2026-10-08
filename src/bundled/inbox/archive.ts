@@ -87,6 +87,7 @@ export function updateArchive(
   scope: string,
   item: InboxItem,
   archived: boolean,
+  at = Math.floor(Date.now() / 1000),
 ) {
   const revision = viewRevision(scope, archiveKey);
   const archives = readArchives(revision).filter((entry) => !owns(entry, item));
@@ -94,7 +95,7 @@ export function updateArchive(
     archives.push({
       id: item.id,
       channelId: item.channelId,
-      through: Math.max(Math.floor(Date.now() / 1000), item.createdAt),
+      through: Math.max(at, item.createdAt),
       messageIds: [...item.messageIds],
     });
   if (archives.length > 1000 || JSON.stringify(archives).length > maxBytes)

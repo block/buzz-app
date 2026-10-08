@@ -541,6 +541,8 @@ export function InboxView({
   }
   function archive(item: InboxItem, value: boolean) {
     cancelRetry();
+    // Retry repeats this click's cutoff, not a later clock or newly arrived mention.
+    const at = Math.floor(Date.now() / 1000);
     const intent = intentRevision.current;
     const generation = session.unread.generation();
     const valid = () => {
@@ -575,7 +577,7 @@ export function InboxView({
     let advanced: InboxItem | undefined;
     void run(
       async () => {
-        updateArchive(archiveScope, item, value);
+        updateArchive(archiveScope, item, value, at);
         setMenu(undefined);
         if (!leaves) return;
         if (open && next) {

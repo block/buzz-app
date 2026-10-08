@@ -104,10 +104,10 @@ it("keeps DM replies archived without persisting ordinary reopening", () => {
   expect(isArchived(index, fresh)).toBe(true);
   reopenArchives(h.scope, [fresh]);
   expect(viewRevision(h.scope, archiveKey)).toBe(revision);
-  const priorBug = archiveIndex(
+  const persistedReopenedDm = archiveIndex(
     readArchives(revision).map((archive) => ({ ...archive, reopened: true })),
   );
-  expect(isArchived(priorBug, fresh)).toBe(true);
+  expect(isArchived(persistedReopenedDm, fresh)).toBe(true);
   const mention = {
     ...fresh,
     messageIds: [...fresh.messageIds, "c".repeat(64)],

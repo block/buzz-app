@@ -103,6 +103,16 @@ export function RecipientPicker({
   const inDirectory = new Map(
     directory.people.map((person) => [person.pubkey, person]),
   );
+  // A managed agent's own name, kept for ranking and for Space.
+  const agentName = new Map(
+    agents.identities.flatMap((agent) =>
+      agent.managed && agent.name ? [[agent.pubkey, agent.name] as const] : [],
+    ),
+  );
+  const namesOf = (person: Recipient) => {
+    const own = agentName.get(person.pubkey);
+    return own && own !== person.name ? [person.name, own] : [person.name];
+  };
   const byAgentName = query.trim()
     ? agents.identities.flatMap((agent): Recipient[] => {
         if (
@@ -146,7 +156,9 @@ export function RecipientPicker({
     const dm = dms.get(person.pubkey);
     return searchOrder(usage, picked, {
       key,
-      rank: matchOf(person)?.tier ?? 3,
+      rank: Math.min(
+        ...namesOf(person).map((name) => matchPerson(name, needle)?.tier ?? 3),
+      ),
       band: relationshipRank(person),
       usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
     });
@@ -202,7 +214,7 @@ export function RecipientPicker({
   // name or a namesake, so Space waits for the full list.
   const exactRecipient = () =>
     listed && !directory.loading && !directory.error
-      ? exactName(eligible, (person) => [person.name], query)
+      ? exactName(eligible, namesOf, query)
       : undefined;
   const loadingRows = useRef(10);
   useEffect(() => {

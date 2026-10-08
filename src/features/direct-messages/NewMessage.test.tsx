@@ -654,7 +654,7 @@ it("matches names from the start of a word, like mentions", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("finds a managed agent by its own name when its profile name differs", async () => {
+it("finds and completes a managed agent by its own name when its profile name differs", async () => {
   const t = setup();
   t.updateControl({
     status: "ready",
@@ -679,6 +679,12 @@ it("finds a managed agent by its own name when its profile name differs", async 
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   ).toBeVisible();
   expect(screen.queryByRole("option", { name: "Person 1" })).toBeNull();
+  // Space completes the agent's own name, as it does a profile name.
+  await t.user.keyboard(" ");
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 2" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveValue("");
 });
 
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {

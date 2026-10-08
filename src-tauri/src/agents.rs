@@ -152,15 +152,19 @@ pub(crate) async fn claude_auth_status<R: tauri::Runtime>(
     use tauri::Manager as _;
     let app_data = app.path().app_data_dir().ok()?;
     let setup = claude_setup(&app_data);
-    let cli = setup.cli?;
-    let mut path = crate::host_command::effective_path();
+    let path = claude_auth_path(&setup)?;
+    probe_claude_auth(setup.cli.as_ref()?, &path).await
+}
+
+fn claude_auth_path(setup: &ClaudeSetup) -> Option<std::ffi::OsString> {
+    let mut path = buzz_agent_controller::tools_path().ok()?;
     if let Some(node_bin) = setup.node.as_ref().and_then(|node| node.parent()) {
         path = std::env::join_paths(
             std::iter::once(node_bin.to_path_buf()).chain(std::env::split_paths(&path)),
         )
         .ok()?;
     }
-    probe_claude_auth(&cli, &path).await
+    Some(path)
 }
 
 async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Option<bool> {

@@ -2792,3 +2792,61 @@ async fn claude_auth_check_exposes_only_confirmed_status() {
         );
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_auth_uses_the_discovered_node_path() {
+    const FIXTURE: &str = "BUZZ_CLAUDE_AUTH_PATH_FIXTURE";
+    if let Some(root) = std::env::var_os(FIXTURE) {
+        let root = PathBuf::from(root);
+        let setup = claude_setup(&root.join("app-data"));
+        assert_eq!(setup.status, "ready");
+        let cli = setup.cli.as_ref().unwrap();
+        assert_eq!(cli, &root.join("shell tools/claude"));
+        assert!(setup.node.is_none(), "global install became managed");
+        assert_eq!(
+            probe_claude_auth(cli, &claude_auth_path(&setup).unwrap()).await,
+            Some(true)
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let tools = root.path().join("shell tools");
+    std::fs::create_dir(&tools).unwrap();
+    // A real env-node shebang must resolve the shell-only interpreter.
+    crate::test_executable::write_executable(
+        &tools.join("node"),
+        "#!/bin/sh\nprintf '%s' '{\"loggedIn\":true}'\n",
+    );
+    crate::test_executable::write_executable(&tools.join("claude"), "#!/usr/bin/env node\n");
+    crate::test_executable::write_executable(
+        &tools.join("claude-agent-acp"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    let shell = root.path().join("shell");
+    crate::test_executable::write_executable(
+        &shell,
+        format!(
+            "#!/bin/sh\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n",
+            tools.display()
+        ),
+    );
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::claude_auth_uses_the_discovered_node_path",
+            "--nocapture",
+        ])
+        .env(FIXTURE, root.path())
+        .env("HOME", root.path())
+        .env("SHELL", shell)
+        .env("PATH", "/nonexistent-pr709-tools")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

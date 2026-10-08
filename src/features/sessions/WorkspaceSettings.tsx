@@ -17,7 +17,6 @@ import {
   readWorkspace,
   sectionTemplateId,
   sectionDefault,
-  templateEntry,
   workspaceCanvas,
   type Workspace,
 } from "./workspace";
@@ -76,7 +75,12 @@ export function WorkspaceSettings({
           throw new Error(kit.error ?? "Section defaults are unavailable.");
         const id = await sectionTemplateId(target.id);
         if (!alive.current) return;
-        const entry = templateEntry(kit.entries, id);
+        // Tombstones still own the revision even though they supply no defaults.
+        const entry = kit.entries.find(
+          (entry) =>
+            entry.record.value.type === "template" &&
+            entry.record.value.id === id,
+        );
         const template = sectionDefault(kit.entries, target.id, id);
         setRecipeId(id);
         setEntries(kit.entries);

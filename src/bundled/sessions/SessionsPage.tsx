@@ -1,3 +1,4 @@
+import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -15,7 +16,7 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -37,7 +38,7 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { SessionsWorkspace } from "./SessionsWorkspace";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
@@ -104,6 +105,10 @@ function LiveSessions({
   });
   const [focusRequest, setFocusRequest] = useState(0);
   const [newSection, setNewSection] = useState<string>();
+  const pendingDraft = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => (selected ? pendingSessionDraft(scope, selected) : undefined),
+  );
   const selectedSession = list.channels.find(
     (item) =>
       item.id === selected &&
@@ -174,7 +179,7 @@ function LiveSessions({
         ) : undefined
       }
     >
-      {selectedSession ? (
+      {selectedSession && !pendingDraft ? (
         <SessionWork
           key={selectedSession.id}
           session={session}
@@ -192,8 +197,13 @@ function LiveSessions({
         <NewSessionComposer
           standalone
           focusRequest={focusRequest}
-          key={newSection ?? "unfiled"}
-          sectionId={newSection}
+          key={pendingDraft ?? newSection ?? "unfiled"}
+          resumeDraftKey={pendingDraft}
+          sectionId={
+            pendingDraft?.startsWith("sessions:section:")
+              ? pendingDraft.slice("sessions:section:".length)
+              : newSection
+          }
           extensions={extensions}
           session={session}
           scope={scope}

@@ -1,3 +1,4 @@
+import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -11,9 +12,9 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   applySessionSetup,
+  removedSectionMessage,
   loadSessionSetup,
   parseSessionSetup,
-  type SessionSetup,
 } from "./workspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
@@ -28,46 +29,6 @@ import { AgentChoice } from "./AgentChoice";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
 
-type PendingStart = {
-  id: string;
-  text: string;
-  draft?: MentionDraft;
-  agent?: string;
-  invitationId?: string;
-  creationId?: string;
-  messageId?: string;
-  setup?: SessionSetup;
-  setupDone?: boolean;
-};
-const sessionId =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-function readPending(
-  scope: string,
-  draftKey: string,
-): PendingStart | undefined {
-  const value = readView<Partial<PendingStart> | null>(
-    scope,
-    `${draftKey}:pending`,
-    null,
-  );
-  if (
-    !value ||
-    typeof value.id !== "string" ||
-    !sessionId.test(value.id) ||
-    typeof value.text !== "string" ||
-    value.text.length > 16000
-  )
-    return;
-  if (
-    [value.creationId, value.messageId, value.invitationId, value.agent].some(
-      (id) =>
-        id !== undefined &&
-        (typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id)),
-    )
-  )
-    return;
-  return value as PendingStart;
-}
 export function NewSessionComposer({
   session,
   scope,
@@ -77,7 +38,9 @@ export function NewSessionComposer({
   extensions,
   standalone = false,
   focusRequest = 0,
+  resumeDraftKey,
 }: {
+  resumeDraftKey?: string | undefined;
   standalone?: boolean;
   focusRequest?: number;
   extensions?: ConversationExtensions | undefined;
@@ -88,11 +51,13 @@ export function NewSessionComposer({
   sectionId?: string | undefined;
 }) {
   const available = session.workSessions.available;
-  const draftKey = parent
-    ? `sessions:channel:${parent.id}`
-    : sectionId
-      ? `sessions:section:${sectionId}`
-      : "sessions";
+  const draftKey =
+    resumeDraftKey ??
+    (parent
+      ? `sessions:channel:${parent.id}`
+      : sectionId
+        ? `sessions:section:${sectionId}`
+        : "sessions");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
@@ -168,7 +133,7 @@ export function NewSessionComposer({
     try {
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
-        if (current.setup.sectionId !== sectionId)
+        if (current.setup.sectionId && current.setup.sectionId !== sectionId)
           throw new Error(
             "The saved session belongs to a different section. Reopen its original section to retry.",
           );
@@ -402,6 +367,30 @@ export function NewSessionComposer({
         </p>
       )}
       {error && <p role="alert">{error}</p>}
+      {error === removedSectionMessage &&
+        pending?.setup?.sectionId &&
+        !pending.setupDone &&
+        !pending.messageId && (
+          <Button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              try {
+                if (!pending.setup) return;
+                const { sectionId: _sectionId, ...setup } = pending.setup;
+                save({ ...pending, setup });
+                setError(undefined);
+                setEditing(true);
+              } catch (reason) {
+                setError(
+                  reason instanceof Error ? reason.message : String(reason),
+                );
+              }
+            }}
+          >
+            Continue without section
+          </Button>
+        )}
       {error && failedId && (
         <Button type="button" disabled={busy} onClick={() => void editFailed()}>
           Edit and retry

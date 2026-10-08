@@ -142,7 +142,7 @@ export function AgentChoice({
   sessionMembers,
   parentMembers,
   parentName,
-  emptyLabel = "Automatic / @mentions",
+  emptyLabel = "Choose an agent",
   side = "top",
 }: {
   session: RelaySession;

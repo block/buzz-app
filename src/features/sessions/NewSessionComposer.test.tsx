@@ -650,6 +650,7 @@ it.each([false, true])(
           writable: true,
           refresh: async () => {},
           snapshot: () => ({
+            status: "ready",
             data: { sections: [{ id: "work", name: "Work" }], assignments: {} },
           }),
           assign: async () => {
@@ -750,4 +751,64 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     undefined,
   );
   expect(order).toEqual(["canvas", "send"]);
+});
+
+it("recovers a deleted destination without duplicating the session or dropping its Canvas", async () => {
+  const test = setup();
+  const onStarted = vi.fn();
+  const id = "22222222-2222-4222-8222-222222222222";
+  const canvas = { id: "f".repeat(64), content: "Frozen instructions" };
+  const assign = vi.fn();
+  const channels = { status: "ready", channels: [{ id, members: [] }] };
+  Object.assign(test.session, {
+    canvas: { read: async () => canvas, save: vi.fn() },
+    channels: {
+      list: () => channels,
+      subscribeList: () => () => {},
+    },
+    sidebarPreferences: {
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [], assignments: {} },
+      }),
+      assign,
+    },
+  });
+  writeView("test", "sessions:section:deleted:pending", {
+    id,
+    text: "Continue my work",
+    creationId: "c".repeat(64),
+    setup: { sectionId: "deleted", canvas: canvas.content, agents: [] },
+  });
+  const view = () => (
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      sectionId="deleted"
+      resumeDraftKey="sessions:section:deleted"
+      onStarted={onStarted}
+    />
+  );
+  const first = render(view());
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByText(
+    "The section was removed. Continue without a section to retry.",
+  );
+  expect(test.messages.send).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Continue without section" }),
+  );
+  first.unmount();
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledWith(id));
+  expect(test.workSessions.create).not.toHaveBeenCalled();
+  expect(assign).not.toHaveBeenCalled();
+  expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(
+    id,
+    "Continue my work",
+    [],
+  );
 });

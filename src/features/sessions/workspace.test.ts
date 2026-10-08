@@ -170,3 +170,102 @@ it("stops after failed Canvas or revoked lifetime before placing or inviting", a
   );
   expect(f.raw.canvas.read).toHaveBeenCalledTimes(1);
 });
+
+it("checks an empty frozen Canvas before placing or inviting on retry", async () => {
+  const f = fixture();
+  f.changeCanvas("Written on another device");
+  await expect(
+    applySessionSetup(
+      f.session,
+      "channel",
+      {
+        sectionId: "work",
+        canvas: "",
+        agents: ["a".repeat(64)],
+      },
+      () => true,
+    ),
+  ).rejects.toThrow("different Canvas");
+  expect(f.calls).toEqual([]);
+});
+
+it("accepts matching empty Canvas without publishing a new revision", async () => {
+  const f = fixture();
+  for (const existing of [false, true]) {
+    if (existing) f.changeCanvas("");
+    await applySessionSetup(
+      f.session,
+      "channel",
+      { canvas: "", agents: [] },
+      () => true,
+    );
+  }
+  expect(f.raw.canvas.read).toHaveBeenCalledTimes(2);
+  expect(f.raw.canvas.save).not.toHaveBeenCalled();
+});
+
+it.each(["archive-error", "archived", "removed-legacy", "eligible"])(
+  "checks inherited agent eligibility: %s",
+  async (state) => {
+    const f = fixture();
+    const pubkey = "a".repeat(64);
+    f.kit.entries = [
+      {
+        record: {
+          value: {
+            type: "template",
+            id: await sectionTemplateId("work"),
+            canvas: "",
+            agents: [pubkey],
+            teamIds: [],
+          },
+        },
+      },
+    ];
+    Object.assign(f.session, {
+      agentChoices: {
+        refresh: vi.fn(async () => {}),
+        snapshot: () => ({
+          templates: {
+            status: "ready",
+            identities: [{ pubkey, name: "Agent", managed: false }],
+          },
+          archives: {
+            status: state === "archive-error" ? "error" : "ready",
+            archived: state === "archived" ? [pubkey] : [],
+          },
+        }),
+      },
+      channels: {
+        list: () => ({
+          status: "ready",
+          channels: state === "removed-legacy" ? [] : [{ members: [pubkey] }],
+        }),
+      },
+    });
+    if (state === "eligible")
+      expect(await loadSessionSetup(f.session, "work")).toMatchObject({
+        agents: [pubkey],
+      });
+    else
+      await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
+        state === "archive-error" ? "couldn’t load" : "unavailable",
+      );
+  },
+);
+
+it("does not offer deleted-section recovery when section refresh fails", async () => {
+  const f = fixture();
+  Object.assign(f.session.sidebarPreferences, {
+    snapshot: () => ({ status: "error", data: undefined }),
+  });
+  await expect(
+    applySessionSetup(
+      f.session,
+      "channel",
+      { sectionId: "work", canvas: "", agents: [] },
+      () => true,
+    ),
+  ).rejects.toThrow("Sections couldn’t load");
+  expect(f.calls).toEqual([]);
+});

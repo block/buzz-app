@@ -1,3 +1,4 @@
+import { templateAgentChoices } from "../agents/choices";
 import type { KitEntry } from "../channel-templates/model";
 import {
   CANVAS_BYTES,
@@ -229,18 +230,26 @@ export async function loadSessionSetup(
   if (!template) return { sectionId, canvas: "", agents: [] };
   if (template.agents.length || template.teamIds.length) {
     await session.agentChoices.refresh("templates");
-    const choices = session.agentChoices.snapshot().templates;
-    if (choices.status !== "ready")
+    const choices = session.agentChoices.snapshot();
+    if (
+      choices.templates.status !== "ready" ||
+      choices.archives.status !== "ready"
+    )
       throw new Error(
         "Available agents couldn’t load. Retry before starting the session.",
       );
-    const agents = resolveLineup(template, kit.entries, choices.identities).map(
-      (agent) => agent.pubkey,
-    );
+    const agents = resolveLineup(
+      template,
+      kit.entries,
+      templateAgentChoices(choices, session.channels.list()),
+    ).map((agent) => agent.pubkey);
     return { sectionId, canvas: template.canvas, agents };
   }
   return { sectionId, canvas: template.canvas, agents: [] };
 }
+
+export const removedSectionMessage =
+  "The section was removed. Continue without a section to retry.";
 
 export async function applySessionSetup(
   session: RelaySession,
@@ -249,27 +258,27 @@ export async function applySessionSetup(
   active: () => boolean,
 ) {
   if (!active()) return;
-  if (setup.canvas) {
-    const head = await session.canvas.read(channelId);
-    if (!active()) return;
-    if (head && head.content !== setup.canvas)
-      throw new Error(
-        "This session already has a different Canvas. Review it before retrying setup.",
-      );
-    if (!head) await session.canvas.save(channelId, setup.canvas, undefined);
-  }
+  const head = await session.canvas.read(channelId);
+  if (!active()) return;
+  if (head && head.content !== setup.canvas)
+    throw new Error(
+      "This session already has a different Canvas. Review it before retrying setup.",
+    );
+  if (!head && setup.canvas)
+    await session.canvas.save(channelId, setup.canvas, undefined);
   if (!active()) return;
   if (setup.sectionId) {
     await session.sidebarPreferences.refresh();
     if (!active()) return;
+    const preferences = session.sidebarPreferences.snapshot();
+    if (preferences.status !== "ready" || !preferences.data)
+      throw new Error("Sections couldn’t load. Retry before continuing setup.");
     if (
-      !session.sidebarPreferences
-        .snapshot()
-        .data?.sections.some((section) => section.id === setup.sectionId)
+      !preferences.data.sections.some(
+        (section) => section.id === setup.sectionId,
+      )
     )
-      throw new Error(
-        "The section was removed. Restore it before retrying this session.",
-      );
+      throw new Error(removedSectionMessage);
     if (
       session.sidebarPreferences.snapshot().data?.assignments[channelId] !==
       setup.sectionId

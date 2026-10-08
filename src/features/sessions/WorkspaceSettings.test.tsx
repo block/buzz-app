@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+import { createChannelKit } from "../channel-templates/capability";
+import { keypair, signed } from "../relay/testing";
+import { matchesEvent } from "../relay/projection";
+import type { RelayEvent } from "../relay/events";
+import type { Outbox } from "../relay/outbox";
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
 import {
@@ -147,4 +152,74 @@ it("saves section defaults as an existing relay template without writing section
     }),
     undefined,
   );
+});
+
+it("recreates deleted section defaults using the tombstone revision", async () => {
+  const viewer = keypair();
+  const events: RelayEvent[] = [];
+  let time = 1_700_000_000;
+  const send = vi.fn((value: Parameters<Outbox["send"]>[0]) => {
+    const event = signed(viewer, { ...value, created_at: time++ });
+    events.push(event);
+    return event.id;
+  });
+  const kit = createChannelKit({
+    viewer: viewer.pubkey,
+    community: "https://relay.example.test",
+    signal: new AbortController().signal,
+    ready: Promise.resolve(),
+    canWrite: () => true,
+    delivered: async () => {},
+    local: undefined,
+    outbox: { send, supports: () => true } as unknown as Outbox,
+    reader: {
+      read: async (filters) =>
+        events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        ),
+    },
+    host: {
+      prepare: async (record) => JSON.stringify(record),
+      decode: async (rows) =>
+        rows.map((event) => ({
+          eventId: event.id,
+          record: JSON.parse(event.content),
+        })),
+    },
+  });
+  const session = { channelKit: kit.capability } as unknown as RelaySession;
+  const close = vi.fn();
+  const view = () => (
+    <WorkspaceSettings
+      session={session}
+      scope="test"
+      target={{ kind: "section", id: "work", name: "Work" }}
+      close={close}
+    />
+  );
+  const first = render(view());
+  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
+    target: { value: "Old instructions" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  first.unmount();
+  const saved = kit.capability.snapshot().entries[0];
+  if (!saved) throw new Error("Expected saved section defaults");
+  // TemplateLibrary deletes through the same revision-checked save operation.
+  await kit.capability.save(saved.record.value, saved.eventId, true);
+  expect(kit.capability.snapshot().entries[0]?.record.deleted).toBe(true);
+  render(view());
+  expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
+    "",
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+    target: { value: "New instructions" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  const restored = kit.capability.snapshot().entries[0];
+  expect(restored?.record.deleted).toBe(false);
+  expect(restored?.record.value).toMatchObject({ canvas: "New instructions" });
+  expect(send).toHaveBeenCalledTimes(3);
 });

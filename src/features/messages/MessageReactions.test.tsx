@@ -461,7 +461,7 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
   expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
 });
 
-it("retires reaction previews while retaining the reaction delivery owner", async () => {
+it("opens reaction previews after 250ms and retires them when hidden", async () => {
   const h = harness([react(other)]);
   vi.useFakeTimers();
   try {
@@ -474,7 +474,9 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
     );
     const view = render(tree(true));
     fireEvent.mouseEnter(screen.getByRole("button", { name: "👍: 1 person" }));
-    await act(() => vi.advanceTimersByTimeAsync(1200));
+    await act(() => vi.advanceTimersByTimeAsync(249));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByRole("tooltip")).toBeTruthy();
     const reactions = screen.getByTestId("reaction-row");
     view.rerender(tree(false));

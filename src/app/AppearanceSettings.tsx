@@ -1,5 +1,12 @@
+import {
+  BUBBLE_COLORS,
+  messageButtonStyle,
+} from "../shared/theme/bubble-color";
 import { IconButton } from "../shared/design-system/ui/IconButton";
-import { ArrowCounterClockwiseIcon } from "../shared/design-system/icons";
+import {
+  ArrowCounterClockwiseIcon,
+  CheckIcon,
+} from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -36,10 +43,8 @@ export function AppearanceSettings({
     pendingFocus.current = null;
     if (target?.isConnected) target.focus();
   });
-  const { preference, error, fontScale, fontError } = useSyncExternalStore(
-    appearance.subscribe,
-    appearance.snapshot,
-  );
+  const { preference, error, fontScale, fontError, bubbleColor, bubbleError } =
+    useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
@@ -100,7 +105,53 @@ export function AppearanceSettings({
               </fieldset>
             }
           />
+          <PreferenceRow
+            title="Message color"
+            subtitle="For your bubbles and send button on this device."
+            trailing={(label) => (
+              <fieldset
+                {...label}
+                className="m-0 grid min-w-0 grid-cols-5 gap-2 border-0 p-0"
+              >
+                {BUBBLE_COLORS.map((color) => (
+                  <IconButton
+                    key={color}
+                    data-bubble-color={color}
+                    style={messageButtonStyle}
+                    variant="primary"
+                    size="sm"
+                    shape="round"
+                    aria-label={`${color.charAt(0).toUpperCase()}${color.slice(1)} message color`}
+                    title={`${color.charAt(0).toUpperCase()}${color.slice(1)}`}
+                    aria-pressed={bubbleColor === color}
+                    onClick={() => appearance.setBubbleColor(color)}
+                    icon={
+                      <CheckIcon
+                        aria-hidden="true"
+                        className={
+                          bubbleColor === color ? "opacity-100" : "opacity-0"
+                        }
+                      />
+                    }
+                  />
+                ))}
+              </fieldset>
+            )}
+          />
         </SettingsGroup>
+        {active && bubbleError && (
+          <ToastNotice
+            title="Message color wasn’t saved"
+            description={bubbleError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setBubbleColor(bubbleColor)}
+            >
+              Retry saving message color
+            </Button>
+          </ToastNotice>
+        )}
         {active && fontError && (
           <ToastNotice
             title="Interface size wasn’t saved"

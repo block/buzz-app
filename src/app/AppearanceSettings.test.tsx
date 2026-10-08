@@ -228,3 +228,31 @@ it("selects and saves color mode through visual radio choices", async () => {
   }
   appearance.dispose();
 });
+
+it("selects and restores a message color, including retry after a failed save", async () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const save = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("denied");
+    });
+  fireEvent.click(screen.getByRole("button", { name: "Blue message color" }));
+  expect(
+    screen.getByRole("button", { name: "Blue message color" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(document.documentElement.dataset.bubbleColor).toBe("blue");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry saving message color" }),
+  );
+  expect(localStorage.getItem("buzz-bubble-color.v1")).toBe("blue");
+  save.mockRestore();
+  appearance.dispose();
+  const restored = createAppearance();
+  expect(restored.snapshot().bubbleColor).toBe("blue");
+  restored.dispose();
+});

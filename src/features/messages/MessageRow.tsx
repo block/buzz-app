@@ -84,6 +84,9 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  viewer?: string | undefined;
+  stackPrevious?: boolean;
+  stackNext?: boolean;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -160,6 +163,9 @@ export const MessageRow = memo(function MessageRow({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  viewer = session?.viewer,
+  stackPrevious = layout === "continuation",
+  stackNext = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -246,6 +252,12 @@ export const MessageRow = memo(function MessageRow({
   const thinkingId = useId();
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
+  const attachmentOnly =
+    !row.content.trim() &&
+    !row.diff &&
+    !row.agentEnvelope &&
+    row.attachments.length > 0 &&
+    row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -370,94 +382,93 @@ export const MessageRow = memo(function MessageRow({
       largeEmoji={emojiOnly}
     />
   );
+  const avatar = row.workflowOwnerId ? (
+    <Avatar
+      alt="Workflow"
+      fallback="Workflow"
+      fallbackContent={<LightningIcon size={20} />}
+      shape="squircle"
+      size={
+        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
+      }
+    />
+  ) : clickable ? (
+    <IconButton
+      size={layout === "timeline" ? "default" : "sm"}
+      shape="round"
+      aria-label={`View ${name} profile`}
+      aria-describedby={
+        [
+          presence !== "unknown" && presenceId,
+          avatarShape === "squircle" && thinkingId,
+        ]
+          .filter(Boolean)
+          .join(" ") || undefined
+      }
+      onClick={(event) => {
+        event.currentTarget.focus();
+        onOpenLink(target);
+      }}
+      icon={
+        <>
+          <AgentAvatar
+            session={session}
+            agentPubkey={row.authorId}
+            channelId={row.channelId}
+            src={picture}
+            alt=""
+            thinkingDescriptionId={thinkingId}
+            fallback={name}
+            size={compactAvatar ? "small" : "fill"}
+            shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+          {presence !== "unknown" && (
+            <span className="sr-only select-none" id={presenceId}>
+              Presence: {presence}
+            </span>
+          )}
+        </>
+      }
+    />
+  ) : (
+    <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+      <AgentAvatar
+        session={session}
+        agentPubkey={row.authorId}
+        channelId={row.channelId}
+        src={picture}
+        alt={
+          presence === "unknown"
+            ? ""
+            : avatarShape === "squircle"
+              ? "Agent"
+              : `${name} avatar`
+        }
+        fallback={name}
+        size={
+          compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
+        }
+        shape={avatarShape}
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
+    </span>
+  );
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
-      <div ref={rowRef} className={styles.message} data-layout={layout}>
-        {layout === "continuation" ? (
-          <span className={styles.messageGutter}>
+      <div
+        ref={rowRef}
+        className={styles.message}
+        data-layout={layout}
+        data-stack-previous={stackPrevious || undefined}
+        data-stack-next={stackNext || undefined}
+      >
+        <span className={styles.messageGutter}>
+          {stackPrevious && stackNext && (
             <MessageTimestamp createdAt={row.createdAt} compact />
-          </span>
-        ) : row.workflowOwnerId ? (
-          <Avatar
-            alt="Workflow"
-            fallback="Workflow"
-            fallbackContent={<LightningIcon size={20} />}
-            shape="squircle"
-            size={
-              compactAvatar
-                ? "small"
-                : layout === "timeline"
-                  ? "large"
-                  : "default"
-            }
-          />
-        ) : clickable ? (
-          <IconButton
-            size={layout === "timeline" ? "default" : "sm"}
-            shape="round"
-            aria-label={`View ${name} profile`}
-            aria-describedby={
-              [
-                presence !== "unknown" && presenceId,
-                avatarShape === "squircle" && thinkingId,
-              ]
-                .filter(Boolean)
-                .join(" ") || undefined
-            }
-            onClick={(event) => {
-              event.currentTarget.focus();
-              onOpenLink(target);
-            }}
-            icon={
-              <>
-                <AgentAvatar
-                  session={session}
-                  agentPubkey={row.authorId}
-                  channelId={row.channelId}
-                  src={picture}
-                  alt=""
-                  thinkingDescriptionId={thinkingId}
-                  fallback={name}
-                  size={compactAvatar ? "small" : "fill"}
-                  shape={avatarShape}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-                {presence !== "unknown" && (
-                  <span className="sr-only select-none" id={presenceId}>
-                    Presence: {presence}
-                  </span>
-                )}
-              </>
-            }
-          />
-        ) : (
-          <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
-            <AgentAvatar
-              session={session}
-              agentPubkey={row.authorId}
-              channelId={row.channelId}
-              src={picture}
-              alt={
-                presence === "unknown"
-                  ? ""
-                  : avatarShape === "squircle"
-                    ? "Agent"
-                    : `${name} avatar`
-              }
-              fallback={name}
-              size={
-                compactAvatar
-                  ? "small"
-                  : layout === "timeline"
-                    ? "large"
-                    : "default"
-              }
-              shape={avatarShape}
-              statusBadge={presence === "unknown" ? undefined : presence}
-            />
-          </span>
-        )}
+          )}
+        </span>
         <div className={styles.messageBody}>
           {opened && session && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>
@@ -566,11 +577,7 @@ export const MessageRow = memo(function MessageRow({
             {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
             <div
-              className={
-                layout === "continuation"
-                  ? "sr-only select-none"
-                  : styles.byline
-              }
+              className={stackPrevious ? "sr-only select-none" : styles.byline}
             >
               {row.workflowOwnerId && workflowOwnerName ? (
                 <WorkflowByline
@@ -583,7 +590,7 @@ export const MessageRow = memo(function MessageRow({
               ) : (
                 <strong className={styles.author}>{name}</strong>
               )}
-              {layout !== "continuation" && (
+              {(!stackPrevious || !stackNext) && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}
               {session &&
@@ -617,150 +624,174 @@ export const MessageRow = memo(function MessageRow({
               />
             </div>
           )}
-          {timeReply && (
-            <span className={styles.mediaTimeLink}>
-              {onMediaTime ? (
-                <Button
-                  size="sm"
-                  type="button"
-                  onClick={() => onMediaTime(timeReply.anchor.seconds)}
-                >
-                  {timeReply.label}
-                </Button>
-              ) : (
-                <span>{timeReply.label}</span>
-              )}
-            </span>
-          )}
-          {extensions?.messages ? (
-            <MessageBody registry={extensions.messages} message={row}>
-              {body}
-            </MessageBody>
-          ) : (
-            body
-          )}
-          <DeliveryNotice row={row} retry={retry} />
-          {attachmentGroups.map((group) => {
-            const images = group[0]?.kind === "image";
-            const files = group[0]?.kind === "file";
-            const items = group.map((attachment, index) => {
-              const url = safeMessageUrl(attachment.url);
-              if (!url) return null;
-              const source = media(url);
-              if (attachment.kind === "file")
-                return (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={onOpenLink}
-                  />
-                );
-              if (attachment.kind === "audio") {
-                if (
-                  source &&
-                  (isProxySource(source) || isNativeMediaSource(source))
-                )
-                  return (
-                    <AudioAttachment
-                      key={url}
-                      attachment={{ ...attachment, url }}
-                      source={source}
-                    />
-                  );
-                return (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={onOpenLink}
-                  />
-                );
-              }
-              if (attachment.kind === "image") {
-                return (
-                  <AttachmentImage
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    cached={cached}
-                    thumbnail
-                    keepMounted={keepRowMounted}
-                    label={
-                      group.length > 1
-                        ? `Open image ${index + 1} of ${group.length}`
-                        : "Open image attachment"
-                    }
-                    {...(onOpenMediaReview
-                      ? {
-                          onOpenReview: (item, seconds) =>
-                            onOpenMediaReview(
-                              row.id,
-                              item,
-                              seconds,
-                              row.replyCount > 0 ||
-                                (!!row.threadRootId &&
-                                  row.threadRootId !== row.id),
-                            ),
-                        }
-                      : {})}
-                  />
-                );
-              }
-              return (
-                <MediaAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  media={media}
-                  mode={mediaMode}
-                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                    ? {
-                        seekTo: mediaSeekTo,
-                        ...(mediaSeekRequest !== undefined
-                          ? { seekRequest: mediaSeekRequest }
-                          : {}),
-                      }
-                    : {})}
-                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                  {...(onOpenMediaReview
-                    ? {
-                        onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(
-                            row.id,
-                            item,
-                            seconds,
-                            row.replyCount > 0 ||
-                              (!!row.threadRootId &&
-                                row.threadRootId !== row.id),
-                          ),
-                      }
-                    : {})}
-                />
-              );
-            });
-            return images ? (
-              <div className={styles.imageGroup} key={group[0]?.url}>
-                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                <div
-                  className={styles.imageStrip}
-                  role="group"
-                  aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
-                  onFocus={revealFocusedThumbnail}
-                >
-                  {items}
-                </div>
-                {group.length > 1 && (
-                  <div className={styles.imageCount}>{group.length} images</div>
+          <div className={styles.messageContent}>
+            {!stackNext && <div className={styles.messageAvatar}>{avatar}</div>}
+            {!attachmentOnly && (
+              <div
+                className={styles.messageBubble}
+                data-own={(!!viewer && row.authorId === viewer) || undefined}
+                data-long-text={
+                  row.content.length > 160 ||
+                  row.content.includes("\n") ||
+                  undefined
+                }
+              >
+                {timeReply && (
+                  <span className={styles.mediaTimeLink}>
+                    {onMediaTime ? (
+                      <Button
+                        size="sm"
+                        type="button"
+                        onClick={() => onMediaTime(timeReply.anchor.seconds)}
+                      >
+                        {timeReply.label}
+                      </Button>
+                    ) : (
+                      <span>{timeReply.label}</span>
+                    )}
+                  </span>
+                )}
+                {extensions?.messages ? (
+                  <MessageBody registry={extensions.messages} message={row}>
+                    {body}
+                  </MessageBody>
+                ) : (
+                  body
                 )}
               </div>
-            ) : files ? (
-              <div className={styles.fileGroup} key={group[0]?.url}>
-                {items}
+            )}
+            {attachmentGroups.length > 0 && (
+              <div className={styles.messageAttachments}>
+                {attachmentGroups.map((group) => {
+                  const images = group[0]?.kind === "image";
+                  const files = group[0]?.kind === "file";
+                  const items = group.map((attachment, index) => {
+                    const url = safeMessageUrl(attachment.url);
+                    if (!url) return null;
+                    const source = media(url);
+                    if (attachment.kind === "file")
+                      return (
+                        <FileAttachment
+                          key={url}
+                          attachment={{ ...attachment, url }}
+                          source={source}
+                          onOpenLink={onOpenLink}
+                        />
+                      );
+                    if (attachment.kind === "audio") {
+                      if (
+                        source &&
+                        (isProxySource(source) || isNativeMediaSource(source))
+                      )
+                        return (
+                          <AudioAttachment
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                          />
+                        );
+                      return (
+                        <FileAttachment
+                          key={url}
+                          attachment={{ ...attachment, url }}
+                          source={source}
+                          onOpenLink={onOpenLink}
+                        />
+                      );
+                    }
+                    if (attachment.kind === "image") {
+                      return (
+                        <AttachmentImage
+                          key={url}
+                          attachment={{ ...attachment, url }}
+                          source={source}
+                          cached={cached}
+                          thumbnail
+                          keepMounted={keepRowMounted}
+                          label={
+                            group.length > 1
+                              ? `Open image ${index + 1} of ${group.length}`
+                              : "Open image attachment"
+                          }
+                          {...(onOpenMediaReview
+                            ? {
+                                onOpenReview: (item, seconds) =>
+                                  onOpenMediaReview(
+                                    row.id,
+                                    item,
+                                    seconds,
+                                    row.replyCount > 0 ||
+                                      (!!row.threadRootId &&
+                                        row.threadRootId !== row.id),
+                                  ),
+                              }
+                            : {})}
+                        />
+                      );
+                    }
+                    return (
+                      <MediaAttachment
+                        key={url}
+                        attachment={{ ...attachment, url }}
+                        media={media}
+                        mode={mediaMode}
+                        {...(attachment.kind === "video" &&
+                        mediaSeekTo !== undefined
+                          ? {
+                              seekTo: mediaSeekTo,
+                              ...(mediaSeekRequest !== undefined
+                                ? { seekRequest: mediaSeekRequest }
+                                : {}),
+                            }
+                          : {})}
+                        {...(onMediaPlayback
+                          ? { onPlayback: onMediaPlayback }
+                          : {})}
+                        {...(onOpenMediaReview
+                          ? {
+                              onOpenReview: (item, seconds) =>
+                                onOpenMediaReview(
+                                  row.id,
+                                  item,
+                                  seconds,
+                                  row.replyCount > 0 ||
+                                    (!!row.threadRootId &&
+                                      row.threadRootId !== row.id),
+                                ),
+                            }
+                          : {})}
+                      />
+                    );
+                  });
+                  return images ? (
+                    <div className={styles.imageGroup} key={group[0]?.url}>
+                      {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                      <div
+                        className={styles.imageStrip}
+                        role="group"
+                        aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
+                        onFocus={revealFocusedThumbnail}
+                      >
+                        {items}
+                      </div>
+                      {group.length > 1 && (
+                        <div className={styles.imageCount}>
+                          {group.length} images
+                        </div>
+                      )}
+                    </div>
+                  ) : files ? (
+                    <div className={styles.fileGroup} key={group[0]?.url}>
+                      {items}
+                    </div>
+                  ) : (
+                    items
+                  );
+                })}
               </div>
-            ) : (
-              items
-            );
-          })}
+            )}
+          </div>
+          <DeliveryNotice row={row} retry={retry} />
           {session && scope && extensions ? (
             <MessageReactions
               onFocusedRemoval={() => menuTrigger.current?.focus()}

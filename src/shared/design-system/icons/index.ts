@@ -411,3 +411,6 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
     { width: 48, height: 48 },
   ],
 });
+
+import TablerImageIcon from "@tabler/icons-react/dist/esm/icons/IconPhoto.mjs";
+export const ImageIcon = defineIcon("tabler", TablerImageIcon);

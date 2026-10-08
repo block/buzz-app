@@ -159,6 +159,29 @@ for (const scope of ["channel", "thread"]) {
     expect(
       await history.evaluate((el) => el.scrollHeight - el.clientHeight),
     ).toBeGreaterThan(100);
+    // Real layout proves the channel and thread share the same composer gap.
+    await edge(page, -1, history);
+    const jump = history.locator("button[data-jump-to-latest]");
+    await expect(jump).toBeVisible();
+    await expect
+      .poll(async () => {
+        const button = await jump.boundingBox();
+        const form = await composer.boundingBox();
+        return form.y - button.y - button.height;
+      })
+      .toBe(12);
+    // The shadow needs room inside the overflow clip, not just a correct button gap.
+    const jumpBounds = await jump.boundingBox();
+    const historyBounds = await history.boundingBox();
+    expect(
+      historyBounds.y + historyBounds.height - jumpBounds.y - jumpBounds.height,
+    ).toBe(12);
+    await jump.click();
+    await expect(jump).toBeHidden();
+    await expect.poll(gap).toBeLessThan(2);
+    const bottomInset = await history.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).paddingBottom),
+    );
     const idle = await history.boundingBox();
     const idleComposer = await composer.boundingBox();
     const stable = async () => {
@@ -171,7 +194,7 @@ for (const scope of ["channel", "thread"]) {
         .boundingBox();
       expect(tail.y).toBeGreaterThanOrEqual(idle.y - 2);
       expect(tail.y + tail.height).toBeLessThanOrEqual(
-        idle.y + idle.height + 2,
+        idle.y + idle.height - bottomInset + 2,
       );
     };
     await expect(indicator).toHaveCount(0);
@@ -179,7 +202,8 @@ for (const scope of ["channel", "thread"]) {
     app.activity(target);
     await expect(indicator).toContainText("is typing");
     const typingBounds = await indicator.boundingBox();
-    expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y + idle.height);
+    expect(typingBounds.y).toBe(idle.y + idle.height - bottomInset);
+    expect(typingBounds.y + typingBounds.height).toBeLessThan(idleComposer.y);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);

@@ -220,7 +220,7 @@
   max-width: calc(100% - var(--space-2));
   background: var(--affordance-prominent);
   box-shadow: var(--shadow-sm);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-capsule);
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
@@ -249,8 +249,11 @@
   }
 }
 
+.unreadEdge > [class~="buzz-button"] {
+  padding-inline: var(--space-2);
+}
 .unreadEdge [class~="buzz-button-label"] {
-  gap: var(--space-1h);
+  gap: var(--space-1);
   min-width: 0;
 }
 .unreadEdgeLabel {
@@ -261,7 +264,7 @@
 .unreadDmPreviews {
   display: flex;
   align-items: center;
-  gap: var(--space-1h);
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 .unreadDmStack {
@@ -270,8 +273,8 @@
 }
 .unreadDmAvatar {
   position: relative;
-  width: var(--space-5);
-  height: var(--space-5);
+  width: var(--space-4);
+  height: var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--affordance-prominent);
   box-shadow: 0 0 0 2px var(--affordance-prominent);
@@ -280,10 +283,10 @@
   margin-inline-start: calc(-1 * var(--space-1h));
 }
 .unreadEdge[data-edge="above"] {
-  top: var(--space-5);
+  top: var(--space-3);
 }
 .unreadEdge[data-edge="below"] {
-  bottom: 0;
+  bottom: var(--space-3);
 }
 .channelSection {
   position: relative;

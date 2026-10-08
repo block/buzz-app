@@ -389,7 +389,7 @@ export function MessageReactions(
               unavailable={action.disabled}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}
-              previewDelay={pointerInRow && preview ? 0 : 1200}
+              previewDelay={pointerInRow && preview ? 0 : 250}
               previewOpen={preview?.key === key}
               previewSlide={previewSlide}
               onPreviewChange={(open) =>

@@ -2045,3 +2045,73 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
     cleanup();
   }
 });
+
+it("renders built-in own bubbles and keeps only the last grouped avatar", () => {
+  const props = {
+    row: { ...row, authorId: "ab".repeat(32) },
+    viewer: "ab".repeat(32),
+    profile: { name: "author" },
+    media: () => undefined,
+    onOpenLink: () => true,
+    canOpenLink: () => true,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const { container, rerender } = renderDom(
+      <MessageRow {...props} stackNext />,
+    );
+    expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+    expect(
+      screen.queryByRole("button", { name: "View author profile" }),
+    ).toBeNull();
+    rerender(<MessageRow {...props} stackPrevious />);
+    expect(
+      screen.getByRole("button", { name: "View author profile" }),
+    ).toBeInTheDocument();
+    rerender(<MessageRow {...props} viewer="someone-else" />);
+    expect(container.querySelector("[data-own]")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it.each(["image", "video", "file", "audio"] as const)(
+  "places %s attachments outside the text bubble and omits empty bubbles",
+  (kind) => {
+    const props = {
+      row: {
+        ...row,
+        content: "",
+        attachments: [{ kind, url: "https://example.com/photo.png" }],
+      },
+      profile: undefined,
+      media: () => undefined,
+      onOpenLink: () => true,
+      day: false,
+      retry: undefined,
+    };
+    try {
+      const { container, rerender } = renderDom(<MessageRow {...props} />);
+      expect(container.querySelector("[data-own]")).toBeNull();
+      expect(container.querySelector("[class*=messageBubble]")).toBeNull();
+      rerender(
+        <MessageRow
+          {...props}
+          row={{ ...props.row, content: "Photo caption" }}
+        />,
+      );
+      const bubble = container.querySelector("[class*=messageBubble]");
+      const attachments = container.querySelector(
+        "[class*=messageAttachments]",
+      );
+      expect(bubble).toHaveTextContent("Photo caption");
+      expect(attachments).not.toBeNull();
+      expect(bubble?.contains(attachments)).toBe(false);
+      expect(bubble?.nextElementSibling).toBe(attachments);
+      expect(screen.getByText("Photo caption")).toBeInTheDocument();
+    } finally {
+      cleanup();
+    }
+  },
+);

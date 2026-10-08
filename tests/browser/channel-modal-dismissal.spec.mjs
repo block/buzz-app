@@ -147,7 +147,7 @@ test.describe("saved template and team cancellation", () => {
           .getByRole("button", { name: "Create team", exact: true })
           .click();
         const editor = page.getByRole("dialog", {
-          name: "New team",
+          name: "Add team",
           exact: true,
         });
         await editor

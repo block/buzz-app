@@ -444,13 +444,15 @@ fn snapshot_export_limits_effective_behavior_overrides_without_exposing_values()
             agent.imported = Value::Null;
             agent.harness.command = harness.into();
             agent.environment.clear();
-            let mut defaults = AgentDefaults::default();
-            defaults.harness = if harness == "goose-acp" {
-                "goose"
-            } else {
-                "buzz-agent"
-            }
-            .into();
+            let mut defaults = AgentDefaults {
+                harness: if harness == "goose-acp" {
+                    "goose"
+                } else {
+                    "buzz-agent"
+                }
+                .into(),
+                ..AgentDefaults::default()
+            };
             // Credentials remain local; only effective behavioral overrides limit portability.
             defaults
                 .environment
@@ -491,8 +493,10 @@ fn snapshot_export_ignores_unapplied_defaults_and_local_credentials() {
     let mut agent = fixture();
     agent.imported = Value::Null;
     agent.environment.clear();
-    let mut defaults = AgentDefaults::default();
-    defaults.harness = "pi".into();
+    let mut defaults = AgentDefaults {
+        harness: "pi".into(),
+        ..AgentDefaults::default()
+    };
     defaults
         .environment
         .insert("BUZZ_ACP_SYSTEM_PROMPT".into(), "different harness".into());

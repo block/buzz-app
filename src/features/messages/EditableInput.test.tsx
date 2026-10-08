@@ -1264,6 +1264,7 @@ it.each([
   ["- ", "ul", "- "],
   ["* ", "ul", "- "],
   ["+ ", "ul", "- "],
+  ["• ", "ul", "- "],
   ["1. ", "ol", "1. "],
   ["1) ", "ol", "1. "],
   ["> ", "blockquote", "> "],
@@ -1295,6 +1296,26 @@ it.each([
     act(() => h.input.reset(saved));
     expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
     expect(h.markdown()).toBe(`${wire}item`);
+  },
+);
+
+it.each(["1. ", "• "])(
+  "hides the placeholder in an empty %j list and restores it after exit",
+  async (prefix) => {
+    const h = mount();
+    expect(h.input.querySelector("[data-placeholder]")).toHaveAttribute(
+      "data-placeholder",
+      "Draft",
+    );
+    await h.user.keyboard(prefix);
+    expect(h.input.querySelector("li")).not.toBeNull();
+    expect(h.input.querySelector("[data-placeholder]")).toBeNull();
+    act(() => h.input.insertLineBreak());
+    expect(h.input.querySelector("ul, ol")).toBeNull();
+    expect(h.input.querySelector(":scope > p")).toHaveAttribute(
+      "data-placeholder",
+      "Draft",
+    );
   },
 );
 
@@ -1738,7 +1759,7 @@ it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", 
   expect(h.markdown()).toBe("note - one 1. two > three");
 });
 
-it.each([" - ", "a- ", "1.5 ", "1234567890. ", "-> ", ">> "])(
+it.each([" - ", "a- ", "a• ", " • ", "1.5 ", "1234567890. ", "-> ", ">> "])(
   "leaves typed %j as paragraph text",
   async (line) => {
     const h = mount();

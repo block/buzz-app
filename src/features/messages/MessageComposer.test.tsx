@@ -2094,21 +2094,69 @@ it("opens a code block as ``` is typed without waiting for Enter, then sends the
   expect(h.input().querySelector("pre")).toBeNull();
 });
 
-it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+it.each([
+  ["- ", "ul", "- first\n- second"],
+  ["3. ", "ol", "3. first\n4. second"],
+])(
+  "continues a typed %s list on Enter and sends with the button",
+  async (marker, tag, markdown) => {
+    const h = mount();
+    await h.user.type(h.input(), `${marker}first`);
+    expect(h.input().querySelector(`${tag} > li`)).toHaveTextContent("first");
+    // Composition confirmation must neither split nor send the list.
+    fireEvent.keyDown(h.input(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 229 });
+    expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(1);
+    await h.user.keyboard("{Enter}second");
+    expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(2);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      markdown,
+      [],
+      [],
+    );
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it("exits an empty list item on Enter, then sends from ordinary prose", async () => {
   const h = mount();
   await h.user.type(h.input(), "- first");
-  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
-  expect(h.input()).toHaveValue("first");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}{Enter}");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.input().querySelector(":scope > p")).not.toBeNull();
+  fireEvent.keyDown(h.input(), { key: "Enter", repeat: true });
   expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  await h.user.keyboard("outside{Enter}");
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    "- first\n- second",
+    "- first\n- second\n\noutside",
     [],
     [],
   );
-  expect(h.input()).toHaveValue("");
-  expect(h.input().querySelector("ul")).toBeNull();
+});
+
+it("uses Enter to leave a nested empty item without sending", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first{Enter}nested{Tab}{Enter}{Enter}");
+  expect(h.input().querySelector("ul ul > li")).toHaveTextContent("nested");
+  expect(h.input().querySelectorAll(":scope > ul > li")).toHaveLength(2);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector(":scope > p")).not.toBeNull();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("accepts a completion before handling list Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- !search");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(1);
+  expect(h.input()).toHaveValue("chosen ");
+  expect(h.messages.send).not.toHaveBeenCalled();
 });
 
 it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
@@ -3918,6 +3966,26 @@ it.each([
     expect(readView("scope", "draft:channel", "")).toBe("");
   },
 );
+
+it("continues a list while editing and saves through Save changes", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised");
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.input().toggleFormat("bullet_list");
+  });
+  await h.user.keyboard("{Enter}Added");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  await h.user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "- Revised\n- Added",
+    "c".repeat(64),
+  );
+});
 
 it.each(["bullet_list", "ordered_list", "code_block"] as const)(
   "does not save a whitespace-only %s edit through Enter",

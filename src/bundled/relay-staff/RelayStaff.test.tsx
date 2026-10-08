@@ -865,3 +865,128 @@ it("a late read for an earlier community is dropped", async () => {
   );
   expect(screen.queryByText(/bbbb/)).toBeNull();
 });
+
+it("an in-flight direct action that succeeds updates a reopened card", async () => {
+  const { reopen } = mountSwitchable();
+  const late = holdNext("directAction", () =>
+    ok({ state: "succeeded", actionId: "done", replayed: true }),
+  );
+  await openCommunityActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await late.started();
+  reopen();
+  await reopenActions();
+  await late.release(
+    ok({ state: "succeeded", actionId: "done", replayed: false }),
+  );
+  expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Review" })).toBeVisible();
+});
+
+it("an in-flight resolve rejected after reopening the report releases the form", async () => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  const late = holdNext("resolveReport", () =>
+    fail({ code: "invalid_action" }),
+  );
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await late.started();
+  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: /Retry: Ban/ });
+  await late.release(fail({ code: "invalid_action" }));
+  expect(screen.queryByRole("button", { name: /Retry: Ban/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Ban" })).toBeEnabled();
+});
+
+it("an in-flight direct action can't be discarded or replaced after reopening", async () => {
+  const { reopen } = mountSwitchable();
+  const late = holdNext("directAction", () =>
+    fail({ category: "ambiguous", status: 502 }),
+  );
+  await openCommunityActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await late.started();
+  reopen();
+  await reopenActions();
+  expect(await screen.findByRole("button", { name: "Discard" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  await late.release(fail({ category: "ambiguous", status: 502 }));
+  reopen();
+  await reopenActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  await expectIdenticalRetry("directAction");
+});
+
+const dnsDown = fail({
+  category: "notSent",
+  status: null,
+  notSent: true,
+  bodyComplete: false,
+  message: "DNS unavailable",
+});
+const refused = fail({ category: "forbidden", status: 403, message: "" });
+
+it.each([
+  ["ambiguous", fail({ category: "ambiguous", status: 502 }), dnsDown],
+  ["ambiguous", fail({ category: "ambiguous", status: 502 }), refused],
+  [
+    "pending",
+    ok({ state: "pending", actionId: "a1", replayed: false }),
+    dnsDown,
+  ],
+  [
+    "pending",
+    ok({ state: "pending", actionId: "a1", replayed: false }),
+    refused,
+  ],
+])(
+  "a direct action that was %s stays held when a retry fails without an answer",
+  async (_, first, retry) => {
+    routes.directAction = () => first;
+    mountSwitchable();
+    await openCommunityActions();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await screen.findByRole("button", { name: "Retry" });
+    routes.directAction = () => retry;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(sent("directAction")).toHaveLength(2));
+    routes.directAction = () => fail({ category: "ambiguous", status: 502 });
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(sent("directAction")).toHaveLength(3));
+    const [a, , c] = sent("directAction");
+    expect(c).toEqual(a);
+  },
+);
+
+it.each([
+  ["refused before sending", dnsDown],
+  ["refused for authorization", refused],
+])("an uncertain resolve stays held when a retry is %s", async (_, retry) => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  routes.resolveReport = () => fail({ category: "ambiguous", status: 502 });
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await screen.findByRole("button", { name: /Retry: Ban/ });
+  routes.resolveReport = () => retry;
+  fireEvent.click(screen.getByRole("button", { name: /Retry: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
+  routes.resolveReport = () => fail({ category: "ambiguous", status: 502 });
+  fireEvent.click(await screen.findByRole("button", { name: /Retry: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(3));
+  const [a, , c] = sent("resolveReport");
+  expect(c).toEqual(a);
+});
+
+it("a first attempt refused before sending releases the write", async () => {
+  routes.directAction = () => dnsDown;
+  mountSwitchable();
+  await openCommunityActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await screen.findByText(/DNS unavailable/);
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});

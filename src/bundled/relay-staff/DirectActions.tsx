@@ -20,7 +20,7 @@ import {
   type StaffRequest,
 } from "../../features/relay-staff/contract";
 import { reasonAudience, SECRET_REASON } from "./Reports";
-import { describe, useRead, useSession, type Read } from "./session";
+import { describe, useRead, useSession, useWrite, type Read } from "./session";
 import {
   absoluteTime,
   CommunityBadge,
@@ -92,8 +92,6 @@ type Frozen = {
   preview: EventPreviewDto | null;
 };
 
-type Held = { frozen: Frozen | null; pending: boolean; error: string | null };
-const IDLE: Held = { frozen: null, pending: false, error: null };
 const DIRECT = "direct action";
 
 type Controller = {
@@ -123,54 +121,33 @@ function useController() {
 /**
  * Owns the draft and the reviewed action for every community page. Mounted
  * above the tabs, so leaving a page mid-action keeps the same request. The
- * reviewed action is held per identity, admin host and relay (`Staff.held`),
- * so it also survives closing the card and losing then regaining access.
+ * reviewed action, its sending state and its last outcome are held per
+ * identity, admin host and relay (`Staff.writes`), so closing the card or
+ * losing then regaining access shows the same request and its real state.
  */
 export function DirectActionsProvider({ children }: { children: ReactNode }) {
-  const { request, frozen: store } = useSession();
   const notify = useToastNotification();
   const [draft, setDraft] = useState<Draft | null>(null);
-  // The reviewed action lives in the session's held writes, so closing the
-  // card or losing and regaining access brings back the same request.
-  const [held, setHeld] = useState(
-    () => (store.get(DIRECT) as Held | undefined) ?? IDLE,
-  );
-  const hold = (next: Held) => {
-    if (next.frozen) store.set(DIRECT, next);
-    else store.delete(DIRECT);
-    setHeld(next);
-  };
-  const { frozen, pending, error } = held;
-  const [submitting, setSubmitting] = useState(false);
-  const inFlight = useRef(false);
+  const write = useWrite<Intent, Omit<Frozen, "intent">>(DIRECT);
+  const { held } = write;
+  const frozen = held?.request ? { ...held.meta, intent: held.request } : null;
+  const outcome = held?.outcome ?? null;
+  const pending = outcome?.ok === true && unresolved(outcome);
+  const error = outcome?.ok === false ? directFailure(outcome.failure) : null;
   const shownHost = useRef<string | null>(null);
 
   const confirm = async () => {
-    if (!frozen || inFlight.current) return;
-    inFlight.current = true;
-    setSubmitting(true);
-    hold({ ...held, error: null });
-    const { intent } = frozen;
-    const outcome = await request(intent);
-    inFlight.current = false;
-    setSubmitting(false);
+    const intent = frozen?.intent;
+    const outcome = intent && (await write.run());
+    if (!intent || !outcome) return;
     if (outcome.ok && outcome.value.state === "succeeded") {
       notify(`${LABELS[intent.action]}: done`, "success");
-      hold(IDLE);
       setDraft(emptyDraft(intent.communityHost));
       return;
     }
-    // Unresolved (pending, or the write may have landed): keep the same
-    // request for a retry. Anything else is final for this request id.
-    const message = outcome.ok ? null : directFailure(outcome.failure);
-    hold({
-      frozen: unresolved(outcome) ? frozen : null,
-      pending: outcome.ok,
-      error: message,
-    });
-    if (message && shownHost.current !== intent.communityHost)
+    if (!outcome.ok && shownHost.current !== intent.communityHost)
       notify(
-        `${LABELS[intent.action]} in ${intent.communityHost} failed: ${message}`,
+        `${LABELS[intent.action]} in ${intent.communityHost} failed: ${directFailure(outcome.failure)}`,
         "error",
       );
   };
@@ -181,24 +158,15 @@ export function DirectActionsProvider({ children }: { children: ReactNode }) {
     frozen,
     pending,
     error,
-    submitting,
+    submitting: write.busy,
     review(lookup, intent) {
-      if (frozen) return;
-      hold({
-        frozen: {
-          ...lookup,
-          intent: {
-            route: "directAction",
-            ...intent,
-            requestId: crypto.randomUUID(),
-          },
-        },
-        pending: false,
-        error: null,
-      });
+      write.freeze(
+        { route: "directAction", ...intent, requestId: crypto.randomUUID() },
+        lookup,
+      );
     },
     confirm,
-    discard: () => hold(IDLE),
+    discard: write.discard,
     shownHost,
   };
   return (

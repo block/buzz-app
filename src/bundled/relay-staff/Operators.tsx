@@ -5,11 +5,17 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import type {
   OperatorDto,
+  StaffRequest,
   StaffRole,
   StaffRoleSource,
 } from "../../features/relay-staff/contract";
-import { describe, useRead, useSession } from "./session";
+import { describe, useRead, useSession, useWrite } from "./session";
 import { containsSecretKey, Loaded, publicKeyInput, shortKey } from "./ui";
+
+type OperatorWrite = Extract<
+  StaffRequest,
+  { route: "putOperator" } | { route: "deleteOperator" }
+>;
 
 const SOURCES: Record<StaffRoleSource, string> = {
   config: "config",
@@ -31,31 +37,28 @@ const configBacked = (operator: OperatorDto) =>
   operator.sources.some((source) => source !== "db");
 
 export function Operators() {
-  const { context, staff, request, canMutate } = useSession();
+  const { context, staff, canMutate } = useSession();
   const [list, reload] = useRead({ route: "listOperators" }, [context]);
   const [input, setInput] = useState("");
   const [role, setRole] = useState<StaffRole>("moderator");
   const [error, setError] = useState("");
-  const [working, setWorking] = useState<string | null>(null);
+  const write = useWrite<OperatorWrite>("operators");
+  const working = write.busy ? (write.frozen?.pubkey ?? null) : null;
   const [removing, setRemoving] = useState<OperatorDto | null>(null);
   const pubkey = publicKeyInput(input);
   const secret = containsSecretKey(input);
 
   /** A change to your own entry re-checks your role. */
-  const after = async (
-    target: string,
-    send: () => ReturnType<typeof request>,
-  ) => {
+  const after = async (change: OperatorWrite) => {
     setError("");
-    setWorking(target);
-    const outcome = await send();
-    setWorking(null);
+    const outcome = await write.run(change);
+    if (!outcome) return false;
     if (!outcome.ok) {
       setError(describe(outcome.failure));
       return false;
     }
     reload();
-    if (target === context.signer) void staff.probe(context, true);
+    if (change.pubkey === context.signer) void staff.probe(context, true);
     return true;
   };
   const add = async (operators: OperatorDto[]) => {
@@ -65,10 +68,7 @@ export function Operators() {
       return setError(
         `Already staff as ${existing.effectiveRole}. Change their role on their row.`,
       );
-    if (
-      await after(pubkey, () => request({ route: "putOperator", pubkey, role }))
-    )
-      setInput("");
+    if (await after({ route: "putOperator", pubkey, role })) setInput("");
   };
 
   return (
@@ -152,13 +152,11 @@ export function Operators() {
                         disabled={working === operator.pubkey}
                         onValueChange={(value) =>
                           value !== operator.effectiveRole &&
-                          void after(operator.pubkey, () =>
-                            request({
-                              route: "putOperator",
-                              pubkey: operator.pubkey,
-                              role: value as StaffRole,
-                            }),
-                          )
+                          void after({
+                            route: "putOperator",
+                            pubkey: operator.pubkey,
+                            role: value as StaffRole,
+                          })
                         }
                       />
                     )}
@@ -199,9 +197,7 @@ export function Operators() {
                     onClick={() => {
                       const target = removing.pubkey;
                       setRemoving(null);
-                      void after(target, () =>
-                        request({ route: "deleteOperator", pubkey: target }),
-                      );
+                      void after({ route: "deleteOperator", pubkey: target });
                     }}
                   >
                     Remove

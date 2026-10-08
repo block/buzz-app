@@ -5,20 +5,21 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type DependencyList,
 } from "react";
-import {
-  unresolved,
-  type AttachmentRef,
-  type ProbeDto,
-  type SaveResult,
-  type StaffContext,
-  type StaffFailure,
-  type StaffOutcome,
-  type StaffRequest,
-  type StaffResults,
+import type {
+  AttachmentRef,
+  ProbeDto,
+  SaveResult,
+  StaffContext,
+  StaffFailure,
+  StaffOutcome,
+  StaffRequest,
+  StaffResults,
 } from "../../features/relay-staff/contract";
 import type { Staff } from "./staff";
+import type { Held, Writes } from "./writes";
 
 export type Session = {
   staff: Staff;
@@ -27,8 +28,8 @@ export type Session = {
   /** False when the relay runs with admin auth disabled: the console is read-only. */
   canMutate: boolean;
   isOperator: boolean;
-  /** Unresolved writes by key for this context; see `Staff.held`. */
-  frozen: Map<string, unknown>;
+  /** Writes for this context; see `Staff.writes`. */
+  writes: Writes;
   request<R extends StaffRequest>(
     request: R,
   ): Promise<StaffOutcome<StaffResults[R["route"]]>>;
@@ -66,7 +67,7 @@ export function createSession(
     staff,
     context,
     probe,
-    frozen: staff.held(context),
+    writes: staff.writes(context),
     canMutate: probe.authMode === "nip98",
     isOperator: probe.role === "operator",
     async request(request) {
@@ -143,41 +144,27 @@ export function describe(failure: StaffFailure) {
 }
 
 /**
- * A write whose whole request (including `requestId`) is frozen under `key`
- * on the first attempt. An unresolved outcome keeps it, even across unmount,
- * so a retry resends it unchanged; success, `notSent` or a definite
- * rejection releases it.
+ * The write held under `key` for this session's context (see `Writes`). Its
+ * request, `sending` state and last outcome live in the store, so a view
+ * opened while the write is in flight, or after it settled, shows the truth.
  */
-export function useFrozenWrite<R extends StaffRequest>(key: string) {
-  const { request: send, frozen: store } = useSession();
-  const [frozen, setFrozen] = useState(
-    () => (store.get(key) as R | undefined) ?? null,
-  );
-  const [busy, setBusy] = useState(false);
-  const inFlight = useRef(false);
-  /** Resends the frozen request if there is one; otherwise freezes `fresh`. */
-  const run = async (
-    fresh?: R,
-  ): Promise<StaffOutcome<StaffResults[R["route"]]> | null> => {
-    const request = (store.get(key) as R | undefined) ?? fresh;
-    if (!request || inFlight.current) return null;
-    inFlight.current = true;
-    store.set(key, request);
-    setFrozen(request);
-    setBusy(true);
-    try {
-      const outcome = await send(request);
-      if (!unresolved(outcome)) {
-        store.delete(key);
-        setFrozen(null);
-      }
-      return outcome;
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+export function useWrite<R extends StaffRequest, M = unknown>(key: string) {
+  const { request: send, writes } = useSession();
+  const held = useSyncExternalStore(writes.subscribe, () =>
+    writes.get(key),
+  ) as Held<R, M> | null;
+  return {
+    held,
+    frozen: held?.request ?? null,
+    busy: held?.sending ?? false,
+    /** Resends the held request; `fresh` only starts a new one. */
+    run: (fresh?: R) =>
+      writes.run(key, send, fresh) as Promise<StaffOutcome<
+        StaffResults[R["route"]]
+      > | null>,
+    freeze: (request: R, meta: M) => writes.freeze(key, request, meta),
+    discard: () => writes.discard(key),
   };
-  return { frozen, busy, run };
 }
 
 type Paged = Extract<

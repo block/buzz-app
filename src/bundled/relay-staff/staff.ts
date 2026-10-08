@@ -5,6 +5,7 @@ import type {
   StaffFailure,
 } from "../../features/relay-staff/contract";
 import { unsupported } from "../../features/relay-staff/contract";
+import { createWrites, type Writes } from "./writes";
 
 /** The selected community relay and the identity that would sign for it. */
 export type StaffTarget = { relay: string; signer: string };
@@ -32,7 +33,7 @@ export function createStaff(
 ) {
   const listeners = new Set<() => void>();
   const access = new Map<string, Access>();
-  const held = new Map<string, Map<string, unknown>>();
+  const writes = new Map<string, Writes>();
   let discovery: Discovery | null = null;
   let retained = 0;
   const emit = () => {
@@ -104,19 +105,18 @@ export function createStaff(
     /** Snapshot that changes whenever the signer, admin host or relay does. */
     contextKey,
     /**
-     * Unresolved writes for exactly this signer, admin host and relay. Kept in
-     * memory for the app session, outside every view and authorization state,
-     * so a retry resends the same request and never goes out under another
-     * identity or host.
+     * Writes for exactly this signer, admin host and relay. Kept in memory
+     * for the app session, outside every view and authorization state, so a
+     * held write is resent unchanged and never under another identity or host.
      */
-    held(context: StaffContext) {
+    writes(context: StaffContext) {
       const id = `${key(context)} ${context.relay}`;
-      let writes = held.get(id);
-      if (!writes) {
-        writes = new Map();
-        held.set(id, writes);
+      let held = writes.get(id);
+      if (!held) {
+        held = createWrites();
+        writes.set(id, held);
       }
-      return writes;
+      return held;
     },
     access(context: StaffContext) {
       return access.get(key(context)) ?? null;

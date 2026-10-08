@@ -25,7 +25,11 @@ import {
   unsupportedTransport,
   unsupportedTransportMessage,
 } from "../../features/agents/catalog-protocol";
-import { TeamCatalogPreview, rememberAdded } from "../agents/CommunityCatalog";
+import {
+  TeamCatalogPreview,
+  catalogAlreadyAdded,
+  rememberAdded,
+} from "../agents/CommunityCatalog";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -72,8 +76,23 @@ export function ChannelTemplatesDialog({
     communityCatalog?.snapshot ?? emptyCatalogSnapshot,
     communityCatalog?.snapshot ?? emptyCatalogSnapshot,
   );
-  const [selectedPublication, setSelectedPublication] =
-    useState<TeamPublication>();
+  const [selectedCoordinate, setSelectedCoordinate] = useState<string>();
+  const selectedPublication = publications.teams.find(
+    (entry) => `${entry.owner}:${entry.d}` === selectedCoordinate,
+  );
+  const alreadyAdded =
+    !!selectedPublication &&
+    !!catalogSession &&
+    catalogAlreadyAdded(catalogSession, selectedPublication, (id) =>
+      kit
+        .snapshot()
+        .entries.some(
+          (entry) =>
+            !entry.record.deleted &&
+            entry.record.value.type === "team" &&
+            entry.record.value.id === id,
+        ),
+    );
   const [catalogError, setCatalogError] = useState("");
   const [catalogBusy, setCatalogBusy] = useState(false);
   const live = useRef(true);
@@ -143,7 +162,7 @@ export function ChannelTemplatesDialog({
     !!portable?.team.description?.trim() ||
     !!portable?.team.instructions?.trim();
   const save = async () => {
-    if (!live.current || !active() || loading) return;
+    if (!live.current || !active() || loading || catalogBusy) return;
     setBusy(true);
     setError("");
     try {
@@ -209,8 +228,11 @@ export function ChannelTemplatesDialog({
       dismissOnOutsideClick
       open={open}
       finalFocus={finalFocus}
-      onOpenChange={onOpenChange}
-      preventClose={busy}
+      onOpenChange={(next) => {
+        if (!next && !catalogBusy && live.current && active())
+          onOpenChange(false);
+      }}
+      preventClose={busy || catalogBusy}
       initialFocus={nameInput}
       title={`${expected ? "Edit" : draft.type === "team" ? "Add" : "New"} ${draft.type}`}
       description={
@@ -221,13 +243,23 @@ export function ChannelTemplatesDialog({
       closeLabel="Close templates"
       actions={
         <>
-          <Button disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button
+            disabled={busy || catalogBusy}
+            onClick={() => {
+              if (live.current && active()) onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button
             variant="prominent"
             loading={busy}
-            disabled={!draft.name.trim() || state.status !== "ready" || loading}
+            disabled={
+              !draft.name.trim() ||
+              state.status !== "ready" ||
+              loading ||
+              catalogBusy
+            }
             onClick={() => void save()}
           >
             Save {draft.type}
@@ -236,17 +268,19 @@ export function ChannelTemplatesDialog({
       }
     >
       <div
-        className={onImport || catalogSession ? "team-add-layout" : undefined}
+        className={
+          onImport || catalogSession ? styles.teamAddLayout : undefined
+        }
       >
         {(onImport || catalogSession) && (
-          <nav aria-label="Add team" className="team-add-sidebar">
+          <nav aria-label="Add team" className={styles.teamAddSidebar}>
             <NavigationItem
               label="Create team"
               aria-label="Create new team"
               icon={<PlusIcon size={16} />}
-              selected={!selectedPublication}
+              selected={!selectedCoordinate}
               disabled={catalogBusy || !!draft.name || draft.agents.length > 0}
-              onClick={() => setSelectedPublication(undefined)}
+              onClick={() => setSelectedCoordinate(undefined)}
             />
             {onImport && (
               <Button
@@ -267,11 +301,11 @@ export function ChannelTemplatesDialog({
               <NavigationItem
                 key={team.eventId}
                 label={team.name}
-                selected={selectedPublication?.eventId === team.eventId}
+                selected={selectedCoordinate === `${team.owner}:${team.d}`}
                 disabled={
                   catalogBusy || !!draft.name || draft.agents.length > 0
                 }
-                onClick={() => setSelectedPublication(team)}
+                onClick={() => setSelectedCoordinate(`${team.owner}:${team.d}`)}
               />
             ))}
             {publications.status === "error" && (
@@ -279,51 +313,84 @@ export function ChannelTemplatesDialog({
             )}
           </nav>
         )}
-        {selectedPublication ? (
+        {selectedCoordinate ? (
           <section
-            aria-label={selectedPublication.name}
+            aria-label={selectedPublication?.name ?? "Withdrawn team"}
             className="team-catalog-preview"
           >
-            <TeamCatalogPreview publication={selectedPublication} />
-            {unsupportedTransport(selectedPublication) && (
-              <p role="note">
-                {unsupportedTransportMessage(
-                  selectedPublication.name,
-                  unsupportedTransport(selectedPublication) ?? "",
-                )}
+            {selectedPublication && catalogSession ? (
+              <TeamCatalogPreview
+                publication={selectedPublication}
+                session={catalogSession}
+              />
+            ) : (
+              <p role="status">
+                This team is no longer shared. Select another team.
               </p>
             )}
+            {selectedPublication &&
+              unsupportedTransport(selectedPublication) && (
+                <p role="note">
+                  {unsupportedTransportMessage(
+                    selectedPublication.name,
+                    unsupportedTransport(selectedPublication) ?? "",
+                  )}
+                </p>
+              )}
             {catalogError && <p role="alert">{catalogError}</p>}
             <Button
               variant="prominent"
               disabled={
+                !selectedPublication ||
+                alreadyAdded ||
                 catalogBusy ||
-                !!unsupportedTransport(selectedPublication) ||
+                !!(
+                  selectedPublication &&
+                  unsupportedTransport(selectedPublication)
+                ) ||
                 !onAddCatalogTeam
               }
               onClick={() => {
-                if (!onAddCatalogTeam || !catalogSession) return;
+                if (
+                  !onAddCatalogTeam ||
+                  !catalogSession ||
+                  !selectedPublication ||
+                  alreadyAdded ||
+                  catalogBusy ||
+                  !live.current ||
+                  !active()
+                )
+                  return;
+                const selected = selectedPublication;
                 setCatalogBusy(true);
                 setCatalogError("");
-                void onAddCatalogTeam(selectedPublication)
+                void onAddCatalogTeam(selected)
                   .then((copy) => {
+                    if (!live.current || !active()) return;
                     rememberAdded(
                       catalogSession.scope,
                       catalogSession.viewer ?? "",
-                      selectedPublication,
+                      selected,
                       copy,
                     );
                     onOpenChange(false);
                   })
-                  .catch((cause) =>
-                    setCatalogError(
-                      cause instanceof Error ? cause.message : String(cause),
-                    ),
-                  )
-                  .finally(() => setCatalogBusy(false));
+                  .catch((cause) => {
+                    if (live.current && active())
+                      setCatalogError(
+                        cause instanceof Error ? cause.message : String(cause),
+                      );
+                  })
+                  .finally(() => {
+                    if (live.current && active()) setCatalogBusy(false);
+                  });
               }}
             >
-              {catalogBusy ? "Adding…" : "Add team"}
+              {alreadyAdded
+                ? "Added to my teams"
+                : catalogBusy
+                  ? "Adding…"
+                  : "Add team"}
             </Button>
           </section>
         ) : (

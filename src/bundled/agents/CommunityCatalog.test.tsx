@@ -40,6 +40,7 @@ import {
   CatalogLauncher,
   CatalogShareSwitch,
   CommunityCatalogDialog,
+  TeamCatalogPreview,
 } from "./CommunityCatalog";
 
 const alice = keypair(),
@@ -689,7 +690,7 @@ it("adopts a shared agent through the create form with its portable settings", a
   expect(
     within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
       "button",
-      { name: "Add agent" },
+      { name: "Added to My Agents" },
     ),
   ).toBeDisabled();
   fireEvent.keyDown(added, { key: "Escape" });
@@ -972,3 +973,38 @@ it.each(["channel", "thread"] as const)(
     ]);
   },
 );
+
+it("routes team member artwork through authenticated session media, never a raw remote URL", () => {
+  const remote = "https://avatar.example.test/member.png";
+  const media = vi.fn((url: string) => {
+    expect(url).toBe(remote);
+    return "/authenticated/media/avatar";
+  });
+  const session = { media } as unknown as RelaySession;
+  const publication = {
+    kind: 30178 as const,
+    eventId: "team-head",
+    owner: alice.pubkey,
+    d: "crew",
+    createdAt: 1,
+    name: "Crew",
+    members: [
+      {
+        memberKey: "one",
+        displayName: "Mate",
+        systemPrompt: "Help.",
+        sessionPolicy: "thread" as const,
+        avatarUrl: remote,
+      },
+    ],
+  };
+  const view = render(
+    <TeamCatalogPreview publication={publication} session={session} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Mate/ }));
+  expect(media).toHaveBeenCalledWith(remote, "small");
+  expect(
+    view.container.querySelector('img[src="/authenticated/media/avatar"]'),
+  ).toBeTruthy();
+  expect(view.container.querySelector(`img[src="${remote}"]`)).toBeNull();
+});

@@ -21,6 +21,7 @@ import {
 } from "../../features/agents/catalog-protocol";
 import {
   AgentCatalogPreview,
+  catalogAlreadyAdded,
   catalogSeed,
   rememberAdded,
 } from "./CommunityCatalog";
@@ -142,8 +143,19 @@ export function AgentCreateDialog({
     catalog?.snapshot ?? emptyCatalogSnapshot,
     catalog?.snapshot ?? emptyCatalogSnapshot,
   );
-  const [selectedPublication, setSelectedPublication] =
-    useState<AgentPublication>();
+  const [selectedCoordinate, setSelectedCoordinate] = useState<string>();
+  const selectedPublication = catalogEntries.agents.find(
+    (entry) => `${entry.owner}:${entry.d}` === selectedCoordinate,
+  );
+  const alreadyAdded =
+    !!selectedPublication &&
+    !!catalogSession &&
+    catalogAlreadyAdded(
+      catalogSession,
+      selectedPublication,
+      (id) =>
+        !!control.snapshot().data?.agents.some((agent) => agent.id === id),
+    );
   const transport =
     selectedPublication && unsupportedTransport(selectedPublication);
   const [requestId] = useState(() => crypto.randomUUID());
@@ -184,6 +196,10 @@ export function AgentCreateDialog({
     if (
       blocked ||
       runtimeBlocked ||
+      (publication &&
+        (!catalogSession ||
+          selectedPublication?.eventId !== publication.eventId ||
+          alreadyAdded)) ||
       (!saved && (!available || !control.create))
     )
       return;
@@ -349,9 +365,9 @@ export function AgentCreateDialog({
                   label="Create agent"
                   aria-label="Create new agent"
                   icon={<PlusIcon size={16} />}
-                  selected={!selectedPublication}
+                  selected={!selectedCoordinate}
                   disabled={busy || !!saved || dirty}
-                  onClick={() => setSelectedPublication(undefined)}
+                  onClick={() => setSelectedCoordinate(undefined)}
                 />
                 {onImport && (
                   <Button
@@ -383,10 +399,15 @@ export function AgentCreateDialog({
                         />
                       }
                       selected={
-                        selectedPublication?.eventId === publication.eventId
+                        selectedCoordinate ===
+                        `${publication.owner}:${publication.d}`
                       }
                       disabled={busy || !!saved || dirty}
-                      onClick={() => setSelectedPublication(publication)}
+                      onClick={() =>
+                        setSelectedCoordinate(
+                          `${publication.owner}:${publication.d}`,
+                        )
+                      }
                     />
                   ))}
                 {catalogAvailable && catalogEntries.status === "error" && (
@@ -394,15 +415,23 @@ export function AgentCreateDialog({
                 )}
               </nav>
             )}
-            {selectedPublication && catalogSession ? (
+            {selectedCoordinate && catalogSession ? (
               <section
                 className="agent-catalog-preview"
-                aria-label={selectedPublication.agent.displayName}
+                aria-label={
+                  selectedPublication?.agent.displayName ?? "Withdrawn agent"
+                }
               >
-                <AgentCatalogPreview
-                  publication={selectedPublication}
-                  session={catalogSession}
-                />
+                {selectedPublication ? (
+                  <AgentCatalogPreview
+                    publication={selectedPublication}
+                    session={catalogSession}
+                  />
+                ) : (
+                  <p role="status">
+                    This agent is no longer shared. Select another agent.
+                  </p>
+                )}
                 {transport && (
                   <p role="note">
                     {unsupportedTransportMessage(
@@ -416,6 +445,8 @@ export function AgentCreateDialog({
                 <Button
                   variant="primary"
                   disabled={
+                    !selectedPublication ||
+                    alreadyAdded ||
                     !!transport ||
                     !available ||
                     blocked ||
@@ -423,11 +454,36 @@ export function AgentCreateDialog({
                     !!saved
                   }
                   onClick={() => {
-                    void create(selectedPublication);
+                    if (selectedPublication) void create(selectedPublication);
                   }}
                 >
-                  Add agent
+                  {alreadyAdded ? "Added to My Agents" : "Add agent"}
                 </Button>
+                <div className="buzz-dialog-actions">
+                  {state.status === "error" && !busy && (
+                    <Button onClick={() => void control.refresh()}>
+                      Retry status
+                    </Button>
+                  )}
+                  <Button onClick={onClose}>Close</Button>
+                  {saved && (
+                    <Button
+                      variant="primary"
+                      disabled={blocked || runtimeBlocked}
+                      onClick={() => void create()}
+                    >
+                      {busy
+                        ? phase === "starting"
+                          ? "Starting…"
+                          : phase === "publishing"
+                            ? "Finishing…"
+                            : "Checking…"
+                        : nextStep === "start"
+                          ? "Start agent"
+                          : "Finish profile"}
+                    </Button>
+                  )}
+                </div>
               </section>
             ) : (
               <form

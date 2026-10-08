@@ -361,6 +361,17 @@ export function addedCopies(
     return new Map();
   }
 }
+export function catalogAlreadyAdded(
+  session: RelaySession,
+  publication: Publication,
+  hasCopy: (id: string) => boolean,
+): boolean {
+  if (publication.owner === session.viewer) return true;
+  const copy = addedCopies(session.scope, session.viewer ?? "").get(
+    coordinate(publication),
+  );
+  return copy !== undefined && hasCopy(copy);
+}
 export function rememberAdded(
   scope: string,
   viewer: string,
@@ -501,7 +512,6 @@ export function CommunityCatalogDialog({
   const resolve = useIdentityNames(session.names);
   const scope = session.scope;
   const viewer = session.viewer ?? "";
-  const [added, setAdded] = useState(() => addedCopies(scope, viewer));
   const [selected, setSelected] = useState<string>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string>();
@@ -509,10 +519,8 @@ export function CommunityCatalogDialog({
   const current =
     entries.find((entry) => coordinate(entry) === selected) ?? entries[0];
   const own = (entry: Publication) => entry.owner === session.viewer;
-  const isAdded = (entry: Publication) => {
-    const copy = added.get(coordinate(entry));
-    return own(entry) || (copy !== undefined && hasCopy(entry, copy));
-  };
+  const isAdded = (entry: Publication) =>
+    catalogAlreadyAdded(session, entry, (id) => hasCopy(entry, id));
   const owner = (entry: Publication) =>
     own(entry) ? "You" : resolve(entry.owner, "Community member");
   const picture = (url?: string) => avatarMedia(url, session.media);
@@ -524,7 +532,6 @@ export function CommunityCatalogDialog({
     try {
       const copy = await onAddTeam(team);
       rememberAdded(scope, viewer, team, copy);
-      setAdded(addedCopies(scope, viewer));
     } catch (problem) {
       setError(message(problem));
     } finally {
@@ -768,8 +775,10 @@ export function AgentCatalogPreview({
 
 export function TeamCatalogPreview({
   publication,
+  session,
 }: {
   publication: TeamPublication;
+  session: RelaySession;
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -790,7 +799,7 @@ export function TeamCatalogPreview({
             <Member
               key={member.memberKey}
               member={member}
-              picture={member.avatarUrl}
+              picture={avatarMedia(member.avatarUrl, session.media)}
             />
           ))}
         </ul>

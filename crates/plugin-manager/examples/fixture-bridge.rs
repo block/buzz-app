@@ -34,6 +34,9 @@ fn main() {
             manager.change(&args[2], &args[3]).unwrap();
             serde_json::json!({"status":"ready","catalog":manager.catalog().unwrap(),"externalPluginsPaused":false})
         }
+        "reload" => {
+            serde_json::json!({"status":"ready","catalog":manager.reload(&args[2]).unwrap(),"externalPluginsPaused":false})
+        }
         "install" => {
             manager.install(&PathBuf::from(&args[2])).unwrap();
             serde_json::json!({"status":"ready","catalog":manager.catalog().unwrap(),"externalPluginsPaused":false})

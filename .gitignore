@@ -29,6 +29,8 @@ coverage/
 !.env.example
 
 dist-author/
+dist-inbox-dev/
+dist-inbox-dev.building-*/
 
 # Generated immutable agent runtime resources.
 src-tauri/resources/agent-runtime/*

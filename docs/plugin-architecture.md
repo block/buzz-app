@@ -491,6 +491,48 @@ immediately. These declarations help review and catch mistakes. Plugins share th
 main WebView and can invoke app commands directly, so the declarations do not
 isolate a malicious plugin. Load only trusted plugin code.
 
+### Inbox Dev: a host-matched external build
+
+Inbox's source can be built as an ordinary external plugin with a separate identity:
+
+```sh
+bin/pnpm plugin:dev inbox
+```
+
+The default output is `dist-inbox-dev/manifest.json` and `dist-inbox-dev/plugin.js`,
+with ID `local.inbox-dev` and catalog name **Inbox Dev**. Optional positional
+arguments select an output folder and alternate ID. The command refuses bundled
+`buzz.*` IDs and output folders containing unrelated files. Rebuilds replace the
+unsigned output, not the installed artifact.
+
+Use a Buzz host built from the same checkout with the Inbox host-module integration:
+
+1. In Settings → Plugins, disable bundled **Inbox**.
+2. Choose **Load from folder**, select `dist-inbox-dev`, install, then enable **Inbox Dev**.
+3. Edit files under `src/bundled/inbox`, run the build command again, disable
+   **Inbox Dev**, click **Reload** on its row, then enable it.
+4. To revert, disable **Inbox Dev** and enable bundled **Inbox**.
+
+No app rebuild is needed for Inbox-only edits. Inbox Dev has its own page identity;
+existing bundled Inbox links do not redirect. Its drafts and attachments still use
+the running host's shared state, while plugin-local React state ends on disable.
+Plugin-owned CSS is added during activation and removed during disposal.
+
+Vite generates `globalThis.__BUZZ_HOST_MODULES__` from Inbox's runtime imports,
+limited to the modules and selected exports it consumes, including the host React
+instance. The external build reads those running modules rather than copying shared
+components or state. This is a **private, unstable Inbox development interface**,
+not a public SDK or a replacement-plugin contract. The existing loader, injection
+API, reserved IDs, import preview, toggles and routing are unchanged.
+
+A source/dependency fingerprint excludes Inbox-owned files and tests, but includes
+host source, build scripts and locked dependencies. Module evaluation refuses a
+missing or incompatible host before activation. After shared-host changes, rebuild
+and restart the host and rebuild Inbox Dev; after installing an app update, use
+its matching source checkout. Newly consumed host exports also require a host
+rebuild. Artifacts are not portable across arbitrary Buzz versions. Load only
+trusted code: this does not change the existing unsandboxed plugin trust model.
+
 ### Loading from folders and repositories
 
 Authors can sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`

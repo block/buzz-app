@@ -8,6 +8,21 @@ export const MAX_AGENT_SNAPSHOT_JSON_BYTES = 5 * 1024 * 1024;
 export const MAX_AGENT_SNAPSHOT_PNG_BYTES = 10 * 1024 * 1024;
 /** Compatibility upper bound for callers without a known format; prefer the format-specific cap. */
 export const MAX_AGENT_SNAPSHOT_FILE_BYTES = MAX_AGENT_SNAPSHOT_PNG_BYTES;
+const LEGACY_AGENT_FILE_SUFFIXES = [
+  ".persona.md",
+  ".persona.json",
+  ".persona.png",
+  ".zip",
+] as const;
+const LEGACY_AGENT_FILE_MESSAGE =
+  "Legacy Buzz agent files are no longer supported. Export an .agent.json or .agent.png snapshot instead.";
+export function legacyAgentFileError(fileName: string): string | undefined {
+  return LEGACY_AGENT_FILE_SUFFIXES.some((suffix) =>
+    fileName.toLowerCase().endsWith(suffix),
+  )
+    ? LEGACY_AGENT_FILE_MESSAGE
+    : undefined;
+}
 const snapshotFileLimit = (bytes: Uint8Array) =>
   bytes.length >= 8 &&
   bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])

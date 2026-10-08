@@ -13,6 +13,7 @@ import {
   encodeAgentSnapshot,
   MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
+  legacyAgentFileError,
   snapshotPngArtwork,
   snapshotImportEdit,
   snapshotLimitations,
@@ -411,6 +412,11 @@ export function AgentSnapshotImport({
       setFileError("Snapshot exceeds the size limit.");
       return;
     }
+    const legacyError = legacyAgentFileError(file.name);
+    if (legacyError) {
+      setFileError(legacyError);
+      return;
+    }
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const parsed = parseAgentSnapshot(bytes);
@@ -637,7 +643,7 @@ export function AgentSnapshotImport({
                 hidden
                 type="file"
                 disabled={busy}
-                accept=".json,.png,.agent.json,.agent.png,application/json,image/png"
+                accept=".json,.png,.md,.zip,.agent.json,.agent.png,.persona.md,.persona.json,.persona.png,application/json,image/png,text/markdown,application/zip"
                 aria-label="Agent snapshot"
                 onChange={(event) => {
                   const file = event.target.files?.[0];

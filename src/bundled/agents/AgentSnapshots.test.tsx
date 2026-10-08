@@ -18,6 +18,7 @@ import {
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  legacyAgentFileError,
   parseAgentSnapshot,
   snapshotPngArtwork,
 } from "../../features/agents/snapshot";
@@ -124,6 +125,33 @@ it.each(["json", "png"] as const)(
     expect(h.create).not.toHaveBeenCalled();
   },
 );
+
+it("rejects legacy beta filenames with snapshot migration guidance before parsing", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  const message =
+    "Legacy Buzz agent files are no longer supported. Export an .agent.json or .agent.png snapshot instead.";
+  for (const [name, type] of [
+    ["worker.persona.md", "text/markdown"],
+    ["worker.PERSONA.JSON", "application/json"],
+    ["worker.persona.png", "image/png"],
+    ["worker.zip", "application/zip"],
+  ] as const) {
+    expect(legacyAgentFileError(name)).toBe(message);
+    choose(new File(["legacy"], name, { type }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(h.create).not.toHaveBeenCalled();
+  }
+  expect(legacyAgentFileError("worker.agent.json")).toBeUndefined();
+});
 
 it("refuses malformed received bytes before import and cannot create", async () => {
   const h = importControl();

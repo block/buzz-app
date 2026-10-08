@@ -35,7 +35,7 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
         harness: "goose",
         timestamp: new Date().toISOString(),
         channelId: "alpha",
-        sessionId: `geometry-${agentIndex}-${sessionIndex}`,
+        sessionId: `geometry-${agentIndex}-${sessionIndex}-very-long-identifier-without-spaces`,
         turnId: `turn-${agentIndex}-${sessionIndex}`,
         turnSeq: 1,
         turn: { inputTokens: 10 },
@@ -74,6 +74,32 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
   ).toHaveAttribute("aria-pressed", "true");
   const details = pane.getByRole("region", { name: "Session usage details" });
   await expect(details).toBeVisible();
+  // A long identifier must wrap in its value column, not squeeze labels to letters.
+  await details
+    .getByRole("button", { name: /Show turn/ })
+    .first()
+    .click();
+  await details.getByText("Identifiers and provenance").click();
+  const identifierRows = details.locator("details dl");
+  for (const width of [1200, 1600]) {
+    await page.setViewportSize({ width, height: 800 });
+    const geometry = await identifierRows.evaluate((list) => {
+      const label = list.querySelector("dt");
+      const value = list.querySelector("dd");
+      return {
+        labelWidth: label.getBoundingClientRect().width,
+        valueWidth: value.getBoundingClientRect().width,
+        labelFontSize: parseFloat(getComputedStyle(label).fontSize),
+        valueOverflows: value.scrollWidth > value.clientWidth + 1,
+        listOverflows: list.scrollWidth > list.clientWidth + 1,
+      };
+    });
+    expect(geometry.labelWidth).toBeGreaterThanOrEqual(90);
+    expect(geometry.valueWidth).toBeGreaterThanOrEqual(90);
+    expect(geometry.labelFontSize).toBeGreaterThanOrEqual(14);
+    expect(geometry.valueOverflows).toBe(false);
+    expect(geometry.listOverflows).toBe(false);
+  }
   await page.setViewportSize({ width: 1200, height: 400 });
   const owner = usage.locator("..");
   for (const index of [1, 2, 0]) {

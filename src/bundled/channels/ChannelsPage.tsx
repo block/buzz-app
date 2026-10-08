@@ -497,8 +497,15 @@ function ChannelWorkspace({
     committedVisit.current = { currentId, queries };
   }, [currentId, queries]);
   const tabState = useChannelTabState(queries, currentId);
-  const { thread, setThread, settings, setSettings, entries, setEntries } =
-    tabState;
+  const {
+    thread,
+    setThread,
+    settings,
+    setSettings,
+    entries,
+    setEntries,
+    retireMenuEntries,
+  } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -784,19 +791,11 @@ function ChannelWorkspace({
     current?.id,
     panels,
   ]);
-  // Menu panels belong to one visit. Channel switches cannot resurrect them.
+  // Menu panels belong to one visit. Retire only this visit's keyed entries.
   useEffect(() => {
     if (!currentId) return;
-    return () => {
-      const retained = entryList.current.filter(
-        (entry) => !entry.panel.channelMenu,
-      );
-      if (retained.length !== entryList.current.length) {
-        entryList.current = retained;
-        setEntries(retained);
-      }
-    };
-  }, [currentId, setEntries]);
+    return () => retireMenuEntries();
+  }, [currentId, retireMenuEntries]);
   const panelTabs = entries.filter(
     (entry) =>
       available.includes(entry.panel) &&

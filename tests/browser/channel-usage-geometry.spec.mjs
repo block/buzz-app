@@ -187,3 +187,35 @@ test("disabling the Channel Usage plugin retires the tab and re-enabling does no
   await page.getByRole("menuitem", { name: "View channel usage" }).click();
   await expect(page.getByRole("tab", { name: "Usage" })).toBeVisible();
 });
+
+test("switching channels retires each Usage tab without reviving an earlier visit", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const usageTab = page.getByRole("tab", { name: "Usage" });
+  const openUsage = async () => {
+    await page.getByRole("button", { name: "Channel actions" }).click();
+    await page.getByRole("menuitem", { name: "View channel usage" }).click();
+    await expect(usageTab).toBeVisible();
+  };
+  const visit = async (name) => {
+    await page
+      .getByRole("button", { name: new RegExp(`^${name}`) })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("textbox", {
+        name: new RegExp(`^Message #${name}$`, "i"),
+      }),
+    ).toBeVisible();
+  };
+  await openUsage();
+  await visit("Beta");
+  await expect(usageTab).toHaveCount(0);
+  await openUsage();
+  await visit("Alpha");
+  await expect(usageTab).toHaveCount(0);
+  await visit("Beta");
+  await expect(usageTab).toHaveCount(0);
+});

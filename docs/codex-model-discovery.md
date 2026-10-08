@@ -1,9 +1,9 @@
 # Codex model and effort discovery
 
-Codex remains unavailable for agent creation. This layer adds headless model and
-effort discovery for the exact native Codex binding established by
-[Codex binding readiness](codex-binding-readiness.md). It does not persist a
-selection, create an identity, send a prompt, or establish successful inference.
+Create and Edit use headless model and effort discovery for the native Codex
+binding described in [Codex binding readiness](codex-binding-readiness.md).
+Discovery itself does not persist a selection, create an identity, send a prompt,
+or establish successful inference.
 
 ## Request and context contract
 

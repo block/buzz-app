@@ -204,55 +204,69 @@ it("accepts matching empty Canvas without publishing a new revision", async () =
   expect(f.raw.canvas.save).not.toHaveBeenCalled();
 });
 
-it.each(["archive-error", "archived", "removed-legacy", "eligible"])(
-  "checks inherited agent eligibility: %s",
-  async (state) => {
-    const f = fixture();
-    const pubkey = "a".repeat(64);
-    f.kit.entries = [
-      {
-        record: {
-          value: {
-            type: "template",
-            id: await sectionTemplateId("work"),
-            canvas: "",
-            agents: [pubkey],
-            teamIds: [],
-          },
+it.each([
+  "archive-error",
+  "incomplete",
+  "archived",
+  "removed-legacy",
+  "eligible",
+])("checks inherited agent eligibility: %s", async (state) => {
+  const f = fixture();
+  const pubkey = "a".repeat(64);
+  let complete = state !== "incomplete";
+  f.kit.entries = [
+    {
+      record: {
+        value: {
+          type: "template",
+          id: await sectionTemplateId("work"),
+          canvas: "",
+          agents: [pubkey],
+          teamIds: [],
         },
       },
-    ];
-    Object.assign(f.session, {
-      agentChoices: {
-        refresh: vi.fn(async () => {}),
-        snapshot: () => ({
-          templates: {
-            status: "ready",
-            identities: [{ pubkey, name: "Agent", managed: false }],
-          },
-          archives: {
-            status: state === "archive-error" ? "error" : "ready",
-            archived: state === "archived" ? [pubkey] : [],
-          },
-        }),
-      },
-      channels: {
-        list: () => ({
+    },
+  ];
+  Object.assign(f.session, {
+    agentChoices: {
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({
+        templates: {
           status: "ready",
-          channels: state === "removed-legacy" ? [] : [{ members: [pubkey] }],
-        }),
-      },
+          complete,
+          identities: [{ pubkey, name: "Agent", managed: false }],
+        },
+        archives: {
+          status: state === "archive-error" ? "error" : "ready",
+          archived: state === "archived" ? [pubkey] : [],
+        },
+      }),
+    },
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: state === "removed-legacy" ? [] : [{ members: [pubkey] }],
+      }),
+    },
+  });
+  if (state === "eligible")
+    expect(await loadSessionSetup(f.session, "work")).toMatchObject({
+      agents: [pubkey],
     });
-    if (state === "eligible")
-      expect(await loadSessionSetup(f.session, "work")).toMatchObject({
-        agents: [pubkey],
-      });
-    else
-      await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
-        state === "archive-error" ? "couldn’t load" : "unavailable",
-      );
-  },
-);
+  else
+    await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
+      state === "archive-error" || state === "incomplete"
+        ? "couldn’t load"
+        : "unavailable",
+    );
+  if (state === "incomplete") {
+    expect(f.calls).toEqual([]);
+    complete = true;
+    expect(await loadSessionSetup(f.session, "work")).toMatchObject({
+      agents: [pubkey],
+    });
+  }
+});
 
 it("does not offer deleted-section recovery when section refresh fails", async () => {
   const f = fixture();

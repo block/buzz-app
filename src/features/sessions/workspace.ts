@@ -233,6 +233,7 @@ export async function loadSessionSetup(
     const choices = session.agentChoices.snapshot();
     if (
       choices.templates.status !== "ready" ||
+      !choices.templates.complete ||
       choices.archives.status !== "ready"
     )
       throw new Error(

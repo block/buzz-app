@@ -30,14 +30,14 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   registering or attesting again. Personal space skips relay registration.
   Creation never adds channel membership.
   Optional **Agent instructions** are saved through Beekeeper's `update-agent`
-  after activation and community setup. Active rows offer **Edit instructions**
+  after activation and community setup. Active rows offer **Edit**
   with Save and Cancel; saving replaces the text, and an empty value clears it.
   `list-agents` requests `include_instructions: true` to populate the editor.
   Instructions affect newly accepted tasks and are never published to the relay.
   Drafts stay in memory across setup/save retries and refreshes; a failed save
   can be retried on the same agent without creating another. Navigation, restart
   or sign-out discards drafts. Text is limited to 20,000 characters.
-  **Delete agent** confirms owner-signed kind-5 deletion of the selected
+  **Delete** confirms owner-signed kind-5 deletion of the selected
   community's registration, refreshes discovery, then deletes the runtime through
   Beekeeper. Personal space only deletes from Beekeeper. Failure leaves the row
   available for manual retry; an already-missing Beekeeper agent counts as success.

@@ -135,7 +135,7 @@ export function createAgentClient(
       throw new Error(
         [2, "DISABLED"].includes(status)
           ? "Agent deletion is disabled on this server."
-          : "Agent deletion was not confirmed. Retry Delete agent.",
+          : "Agent deletion was not confirmed. Retry Delete.",
       );
     },
     async register(name: string, signal: AbortSignal): Promise<RemoteAgent> {

@@ -106,10 +106,10 @@ it.each(["unsupported relay", "storage failure"])(
         throw new Error("storage full");
       });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "Delete agent",
+        name: "Delete",
       }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -121,7 +121,7 @@ it.each(["unsupported relay", "storage failure"])(
       ).toBeEnabled(),
     );
     expect(
-      screen.queryByText("Deletion pending. Retry Delete agent."),
+      screen.queryByText("Deletion pending. Retry Delete."),
     ).not.toBeInTheDocument();
     expect(h.community.publish).not.toHaveBeenCalled();
     expect(h.request).toHaveBeenCalledTimes(1);
@@ -159,17 +159,15 @@ it("confirms deletion, waits for the relay, and keeps a failed backend deletion 
   );
   const user = userEvent.setup();
   const confirm = async () => {
-    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("alertdialog", { name: "Delete Helper?" });
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete agent" }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
   };
   try {
     await confirm();
     await waitFor(() => expect(h.community.publish).toHaveBeenCalledTimes(1));
     expect(attempts).toBe(0);
-    expect(screen.getByRole("button", { name: "Delete agent" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Refresh agents" }),
     ).toBeDisabled();
@@ -177,12 +175,10 @@ it("confirms deletion, waits for the relay, and keeps a failed backend deletion 
     expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 503");
     expect(screen.getByText("Helper · Active")).toBeInTheDocument();
     expect(
-      screen.getByText("Deletion pending. Retry Delete agent."),
+      screen.getByText("Deletion pending. Retry Delete."),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Delete agent" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled(),
     );
     await confirm();
     expect(
@@ -209,7 +205,7 @@ it("allows canceling confirmation and deletes directly from Builderlab in Person
     ).toBeEnabled(),
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
   await user.click(
     within(screen.getByRole("alertdialog")).getByRole("button", {
       name: "Cancel",
@@ -223,10 +219,10 @@ it("allows canceling confirmation and deletes directly from Builderlab in Person
       body: '{"status":"DELETE_AGENT_STATUS_NOT_FOUND"}',
     })
     .mockResolvedValue(response([]));
-  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
   await user.click(
     within(screen.getByRole("alertdialog")).getByRole("button", {
-      name: "Delete agent",
+      name: "Delete",
     }),
   );
   expect(await screen.findByText("No remote agents yet.")).toBeInTheDocument();
@@ -278,7 +274,7 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
     </StrictMode>,
   );
   const user = userEvent.setup();
-  const edit = await screen.findByRole("button", { name: "Edit instructions" });
+  const edit = await screen.findByRole("button", { name: "Edit" });
   await waitFor(() => expect(edit).toBeEnabled());
   await user.click(edit);
   const draft = screen.getByRole("textbox", {
@@ -294,7 +290,7 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
   await waitFor(() => expect(draft).toBeEnabled());
   expect(draft).toHaveValue("Unsaved draft.");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  await user.click(screen.getByRole("button", { name: "Edit" }));
   const restored = screen.getByRole("textbox", {
     name: "Agent instructions for Helper",
   });
@@ -309,13 +305,13 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
   ).toBeDisabled();
   await user.clear(restored);
   await user.click(screen.getByRole("button", { name: "Save instructions" }));
-  await screen.findByRole("button", { name: "Edit instructions" });
+  await screen.findByRole("button", { name: "Edit" });
   expect(
     screen
       .getAllByRole("listitem")
       .map((item) => within(item).getByText(/ · /).textContent),
   ).toEqual(["Helper · Active", "Second · Revoked"]);
-  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(
     screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
   ).toHaveValue("");
@@ -334,7 +330,7 @@ it.each(["new login", "deletion"])(
     render(<RemoteAgents {...h} active={() => true} />);
     const user = userEvent.setup();
     const edit = await screen.findByRole("button", {
-      name: "Edit instructions",
+      name: "Edit",
     });
     await waitFor(() => expect(edit).toBeEnabled());
     await user.click(edit);
@@ -352,7 +348,7 @@ it.each(["new login", "deletion"])(
       if (cause === "new login") {
         act(() => h.session.signOut());
         await act(async () => h.session.signIn());
-        await screen.findByRole("button", { name: "Edit instructions" });
+        await screen.findByRole("button", { name: "Edit" });
         await act(async () => held.resolve(response([], 503)));
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         expect(
@@ -360,9 +356,7 @@ it.each(["new login", "deletion"])(
             name: "Agent instructions for Helper",
           }),
         ).not.toBeInTheDocument();
-        await user.click(
-          screen.getByRole("button", { name: "Edit instructions" }),
-        );
+        await user.click(screen.getByRole("button", { name: "Edit" }));
         expect(
           screen.getByRole("textbox", {
             name: "Agent instructions for Helper",
@@ -522,7 +516,7 @@ it("creates with instructions, locks controls through setup and retries a failed
     ).toHaveValue("Review carefully.");
     h.request.mockResolvedValueOnce({ status: 200, headers: {}, body: "{}" });
     await user.click(screen.getByRole("button", { name: "Save instructions" }));
-    await screen.findByRole("button", { name: "Edit instructions" });
+    await screen.findByRole("button", { name: "Edit" });
     expect(
       h.request.mock.calls.filter(([input]) =>
         input.url.endsWith("/register-agent"),
@@ -542,7 +536,7 @@ it("creates with instructions, locks controls through setup and retries a failed
   expect(
     screen.getByRole("textbox", { name: "Agent instructions (optional)" }),
   ).toHaveValue("");
-  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(
     screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
   ).toHaveValue("Review carefully.");
@@ -595,9 +589,7 @@ it.each(["Active", "Revoked"])(
     const secondRow = screen.getByText("Second · Active").closest("li");
     if (!secondRow) throw new Error("Missing second agent row");
     if (status === "Active") {
-      await user.click(
-        within(secondRow).getByRole("button", { name: "Edit instructions" }),
-      );
+      await user.click(within(secondRow).getByRole("button", { name: "Edit" }));
       await user.type(
         within(secondRow).getByRole("textbox", {
           name: "Agent instructions for Second",
@@ -731,9 +723,7 @@ it.each(["attestation", "enrollment storage"])(
         ),
       );
       await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Edit instructions" }),
-        ).toBeEnabled(),
+        expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled(),
       );
       expect(
         h.request.mock.calls.filter(([input]) =>

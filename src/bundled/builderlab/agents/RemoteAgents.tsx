@@ -248,7 +248,7 @@ function AgentList({
         discardDraft(agent.pubkey);
         setRevision((value) => value + 1);
       }
-    }, "Could not delete the agent. Retry Delete agent.");
+    }, "Could not delete the agent. Retry Delete.");
   };
   return (
     <section
@@ -276,10 +276,7 @@ function AgentList({
             disabled={busy || loading}
           />
         </Field>
-        <Field
-          label="Agent instructions (optional)"
-          description="Used for new tasks. Up to 20,000 characters."
-        >
+        <Field label="Agent instructions (optional)" style={{ width: "100%" }}>
           <Textarea
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
@@ -328,7 +325,7 @@ function AgentList({
                 )}
               {removing.includes(agent.pubkey) && (
                 <p className="text-body-sm text-secondary">
-                  Deletion pending. Retry Delete agent.
+                  Deletion pending. Retry Delete.
                 </p>
               )}
               {confirmed.includes(agent.pubkey) && (
@@ -361,11 +358,11 @@ function AgentList({
                 )}
               {agent.status === "Active" &&
                 !removing.includes(agent.pubkey) &&
-                (drafts[agent.pubkey] !== undefined ? (
+                drafts[agent.pubkey] !== undefined && (
                   <div className="flex flex-col items-start gap-2">
                     <Field
                       label={`Agent instructions for ${agent.name}`}
-                      description="Saved changes apply to new tasks."
+                      style={{ width: "100%" }}
                     >
                       <Textarea
                         value={drafts[agent.pubkey]}
@@ -397,8 +394,11 @@ function AgentList({
                       </Button>
                     </div>
                   </div>
-                ) : (
-                  <div>
+                )}
+              <div className="flex gap-2">
+                {agent.status === "Active" &&
+                  !removing.includes(agent.pubkey) &&
+                  drafts[agent.pubkey] === undefined && (
                     <Button
                       variant="outline"
                       disabled={busy || loading}
@@ -406,17 +406,15 @@ function AgentList({
                         setDraft(agent.pubkey, agent.instructions ?? "")
                       }
                     >
-                      Edit instructions
+                      Edit
                     </Button>
-                  </div>
-                ))}
-              <div>
+                  )}
                 <Button
                   variant="destructive"
                   disabled={busy || loading}
                   onClick={() => setDeleting(agent)}
                 >
-                  Delete agent
+                  Delete
                 </Button>
               </div>
             </li>
@@ -448,7 +446,7 @@ function AgentList({
                 disabled={busy || loading}
                 onClick={() => void remove(deleting)}
               >
-                Delete agent
+                Delete
               </Button>
             </>
           }

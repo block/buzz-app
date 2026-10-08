@@ -18,8 +18,8 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
-  await expect(topbar.getByRole("button")).toHaveText(["Me", "Messages"]);
-  await topbar.getByRole("button", { name: "Me", exact: true }).click();
+  await expect(topbar.getByRole("tab")).toHaveText(["Me", "Messages"]);
+  await topbar.getByRole("tab", { name: "Me", exact: true }).click();
   await expect(
     page.getByRole("complementary", { name: "Me sidebar" }),
   ).toBeVisible();
@@ -28,21 +28,41 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   ).toHaveCount(0);
   await expect(composer).toHaveCount(0);
   await expect(
-    topbar.getByRole("button", { name: "Me", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    topbar.getByRole("tab", { name: "Me", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Hide Me sidebar" }).click();
   await expect(page.locator("#shell-navigation")).toHaveAttribute(
     "aria-hidden",
     "true",
   );
   await page.getByRole("button", { name: "Show Me sidebar" }).click();
-  await topbar.getByRole("button", { name: "Messages", exact: true }).click();
+  const me = topbar.getByRole("tab", { name: "Me", exact: true });
+  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
+  await me.focus();
+  await me.press("ArrowRight");
+  await expect(messages).toBeFocused();
+  await expect(me).toHaveAttribute("aria-selected", "true");
+  await messages.press("Enter");
+  await expect(messages).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("tabpanel", { name: "Messages", exact: true }),
+  ).toBeVisible();
+  const indicator = topbar.locator(".buzz-tabs-indicator");
+  await expect
+    .poll(async () => {
+      const tab = await messages.boundingBox();
+      const pill = await indicator.boundingBox();
+      return tab && pill
+        ? Math.abs(tab.x - pill.x) + Math.abs(tab.width - pill.width)
+        : Infinity;
+    })
+    .toBeLessThan(1);
   await expect(composer).toHaveText("Keep this draft");
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
   ).toBeVisible();
   await openPage(page, "Settings");
-  await expect(topbar.locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(topbar.locator('[aria-selected="true"]')).toHaveCount(0);
 });
 
 test("header pages remain reachable without overlap through scale and resize", async ({
@@ -64,7 +84,7 @@ test("header pages remain reachable without overlap through scale and resize", a
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
   const toolbar = page.getByRole("navigation", { name: "Toolbar pages" });
   const more = page.getByRole("button", { name: "More pages", exact: true });
-  const me = topbar.getByRole("button", { name: "Me", exact: true });
+  const me = topbar.getByRole("tab", { name: "Me", exact: true });
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);

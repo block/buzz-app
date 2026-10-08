@@ -4,6 +4,7 @@ import {
   contributionKey,
 } from "../../features/conversation/ContributionBoundary";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PageIcon } from "./PageIcon";
 import { pagePresentation } from "./presentation";
@@ -19,6 +20,29 @@ export function PageNavigation({
   onSelect(key: string): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
+  if (placement === "topbar") {
+    return (
+      <Tabs
+        label="Topbar pages"
+        variant="chrome"
+        value={pages.some((page) => page.key === selected) ? selected : null}
+        onValueChange={onSelect}
+        items={pages.map((page) => {
+          const Badge = page.badge;
+          return {
+            value: page.key,
+            label: pagePresentation(page).label,
+            panelId: `shell-page-${page.key}`,
+            trailing: Badge ? (
+              <ContributionBoundary key={contributionKey(page)} fallback={null}>
+                <Badge />
+              </ContributionBoundary>
+            ) : undefined,
+          };
+        })}
+      />
+    );
+  }
   return pages.map((page) => {
     const { label, icon, image } = pagePresentation(page);
     const Badge = page.badge;
@@ -59,7 +83,7 @@ export function PageNavigation({
         selected={selected === page.key}
         label={label}
         title={label}
-        variant={placement === "topbar" ? "pill" : "row"}
+        variant="row"
         trailing={badge}
         icon={
           placement === "sidebar" ? (

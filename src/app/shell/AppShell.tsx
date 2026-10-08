@@ -153,6 +153,7 @@ export function AppShell({
     [pages],
   );
   const topbarPages = headerPages.filter((page) => page.placement === "topbar");
+  const selectedTopbarPage = topbarPages.some((page) => page.key === selected);
   const toolbarPages = headerPages.filter(
     (page) => page.placement === "toolbar",
   );
@@ -281,7 +282,7 @@ export function AppShell({
           <nav
             ref={topbarRef}
             aria-label="Topbar pages"
-            className="shell-topbar-pages chrome-navigation"
+            className="shell-topbar-pages"
             aria-hidden={compactPages}
             inert={compactPages}
           >
@@ -425,6 +426,14 @@ export function AppShell({
               >
                 <PanelFrame companion={companion}>
                   <div
+                    id={`shell-page-${selected}`}
+                    {...(!compactPages && selectedTopbarPage
+                      ? {
+                          role: "tabpanel",
+                          "aria-labelledby": `shell-page-${selected}-tab`,
+                          tabIndex: 0,
+                        }
+                      : {})}
                     className={
                       fillsWorkspace
                         ? "h-full min-h-0"

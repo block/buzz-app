@@ -48,8 +48,8 @@ install keeps the previous release and shows the private install log. Success
 re-detects the tools, so no `PATH` change or symlink is needed. Install shares the
 native install/quit owner with Pi and Claude Code. If a user-installed adapter
 exists, Install refuses and the user updates it in their terminal. Settings
-does not probe adapter versions; an incompatible user adapter fails model
-discovery or appears in the agent log at Start. Adding
+does not probe adapter versions; an incompatible user adapter appears in the
+agent log at Start. Adding
 or removing a user adapter changes new selections. Existing agents keep their
 saved command for model discovery and Start, including its managed Node binding.
 A missing saved adapter is a Start error; it never triggers silent fallback.

@@ -25,8 +25,6 @@ export interface CodexModelMetadata {
   /** False means no usable model option was published; true with an empty
    * catalog is a known-empty result. */
   modelsKnown: boolean;
-  resolvedModel?: string;
-  resolvedEffort?: string;
   effort?: {
     model: string;
     current?: string;

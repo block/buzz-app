@@ -192,9 +192,10 @@ under **Advanced → Model**. App maintainers can instead supply the nonsecret
 `DATABRICKS_HOST` build default below and rebuild the app.
 
 The native model-request service also has a Codex discovery path keyed by the
-stable integration ID. It opens a headless ACP session with the selected adapter
-and reports known, unknown, or empty model metadata plus reported effort choices
-for only the selected model. It does not send a prompt or persist a selection.
+stable integration ID. It reads the selected Codex CLI's `codex debug models`
+catalog, offers only the models Codex lists in its own picker, and reports effort
+choices for only the selected model. It opens no ACP session, sends no prompt,
+and persists no selection.
 See [Codex model and effort discovery](codex-model-discovery.md).
 
 ### Nonsecret build defaults

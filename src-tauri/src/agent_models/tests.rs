@@ -828,9 +828,7 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
 #[test]
 fn codex_effort_wire_omits_unknown_current_and_keeps_known_empty_options() {
     let catalog = codex_catalog(crate::codex_models::Discovery {
-        models: Some(Vec::new()),
-        resolved_model: None,
-        resolved_effort: None,
+        models: Vec::new(),
         effort: Some(crate::codex_models::Effort {
             model: "alpha".into(),
             current: None,
@@ -846,50 +844,29 @@ fn codex_effort_wire_omits_unknown_current_and_keeps_known_empty_options() {
 
 #[cfg(unix)]
 #[tokio::test]
-#[ignore = "requires the explicitly selected Codex adapter 1.10.0 and CLI 0.151.0; no prompt"]
+#[ignore = "requires an installed Codex adapter and CLI; runs `codex debug models`, no prompt"]
 async fn selected_production_codex_catalog_refresh_and_selection() {
     use buzz_agent_controller::codex::CodexContext;
 
     let workspace = tempfile::tempdir().unwrap();
-    let context = CodexContext::new(
-        std::path::Path::new("/tmp/buzz-codex-adapter-acceptance/node_modules/.bin/codex-acp"),
-        std::path::Path::new("/opt/homebrew/bin/codex"),
-        workspace.path(),
-        &std::collections::BTreeMap::new(),
-    )
-    .unwrap();
+    let context = CodexContext::installed(workspace.path(), None).unwrap();
     let initial = codex_catalog(crate::codex_models::discover(&context, None).await.unwrap());
-    let metadata = initial.codex.as_ref().unwrap();
-    assert!(metadata.models_known);
+    assert!(initial.codex.as_ref().unwrap().models_known);
     assert!(!initial.models.is_empty());
-    assert!(metadata.resolved_model.is_some());
-    let selected = initial
-        .models
-        .iter()
-        .find(|model| {
-            metadata.resolved_model.as_deref() != Some(model.id.as_str())
-                && model.id.contains("codex")
-        })
-        .or_else(|| {
-            initial
-                .models
-                .iter()
-                .find(|model| metadata.resolved_model.as_deref() != Some(model.id.as_str()))
-        })
-        .unwrap_or(&initial.models[0])
-        .id
-        .clone();
-    let selected_result = codex_catalog(
-        crate::codex_models::discover(&context, Some(&selected))
+    for model in &initial.models {
+        let selected = crate::codex_models::discover(&context, Some(&model.id))
             .await
-            .unwrap(),
-    );
-    let selected_metadata = selected_result.codex.unwrap();
-    let effort = selected_metadata.effort.unwrap();
-    assert_eq!(effort.model, selected);
-    assert!(!effort.options.is_empty());
-    let refreshed = codex_catalog(crate::codex_models::discover(&context, None).await.unwrap());
-    assert!(refreshed.codex.unwrap().models_known);
+            .unwrap();
+        let effort = selected.effort.unwrap();
+        eprintln!(
+            "{} ({}): {:?} default {:?}",
+            model.id,
+            model.name,
+            effort.options.iter().map(|o| &o.id).collect::<Vec<_>>(),
+            effort.current
+        );
+        assert_eq!(effort.model, model.id);
+    }
 }
 
 #[tokio::test]

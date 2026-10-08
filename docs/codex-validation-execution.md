@@ -12,7 +12,7 @@ revision checks, and credential custody still apply.
 Default saves no model or effort override. The selected CLI reads its effective
 configuration at each Start. Advanced retains an explicit model and either a
 reported effort value or explicit absence of effort support. Model discovery
-uses ACP configuration metadata and sends no prompt. Saved choices survive an
+reads the selected CLI's `codex debug models` catalog and sends no prompt. Saved choices survive an
 unavailable catalog. Runtime arguments carry the requested Advanced settings;
 Buzz retains the runtime's existing fallback behavior.
 

@@ -11,7 +11,7 @@ const TEST_FAILURE: &str = "Goose could not complete a request with this provide
 const TEST_TIMEOUT: &str = "Goose connection test timed out. Check the network, then test again.";
 const CLEANUP_FAILURE: &str = "Goose could not delete its temporary connection-test session. It may remain in Goose history; retry the test.";
 
-struct CheckChild(tokio::process::Child);
+pub(crate) struct CheckChild(pub(crate) tokio::process::Child);
 impl Drop for CheckChild {
     fn drop(&mut self) {
         #[cfg(unix)]

@@ -81,10 +81,6 @@ struct CodexCatalog {
     /// `models` array is a known-empty catalog.
     models_known: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resolved_model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resolved_effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     effort: Option<CodexEffort>,
 }
 #[derive(Serialize)]
@@ -689,10 +685,8 @@ async fn execute(
 
 #[cfg(unix)]
 fn codex_catalog(discovery: crate::codex_models::Discovery) -> Catalog {
-    let models_known = discovery.models.is_some();
     let models = discovery
         .models
-        .unwrap_or_default()
         .into_iter()
         .map(|entry| Model {
             id: entry.id,
@@ -718,9 +712,7 @@ fn codex_catalog(discovery: crate::codex_models::Discovery) -> Catalog {
         disconnected: false,
         tested_model: None,
         codex: Some(CodexCatalog {
-            models_known,
-            resolved_model: discovery.resolved_model,
-            resolved_effort: discovery.resolved_effort,
+            models_known: true,
             effort,
         }),
     }

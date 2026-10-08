@@ -829,9 +829,15 @@ test("saved team selection previews avatars and inserts exact recipients in one 
     );
     // Exercise keyboard selection; pointer selection has a separate known
     // layout race when the directory loading status disappears mid-click.
-    await picker.getByRole("searchbox").press("ArrowDown");
-    await expect(row).toBeFocused();
-    await row.press("Enter");
+    // The first match is highlighted while focus stays in the search, so
+    // Enter from the search inserts the team.
+    const search = picker.getByRole("searchbox");
+    await expect(row).toHaveAttribute("data-selected", "true");
+    await expect(search).toHaveAttribute(
+      "aria-activedescendant",
+      (await row.getAttribute("id")) ?? "",
+    );
+    await search.press("Enter");
     await expect(input).toBeFocused();
     await expect(input.locator(".inline-chip")).toHaveText([
       "@Honey",

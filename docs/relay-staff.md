@@ -42,7 +42,8 @@ connection" section of [identity.md](identity.md) for the address rules.
   says who receives the reason. A failed enforcement can be cancelled, which
   reopens the report.
 - **Feedback**: list, detail and status (new, reviewed, archived). At most five
-  attachments and 50 MiB are shown. Images preview inline; every attachment can
+  attachments and 50 MiB are shown. Images preview inline and open in the
+  shared media viewer on click; every attachment can
   be saved through the native Save dialog.
 - **Communities**: the directory searched by host prefix, with the connected
   community pinned and cursor paging. Each community page has Reports,

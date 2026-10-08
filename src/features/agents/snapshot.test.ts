@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { controlFixture } from "./control-testing";
 import {
@@ -731,15 +732,15 @@ it("rejects escaped memory event overflow before identity creation", () => {
   ).toThrow("Invalid snapshot manifest");
 });
 
-it("extracts PNG pixels without portable metadata and preserves JSON placeholder fallback", () => {
+it("extracts PNG pixels without portable metadata and preserves JSON placeholder fallback", async () => {
   const manifest = buildAgentSnapshot(portableAgent());
   const empty = encodeAgentSnapshot(manifest, "png");
-  expect(snapshotPngArtwork(empty)).toBeUndefined();
+  expect(await snapshotPngArtwork(empty)).toBeUndefined();
   expect(
-    snapshotPngArtwork(encodeAgentSnapshot(manifest, "json")),
+    await snapshotPngArtwork(encodeAgentSnapshot(manifest, "json")),
   ).toBeUndefined();
   expect(
-    snapshotPngArtwork(encodeAgentSnapshot(manifest, "png", empty)),
+    await snapshotPngArtwork(encodeAgentSnapshot(manifest, "png", empty)),
   ).toBeUndefined();
 });
 
@@ -760,7 +761,7 @@ it("rejects aggregate reader DTO overflow even when entry array fits", () => {
   ).not.toThrow();
 });
 
-it("extracts real PNG artwork while stripping snapshot metadata", () => {
+it("extracts real PNG artwork while stripping snapshot metadata", async () => {
   const source = buildAgentSnapshot(portableAgent());
   const pixels = Uint8Array.from(
     atob(
@@ -769,11 +770,105 @@ it("extracts real PNG artwork while stripping snapshot metadata", () => {
     (char) => char.charCodeAt(0),
   );
   const png = encodeAgentSnapshot(source, "png", pixels);
-  const extracted = snapshotPngArtwork(png);
+  const extracted = await snapshotPngArtwork(png);
   expect(extracted).toEqual(pixels);
   expect(new TextDecoder().decode(extracted)).not.toContain(
     "buzz_agent_snapshot",
   );
+});
+
+// Build CRC-valid PNG chunks without relying on the reference encoder's zlib output.
+function pngChunk(type: string, data: Uint8Array) {
+  const out = new Uint8Array(data.length + 12);
+  new DataView(out.buffer).setUint32(0, data.length);
+  out.set(utf8.encode(type), 4);
+  out.set(data, 8);
+  let crc = 0xffffffff;
+  for (const byte of out.subarray(4, 8 + data.length)) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  new DataView(out.buffer).setUint32(8 + data.length, (crc ^ 0xffffffff) >>> 0);
+  return out;
+}
+function replacePngPixels(
+  source: Uint8Array,
+  update: (type: string, data: Uint8Array) => Uint8Array[],
+) {
+  const parts: Uint8Array[] = [source.slice(0, 8)];
+  for (let at = 8; at < source.length; ) {
+    const size = new DataView(source.buffer, source.byteOffset).getUint32(at);
+    const type = new TextDecoder().decode(source.subarray(at + 4, at + 8));
+    parts.push(...update(type, source.subarray(at + 8, at + 8 + size)));
+    at += size + 12;
+  }
+  const result = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+it("retains indexed PNG palette and transparency while excluding private metadata", async () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const original = encodeAgentSnapshot(source, "png");
+  const indexed = replacePngPixels(original, (type, data) => {
+    if (type === "IHDR") {
+      const header = data.slice();
+      header[9] = 3;
+      return [
+        pngChunk(type, header),
+        pngChunk("PLTE", new Uint8Array([255, 0, 0, 0, 0, 255])),
+        pngChunk("tRNS", new Uint8Array([0, 255])),
+      ];
+    }
+    if (type === "IDAT")
+      return [pngChunk(type, deflateSync(new Uint8Array([0, 0])))];
+    return [pngChunk(type, data)];
+  });
+  const extracted = await snapshotPngArtwork(indexed);
+  if (!extracted) throw new Error("Indexed artwork was lost");
+  const kinds: string[] = [];
+  replacePngPixels(extracted, (type, data) => {
+    kinds.push(type);
+    return [pngChunk(type, data)];
+  });
+  expect(kinds).toEqual(["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+});
+
+it("keeps a transparent placeholder when its scanline is malformed", async () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const image = replacePngPixels(
+    encodeAgentSnapshot(source, "png"),
+    (type, data) =>
+      type === "IDAT"
+        ? [pngChunk(type, deflateSync(new Uint8Array([0, 0, 0, 0, 0, 0])))]
+        : [pngChunk(type, data)],
+  );
+  await expect(snapshotPngArtwork(image)).rejects.toThrow(
+    "Invalid snapshot artwork",
+  );
+});
+
+it("recognizes differently compressed transparent placeholders, not painted 1x1 art", async () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const original = encodeAgentSnapshot(source, "png");
+  for (const alpha of [0, 255]) {
+    const image = replacePngPixels(original, (type, data) =>
+      type === "IDAT"
+        ? [pngChunk(type, deflateSync(new Uint8Array([0, 0, 0, 0, alpha])))]
+        : [pngChunk(type, data)],
+    );
+    expect(await snapshotPngArtwork(image)).toEqual(
+      alpha === 0
+        ? undefined
+        : replacePngPixels(image, (type, data) =>
+            type === "tEXt" ? [] : [pngChunk(type, data)],
+          ),
+    );
+  }
 });
 
 it("fails closed when the host cannot attest portable native settings", () => {

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { deflateSync } from "node:zlib";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -1321,6 +1322,65 @@ it("uploads portable PNG artwork before creation but gives inline avatar precede
   if (!inlineFile) throw new Error("Inline avatar was not uploaded");
   expect(new TextDecoder().decode(await inlineFile.arrayBuffer())).toBe(
     "inline",
+  );
+});
+
+it("retains the source avatar URL for a differently compressed transparent PNG", async () => {
+  vi.mocked(uploadAvatar).mockClear();
+  const snapshot = buildAgentSnapshot({
+    ...portableAgent(),
+    picture: "https://cdn.example.test/source.png",
+  });
+  const original = encodeAgentSnapshot(snapshot, "png");
+  const idat = deflateSync(new Uint8Array(5));
+  const replacement = new Uint8Array(12 + idat.length);
+  const header = new DataView(replacement.buffer);
+  header.setUint32(0, idat.length);
+  replacement.set(new TextEncoder().encode("IDAT"), 4);
+  replacement.set(idat, 8);
+  let checksum = 0xffffffff;
+  for (const byte of replacement.subarray(4, -4)) {
+    checksum ^= byte;
+    for (let i = 0; i < 8; i++)
+      checksum = (checksum >>> 1) ^ (checksum & 1 ? 0xedb88320 : 0);
+  }
+  header.setUint32(8 + idat.length, (checksum ^ 0xffffffff) >>> 0);
+  // Walk the container to find the full IDAT chunk rather than its incidental payload bytes.
+  let offset = 8;
+  while (offset < original.length) {
+    const length = new DataView(original.buffer).getUint32(offset);
+    if (
+      new TextDecoder().decode(original.subarray(offset + 4, offset + 8)) ===
+      "IDAT"
+    )
+      break;
+    offset += length + 12;
+  }
+  const oldLength = new DataView(original.buffer).getUint32(offset) + 12;
+  const changed = new Uint8Array(
+    original.length - oldLength + replacement.length,
+  );
+  changed.set(original.subarray(0, offset));
+  changed.set(replacement, offset);
+  changed.set(
+    original.subarray(offset + oldLength),
+    offset + replacement.length,
+  );
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={changed}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  expect(uploadAvatar).not.toHaveBeenCalled();
+  expect(h.create.mock.calls[0]?.[3]).toEqual(
+    expect.objectContaining({ picture: "https://cdn.example.test/source.png" }),
   );
 });
 

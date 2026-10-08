@@ -79,6 +79,9 @@ const pngRendering = new Set([
   "fcTL",
   "fdAT",
 ]);
+export function isPngRenderingChunk(kind: string): boolean {
+  return !(kind.charCodeAt(0) & 32) || pngRendering.has(kind);
+}
 export function cleanPng(
   bytes: Uint8Array,
   snapshot?: Uint8Array,
@@ -89,8 +92,7 @@ export function cleanPng(
   if (animated) assertAnimationAppearance(chunks, "iCCP", "eXIf");
   const parts: BlobPart[] = [bytes.slice(0, 8)];
   for (const chunk of chunks) {
-    if (!(chunk.kind.charCodeAt(0) & 32) || pngRendering.has(chunk.kind))
-      parts.push(chunk.raw.slice());
+    if (isPngRenderingChunk(chunk.kind)) parts.push(chunk.raw.slice());
     if (chunk.kind === "IHDR" && snapshot) parts.push(snapshot.slice());
   }
   return new Blob(parts, { type: "image/png" });

@@ -369,17 +369,28 @@ export function AgentSnapshotImport({
     if (!receivedBytes) return;
     requestId.current = crypto.randomUUID();
     setRestoreMemory(false);
-    try {
-      setSnapshot(parseAgentSnapshot(receivedBytes));
-      setArtwork(snapshotPngArtwork(receivedBytes));
-      setFileError("");
-    } catch (error) {
-      setSnapshot(undefined);
-      setArtwork(undefined);
-      setFileError(
-        error instanceof Error ? error.message : "Invalid snapshot JSON.",
-      );
-    }
+    let cancelled = false;
+    const preview = async () => {
+      try {
+        const parsed = parseAgentSnapshot(receivedBytes);
+        const pixels = await snapshotPngArtwork(receivedBytes);
+        if (cancelled) return;
+        setSnapshot(parsed);
+        setArtwork(pixels);
+        setFileError("");
+      } catch (error) {
+        if (cancelled) return;
+        setSnapshot(undefined);
+        setArtwork(undefined);
+        setFileError(
+          error instanceof Error ? error.message : "Invalid snapshot JSON.",
+        );
+      }
+    };
+    void preview();
+    return () => {
+      cancelled = true;
+    };
   }, [receivedBytes]);
   const read = async (file?: File) => {
     setFileError("");
@@ -396,7 +407,7 @@ export function AgentSnapshotImport({
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const parsed = parseAgentSnapshot(bytes);
-      const pixels = snapshotPngArtwork(bytes);
+      const pixels = await snapshotPngArtwork(bytes);
       if (requestId.current === readId) {
         setSnapshot(parsed);
         setArtwork(pixels);

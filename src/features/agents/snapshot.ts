@@ -1,4 +1,5 @@
 /** Portable buzz-agent-snapshot v1. No saved identity or local execution state crosses this boundary. */
+import { isPngRenderingChunk } from "../messages/image-metadata";
 import { harnessKind } from "./harness-presets";
 import type { AgentEdit, AgentView, ControlSnapshot } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
@@ -16,10 +17,6 @@ const MAGIC = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
 const keyword = encoder.encode("buzz_agent_snapshot\0");
-const PLACEHOLDER_PIXEL = new Uint8Array([
-  0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0, 0x00, 0x05, 0x00,
-  0x01,
-]);
 // NIP-44 v2 at 65,536 plaintext bytes changes to the extended length prefix;
 // its base64 payload then exceeds the native reader’s 87,472-byte cap.
 const MAX_MEMORY_PLAINTEXT_BYTES = 65_535;
@@ -651,8 +648,41 @@ export function encodeAgentSnapshot(
   parseAgentSnapshot(png);
   return png;
 }
-/** Preserve only PNG pixel-bearing chunks; never carry the embedded manifest or metadata into avatar upload. */
-export function snapshotPngArtwork(bytes: Uint8Array): Uint8Array | undefined {
+/** A 1x1 RGBA scanline is five bytes, regardless of compression or PNG filter. */
+async function transparentSinglePixel(idat: Uint8Array[]): Promise<boolean> {
+  const stream = new ReadableStream<BufferSource>({
+    start(controller) {
+      for (const part of idat) controller.enqueue(Uint8Array.from(part));
+      controller.close();
+    },
+  }).pipeThrough(new DecompressionStream("deflate"));
+  const reader = stream.getReader();
+  const scanline = new Uint8Array(5);
+  let length = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (length + value.length > scanline.length) {
+        await reader.cancel();
+        throw new Error("Invalid snapshot artwork.");
+      }
+      scanline.set(value, length);
+      length += value.length;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (length !== 5 || (scanline[0] ?? 255) > 4)
+    throw new Error("Invalid snapshot artwork.");
+  // With one pixel there are no left/up samples; every PNG filter leaves alpha unchanged.
+  return scanline[4] === 0;
+}
+
+/** Strip private metadata, retaining the chunks used by the avatar sanitizer for rendering. */
+export async function snapshotPngArtwork(
+  bytes: Uint8Array,
+): Promise<Uint8Array | undefined> {
   if (
     bytes.length < 8 ||
     !bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])
@@ -661,30 +691,30 @@ export function snapshotPngArtwork(bytes: Uint8Array): Uint8Array | undefined {
   // The caller parses the manifest first; keep this utility safe when used alone.
   parseAgentSnapshot(bytes);
   const parts = [MAGIC];
+  const idat: Uint8Array[] = [];
   let offset = 8;
-  let imageData = 0;
-  let placeholderHeader = false;
-  let placeholderPixel = false;
+  let singleRgba = false;
   while (offset + 12 <= bytes.length) {
     const length = u32(bytes, offset);
     const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
-    const data = bytes.subarray(offset + 8, offset + 8 + length);
     if (type === "IHDR") {
-      placeholderHeader =
-        length === 13 && u32(data, 0) === 1 && u32(data, 4) === 1;
+      const data = bytes.subarray(offset + 8, offset + 8 + length);
+      singleRgba =
+        length === 13 &&
+        u32(data, 0) === 1 &&
+        u32(data, 4) === 1 &&
+        data[8] === 8 &&
+        data[9] === 6 &&
+        data[12] === 0;
     }
-    if (type === "IDAT") {
-      imageData++;
-      placeholderPixel =
-        length === PLACEHOLDER_PIXEL.length &&
-        data.every((byte, i) => byte === PLACEHOLDER_PIXEL[i]);
-    }
-    if (["IHDR", "IDAT", "IEND"].includes(type))
+    if (type === "IDAT")
+      idat.push(bytes.subarray(offset + 8, offset + 8 + length));
+    if (isPngRenderingChunk(type))
       parts.push(bytes.slice(offset, offset + length + 12));
     offset += length + 12;
     if (type === "IEND") break;
   }
-  return placeholderHeader && imageData === 1 && placeholderPixel
+  return singleRgba && (await transparentSinglePixel(idat))
     ? undefined
     : concat(parts);
 }

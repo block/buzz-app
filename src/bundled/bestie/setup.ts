@@ -3,6 +3,12 @@ import type { RemoteAgent } from "../builderlab/agents/client";
 import { oauthTarget } from "../builderlab/oauth/browser";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { bestieInstructions, PROMPT_VERSION } from "./prompt";
+import {
+  installRhythms,
+  rhythmsComplete,
+  validRhythms,
+  type RhythmInstalls,
+} from "./rhythms";
 
 type Record = {
   version: 1;
@@ -15,6 +21,7 @@ type Record = {
   welcomeId?: string | undefined;
   welcomeFailed?: boolean | undefined;
   complete?: boolean;
+  rhythms?: RhythmInstalls;
 };
 type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
@@ -49,6 +56,7 @@ function read(key: string, owner: string): Record | undefined {
         !record.agent.id ||
         !HEX.test(record.agent.pubkey))) ||
     (record.complete && (!record.agent || !record.promptVersion)) ||
+    (record.rhythms !== undefined && !validRhythms(record.rhythms)) ||
     [record.channelOperation, record.welcomeId].some(
       (id) => id !== undefined && !HEX.test(id),
     )
@@ -100,11 +108,14 @@ export function createRemoteBestie(builderlab: Builderlab, relay: RelayData) {
         return;
       }
       const record = read(current.key, current.enrollment.viewer);
+      const ready = record?.complete && rhythmsComplete(record.rhythms);
       publish({
-        status: record?.complete ? "ready" : "idle",
-        message: record?.complete
+        status: ready ? "ready" : "idle",
+        message: ready
           ? "Your remote Bestie is connected."
-          : "Set up your remote Bestie in this community.",
+          : record?.complete
+            ? "Add Bestie's paused workflows to your existing private chat."
+            : "Set up your remote Bestie in this community.",
         record,
         connection: current.enrollment.connection,
         community: current.enrollment.url,
@@ -144,6 +155,7 @@ export function createRemoteBestie(builderlab: Builderlab, relay: RelayData) {
       publish({
         status: "busy",
         message,
+        record,
         connection,
         community: enrollment.url,
       });
@@ -370,6 +382,18 @@ export function createRemoteBestie(builderlab: Builderlab, relay: RelayData) {
     }
     record.complete = true;
     save();
+    progress("Saving Bestie's paused workflows…");
+    record.rhythms ??= {};
+    await installRhythms({
+      session,
+      channelId: record.channelId,
+      owner,
+      agent: record.agent.pubkey,
+      installs: record.rhythms,
+      persist: save,
+      check,
+    });
+    check();
     publish({
       status: "ready",
       message: "Your remote Bestie is connected.",

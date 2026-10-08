@@ -175,7 +175,12 @@ export async function bestieFixture() {
         scope: COMMUNITY,
         media: () => undefined,
         query,
-        writer: { kinds: [9, 9000, 9007, 30177], sign, publish },
+        writer: {
+          kinds: [9, 9000, 9007, 30177, 30620, 46020, 5],
+          sign,
+          publish,
+        },
+        workflows: { runs: async () => ({ runs: [], next: null }) },
       },
       {
         outboxStorage: {

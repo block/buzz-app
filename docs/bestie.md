@@ -10,6 +10,13 @@ and enrolls it in the community, creates a private stream, invites Bestie,
 updates its instructions, and sends an introductory mention. It then opens that
 channel in the normal conversation UI. Clicking Bestie again opens the same chat.
 
+Setup also saves three paused workflows in that private channel: hourly memory
+review, nightly reflection at **09:00 UTC**, and daily check-in at **17:00 UTC**.
+These are editable configuration presets. They do not establish hosted execution
+or the full OpenClaw/Muse behavior set. If workflow setup fails, **Open Bestie
+conversation** still opens the completed chat; **Set up Bestie workflows** retries
+only the missing configuration. Existing setups can use those same actions.
+
 The existing enrollment, membership, channel, navigation and Outbox services own
 their operations. Bestie saves setup identifiers and receipts scoped to the
 Builderlab server/account, community and Buzz identity. Retries reuse the agent
@@ -40,7 +47,41 @@ ID identifies a save operation, not confirmed delivery. Follow the existing
 operation status and definition readback. Pass the saved definition as `existing`
 when updating; a new save allocates a new workflow.
 
-This minimal setup-and-chat plugin installs no workflow and embeds no workflow
-editor. Use the normal Workflows page for schedules and Send Message actions.
-A successful workflow run does not prove that hosted Bestie replied; check its
-actual message and response when testing that path.
+Open **Workflows**, choose Bestie's private channel, and inspect the three named
+presets. Confirm all three are paused. Edit schedules and text in the normal
+editor. Reopen Bestie and confirm the same channel and workflow IDs remain;
+reopening does not overwrite edits or re-enable schedules. Definitions remain
+available independently of the Bestie plugin; disabling it does not cancel
+workflow runs or erase the companion.
+
+The configured hosted source admits owner-signed messages; an ordinary relay-signed
+workflow message has no matching owner authority. The separate hidden-wake bridge
+has no verified deployment receipt and requires an installation binding. This
+BuzzApp-only PR does not change that admission policy, invent the binding, or
+install unsupported wake actions. The presets remain paused because that runtime
+boundary is unresolved. Do not enable recurring execution on the strength of a
+successful definition save.
+
+After a compatible hosted runtime is available, enable a preset deliberately,
+press **Run**, and verify the actual Bestie response or a memory write/readback.
+Run is unavailable while paused. A successful relay run alone proves its own
+action outcome, not Bestie execution. Send Message ticks are visible in chat even
+when the agent chooses silence; private hidden maintenance needs the wake bridge.
+
+Setup journals each save event and workflow ID in its existing scoped record and
+confirms a signed definition before marking it installed. Unknown delivery never
+starts another new save. Use **Check saved configuration** in Workflows after a
+lost receipt; retrying Bestie can then adopt that confirmed definition, including
+later edits. A definitely rejected intent may be replaced only after durable
+manual dismissal and fresh absence readback. Setup preserves deliberate removal
+of a previously confirmed workflow and asks for review instead of recreating it.
+
+For the workflow candidate, launch this worktree on a separate free port:
+
+```sh
+BUZZ_DEV_VIEWER= BUZZ_BUILDERLAB_URL=https://test.blockstaging.build bin/just desktop --port 1461 --no-watch
+```
+
+The basic demo gate remains native sign-in → setup/choose existing → private chat
+→ real Bestie reply → reopen same channel. The workflow configuration gate adds
+three paused definitions with stable IDs; automatic execution is a separate gate.

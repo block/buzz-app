@@ -43,6 +43,35 @@ function navigationFixture() {
   return { open, navigation: { open } as unknown as Navigation };
 }
 
+it("keeps the completed private chat reachable when workflow setup fails and resumes rhythms separately", async () => {
+  const h = await bestieFixture();
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  h.query.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(30620)))
+      throw new Error("unavailable");
+    return query(filters);
+  });
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().record?.complete).toBe(true);
+  expect(h.bestie.snapshot().status).toBe("error");
+  const nav = navigationFixture();
+  render(<BestiePage bestie={h.bestie} navigation={nav.navigation} />);
+  expect(nav.open).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Bestie conversation" }),
+  );
+  await waitFor(() => expect(nav.open).toHaveBeenCalledOnce());
+  h.query.mockImplementation(query);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Set up Bestie workflows" }),
+  );
+  await waitFor(() => expect(nav.open).toHaveBeenCalledTimes(2));
+  expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.events.filter((event) => event.kind === 9)).toHaveLength(1);
+  expect(h.events.filter((event) => event.kind === 30620)).toHaveLength(3);
+});
+
 it("keeps Bestie available with a route to enable Builderlab", () => {
   const h = navigationFixture();
   render(<BestiePage navigation={h.navigation} />);
@@ -130,7 +159,9 @@ it("finishes setup through the real client and Outbox, opens chat automatically,
     h.viewer,
     h.agent,
   ]);
-  expect(h.events.map((event) => event.kind)).toEqual([30177, 9007, 9000, 9]);
+  expect(h.events.map((event) => event.kind)).toEqual([
+    30177, 9007, 9000, 9, 30620, 30620, 30620,
+  ]);
   h.customize("Keep these personal instructions.");
   mounted.unmount();
   render(<BestiePage bestie={h.bestie} navigation={nav.navigation} />);

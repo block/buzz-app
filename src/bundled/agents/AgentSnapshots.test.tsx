@@ -277,6 +277,116 @@ it.each([
   },
 );
 
+it.each(["partial", "rejected"] as const)(
+  "retries %s memory restoration against the created identity without creating again",
+  async (failure) => {
+    const h = importControl();
+    if (failure === "partial") {
+      h.writeSnapshotMemory.mockResolvedValueOnce({
+        written: 0,
+        total: 1,
+        errors: ["core: retry this agent"],
+      });
+    } else {
+      h.writeSnapshotMemory.mockRejectedValueOnce(
+        new Error("relay unavailable"),
+      );
+    }
+    let finishRetry:
+      | ((receipt: {
+          written: number;
+          total: number;
+          errors: string[];
+        }) => void)
+      | undefined;
+    h.writeSnapshotMemory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+    render(
+      <AgentSnapshotImport
+        control={h.control}
+        destination="https://relay.example.test"
+        owner={"ef".repeat(32)}
+        onClose={() => {}}
+      />,
+    );
+    choose(file("core"));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Restore memory/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    const retry = await screen.findByRole("button", {
+      name: "Retry memory restore",
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      failure === "partial"
+        ? "Memory partially restored"
+        : "Memory restoration unconfirmed",
+    );
+    fireEvent.click(retry);
+    await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledTimes(2));
+    expect(retry).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      failure === "partial"
+        ? "Memory partially restored"
+        : "Memory restoration unconfirmed",
+    );
+    expect(h.writeSnapshotMemory).toHaveBeenNthCalledWith(2, "new-id", [
+      { slug: "core", body: "private fixture memory" },
+    ]);
+    expect(h.create).toHaveBeenCalledOnce();
+    await act(async () => finishRetry?.({ written: 1, total: 1, errors: [] }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Retry memory restore" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(h.create).toHaveBeenCalledOnce();
+  },
+);
+
+it("keeps the memory retry available after another incomplete confirmation", async () => {
+  const h = importControl();
+  h.writeSnapshotMemory.mockResolvedValueOnce({
+    written: 0,
+    total: 1,
+    errors: [],
+  });
+  h.writeSnapshotMemory.mockResolvedValueOnce({
+    written: 1,
+    total: 2,
+    errors: [],
+  });
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(file("core"));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Retry memory restore" }),
+  );
+  await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledTimes(2));
+  expect(
+    screen.getByRole("button", { name: "Retry memory restore" }),
+  ).toBeEnabled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "1 of 1 entries confirmed",
+  );
+  expect(h.create).toHaveBeenCalledOnce();
+});
+
 it("imports configuration without a memory writer and disables restoration", async () => {
   const h = importControl();
   const control = {

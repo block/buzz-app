@@ -356,6 +356,10 @@ export function AgentSnapshotImport({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
   const [createdId, setCreatedId] = useState<string>();
+  const [memoryRetry, setMemoryRetry] = useState<{
+    id: string;
+    entries: AgentSnapshot["memory"]["entries"];
+  }>();
   const [profilePublished, setProfilePublished] = useState(false);
   useEffect(() => {
     if (!receivedBytes) return;
@@ -395,6 +399,44 @@ export function AgentSnapshotImport({
     }
   };
   const unsupported = snapshot ? snapshotLimitations(snapshot) : [];
+  const restore = async (
+    id: string,
+    entries: AgentSnapshot["memory"]["entries"],
+  ) => {
+    if (!control.writeSnapshotMemory) return;
+    try {
+      const outcome = await control.writeSnapshotMemory(id, entries);
+      const expected = entries.length;
+      if (
+        outcome.total !== expected ||
+        outcome.written !== expected ||
+        outcome.errors.length
+      ) {
+        setMemoryRetry({ id, entries });
+        setFileError(
+          `Memory partially restored: ${outcome.written} of ${expected} entries confirmed. The agent exists but some memory entries were not confirmed. ${outcome.errors.join("; ")}`,
+        );
+      } else {
+        setMemoryRetry(undefined);
+        setFileError("");
+      }
+    } catch (error) {
+      setMemoryRetry({ id, entries });
+      setFileError(
+        `Memory restoration unconfirmed for ${entries.length} entries. The agent exists; check its memories before retrying. ${error instanceof Error ? error.message : ""}`,
+      );
+    }
+  };
+  const retryMemory = async () => {
+    if (busy || !memoryRetry || !createdId || memoryRetry.id !== createdId)
+      return;
+    setBusy(true);
+    try {
+      await restore(memoryRetry.id, memoryRetry.entries);
+    } finally {
+      setBusy(false);
+    }
+  };
   const create = async () => {
     if (
       createdId ||
@@ -442,25 +484,7 @@ export function AgentSnapshotImport({
         snapshot.memory.entries.length &&
         control.writeSnapshotMemory
       ) {
-        try {
-          const outcome = await control.writeSnapshotMemory(
-            agent.id,
-            snapshot.memory.entries,
-          );
-          const expected = snapshot.memory.entries.length;
-          if (
-            outcome.total !== expected ||
-            outcome.written !== expected ||
-            outcome.errors.length
-          )
-            setFileError(
-              `Memory partially restored: ${outcome.written} of ${expected} entries confirmed. The agent exists but some memory entries were not confirmed. ${outcome.errors.join("; ")}`,
-            );
-        } catch (error) {
-          setFileError(
-            `Memory partially restored: 0 of ${snapshot.memory.entries.length} entries written. The agent exists but publication was not confirmed. Check its memories before retrying. ${error instanceof Error ? error.message : ""}`,
-          );
-        }
+        await restore(agent.id, snapshot.memory.entries);
       }
     } catch (error) {
       await control.refresh();
@@ -481,9 +505,19 @@ export function AgentSnapshotImport({
       title={result ? "Agent imported" : "Import agent snapshot"}
       actions={
         result ? (
-          <Button disabled={busy} onClick={onClose}>
-            Close
-          </Button>
+          <>
+            {memoryRetry && (
+              <Button
+                disabled={busy || !control.writeSnapshotMemory}
+                onClick={() => void retryMemory()}
+              >
+                Retry memory restore
+              </Button>
+            )}
+            <Button disabled={busy} onClick={onClose}>
+              Close
+            </Button>
+          </>
         ) : (
           <>
             <Button

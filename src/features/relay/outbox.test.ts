@@ -201,6 +201,124 @@ it("failed sends remain retryable, and retry republishes exactly the same signed
   await flush();
   expect(h.outbox.snapshot()).toHaveLength(0);
 });
+it("a failed chat message refused as too old is resent with its delivery time", async () => {
+  const h = setup();
+  await h.open();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  const id = h.send();
+  const original = await h.signNext();
+  h.publications.shift()?.reject(new PublishRejected("offline"));
+  await flush();
+  expect(h.outbox.snapshot()[0]).toMatchObject({ delivery: "failed" });
+  vi.setSystemTime(new Date("2026-01-01T01:00:00Z"));
+  h.outbox.retry(id);
+  await flush();
+  h.publications
+    .shift()
+    ?.reject(
+      new PublishRejected("invalid: event timestamp too far from server time"),
+    );
+  await flush();
+  const [pending] = h.outbox.snapshot();
+  assert.exists(pending);
+  expect(h.outbox.snapshot()).toHaveLength(1);
+  expect(pending.event.id).not.toBe(id);
+  expect(pending.event.created_at).toBe(original.created_at + 3600);
+  expect(pending.event.content).toBe(original.content);
+  const clientId = (event: { tags: string[][] }) =>
+    event.tags.find(([name]) => name === "client-id")?.[1];
+  expect(clientId(pending.event)).not.toBe(clientId(original));
+  const event = await h.signNext();
+  const publication = h.publications.shift();
+  assert.exists(publication);
+  expect(publication.event).toEqual(event);
+  publication.resolve();
+  await flush();
+  h.next().respond([event]);
+  await flush();
+  expect(h.outbox.snapshot()).toHaveLength(0);
+  expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
+    event.id,
+  ]);
+});
+it("a non-chat operation refused as too old keeps its id", async () => {
+  const h = setup();
+  await h.open();
+  const id = h.outbox.send({
+    kind: 7,
+    content: "+",
+    tags: [
+      ["h", "c"],
+      ["e", "a".repeat(64)],
+    ],
+  });
+  const event = await h.signNext();
+  h.publications
+    .shift()
+    ?.reject(
+      new PublishRejected("invalid: event timestamp too far from server time"),
+    );
+  await flush();
+  expect(h.outbox.snapshot()[0]).toMatchObject({
+    event: { id },
+    delivery: "failed",
+  });
+  h.outbox.retry(id);
+  await flush();
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publications[0]?.event).toEqual(event);
+});
+it("an uncertain retry refused as too old is re-stamped once and resent", async () => {
+  const storage = memoryStorage();
+  const first = setup(storage);
+  const id = first.send();
+  await first.signNext();
+  first.dispose();
+  const h = setup(storage);
+  expect(h.outbox.snapshot()[0]).toMatchObject({ delivery: "unknown" });
+  h.outbox.retry(id);
+  await flush();
+  const stale = h.publications.shift();
+  assert.exists(stale);
+  expect(stale.event.id).toBe(id);
+  stale.reject(
+    new PublishRejected("invalid: event timestamp too far from server time"),
+  );
+  await flush();
+  const [copy] = h.outbox.snapshot();
+  assert.exists(copy);
+  expect(h.outbox.snapshot()).toHaveLength(1);
+  expect(copy.event.id).not.toBe(id);
+  expect(copy.delivery).toBe("sending");
+  await h.signNext();
+  const again = h.publications.shift();
+  assert.exists(again);
+  expect(again.event.id).toBe(copy.event.id);
+  // A fresh stamp refused again means a clock problem: stop and show it.
+  again.reject(
+    new PublishRejected("invalid: event timestamp too far from server time"),
+  );
+  await flush();
+  expect(h.publications).toHaveLength(0);
+  expect(h.outbox.snapshot()).toMatchObject([
+    {
+      event: { id: copy.event.id },
+      delivery: "failed",
+      error: "invalid: event timestamp too far from server time",
+    },
+  ]);
+  expect((await storage.load()).map((item) => item.event.id)).toEqual([
+    copy.event.id,
+  ]);
+  // Retrying by the caller's original id reaches the copy and stamps it anew.
+  h.outbox.retry(id);
+  await flush();
+  const [fresh] = h.outbox.snapshot();
+  assert.exists(fresh);
+  expect(fresh.event.id).not.toBe(copy.event.id);
+  expect(fresh.delivery).toBe("sending");
+});
 it("persists before publish, restores uncertain writes without auto-sending, and retries using the same event ID", async () => {
   const storage = memoryStorage();
   const first = setup(storage);

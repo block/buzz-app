@@ -16,6 +16,19 @@ import { deferred } from "../builderlab/test-helpers";
 
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (
+        _name: string,
+        options: { signal: AbortSignal },
+        work: () => Promise<void>,
+      ) => {
+        options.signal.throwIfAborted();
+        return work();
+      },
+    },
+  });
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
 });
 afterEach(async () => {
@@ -23,6 +36,7 @@ afterEach(async () => {
   for (const dispose of cleanups.splice(0).reverse()) await dispose();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  Reflect.deleteProperty(navigator, "locks");
 });
 function navigationFixture() {
   const open = vi.fn(async () => ({ status: "opened" }));

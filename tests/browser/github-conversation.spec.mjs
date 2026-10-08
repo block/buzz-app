@@ -16,6 +16,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   context,
   app,
 }, testInfo) => {
+  // Fix the page's clock near the fixture dates. Relative dates ("6 days
+  // ago" vs "on Oct 1") change header wrapping, which the layout checks
+  // below measure.
+  await page.clock.install({ time: new Date("2026-10-02T12:00:00Z") });
   const requests = [];
   // Exercise browser menu wiring without writing to the machine's clipboard.
   await page.addInitScript(() => {

@@ -47,6 +47,7 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
+bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/projects/       repository/project pages, issue/PR details and Git views
 features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
@@ -113,9 +114,9 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 22 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+All 24 plugins are bundled. **Channels is the only required plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Channel Usage, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
 Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
@@ -136,6 +137,21 @@ GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
+
+### Optional channel menu panels
+
+A panel can register `channelMenu: { label, eligible(channel, session) }` for
+placement in Channels → Channel actions. Channels owns the menu, selected channel,
+tab geometry, focus, and close behavior; it opens the **exact active contribution**
+without resolving a target matcher. Eligibility is evaluated again at activation
+against the current connected session, selected non-cached channel and membership.
+Disabling or replacing a plugin retires its open tab; a channel change or loss of
+eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
+stale tab. Eligibility and `channelContext` are presentation, **not authority**:
+the panel must independently verify access before reading any sensitive data and
+fence asynchronous reads on revocation. Channel Usage owns this panel and its
+archive projection; the session continues to own archive capture, access and
+retention. Plugin enablement controls visibility without changing capture settings.
 
 ### Optional channel templates and Settings cards
 

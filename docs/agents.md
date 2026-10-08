@@ -728,3 +728,36 @@ status. Native cards keep their controls. Other known identities appear in a
 read-only section. Each card offers its own Import; the separate installation
 browser appears only for repair.
 No keys, config, memory, membership, or runtime state are changed by discovery.
+
+### Channel session usage
+
+The Usage tab reads saved kind-44200 metrics from the current account/community's
+host archive. Its strip and detail are **channel-associated session**
+usage, not thread attribution or context-window capacity. Each signed agent key
+and reported harness session remains separate; missing session IDs are individual
+unidentified records. The latest cumulative snapshot is selected by turn sequence;
+turn deltas are shown only when reliable. Unknown counters are not zero and cache
+counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
+
+The Usage tab's agent dropdown shows each agent's latest total or session count;
+selecting an agent reveals an aggregate of the latest trustworthy cumulative
+snapshot from each of its sessions. Counters missing in any session remain unknown
+rather than silently understating the total. The outlined Session dropdown then
+selects one session for provenance and turn detail without filling the pane with
+session buttons. The aggregate may cover other threads and is limited to loaded
+archive history.
+
+The channel's **Channel actions → View channel usage** item opens a dedicated
+**Usage** tab in the channel's side pane. It is available only while this
+account has positive access to the current channel and the default-on Channel Usage
+plugin is enabled under Settings → Plugins. Closing the tab unmounts its
+archive reader; disabling the plugin removes the tab and stops reads. It
+does not change metric capture or retention. Opening the Usage tab reads archive
+pages automatically until exhaustion or the 2,000-record limit; an early page
+without channel matches does not prove the archive has none. **Refresh** starts
+a new scan from the newest page; neither action fetches relay history. The client
+retains at most 2,000 decoded records while this tab lives and fences late reads
+on channel/access changes. Saved metrics remain
+subject to the independent 90-day/byte eviction policy above, so loaded history
+is never a completeness guarantee. Restored usage is display-only and cannot
+establish working, typing, or online status.

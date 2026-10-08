@@ -25,6 +25,8 @@ import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
 import channelsManifest from "./channels/manifest.json";
+import usageManifest from "./channel-usage/manifest.json";
+import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
@@ -115,6 +117,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
     enabledByDefault: true,
   },
   {

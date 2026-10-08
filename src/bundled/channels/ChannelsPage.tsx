@@ -497,8 +497,15 @@ function ChannelWorkspace({
     committedVisit.current = { currentId, queries };
   }, [currentId, queries]);
   const tabState = useChannelTabState(queries, currentId);
-  const { thread, setThread, settings, setSettings, entries, setEntries } =
-    tabState;
+  const {
+    thread,
+    setThread,
+    settings,
+    setSettings,
+    entries,
+    setEntries,
+    retireMenuEntries,
+  } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -784,9 +791,19 @@ function ChannelWorkspace({
     current?.id,
     panels,
   ]);
+  // Menu panels belong to one visit. Retire only this visit's keyed entries.
+  useEffect(() => {
+    if (!currentId) return;
+    return () => retireMenuEntries();
+  }, [currentId, retireMenuEntries]);
   const panelTabs = entries.filter(
     (entry) =>
       available.includes(entry.panel) &&
+      (!entry.panel.channelMenu ||
+        (current &&
+          current.id === entry.channelId &&
+          !cached &&
+          entry.panel.channelMenu.eligible(current, queries))) &&
       (!entry.channelContext ||
         (current &&
           !current.readOnly &&
@@ -1562,6 +1579,44 @@ function ChannelWorkspace({
                           setSettings({ channelId: currentId });
                         }}
                         openCanvas={openCanvas}
+                        menuPanels={
+                          current && !cached
+                            ? available.filter((panel) =>
+                                panel.channelMenu?.eligible(current, queries),
+                              )
+                            : []
+                        }
+                        openMenuPanel={(panel) => {
+                          const connection = relay.snapshot();
+                          const channel = queries.channels
+                            .list()
+                            .channels.find((item) => item.id === currentId);
+                          if (
+                            connection.status !== "ready" ||
+                            connection.cached ||
+                            connection.session !== queries ||
+                            !drawerContext ||
+                            drawerContext.channelId !== channel?.id ||
+                            !channel ||
+                            channel.cached ||
+                            channel.readOnly ||
+                            !channel.members?.includes(queries.viewer ?? "") ||
+                            !panels.snapshot().includes(panel) ||
+                            !panel.channelMenu?.eligible(channel, queries)
+                          )
+                            return;
+                          drawer.close();
+                          panelTrigger.current = settingsTrigger.current;
+                          open(
+                            {
+                              panel,
+                              channelId: channel.id,
+                              target: channel.id,
+                              channelContext: drawerContext,
+                            },
+                            true,
+                          );
+                        }}
                       />
                       {current && (
                         <IconButton

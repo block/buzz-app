@@ -3,6 +3,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RegisteredPanel } from "../../features/panels/service";
 import {
   TerminalWindowIcon,
+  InfoIcon,
   ListChecksIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -13,7 +14,9 @@ import styles from "./ChannelTabs.module.css";
 // These existing channel tools accept their context from the host; arbitrary
 // target-based contributions still open through their own links.
 export function channelToolIcon(panel: RegisteredPanel) {
-  return panel.pluginId === "buzz.terminal" ? (
+  return panel.channelMenu ? (
+    <InfoIcon size="1rem" />
+  ) : panel.pluginId === "buzz.terminal" ? (
     <TerminalWindowIcon size="1rem" />
   ) : (
     <ListChecksIcon size="1rem" />

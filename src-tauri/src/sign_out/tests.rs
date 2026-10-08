@@ -602,6 +602,60 @@ fn kept_agents_keep_only_their_list_settings_and_keys() {
         ]
     );
     assert_eq!(fs::read(controller.join("agents.json")).unwrap(), b"agents");
+    assert_eq!(fs::read(controller.join("defaults.json")).unwrap(), b"x");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_kept_registry_stops_the_wipe_and_deletes_nothing_through_it() {
+    let (dir, paths) = fixture();
+    let controller = paths.app_data.join(KEPT);
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let files = [
+        ("agents.json", "a"),
+        ("defaults.json", "d"),
+        ("sentinel", "s"),
+    ];
+    for (name, body) in files {
+        fs::write(outside.join(name), body).unwrap();
+    }
+    fs::remove_dir_all(&controller).unwrap();
+    std::os::unix::fs::symlink(&outside, &controller).unwrap();
+    mark(&paths, true, false);
+    let result = finish_pending(&paths, no_agents, || panic!("the human key stays"));
+    assert_eq!(result, Err(FAILED.to_owned()));
+    assert!(paths.marker.exists());
+    for (name, body) in files {
+        assert_eq!(fs::read(outside.join(name)).unwrap(), body.as_bytes());
+    }
+    // A real registry in its place lets the retry finish.
+    fs::remove_file(&controller).unwrap();
+    fs::create_dir(&controller).unwrap();
+    fs::write(controller.join("agents.json"), "agents").unwrap();
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert!(!paths.marker.exists());
+    assert_eq!(fs::read(controller.join("agents.json")).unwrap(), b"agents");
+    assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"s");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_wipe_folder_or_trash_stops_the_wipe() {
+    for linked in ["webkit", "webkit.sign-out-trash", "app.sign-out-trash"] {
+        let (dir, paths) = fixture();
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), "s").unwrap();
+        let link = dir.path().join(linked);
+        let _ = fs::remove_dir_all(&link);
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        mark(&paths, true, false);
+        let result = finish_pending(&paths, no_agents, || panic!("the human key stays"));
+        assert_eq!(result, Err(FAILED.to_owned()), "{linked}");
+        assert!(paths.marker.exists());
+        assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"s");
+    }
 }
 
 #[test]
@@ -641,7 +695,7 @@ fn preparation_commits_the_marker_before_stopping_agents() {
     let (_dir, paths) = fixture();
     let marker = paths.marker.clone();
     let stopped = Cell::new(false);
-    run(prepare(&paths.marker, choices(true), || {
+    run(prepare(&paths, choices(true), || {
         assert!(marker.exists());
         stopped.set(true);
         async { Ok(()) }
@@ -652,10 +706,10 @@ fn preparation_commits_the_marker_before_stopping_agents() {
 
 #[test]
 fn a_marker_write_failure_stops_nothing() {
-    let (dir, _) = fixture();
-    let marker = dir.path().join("missing-folder/marker");
+    let (dir, mut paths) = fixture();
+    paths.marker = dir.path().join("missing-folder/marker");
     let failure = run(prepare(
-        &marker,
+        &paths,
         choices(true),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -666,7 +720,7 @@ fn a_marker_write_failure_stops_nothing() {
 #[test]
 fn a_shutdown_failure_keeps_the_marker_and_asks_to_reopen() {
     let (_dir, paths) = fixture();
-    let failure = run(prepare(&paths.marker, choices(false), || async {
+    let failure = run(prepare(&paths, choices(false), || async {
         Err("controller stuck".to_owned())
     }))
     .unwrap_err();
@@ -678,6 +732,23 @@ fn a_shutdown_failure_keeps_the_marker_and_asks_to_reopen() {
         }
     );
     assert!(paths.marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_wipe_folder_refuses_before_any_marker() {
+    let (dir, paths) = fixture();
+    let controller = paths.app_data.join(KEPT);
+    fs::remove_dir_all(&controller).unwrap();
+    std::os::unix::fs::symlink(dir.path(), &controller).unwrap();
+    let failure = run(prepare(
+        &paths,
+        choices(false),
+        || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
+    ))
+    .unwrap_err();
+    assert_eq!(failure, refuse(LINKED));
+    assert!(!paths.marker.exists());
 }
 
 #[test]

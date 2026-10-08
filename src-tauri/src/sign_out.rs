@@ -20,6 +20,7 @@ const SIGNING_OUT: &str = "Buzz is signing out in another window. Open Buzz agai
 const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try again.";
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
 const ALREADY: &str = "Buzz is already signing out.";
+const LINKED: &str = "Wipe is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
 const KEPT: &str = "agent-controller";
 /// What a kept agent needs to be identified and start again: the agent list
 /// with each agent's settings, and the shared agent defaults. Its keys live in
@@ -83,6 +84,40 @@ impl Paths {
         std::iter::once((self.app_data.as_path(), kept))
             .chain(self.others.iter().map(|path| (path.as_path(), None)))
             .collect()
+    }
+    /// The wipe never deletes through a link: every folder it moves, opens or
+    /// removes, its trash and the kept registry must be a real folder or absent.
+    fn unlinked(&self, choices: Choices) -> std::io::Result<()> {
+        if choices.remove_agents {
+            real_dir(&self.app_data.join(KEPT))?;
+        }
+        if !choices.wipe {
+            return Ok(());
+        }
+        for (path, kept) in self.targets(choices) {
+            for path in [path.to_owned(), trash(path)] {
+                if real_dir(&path)? {
+                    if let Some(child) = kept {
+                        real_dir(&path.join(child))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether `path` is a real folder; absent is `false`. A link, anything else
+/// or failing to look is an error, never absence.
+fn real_dir(path: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+        Ok(meta) if meta.is_dir() => Ok(true),
+        Ok(_) => Err(std::io::Error::other(format!(
+            "{} is a link or not a folder",
+            path.display()
+        ))),
     }
 }
 
@@ -278,11 +313,10 @@ fn clear(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
 }
 
 fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
-    let entries = match fs::read_dir(path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        other => other?,
-    };
-    for entry in entries {
+    if !real_dir(path)? {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path)? {
         let entry = entry?;
         if keep.iter().any(|name| entry.file_name() == *name) {
             continue;
@@ -324,6 +358,9 @@ fn finish(
     // Agent keys go first, while their registry is still in place; nothing is
     // moved until every key is gone, so a registry confirmed absent means it's done.
     // Failing to look is not absence: stop before moving anything.
+    paths
+        .unlinked(choices)
+        .map_err(|error| format!("check wipe folders: {error}"))?;
     let registry = paths.app_data.join(KEPT);
     if choices.remove_agents
         && registry
@@ -397,14 +434,18 @@ fn reopen() -> Failure {
 
 /// Commit intent, then stop agents. Deleting is left to the next launch.
 async fn prepare<S>(
-    marker: &Path,
+    paths: &Paths,
     choices: Choices,
     shutdown: impl FnOnce() -> S,
 ) -> Result<(), Failure>
 where
     S: Future<Output = Result<(), String>>,
 {
-    write_marker(marker, choices).map_err(|error| {
+    if let Err(error) = paths.unlinked(choices) {
+        eprintln!("buzz: sign out refused: {error}");
+        return Err(refuse(LINKED));
+    }
+    write_marker(&paths.marker, choices).map_err(|error| {
         eprintln!("buzz: could not write sign-out marker: {error}");
         refuse(NOT_PREPARED)
     })?;
@@ -462,7 +503,7 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
     instance.begin()?;
     let stop = app.clone();
     let result = prepare(
-        &paths.marker,
+        &paths,
         Choices {
             wipe,
             remove_agents,

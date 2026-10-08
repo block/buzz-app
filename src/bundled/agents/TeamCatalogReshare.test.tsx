@@ -35,7 +35,11 @@ import { createOutbox } from "../../features/relay/outbox";
 import { relayPartition } from "../../features/relay/partition";
 import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
-import { TeamShareDialog } from "./CommunityCatalog";
+import { TeamDirectShare } from "./DirectShare";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+vi.mock("../../features/direct-messages/RecipientPicker", () => ({
+  RecipientPicker: () => null,
+}));
 
 // Member creation is the importer's own native boundary; everything that
 // carries team metadata — preview, receipt, portable save — runs for real.
@@ -147,21 +151,26 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
   });
   owners.push(catalog, { dispose: () => writes.dispose() });
   const session = {
+    viewer: adopter.pubkey,
+    outbox: writes.outbox,
+    directMessages: { delivery: () => "unknown" },
     communityCatalog: catalog.queries,
     scope: relayPartition(relayOrigin(copy.relayUrl), adopter.pubkey),
   } as unknown as RelaySession;
   if (!saved) throw new Error("import saved no portable team");
   render(
-    <TeamShareDialog
-      session={session}
-      control={control}
-      kit={kit}
-      team={{
-        ...saved.team,
-        portable: { revision: imported.id } as NonNullable<Team["portable"]>,
-      }}
-      onClose={() => {}}
-    />,
+    <ToastProvider>
+      <TeamDirectShare
+        session={session}
+        control={control}
+        kit={kit}
+        team={{
+          ...saved.team,
+          portable: { revision: imported.id } as NonNullable<Team["portable"]>,
+        }}
+        onClose={() => {}}
+      />
+    </ToastProvider>,
   );
   const share = await screen.findByRole("switch", {
     name: /Share to catalog/,
@@ -233,12 +242,15 @@ function pendingShare(defaultSessionPolicy: "channel" | "thread" = "channel") {
   });
   owners.push(catalog, { dispose: () => writes.dispose() });
   const session = {
+    viewer: owner.pubkey,
+    outbox: writes.outbox,
+    directMessages: { delivery: () => "unknown" },
     communityCatalog: catalog.queries,
     scope: relayPartition(relayOrigin(member.relayUrl), owner.pubkey),
   } as unknown as RelaySession;
   const onClose = vi.fn();
   const dialog = (
-    <TeamShareDialog
+    <TeamDirectShare
       session={session}
       control={control}
       kit={{ loadTeam } as unknown as ChannelKit}
@@ -284,11 +296,12 @@ async function startShare(loadTeam: ReturnType<typeof vi.fn>) {
 it("keeps the share dialog open until a pending portable read publishes", async () => {
   const user = userEvent.setup();
   const test = pendingShare();
-  render(test.dialog);
+  render(<ToastProvider>{test.dialog}</ToastProvider>);
   await startShare(test.loadTeam);
 
   const close = screen.getByRole("button", { name: "Close" });
   expect(close).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Export team" })).toBeDisabled();
   await user.keyboard("{Escape}");
   await user.click(close);
   expect(test.onClose).not.toHaveBeenCalled();
@@ -307,7 +320,7 @@ it("keeps the share dialog open until a pending portable read publishes", async 
 
 it("shares an inheriting member with the agent defaults it runs with", async () => {
   const test = pendingShare("thread");
-  render(test.dialog);
+  render(<ToastProvider>{test.dialog}</ToastProvider>);
   await startShare(test.loadTeam);
   test.settle().resolve({ team: { name: "Crew" } });
   await waitFor(async () => {
@@ -322,7 +335,7 @@ it("shares an inheriting member with the agent defaults it runs with", async () 
 it("shows a failed portable read and lets the dialog close without publishing", async () => {
   const user = userEvent.setup();
   const test = pendingShare();
-  render(test.dialog);
+  render(<ToastProvider>{test.dialog}</ToastProvider>);
   await startShare(test.loadTeam);
 
   test.settle().reject(new Error("Saved team is unreadable"));
@@ -339,7 +352,7 @@ it("shows a failed portable read and lets the dialog close without publishing", 
 
 it("does not publish a projection that settles after the dialog is gone", async () => {
   const test = pendingShare();
-  const view = render(test.dialog);
+  const view = render(<ToastProvider>{test.dialog}</ToastProvider>);
   await startShare(test.loadTeam);
 
   const releasePreview = test.holdPreview();

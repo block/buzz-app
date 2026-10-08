@@ -281,6 +281,22 @@ async function portableTeamText(
   return { description, instructions };
 }
 
+/** Complete catalog projection shared by the catalog and direct-share dialogs. */
+export async function buildTeamCatalogContent(
+  session: RelaySession,
+  control: AgentControl,
+  kit: Pick<ChannelKit, "loadTeam">,
+  team: Team,
+) {
+  const text = await portableTeamText(kit, control, team);
+  const data = control.snapshot().data;
+  return teamCatalogContent(
+    { ...team, ...text },
+    sameCommunityAgents(data?.agents ?? [], session.scope),
+    data?.defaultSettings?.sessionPolicy,
+  );
+}
+
 /** A saved team's catalog switch. Its members are projected from this
  * community's local agent definitions when sharing, never from relay data. */
 export function TeamShareDialog({
@@ -313,15 +329,7 @@ export function TeamShareDialog({
         d={team.id}
         name={team.name}
         description={teamShareDescription}
-        content={async () => {
-          const text = await portableTeamText(kit, control, team);
-          const data = control.snapshot().data;
-          return teamCatalogContent(
-            { ...team, ...text },
-            sameCommunityAgents(data?.agents ?? [], session.scope),
-            data?.defaultSettings?.sessionPolicy,
-          );
-        }}
+        content={() => buildTeamCatalogContent(session, control, kit, team)}
       />
     </Dialog>
   );
@@ -352,6 +360,17 @@ export function addedCopies(
   } catch {
     return new Map();
   }
+}
+export function catalogAlreadyAdded(
+  session: RelaySession,
+  publication: Publication,
+  hasCopy: (id: string) => boolean,
+): boolean {
+  if (publication.owner === session.viewer) return true;
+  const copy = addedCopies(session.scope, session.viewer ?? "").get(
+    coordinate(publication),
+  );
+  return copy !== undefined && hasCopy(copy);
 }
 export function rememberAdded(
   scope: string,
@@ -407,7 +426,7 @@ export async function adoptCatalogTeam(
   return result.id;
 }
 
-/** The header action that opens the catalog. An added agent goes through the
+/** The Add dialog's catalog browser. An added agent goes through the
  * ordinary create flow, so its copy has a fresh identity and local keys. */
 export function CatalogLauncher({
   session,
@@ -415,7 +434,11 @@ export function CatalogLauncher({
   hasAgent,
   control,
   destination,
+  open,
+  onClose,
 }: {
+  open: boolean;
+  onClose(): void;
   session: RelaySession;
   addAgent:
     | ((settings: CatalogSeed, onCreated: (agent: AgentView) => void) => void)
@@ -426,7 +449,6 @@ export function CatalogLauncher({
   control?: AgentControl | undefined;
   destination?: string | undefined;
 }) {
-  const [open, setOpen] = useState(false);
   if (!session.communityCatalog.available()) return null;
   const kit = session.channelKit;
   const owner = session.viewer;
@@ -437,47 +459,35 @@ export function CatalogLauncher({
         (entry) =>
           entry.record.value.type === "team" && entry.record.value.id === id,
       );
-  return (
-    <>
-      <Button
-        variant="subtle"
-        size="sm"
-        aria-haspopup="dialog"
-        onClick={() => setOpen(true)}
-      >
-        Choose from catalog
-      </Button>
-      {open && (
-        <CommunityCatalogDialog
-          session={session}
-          onClose={() => setOpen(false)}
-          hasCopy={(publication, id) =>
-            publication.kind === AGENT_CATALOG_KIND ? hasAgent(id) : hasTeam(id)
-          }
-          onAddTeam={
-            control?.previewTeam && kit.available && destination && owner
-              ? (listed) =>
-                  adoptCatalogTeam(session, control, destination, owner, listed)
-              : undefined
-          }
-          onAddAgent={
-            addAgent &&
-            ((publication) => {
-              setOpen(false);
-              addAgent(catalogSeed(publication.agent), (agent) =>
-                rememberAdded(
-                  session.scope,
-                  session.viewer ?? "",
-                  publication,
-                  agent.id,
-                ),
-              );
-            })
-          }
-        />
-      )}
-    </>
-  );
+  return open ? (
+    <CommunityCatalogDialog
+      session={session}
+      onClose={onClose}
+      hasCopy={(publication, id) =>
+        publication.kind === AGENT_CATALOG_KIND ? hasAgent(id) : hasTeam(id)
+      }
+      onAddTeam={
+        control?.previewTeam && kit.available && destination && owner
+          ? (listed) =>
+              adoptCatalogTeam(session, control, destination, owner, listed)
+          : undefined
+      }
+      onAddAgent={
+        addAgent &&
+        ((publication) => {
+          onClose();
+          addAgent(catalogSeed(publication.agent), (agent) =>
+            rememberAdded(
+              session.scope,
+              session.viewer ?? "",
+              publication,
+              agent.id,
+            ),
+          );
+        })
+      }
+    />
+  ) : null;
 }
 
 /** Browse and preview shared agents and teams. Preview renders plain data
@@ -502,7 +512,6 @@ export function CommunityCatalogDialog({
   const resolve = useIdentityNames(session.names);
   const scope = session.scope;
   const viewer = session.viewer ?? "";
-  const [added, setAdded] = useState(() => addedCopies(scope, viewer));
   const [selected, setSelected] = useState<string>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string>();
@@ -510,10 +519,8 @@ export function CommunityCatalogDialog({
   const current =
     entries.find((entry) => coordinate(entry) === selected) ?? entries[0];
   const own = (entry: Publication) => entry.owner === session.viewer;
-  const isAdded = (entry: Publication) => {
-    const copy = added.get(coordinate(entry));
-    return own(entry) || (copy !== undefined && hasCopy(entry, copy));
-  };
+  const isAdded = (entry: Publication) =>
+    catalogAlreadyAdded(session, entry, (id) => hasCopy(entry, id));
   const owner = (entry: Publication) =>
     own(entry) ? "You" : resolve(entry.owner, "Community member");
   const picture = (url?: string) => avatarMedia(url, session.media);
@@ -525,7 +532,6 @@ export function CommunityCatalogDialog({
     try {
       const copy = await onAddTeam(team);
       rememberAdded(scope, viewer, team, copy);
-      setAdded(addedCopies(scope, viewer));
     } catch (problem) {
       setError(message(problem));
     } finally {
@@ -723,6 +729,82 @@ export function CommunityCatalogDialog({
         </div>
       )}
     </Dialog>
+  );
+}
+
+/** The existing catalog preview is reusable inside the Add surface. */
+export function AgentCatalogPreview({
+  publication,
+  session,
+}: {
+  publication: AgentPublication;
+  session: RelaySession;
+}) {
+  const agent = publication.agent;
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center gap-3">
+        <Avatar
+          size="large"
+          src={avatarMedia(agent.avatarUrl, session.media)}
+          alt=""
+          fallback={agent.displayName}
+        />
+        <div>
+          <h3 className="m-0 text-heading">{agent.displayName}</h3>
+          <AddedBy
+            label={
+              publication.owner === session.viewer
+                ? "You"
+                : publication.owner.slice(0, 12)
+            }
+          />
+        </div>
+      </div>
+      {agent.description && (
+        <p className="m-0 text-body-sm text-secondary">{agent.description}</p>
+      )}
+      <Metadata agent={agent} />
+      <div className="flex flex-col gap-2">
+        <h4 className="m-0 text-label">Agent instructions</h4>
+        <Instructions text={agent.systemPrompt} />
+      </div>
+    </div>
+  );
+}
+
+export function TeamCatalogPreview({
+  publication,
+  session,
+}: {
+  publication: TeamPublication;
+  session: RelaySession;
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h3 className="m-0 text-heading">{publication.name}</h3>
+        {publication.description && <p>{publication.description}</p>}
+      </div>
+      {publication.instructions && (
+        <div>
+          <h4 className="text-label">Team instructions</h4>
+          <Instructions text={publication.instructions} />
+        </div>
+      )}
+      <div>
+        <h4 className="text-label">{publication.members.length} members</h4>
+        <ul className="m-0 list-none p-0">
+          {publication.members.map((member) => (
+            <Member
+              key={member.memberKey}
+              member={member}
+              picture={avatarMedia(member.avatarUrl, session.media)}
+            />
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 

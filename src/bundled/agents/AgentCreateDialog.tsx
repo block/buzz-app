@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   agentFailureReason,
@@ -9,6 +9,22 @@ import {
   type AgentView,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { PlusIcon } from "../../shared/design-system/icons";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
+import type { RelaySession } from "../../features/relay/session";
+import type { AgentPublication } from "../../features/agents/catalog-protocol";
+import {
+  unsupportedTransport,
+  unsupportedTransportMessage,
+} from "../../features/agents/catalog-protocol";
+import {
+  AgentCatalogPreview,
+  catalogAlreadyAdded,
+  catalogSeed,
+  rememberAdded,
+} from "./CommunityCatalog";
 import { AgentSettingsFields } from "./AgentSettingsFields";
 import {
   agentDraft,
@@ -100,9 +116,13 @@ export function AgentCreateDialog({
   onClose,
   onCreated,
   onOpenHarnesses,
+  onImport,
+  catalogSession,
 }: {
   control: AgentControl;
   onOpenHarnesses?: (() => void) | undefined;
+  onImport?: (() => void) | undefined;
+  catalogSession?: RelaySession | undefined;
   state: AgentControlState;
   destination: string;
   owner: string;
@@ -112,6 +132,32 @@ export function AgentCreateDialog({
   /** The new identity exists, even if starting or profile setup fails later. */
   onCreated?: ((agent: AgentView) => void) | undefined;
 }) {
+  const catalog = catalogSession?.communityCatalog;
+  const catalogAvailable =
+    !!catalog?.available() && !source && !initialSettings;
+  useEffect(() => {
+    if (catalogAvailable) return catalog?.retain();
+  }, [catalog, catalogAvailable]);
+  const catalogEntries = useSyncExternalStore(
+    catalog?.subscribe ?? emptySubscribe,
+    catalog?.snapshot ?? emptyCatalogSnapshot,
+    catalog?.snapshot ?? emptyCatalogSnapshot,
+  );
+  const [selectedCoordinate, setSelectedCoordinate] = useState<string>();
+  const selectedPublication = catalogEntries.agents.find(
+    (entry) => `${entry.owner}:${entry.d}` === selectedCoordinate,
+  );
+  const alreadyAdded =
+    !!selectedPublication &&
+    !!catalogSession &&
+    catalogAlreadyAdded(
+      catalogSession,
+      selectedPublication,
+      (id) =>
+        !!control.snapshot().data?.agents.some((agent) => agent.id === id),
+    );
+  const transport =
+    selectedPublication && unsupportedTransport(selectedPublication);
   const [requestId] = useState(() => crypto.randomUUID());
   const [draft, setDraft] = useState<AgentDraft>(() => {
     const initial = source
@@ -146,10 +192,14 @@ export function AgentCreateDialog({
     !state.data?.runtimeAvailable && (!saved || nextStep === "start");
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
-  const create = async () => {
+  const create = async (publication?: AgentPublication) => {
     if (
       blocked ||
       runtimeBlocked ||
+      (publication &&
+        (!catalogSession ||
+          selectedPublication?.eventId !== publication.eventId ||
+          alreadyAdded)) ||
       (!saved && (!available || !control.create))
     )
       return;
@@ -161,7 +211,14 @@ export function AgentCreateDialog({
       if (!agent) {
         let edit: ReturnType<typeof agentEdit>;
         try {
-          edit = agentEdit(draft);
+          edit = agentEdit(
+            publication
+              ? {
+                  ...seededDraft(state, catalogSeed(publication.agent)),
+                  environment: { BUZZ_ACP_AGENTS: "10" },
+                }
+              : draft,
+          );
         } catch (problem) {
           if (mounted.current)
             setError(
@@ -175,6 +232,13 @@ export function AgentCreateDialog({
         if (!control.create) return;
         agent = await control.create(requestId, destination, owner, edit);
         onCreated?.(agent);
+        if (publication && catalogSession)
+          rememberAdded(
+            catalogSession.scope,
+            catalogSession.viewer ?? "",
+            publication,
+            agent.id,
+          );
       }
       const created = agent;
       if (!saved && mounted.current) {
@@ -274,7 +338,7 @@ export function AgentCreateDialog({
                 ? `Duplicate ${source.name}`
                 : cloned
                   ? "Clone agent"
-                  : "Create agent"}
+                  : "Add agent"}
             </Dialog.Title>
           </header>
           <Dialog.Description className="buzz-dialog-description">
@@ -290,98 +354,240 @@ export function AgentCreateDialog({
               membership are not copied. The source stays unchanged.
             </p>
           )}
-          <form
-            className="buzz-dialog-body space-y-section-gap"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void create();
-            }}
+          <div
+            className={
+              onImport || catalogAvailable ? "agent-add-layout" : undefined
+            }
           >
-            <AgentSettingsFields
-              draft={draft}
-              control={control}
-              state={state}
-              disabled={blocked || !!saved}
-              onOpenHarnesses={onOpenHarnesses}
-              discardEdits={dirty}
-              onChange={(patch) => {
-                setDraft({ ...draft, ...patch });
-                setDirty(true);
-                setError(undefined);
-              }}
-            />
-            {source?.harness.environmentKeys.length ? (
-              <p role="status" className="text-body-sm text-secondary">
-                Re-enter environment values for{" "}
-                {source.harness.environmentKeys.join(", ")}. Saved values cannot
-                be copied into a new identity.
-              </p>
-            ) : null}
-            {!available && (
-              <p role="status">
-                Connect to a community and use a rebuilt desktop app to create
-                an agent.
-              </p>
+            {(onImport || catalogAvailable) && (
+              <nav aria-label="Add agent" className="agent-add-sidebar">
+                <NavigationItem
+                  label="Create agent"
+                  aria-label="Create new agent"
+                  icon={<PlusIcon size={16} />}
+                  selected={!selectedCoordinate}
+                  disabled={busy || !!saved || dirty}
+                  onClick={() => setSelectedCoordinate(undefined)}
+                />
+                {onImport && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || !!saved || dirty}
+                    onClick={onImport}
+                  >
+                    Import
+                  </Button>
+                )}
+                {catalogAvailable && catalogEntries.agents.length > 0 && (
+                  <span className="text-label text-subtle">AGENTS</span>
+                )}
+                {catalogAvailable &&
+                  catalogEntries.agents.map((publication) => (
+                    <NavigationItem
+                      key={publication.eventId}
+                      label={publication.agent.displayName}
+                      icon={
+                        <Avatar
+                          size="small"
+                          src={avatarMedia(
+                            publication.agent.avatarUrl,
+                            catalogSession?.media,
+                          )}
+                          alt=""
+                          fallback={publication.agent.displayName}
+                        />
+                      }
+                      selected={
+                        selectedCoordinate ===
+                        `${publication.owner}:${publication.d}`
+                      }
+                      disabled={busy || !!saved || dirty}
+                      onClick={() =>
+                        setSelectedCoordinate(
+                          `${publication.owner}:${publication.d}`,
+                        )
+                      }
+                    />
+                  ))}
+                {catalogAvailable && catalogEntries.status === "error" && (
+                  <p role="alert">{catalogEntries.error}</p>
+                )}
+              </nav>
             )}
-            {runtimeBlocked && (
-              <p role="alert">
-                This app’s agent runtime is unavailable. Repair or rebuild the
-                desktop app before {saved ? "starting" : "creating"} an agent.
-                {state.data?.runtimeMessage && ` ${state.data.runtimeMessage}`}
-              </p>
-            )}
-            {busy && (
-              <p role="status">
-                {phase === "creating" && "Creating agent…"}
-                {phase === "starting" &&
-                  `${saved?.name ?? draft.name} was created. Starting it…`}
-                {phase === "publishing" &&
-                  `${saved?.name ?? draft.name} was saved. Finishing its profile…`}
-                {phase === "checking" && "Checking agent status…"}
-              </p>
-            )}
-            {saved && !busy && !error && (
-              <p role="status">
-                {nextStep === "start"
-                  ? `${saved.name} was saved. Start it to finish setup.`
-                  : `${saved.name} was saved and started. Finish its profile setup.`}
-              </p>
-            )}
-            {error && <p role="alert">{error}</p>}
-            {state.status === "error" && !busy && (
-              <Button onClick={() => void control.refresh()}>
-                Retry status
-              </Button>
-            )}
-            <div className="buzz-dialog-actions">
-              <Button onClick={onClose}>
-                {busy || saved ? "Close" : "Cancel"}
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={blocked || runtimeBlocked || (!saved && !available)}
+            {selectedCoordinate && catalogSession ? (
+              <section
+                className="agent-catalog-preview"
+                aria-label={
+                  selectedPublication?.agent.displayName ?? "Withdrawn agent"
+                }
               >
-                {busy
-                  ? phase === "starting"
-                    ? "Starting…"
-                    : phase === "publishing"
-                      ? "Finishing…"
-                      : phase === "checking"
-                        ? "Checking…"
-                        : "Creating…"
-                  : saved
-                    ? nextStep === "start"
-                      ? "Start agent"
-                      : "Finish profile"
-                    : cloned
-                      ? "Clone agent"
-                      : "Create agent"}
-              </Button>
-            </div>
-          </form>
+                {selectedPublication ? (
+                  <AgentCatalogPreview
+                    publication={selectedPublication}
+                    session={catalogSession}
+                  />
+                ) : (
+                  <p role="status">
+                    This agent is no longer shared. Select another agent.
+                  </p>
+                )}
+                {transport && (
+                  <p role="note">
+                    {unsupportedTransportMessage(
+                      selectedPublication.agent.displayName,
+                      transport,
+                    )}
+                  </p>
+                )}
+                {error && <p role="alert">{error}</p>}
+                {busy && <p role="status">Adding agent…</p>}
+                <Button
+                  variant="primary"
+                  disabled={
+                    !selectedPublication ||
+                    alreadyAdded ||
+                    !!transport ||
+                    !available ||
+                    blocked ||
+                    runtimeBlocked ||
+                    !!saved
+                  }
+                  onClick={() => {
+                    if (selectedPublication) void create(selectedPublication);
+                  }}
+                >
+                  {alreadyAdded ? "Added to My Agents" : "Add agent"}
+                </Button>
+                <div className="buzz-dialog-actions">
+                  {state.status === "error" && !busy && (
+                    <Button onClick={() => void control.refresh()}>
+                      Retry status
+                    </Button>
+                  )}
+                  <Button onClick={onClose}>Close</Button>
+                  {saved && (
+                    <Button
+                      variant="primary"
+                      disabled={blocked || runtimeBlocked}
+                      onClick={() => void create()}
+                    >
+                      {busy
+                        ? phase === "starting"
+                          ? "Starting…"
+                          : phase === "publishing"
+                            ? "Finishing…"
+                            : "Checking…"
+                        : nextStep === "start"
+                          ? "Start agent"
+                          : "Finish profile"}
+                    </Button>
+                  )}
+                </div>
+              </section>
+            ) : (
+              <form
+                className="buzz-dialog-body space-y-section-gap"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void create();
+                }}
+              >
+                <AgentSettingsFields
+                  draft={draft}
+                  control={control}
+                  state={state}
+                  disabled={blocked || !!saved}
+                  onOpenHarnesses={onOpenHarnesses}
+                  discardEdits={dirty}
+                  onChange={(patch) => {
+                    setDraft({ ...draft, ...patch });
+                    setDirty(true);
+                    setError(undefined);
+                  }}
+                />
+                {source?.harness.environmentKeys.length ? (
+                  <p role="status" className="text-body-sm text-secondary">
+                    Re-enter environment values for{" "}
+                    {source.harness.environmentKeys.join(", ")}. Saved values
+                    cannot be copied into a new identity.
+                  </p>
+                ) : null}
+                {!available && (
+                  <p role="status">
+                    Connect to a community and use a rebuilt desktop app to
+                    create an agent.
+                  </p>
+                )}
+                {runtimeBlocked && (
+                  <p role="alert">
+                    This app’s agent runtime is unavailable. Repair or rebuild
+                    the desktop app before {saved ? "starting" : "creating"} an
+                    agent.
+                    {state.data?.runtimeMessage &&
+                      ` ${state.data.runtimeMessage}`}
+                  </p>
+                )}
+                {busy && (
+                  <p role="status">
+                    {phase === "creating" && "Creating agent…"}
+                    {phase === "starting" &&
+                      `${saved?.name ?? draft.name} was created. Starting it…`}
+                    {phase === "publishing" &&
+                      `${saved?.name ?? draft.name} was saved. Finishing its profile…`}
+                    {phase === "checking" && "Checking agent status…"}
+                  </p>
+                )}
+                {saved && !busy && !error && (
+                  <p role="status">
+                    {nextStep === "start"
+                      ? `${saved.name} was saved. Start it to finish setup.`
+                      : `${saved.name} was saved and started. Finish its profile setup.`}
+                  </p>
+                )}
+                {error && <p role="alert">{error}</p>}
+                {state.status === "error" && !busy && (
+                  <Button onClick={() => void control.refresh()}>
+                    Retry status
+                  </Button>
+                )}
+                <div className="buzz-dialog-actions">
+                  <Button onClick={onClose}>
+                    {busy || saved ? "Close" : "Cancel"}
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={
+                      blocked || runtimeBlocked || (!saved && !available)
+                    }
+                  >
+                    {busy
+                      ? phase === "starting"
+                        ? "Starting…"
+                        : phase === "publishing"
+                          ? "Finishing…"
+                          : phase === "checking"
+                            ? "Checking…"
+                            : "Creating…"
+                      : saved
+                        ? nextStep === "start"
+                          ? "Start agent"
+                          : "Finish profile"
+                        : cloned
+                          ? "Clone agent"
+                          : "Create agent"}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
+
+const emptySubscribe = () => () => {};
+const emptyCatalog = { status: "unavailable" as const, agents: [], teams: [] };
+const emptyCatalogSnapshot = () => emptyCatalog;

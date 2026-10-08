@@ -27,6 +27,7 @@ import { AgentImport } from "./AgentImport";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
 import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
+import { AgentDirectShare } from "./DirectShare";
 import type { RelaySession } from "../../features/relay/session";
 import "./AgentControls.css";
 
@@ -57,6 +58,8 @@ export function AgentControlPanel({
             ) => void)
           | undefined,
         hasAgent: (id: string) => boolean,
+        open: boolean,
+        onClose: () => void,
       ) => ReactNode)
     | undefined;
   resolveName?: ReturnType<typeof useIdentityNames>;
@@ -80,7 +83,7 @@ export function AgentControlPanel({
       source?: ImportSource,
     ) => void,
     onImport: (pubkey: string, source?: ImportSource) => void,
-    onExport: (agent: AgentView) => void,
+    onShare: (agent: AgentView) => void,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
@@ -127,6 +130,7 @@ export function AgentControlPanel({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [importingSnapshot, setImportingSnapshot] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
     if (editTarget) onCloseTarget?.();
@@ -255,53 +259,37 @@ export function AgentControlPanel({
       }}
     />
   ) : null;
-  const createButton = (
-    <div className="flex items-center gap-2">
-      {control.create && (
-        <Button
-          variant="subtle"
-          size="sm"
-          onClick={() => setImportingSnapshot(true)}
-        >
-          Import agent snapshot
-        </Button>
-      )}
-      <Button
-        variant="subtle"
-        size="sm"
-        aria-haspopup="dialog"
-        disabled={localPending}
-        onClick={() =>
+  const headerButtons = (
+    <Button
+      variant="subtle"
+      size="sm"
+      aria-haspopup="dialog"
+      disabled={localPending}
+      onClick={() =>
+        setAdding({ destination: importDestination, owner: createOwner ?? "" })
+      }
+    >
+      <PlusIcon size={16} aria-hidden="true" /> Add agent
+    </Button>
+  );
+  const catalogBrowser = catalog?.(
+    createOwner &&
+      importDestination &&
+      state.data?.createAvailable &&
+      !localPending
+      ? (initialSettings, onCreated) => {
+          setCatalogOpen(false);
           setAdding({
             destination: importDestination,
-            owner: createOwner ?? "",
-          })
+            owner: createOwner,
+            initialSettings,
+            onCreated,
+          });
         }
-      >
-        <PlusIcon size={16} aria-hidden="true" />
-        Create agent
-      </Button>
-    </div>
-  );
-  const headerButtons = (
-    <>
-      {catalog?.(
-        createOwner &&
-          importDestination &&
-          state.data?.createAvailable &&
-          !localPending
-          ? (initialSettings, onCreated) =>
-              setAdding({
-                destination: importDestination,
-                owner: createOwner,
-                initialSettings,
-                onCreated,
-              })
-          : undefined,
-        (id) => !!state.data?.agents.some((agent) => agent.id === id),
-      )}
-      {createButton}
-    </>
+      : undefined,
+    (id) => !!state.data?.agents.some((agent) => agent.id === id),
+    catalogOpen,
+    () => setCatalogOpen(false),
   );
   return (
     <section
@@ -315,6 +303,7 @@ export function AgentControlPanel({
         ) : (
           <div className="flex justify-end gap-2">{headerButtons}</div>
         ))}
+      {catalogOpen && catalogBrowser}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}
@@ -375,7 +364,7 @@ export function AgentControlPanel({
               editable={[agent]}
               onEdit={edit}
               onDuplicate={duplicate}
-              onExport={(agent) => setExporting(agent.id)}
+              onShare={(agent) => setExporting(agent.id)}
               onDelete={control.delete ? remove : undefined}
             />
           ))}
@@ -505,14 +494,25 @@ export function AgentControlPanel({
       )}
       {state.data?.agents.map((agent) =>
         agent.id === exporting ? (
-          <AgentSnapshotExport
-            key={agent.id}
-            agent={agent}
-            defaultSessionPolicy={state.data?.defaultSettings?.sessionPolicy}
-            session={session}
-            destination={importDestination}
-            onClose={() => setExporting(null)}
-          />
+          session ? (
+            <AgentDirectShare
+              key={agent.id}
+              agent={agent}
+              name={label(agent)}
+              control={control}
+              session={session}
+              open
+              onClose={() => setExporting(null)}
+            />
+          ) : (
+            <AgentSnapshotExport
+              key={agent.id}
+              agent={agent}
+              defaultSessionPolicy={state.data?.defaultSettings?.sessionPolicy}
+              destination={importDestination}
+              onClose={() => setExporting(null)}
+            />
+          )
         ) : null,
       )}
       {adding && (
@@ -528,6 +528,15 @@ export function AgentControlPanel({
           onClose={() => setAdding(null)}
           onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
+          catalogSession={session}
+          onImport={
+            control.create && !adding.source && !adding.initialSettings
+              ? () => {
+                  setAdding(null);
+                  setImportingSnapshot(true);
+                }
+              : undefined
+          }
         />
       )}
       {editing && (

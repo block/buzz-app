@@ -186,6 +186,8 @@ it("shows preview rejection beside import and clears it on retry", async () => {
   const file = new File(['{"broken":true}'], "team.json", {
     type: "application/json",
   });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   fireEvent.change(input, { target: { files: [file] } });
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Invalid team snapshot",
@@ -197,12 +199,25 @@ it("shows preview rejection beside import and clears it on retry", async () => {
     team: { name: "Recovered" },
     members: [],
   });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   fireEvent.change(input, { target: { files: [file] } });
   expect(
     await screen.findByRole("dialog", { name: /Import team snapshot/i }),
   ).toBeInTheDocument();
   expect(previewTeam).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("opens team creation directly without a chooser", async () => {
+  const user = userEvent.setup();
+  fixture(false, [], "ready", true, "team");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const dialog = screen.getByRole("dialog", { name: "Add team" });
+  expect(
+    within(dialog).getByRole("button", { name: "Save team" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeVisible();
 });
 
 it("delete cancellation leaves the page and saved data intact", async () => {

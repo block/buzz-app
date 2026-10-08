@@ -18,6 +18,18 @@ import type {
   Template,
 } from "../../features/channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { PlusIcon } from "../../shared/design-system/icons";
+import type { TeamPublication } from "../../features/agents/catalog-protocol";
+import {
+  unsupportedTransport,
+  unsupportedTransportMessage,
+} from "../../features/agents/catalog-protocol";
+import {
+  TeamCatalogPreview,
+  catalogAlreadyAdded,
+  rememberAdded,
+} from "../agents/CommunityCatalog";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -36,10 +48,16 @@ export function ChannelTemplatesDialog({
   notice,
   active,
   finalFocus,
+  onImport,
+  catalogSession,
+  onAddCatalogTeam,
 }: {
   session?: RelaySession | undefined;
   control?: AgentControl | undefined;
   finalFocus?: DialogProps["finalFocus"];
+  onImport?: (() => void) | undefined;
+  catalogSession?: RelaySession | undefined;
+  onAddCatalogTeam?: ((team: TeamPublication) => Promise<string>) | undefined;
   active(): boolean;
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -49,6 +67,34 @@ export function ChannelTemplatesDialog({
   expected?: string | undefined;
   notice?: string | undefined;
 }) {
+  const communityCatalog = catalogSession?.communityCatalog;
+  useEffect(() => {
+    if (communityCatalog?.available()) return communityCatalog.retain();
+  }, [communityCatalog]);
+  const publications = useSyncExternalStore(
+    communityCatalog?.subscribe ?? emptySubscribe,
+    communityCatalog?.snapshot ?? emptyCatalogSnapshot,
+    communityCatalog?.snapshot ?? emptyCatalogSnapshot,
+  );
+  const [selectedCoordinate, setSelectedCoordinate] = useState<string>();
+  const selectedPublication = publications.teams.find(
+    (entry) => `${entry.owner}:${entry.d}` === selectedCoordinate,
+  );
+  const alreadyAdded =
+    !!selectedPublication &&
+    !!catalogSession &&
+    catalogAlreadyAdded(catalogSession, selectedPublication, (id) =>
+      kit
+        .snapshot()
+        .entries.some(
+          (entry) =>
+            !entry.record.deleted &&
+            entry.record.value.type === "team" &&
+            entry.record.value.id === id,
+        ),
+    );
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogBusy, setCatalogBusy] = useState(false);
   const live = useRef(true);
   useLayoutEffect(() => {
     live.current = true;
@@ -116,7 +162,7 @@ export function ChannelTemplatesDialog({
     !!portable?.team.description?.trim() ||
     !!portable?.team.instructions?.trim();
   const save = async () => {
-    if (!live.current || !active() || loading) return;
+    if (!live.current || !active() || loading || catalogBusy) return;
     setBusy(true);
     setError("");
     try {
@@ -182,10 +228,13 @@ export function ChannelTemplatesDialog({
       dismissOnOutsideClick
       open={open}
       finalFocus={finalFocus}
-      onOpenChange={onOpenChange}
-      preventClose={busy}
+      onOpenChange={(next) => {
+        if (!next && !catalogBusy && live.current && active())
+          onOpenChange(false);
+      }}
+      preventClose={busy || catalogBusy}
       initialFocus={nameInput}
-      title={`${expected ? "Edit" : "New"} ${draft.type}`}
+      title={`${expected ? "Edit" : draft.type === "team" ? "Add" : "New"} ${draft.type}`}
       description={
         draft.type === "team"
           ? "Choose agents to reuse together in future channels and @mentions. This team is private to you in this community."
@@ -194,13 +243,23 @@ export function ChannelTemplatesDialog({
       closeLabel="Close templates"
       actions={
         <>
-          <Button disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button
+            disabled={busy || catalogBusy}
+            onClick={() => {
+              if (live.current && active()) onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button
             variant="prominent"
             loading={busy}
-            disabled={!draft.name.trim() || state.status !== "ready" || loading}
+            disabled={
+              !draft.name.trim() ||
+              state.status !== "ready" ||
+              loading ||
+              catalogBusy
+            }
             onClick={() => void save()}
           >
             Save {draft.type}
@@ -208,124 +267,257 @@ export function ChannelTemplatesDialog({
         </>
       }
     >
-      <div className={styles.stack} inert={busy || loading}>
-        {notice && <p role="status">{notice}</p>}
-        {error && (
-          <p role="alert" className={styles.error}>
-            {error}
-          </p>
-        )}
-        {state.status !== "ready" && (
-          <p role="status">
-            {state.error ??
-              (state.status === "unavailable"
-                ? "This host does not support saved templates."
-                : "Loading your saved templates…")}
-          </p>
-        )}
-        <Field label="Name">
-          <Input
-            ref={nameInput}
-            placeholder={
-              draft.type === "team" ? "Engineering Squad" : undefined
-            }
-            maxLength={120}
-            value={draft.name}
-            onChange={(e) => {
-              revision.current = crypto.randomUUID();
-              prepared.current = undefined;
-              setDraft({ ...draft, name: e.target.value });
-            }}
-          />
-        </Field>
-        {draft.type === "team" ? (
-          <>
-            {((initial.type === "team" && initial.portable) ||
-              canCapture ||
-              hasPortableFields) && (
-              <>
-                <Field label="Description">
-                  <Textarea
-                    placeholder="Optional description for this team."
-                    value={portable?.team.description ?? ""}
-                    onChange={(event) => {
-                      revision.current = crypto.randomUUID();
-                      prepared.current = undefined;
-                      setPortable((value) => ({
-                        ...(value ?? {
-                          format: "buzz-team-snapshot",
-                          version: 1,
-                          members: [],
-                        }),
-                        team: {
-                          ...value?.team,
-                          name: draft.name,
-                          description: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </Field>
-                <Field label="Team Instructions">
-                  <Textarea
-                    placeholder="Optional instructions applied to every deployed team member."
-                    value={portable?.team.instructions ?? ""}
-                    onChange={(event) => {
-                      revision.current = crypto.randomUUID();
-                      prepared.current = undefined;
-                      setPortable((value) => ({
-                        ...(value ?? {
-                          format: "buzz-team-snapshot",
-                          version: 1,
-                          members: [],
-                        }),
-                        team: {
-                          ...value?.team,
-                          name: draft.name,
-                          instructions: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </Field>
-              </>
-            )}
-            {loading && <p role="status">Loading team definitions…</p>}
-            <AgentSelection
-              session={session}
-              agents={agents}
-              selected={draft.agents}
-              onChange={(agents) => {
-                revision.current = crypto.randomUUID();
-                prepared.current = undefined;
-                setDraft({ ...draft, agents });
-              }}
+      <div
+        className={
+          onImport || catalogSession ? styles.teamAddLayout : undefined
+        }
+      >
+        {(onImport || catalogSession) && (
+          <nav aria-label="Add team" className={styles.teamAddSidebar}>
+            <NavigationItem
+              label="Create team"
+              aria-label="Create new team"
+              icon={<PlusIcon size={16} />}
+              selected={!selectedCoordinate}
+              disabled={catalogBusy || !!draft.name || draft.agents.length > 0}
+              onClick={() => setSelectedCoordinate(undefined)}
             />
-          </>
-        ) : (
-          <>
-            <Field
-              label="Description"
-              description="Optional. A short reminder of what this template is for."
-            >
-              <Input
-                maxLength={1000}
-                value={draft.description}
-                onChange={(e) =>
-                  setDraft({ ...draft, description: e.target.value })
+            {onImport && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={
+                  catalogBusy || !!draft.name || draft.agents.length > 0
                 }
+                onClick={onImport}
+              >
+                Import
+              </Button>
+            )}
+            {publications.teams.length > 0 && (
+              <span className="text-label text-subtle">TEAMS</span>
+            )}
+            {publications.teams.map((team) => (
+              <NavigationItem
+                key={team.eventId}
+                label={team.name}
+                selected={selectedCoordinate === `${team.owner}:${team.d}`}
+                disabled={
+                  catalogBusy || !!draft.name || draft.agents.length > 0
+                }
+                onClick={() => setSelectedCoordinate(`${team.owner}:${team.d}`)}
+              />
+            ))}
+            {publications.status === "error" && (
+              <p role="alert">{publications.error}</p>
+            )}
+          </nav>
+        )}
+        {selectedCoordinate ? (
+          <section
+            aria-label={selectedPublication?.name ?? "Withdrawn team"}
+            className="team-catalog-preview"
+          >
+            {selectedPublication && catalogSession ? (
+              <TeamCatalogPreview
+                publication={selectedPublication}
+                session={catalogSession}
+              />
+            ) : (
+              <p role="status">
+                This team is no longer shared. Select another team.
+              </p>
+            )}
+            {selectedPublication &&
+              unsupportedTransport(selectedPublication) && (
+                <p role="note">
+                  {unsupportedTransportMessage(
+                    selectedPublication.name,
+                    unsupportedTransport(selectedPublication) ?? "",
+                  )}
+                </p>
+              )}
+            {catalogError && <p role="alert">{catalogError}</p>}
+            <Button
+              variant="prominent"
+              disabled={
+                !selectedPublication ||
+                alreadyAdded ||
+                catalogBusy ||
+                !!(
+                  selectedPublication &&
+                  unsupportedTransport(selectedPublication)
+                ) ||
+                !onAddCatalogTeam
+              }
+              onClick={() => {
+                if (
+                  !onAddCatalogTeam ||
+                  !catalogSession ||
+                  !selectedPublication ||
+                  alreadyAdded ||
+                  catalogBusy ||
+                  !live.current ||
+                  !active()
+                )
+                  return;
+                const selected = selectedPublication;
+                setCatalogBusy(true);
+                setCatalogError("");
+                void onAddCatalogTeam(selected)
+                  .then((copy) => {
+                    if (!live.current || !active()) return;
+                    rememberAdded(
+                      catalogSession.scope,
+                      catalogSession.viewer ?? "",
+                      selected,
+                      copy,
+                    );
+                    onOpenChange(false);
+                  })
+                  .catch((cause) => {
+                    if (live.current && active())
+                      setCatalogError(
+                        cause instanceof Error ? cause.message : String(cause),
+                      );
+                  })
+                  .finally(() => {
+                    if (live.current && active()) setCatalogBusy(false);
+                  });
+              }}
+            >
+              {alreadyAdded
+                ? "Added to my teams"
+                : catalogBusy
+                  ? "Adding…"
+                  : "Add team"}
+            </Button>
+          </section>
+        ) : (
+          <div className={styles.stack} inert={busy || loading}>
+            {notice && <p role="status">{notice}</p>}
+            {error && (
+              <p role="alert" className={styles.error}>
+                {error}
+              </p>
+            )}
+            {state.status !== "ready" && (
+              <p role="status">
+                {state.error ??
+                  (state.status === "unavailable"
+                    ? "This host does not support saved templates."
+                    : "Loading your saved templates…")}
+              </p>
+            )}
+            <Field label="Name">
+              <Input
+                ref={nameInput}
+                placeholder={
+                  draft.type === "team" ? "Engineering Squad" : undefined
+                }
+                maxLength={120}
+                value={draft.name}
+                onChange={(e) => {
+                  revision.current = crypto.randomUUID();
+                  prepared.current = undefined;
+                  setDraft({ ...draft, name: e.target.value });
+                }}
               />
             </Field>
-            <TemplateFields
-              session={session}
-              value={draft}
-              onChange={(value) => setDraft({ ...draft, ...value })}
-              entries={state.entries}
-              agents={agents}
-            />
-          </>
+            {draft.type === "team" ? (
+              <>
+                {((initial.type === "team" && initial.portable) ||
+                  canCapture ||
+                  hasPortableFields) && (
+                  <>
+                    <Field label="Description">
+                      <Textarea
+                        placeholder="Optional description for this team."
+                        value={portable?.team.description ?? ""}
+                        onChange={(event) => {
+                          revision.current = crypto.randomUUID();
+                          prepared.current = undefined;
+                          setPortable((value) => ({
+                            ...(value ?? {
+                              format: "buzz-team-snapshot",
+                              version: 1,
+                              members: [],
+                            }),
+                            team: {
+                              ...value?.team,
+                              name: draft.name,
+                              description: event.target.value,
+                            },
+                          }));
+                        }}
+                      />
+                    </Field>
+                    <Field label="Team Instructions">
+                      <Textarea
+                        placeholder="Optional instructions applied to every deployed team member."
+                        value={portable?.team.instructions ?? ""}
+                        onChange={(event) => {
+                          revision.current = crypto.randomUUID();
+                          prepared.current = undefined;
+                          setPortable((value) => ({
+                            ...(value ?? {
+                              format: "buzz-team-snapshot",
+                              version: 1,
+                              members: [],
+                            }),
+                            team: {
+                              ...value?.team,
+                              name: draft.name,
+                              instructions: event.target.value,
+                            },
+                          }));
+                        }}
+                      />
+                    </Field>
+                  </>
+                )}
+                {loading && <p role="status">Loading team definitions…</p>}
+                <AgentSelection
+                  session={session}
+                  agents={agents}
+                  selected={draft.agents}
+                  onChange={(agents) => {
+                    revision.current = crypto.randomUUID();
+                    prepared.current = undefined;
+                    setDraft({ ...draft, agents });
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <Field
+                  label="Description"
+                  description="Optional. A short reminder of what this template is for."
+                >
+                  <Input
+                    maxLength={1000}
+                    value={draft.description}
+                    onChange={(e) =>
+                      setDraft({ ...draft, description: e.target.value })
+                    }
+                  />
+                </Field>
+                <TemplateFields
+                  session={session}
+                  value={draft}
+                  onChange={(value) => setDraft({ ...draft, ...value })}
+                  entries={state.entries}
+                  agents={agents}
+                />
+              </>
+            )}
+          </div>
         )}
       </div>
     </Dialog>
   );
 }
+
+const emptySubscribe = () => () => {};
+const emptyCatalog = { status: "unavailable" as const, agents: [], teams: [] };
+const emptyCatalogSnapshot = () => emptyCatalog;

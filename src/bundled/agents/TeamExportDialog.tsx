@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import type { AgentControl } from "../../features/agents/control";
 import type { Team } from "../../features/channel-templates/model";
 import type { ChannelKit } from "../../features/channel-templates/capability";
@@ -22,22 +23,34 @@ export function TeamExportDialog({
 }) {
   const [format, setFormat] = useState<"png" | "json">("png");
   const [memory, setMemory] = useState<"none" | "core" | "everything">("none");
+  const [confirmed, setConfirmed] = useState(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function save() {
-    if (!control.exportTeam || busy) return;
+    if (!control.exportTeam || busy || (memory !== "none" && !confirmed))
+      return;
     setBusy(true);
     setError("");
     try {
       const loaded = await kit.loadTeam(team);
       if (!control.previewTeam) throw new Error("Team preview is unavailable");
+      if (!active.current) return;
       const portable = await control.previewTeam(JSON.stringify(loaded));
+      if (!active.current) return;
       const snapshot = await control.exportTeam(
         portable,
         team.agents,
         community,
         memory,
       );
+      if (!active.current) return;
       const url = URL.createObjectURL(encodeTeam(snapshot, format));
       try {
         const link = document.createElement("a");
@@ -51,9 +64,10 @@ export function TeamExportDialog({
       }
       close();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      if (active.current)
+        setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   }
   return (
@@ -69,7 +83,10 @@ export function TeamExportDialog({
           <Button variant="outline" disabled={busy} onClick={close}>
             Cancel
           </Button>
-          <Button disabled={busy} onClick={() => void save()}>
+          <Button
+            disabled={busy || (memory !== "none" && !confirmed)}
+            onClick={() => void save()}
+          >
             Export
           </Button>
         </>
@@ -81,8 +98,10 @@ export function TeamExportDialog({
         disabled={busy}
         variant="field"
         onValueChange={(value) => {
-          if (value === "none" || value === "core" || value === "everything")
+          if (value === "none" || value === "core" || value === "everything") {
             setMemory(value);
+            setConfirmed(false);
+          }
         }}
         groups={[
           {
@@ -96,10 +115,18 @@ export function TeamExportDialog({
         ]}
       />
       {memory !== "none" && (
-        <p className="text-body-sm text-secondary">
-          Memory is stored as plaintext in the snapshot. Only share it with
-          people you trust.
-        </p>
+        <>
+          <p className="text-body-sm text-secondary">
+            Memory is stored as plaintext in the snapshot. Only share it with
+            people you trust.
+          </p>
+          <Checkbox
+            checked={confirmed}
+            disabled={busy}
+            onCheckedChange={(value) => setConfirmed(value === true)}
+            label="I confirm that I want to include memory in this snapshot."
+          />
+        </>
       )}
       <Select
         label="File format"

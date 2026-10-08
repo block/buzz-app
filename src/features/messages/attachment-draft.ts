@@ -20,6 +20,7 @@ export type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
   subscribe(listener: () => void): () => void;
   add(files: readonly File[]): void;
+  addUploaded(attachment: UploadedAttachment): void;
   adopt(files: readonly DraftAttachment[]): boolean;
   prepareForSend(signal: AbortSignal): Promise<readonly UploadedAttachment[]>;
   remove(id: string): void;
@@ -201,6 +202,24 @@ export function attachmentDraft(
             status: "queued",
           }),
         ),
+      ];
+      owners.set(key, store);
+      emit();
+    },
+    addUploaded(attachment: UploadedAttachment) {
+      if (!session.attachments) throw new UploadError("unavailable");
+      if (items.some((item) => item.uploaded?.url === attachment.url)) return;
+      if (items.length >= MAX_FILES)
+        throw new Error(`Attach at most ${MAX_FILES} files per message.`);
+      // No local bytes are retained. Send reuses the already uploaded descriptor.
+      items = [
+        ...items,
+        {
+          id: crypto.randomUUID(),
+          file: new File([], attachment.name, { type: attachment.type }),
+          status: "ready",
+          uploaded: attachment,
+        },
       ];
       owners.set(key, store);
       emit();

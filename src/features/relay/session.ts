@@ -1652,6 +1652,27 @@ export function createRelaySession(
             },
           })
         : undefined,
+    // Snapshot links are community media, not channel messages or catalog publications.
+    snapshotUpload: uploadAttachment
+      ? Object.freeze({
+          async upload(
+            file: File,
+            signal: AbortSignal,
+          ): Promise<UploadedAttachment> {
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            const result = await uploadAttachment(file, combined);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            return result;
+          },
+        })
+      : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain
     // ordinary community-media access, matching Desktop's attachment path.
     feedbackUpload:

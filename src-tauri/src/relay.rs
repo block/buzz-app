@@ -1599,6 +1599,24 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Read a snapshot into the trusted renderer through the existing authenticated
+/// media path. The caller may tighten, but never raise, the host's snapshot cap.
+#[tauri::command]
+pub(crate) async fn media_snapshot_read(
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    if max_bytes == 0 || max_bytes > 16 * 1024 * 1024 {
+        return Err("Invalid snapshot size limit".into());
+    }
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    fetch_media_bounded(host.inner(), url, None, max_bytes)
+        .await
+        .map(tauri::http::Response::into_body)
+        .map_err(|status| format!("Snapshot media read failed ({status})"))
+}
+
 /// `buzz-media://localhost/<percent-encoded relay media URL>`, the shape of
 /// `convertFileSrc(url, "buzz-media")` on every desktop platform.
 fn media_request(
@@ -1659,7 +1677,16 @@ async fn fetch_media(
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    buffer_media(send_media(host, url, range.as_deref()).await?).await
+    fetch_media_bounded(host, url, range, MAX_MEDIA).await
+}
+
+async fn fetch_media_bounded(
+    host: &IdentityHost,
+    url: Url,
+    range: Option<String>,
+    max_bytes: usize,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    buffer_media(send_media(host, url, range.as_deref()).await?, max_bytes).await
 }
 
 /// One freshly signed upstream GET; only a 200 or 206 is returned.
@@ -1714,12 +1741,13 @@ fn media_headers(kind: String, disposition: bool) -> tauri::http::response::Buil
 
 async fn buffer_media(
     mut upstream: reqwest::Response,
+    max_bytes: usize,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     let status = upstream.status().as_u16();
     let limit = if status == 206 {
-        MAX_MEDIA_RANGE
+        MAX_MEDIA_RANGE.min(max_bytes)
     } else {
-        MAX_MEDIA
+        max_bytes
     };
     if upstream
         .content_length()

@@ -27,6 +27,11 @@ import {
 import { controlFixture } from "../../features/agents/control-testing";
 import { importTeamSnapshot } from "../../features/agents/team-import";
 import { AgentControlPanel } from "./AgentControlPanel";
+import { AgentDirectShare } from "./DirectShare";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+vi.mock("../../features/direct-messages/RecipientPicker", () => ({
+  RecipientPicker: () => null,
+}));
 vi.mock("../../features/agents/team-import", () => ({
   importTeamSnapshot: vi.fn(),
 }));
@@ -35,6 +40,7 @@ import {
   CatalogLauncher,
   CatalogShareSwitch,
   CommunityCatalogDialog,
+  TeamCatalogPreview,
 } from "./CommunityCatalog";
 
 const alice = keypair(),
@@ -636,11 +642,14 @@ it("adopts a shared agent through the create form with its portable settings", a
       control={control}
       importDestination="https://relay.example.test"
       createOwner={viewer.session.viewer}
-      catalog={(add, has) => (
+      session={viewer.session}
+      catalog={(add, has, open, onClose) => (
         <CatalogLauncher
           session={viewer.session}
           addAgent={add}
           hasAgent={has}
+          open={open}
+          onClose={onClose}
         />
       )}
     />
@@ -648,16 +657,12 @@ it("adopts a shared agent through the create form with its portable settings", a
   const bobView = client(server, bob);
   const view = render(render_(bobView));
   const openCatalog = async () => {
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
-    );
-    return screen.findByRole("button", {
-      name: /Helper (is already in My Agents|from Community Catalog)/,
-    });
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+    return screen.findByRole("button", { name: "Helper" });
   };
   fireEvent.click(await openCatalog());
-  const form = await screen.findByRole("dialog", { name: "Create agent" });
-  fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+  const form = await screen.findByRole("dialog", { name: "Add agent" });
+  fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   const edit = commit.mock.calls[0]?.[1];
   expect(edit).toMatchObject({
@@ -681,20 +686,28 @@ it("adopts a shared agent through the create form with its portable settings", a
   });
 
   const added = await openCatalog();
-  expect(added).toHaveAccessibleName("Helper is already in My Agents");
-  expect(added).toBeDisabled();
+  fireEvent.click(added);
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Added to My Agents" },
+    ),
+  ).toBeDisabled();
   fireEvent.keyDown(added, { key: "Escape" });
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Community Catalog" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("dialog", { name: "Add agent" })).toBeNull(),
   );
 
   // Another viewer on this installation has added nothing.
   view.rerender(render_(client(server, keypair())));
-  expect(await openCatalog()).toHaveAccessibleName(
-    "Add Helper from Community Catalog",
-  );
+  expect(await openCatalog()).toHaveAccessibleName("Helper");
+  fireEvent.click(screen.getByRole("button", { name: "Helper" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Add agent" },
+    ),
+  ).toBeEnabled();
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
@@ -704,9 +717,14 @@ it("adopts a shared agent through the create form with its portable settings", a
     (agent) => agent.id !== "copy-1",
   );
   await control.refresh();
-  expect(await openCatalog()).toHaveAccessibleName(
-    "Add Helper from Community Catalog",
-  );
+  expect(await openCatalog()).toHaveAccessibleName("Helper");
+  fireEvent.click(screen.getByRole("button", { name: "Helper" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Add agent" },
+    ),
+  ).toBeEnabled();
 });
 
 it.each([
@@ -769,25 +787,22 @@ it.each([
         control={control}
         importDestination="https://relay.example.test"
         createOwner={viewer.session.viewer}
-        catalog={(add, has) => (
+        session={viewer.session}
+        catalog={(add, has, open, onClose) => (
           <CatalogLauncher
             session={viewer.session}
             addAgent={add}
             hasAgent={has}
+            open={open}
+            onClose={onClose}
           />
         )}
       />,
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Add Preset from Community Catalog",
-      }),
-    );
-    const form = await screen.findByRole("dialog", { name: "Create agent" });
-    fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preset" }));
+    const form = await screen.findByRole("dialog", { name: "Add agent" });
+    fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
     await waitFor(() => expect(commit).toHaveBeenCalledOnce());
     // The preset owns its model and credentials; the default harness differs.
     expect(commit.mock.calls[0]?.[1]).toMatchObject({
@@ -839,14 +854,13 @@ it("adds a catalog team through the shared importer only while its listed head i
         session={viewer.session}
         addAgent={undefined}
         hasAgent={() => false}
+        open
+        onClose={() => {}}
         control={control}
         destination="https://catalog.test"
       />,
     );
   const openTeam = async () => {
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
-    );
     // The only entry is selected by default.
     return screen.findByRole("button", {
       name: /Crew (is already in your teams|from Community Catalog)/,
@@ -900,4 +914,97 @@ it("adds a catalog team through the shared importer only while its listed head i
   server.put(crew(3, "Crew v2", false));
   await viewer.catalog.refresh();
   expect(viewer.catalog.snapshot().teams).toEqual([]);
+});
+
+it.each(["channel", "thread"] as const)(
+  "shares an inheriting agent through the real direct-share catalog switch with %s defaults",
+  async (sessionPolicy) => {
+    const server = catalogRelay();
+    const owner = client(server, alice, `https://catalog.test:${alice.pubkey}`);
+    const fixture = controlFixture();
+    fixture.agent.relayUrl = "wss://catalog.test";
+    fixture.agent.harness.command = "buzz-agent";
+    fixture.data.defaultSettings = {
+      harness: "buzz-agent",
+      provider: "",
+      model: "",
+      effort: "",
+      sessionPolicy,
+      environmentKeys: [],
+    };
+    const control = createAgentControl(fixture.host);
+    owners.push(control);
+    await control.refresh();
+    const operations: never[] = [];
+    const session = {
+      ...owner.session,
+      outbox: {
+        ready: async () => {},
+        snapshot: () => operations,
+        subscribe: () => () => {},
+      },
+      directMessages: { delivery: () => "unknown" },
+    } as unknown as RelaySession;
+    render(
+      <ToastProvider>
+        <AgentDirectShare
+          session={session}
+          agent={fixture.agent}
+          control={control}
+          name={fixture.agent.name}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() => expect(enabled()).toBe(true));
+    fireEvent.click(shareSwitch());
+    await screen.findByText(
+      `Published ${fixture.agent.name} to the community catalog.`,
+    );
+    const viewer = client(server, bob);
+    await viewer.catalog.refresh();
+    expect(viewer.catalog.snapshot().agents).toEqual([
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          displayName: fixture.agent.name,
+          sessionPolicy,
+        }),
+      }),
+    ]);
+  },
+);
+
+it("routes team member artwork through authenticated session media, never a raw remote URL", () => {
+  const remote = "https://avatar.example.test/member.png";
+  const media = vi.fn((url: string) => {
+    expect(url).toBe(remote);
+    return "/authenticated/media/avatar";
+  });
+  const session = { media } as unknown as RelaySession;
+  const publication = {
+    kind: 30178 as const,
+    eventId: "team-head",
+    owner: alice.pubkey,
+    d: "crew",
+    createdAt: 1,
+    name: "Crew",
+    members: [
+      {
+        memberKey: "one",
+        displayName: "Mate",
+        systemPrompt: "Help.",
+        sessionPolicy: "thread" as const,
+        avatarUrl: remote,
+      },
+    ],
+  };
+  const view = render(
+    <TeamCatalogPreview publication={publication} session={session} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Mate/ }));
+  expect(media).toHaveBeenCalledWith(remote, "small");
+  expect(
+    view.container.querySelector('img[src="/authenticated/media/avatar"]'),
+  ).toBeTruthy();
+  expect(view.container.querySelector(`img[src="${remote}"]`)).toBeNull();
 });

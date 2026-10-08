@@ -1211,7 +1211,8 @@ The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
 and search load only when opened. Search by name/shortcode; after Emoji Mart's own
 matches, shortcodes match as fuzzily as in `:` completion (`bufop`, `bufo_pray` or
-`bfpray` for `bufo-pray`, `pointup` for `point_up`). Then choose an emoji
+`bfpray` for `bufo-pray`, `pointup` for `point_up`), including aliases such as
+`open_book`. Then choose an emoji
 to insert at the cursor; Enter selects a search result and Escape closes the picker
 and returns focus. You can also type `:shortcode:`: the closing colon after one
 exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with

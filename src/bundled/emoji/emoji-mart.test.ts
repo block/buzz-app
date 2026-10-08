@@ -65,6 +65,7 @@ it("adds fuzzy shortcode matches after Mart's own results", async () => {
       ["thumbsup", ":bufo-thumbs-up:"],
       ["pointup", "Index Pointing Up"],
       ["hearteyes", "Smiling Face with Heart-Eyes"],
+      ["open_book", "Open Book"],
       ["thumbs up", "Thumbs Up"],
     ] as const) {
       // Clear first so the previous query's rendered results cannot pass this one.

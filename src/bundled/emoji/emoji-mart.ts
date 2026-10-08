@@ -570,20 +570,27 @@ export function mountEmojiMart({
     );
     if (!results) return results;
     const found = new Set(results.map(({ id }) => id));
-    // Mart leaves unsupported emoji in its dictionary without search terms.
-    const pool = Object.values<{ id: string; search?: string }>(
-      Data.emojis,
-    ).filter((emoji) => emoji.search && !found.has(emoji.id));
+    const emojis: Record<string, { id: string; search?: string }> = Data.emojis;
+    const candidates = [
+      ...Object.values(emojis).map((emoji) => ({
+        emoji,
+        shortcode: values.get(emoji.id)?.shortcode ?? emoji.id,
+      })),
+      // Mart does not index alias shortcodes such as `open_book`.
+      ...Object.entries<string>(Data.aliases).flatMap(([shortcode, id]) => {
+        const emoji = emojis[id];
+        return emoji ? [{ emoji, shortcode }] : [];
+      }),
+      // Mart leaves unsupported emoji in its dictionary without search terms.
+    ].filter(({ emoji }) => emoji.search && !found.has(emoji.id));
     const fuzzy = rankShortcodes(
       String(value).replaceAll(":", ""),
-      pool,
-      (emoji) => values.get(emoji.id)?.shortcode ?? emoji.id,
+      candidates,
+      ({ shortcode }) => shortcode,
     );
+    const extra = new Set(fuzzy.map(({ item }) => item.emoji));
     // 90 is Mart's own default limit.
-    return [...results, ...fuzzy.map(({ item }) => item)].slice(
-      0,
-      options?.maxResults || 90,
-    );
+    return [...results, ...extra].slice(0, options?.maxResults || 90);
   };
   // Search also caches results after deletion/replacement; recreate rather than update.
   SearchIndex.reset();

@@ -427,3 +427,68 @@ fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_reco
         vec!["effort level"]
     );
 }
+
+#[test]
+fn snapshot_export_limits_effective_behavior_overrides_without_exposing_values() {
+    for placement in ["inherited", "agent"] {
+        let mut agent = fixture();
+        agent.imported = Value::Null;
+        agent.harness.command = "goose-acp".into();
+        agent.environment.clear();
+        let mut defaults = AgentDefaults::default();
+        defaults.harness = "goose".into();
+        // Credentials remain local; only effective behavioral overrides limit portability.
+        defaults
+            .environment
+            .insert("PROVIDER_TOKEN".into(), "private".into());
+        let key = "BUZZ_ACP_SYSTEM_PROMPT".to_string();
+        if placement == "inherited" {
+            defaults
+                .environment
+                .insert(key.clone(), "private override".into());
+        } else {
+            agent
+                .environment
+                .insert(key.clone(), "private override".into());
+        }
+        let view = serde_json::to_value(agent.view(&defaults)).unwrap();
+        assert_eq!(
+            view["snapshotExportLimitations"],
+            serde_json::json!(["behavioral environment overrides"])
+        );
+        assert!(!view.to_string().contains("private override"));
+        assert!(!view.to_string().contains("PROVIDER_TOKEN"));
+        if placement == "inherited" {
+            agent.environment.insert(key, "own override".into());
+            assert_eq!(
+                agent.view(&defaults).snapshot_export_limitations,
+                vec!["behavioral environment overrides"]
+            );
+        }
+        defaults.environment.remove("BUZZ_ACP_SYSTEM_PROMPT");
+        agent.environment.remove("BUZZ_ACP_SYSTEM_PROMPT");
+        assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+    }
+}
+
+#[test]
+fn snapshot_export_ignores_unapplied_defaults_and_local_credentials() {
+    let mut agent = fixture();
+    agent.imported = Value::Null;
+    agent.environment.clear();
+    let mut defaults = AgentDefaults::default();
+    defaults.harness = "pi".into();
+    defaults
+        .environment
+        .insert("BUZZ_ACP_SYSTEM_PROMPT".into(), "different harness".into());
+    defaults
+        .environment
+        .insert("PROVIDER_TOKEN".into(), "local credential".into());
+    assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+    defaults.environment.remove("BUZZ_ACP_SYSTEM_PROMPT");
+    defaults
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "4".into());
+    assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(4));
+}

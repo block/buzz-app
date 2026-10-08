@@ -225,6 +225,13 @@ impl Agent {
                 {
                     limits.push("effort level");
                 }
+                if effective
+                    .environment
+                    .keys()
+                    .any(|key| key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
+                {
+                    limits.push("behavioral environment overrides");
+                }
                 limits
             },
             acp_command: None,
@@ -426,20 +433,32 @@ fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
     static PICTOGRAPHIC: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"^\p{Extended_Pictographic}$").expect("Unicode property is supported")
     });
+    static SCRIPT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^[\p{L}\p{M}]$").expect("Unicode property is supported")
+    });
     let chars: Vec<char> = value.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
         let code = ch as u32;
         let pictographic = |c: char| PICTOGRAPHIC.is_match(&c.to_string());
         let emoji_format = match ch {
-            '\u{fe0f}' => {
+            '\u{fe0f}' | '\u{fe0e}' => {
                 i > 0
                     && (pictographic(chars[i - 1]) || matches!(chars[i - 1], '#' | '*' | '0'..='9'))
             }
+            '\u{200c}' | '\u{200d}'
+                if i > 0
+                    && chars
+                        .get(i + 1)
+                        .is_some_and(|c| !c.is_ascii() && SCRIPT.is_match(&c.to_string()))
+                    && !chars[i - 1].is_ascii()
+                    && SCRIPT.is_match(&chars[i - 1].to_string()) =>
+            {
+                true
+            }
             '\u{200d}' => {
-                let previous = chars[..i]
-                    .iter()
-                    .rev()
-                    .find(|&&c| c != '\u{fe0f}' && !matches!(c as u32, 0x1f3fb..=0x1f3ff));
+                let previous = chars[..i].iter().rev().find(|&&c| {
+                    c != '\u{fe0f}' && c != '\u{fe0e}' && !matches!(c as u32, 0x1f3fb..=0x1f3ff)
+                });
                 previous.is_some_and(|&c| pictographic(c))
                     && chars.get(i + 1).is_some_and(|&c| pictographic(c))
             }
@@ -451,7 +470,7 @@ fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
             0x2060..=0x206f | 0x3164 | 0xfe00..=0xfe0f | 0xfeff |
             0xffa0 | 0xfff0..=0xfff8 | 0x1bca0..=0x1bca3 |
             0x1d173..=0x1d17a | 0xe0000..=0xe0fff);
-        if (ch.is_control() && !(prompt && matches!(ch, '\n' | '\t')))
+        if (ch.is_control() && !(prompt && matches!(ch, '\n' | '\r' | '\t')))
             || (ignorable && !emoji_format)
         {
             return Err(format!(

@@ -961,6 +961,10 @@ it("names inherited effort without exposing unexpected native verdict values", (
   expect(() => buildAgentSnapshot(source)).toThrow(
     /team instructions, idle timeout.*Remove the listed settings/,
   );
+  source.snapshotExportLimitations = ["behavioral environment overrides"];
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    /behavioral environment overrides/,
+  );
   source.snapshotExportLimitations = ["private native text"];
   expect(() => buildAgentSnapshot(source)).toThrow(
     "This agent cannot be exported faithfully.",
@@ -986,4 +990,37 @@ it("accepts exact per-event plaintext boundary, rejects first byte beyond", () =
   }
   expect(() => parse(make(low))).not.toThrow();
   expect(() => parse(make(low + 1))).toThrow("Invalid snapshot manifest");
+});
+
+it("rejects hidden standing memory in both formats while allowing multilingual context", () => {
+  const source = buildAgentSnapshot(portableAgent(), "core", []);
+  for (const character of ["\u202e", "\u200b", "\u{e0061}"]) {
+    const hidden = {
+      ...source,
+      memory: {
+        level: "core" as const,
+        entries: [{ slug: "core", body: `Before${character}after` }],
+      },
+    };
+    expect(() => parse(hidden)).toThrow("Invalid snapshot manifest");
+    for (const format of ["json", "png"] as const)
+      expect(() => encodeAgentSnapshot(hidden, format)).toThrow(
+        "Invalid snapshot manifest",
+      );
+  }
+  const visible = {
+    ...source,
+    definition: {
+      ...source.definition,
+      systemPrompt: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻",
+    },
+    memory: {
+      level: "core" as const,
+      entries: [{ slug: "core", body: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻" }],
+    },
+  };
+  for (const format of ["json", "png"] as const)
+    expect(
+      parseAgentSnapshot(encodeAgentSnapshot(visible, format)).memory.entries,
+    ).toEqual(visible.memory.entries);
 });

@@ -92,18 +92,29 @@ const invisible = (char: string) => {
     (code >= 0xe0000 && code <= 0xe0fff)
   );
 };
-/** Reviewable text: permit only contextual emoji joiners/selectors. */
+/** Reviewable text: permit contextual script/emoji joiners and ordinary prompt line endings. */
 export function visibleSnapshotText(value: string, prompt = false): boolean {
   const chars = Array.from(value);
   const pictographic = (char: string) =>
     /^\p{Extended_Pictographic}$/u.test(char);
   for (const [i, char] of chars.entries()) {
-    if (/[\p{Cc}]/u.test(char) && !(prompt && (char === "\n" || char === "\t")))
+    if (
+      /[\p{Cc}]/u.test(char) &&
+      !(prompt && (char === "\n" || char === "\r" || char === "\t"))
+    )
       return false;
     if (!invisible(char)) continue;
     if (
-      char === "\uFE0F" &&
+      (char === "\uFE0F" || char === "\uFE0E") &&
       (/[#*0-9]/.test(chars[i - 1] ?? "") || pictographic(chars[i - 1] ?? ""))
+    )
+      continue;
+    if (
+      (char === "\u200C" || char === "\u200D") &&
+      (chars[i - 1]?.codePointAt(0) ?? 0) > 127 &&
+      (chars[i + 1]?.codePointAt(0) ?? 0) > 127 &&
+      /[\p{Letter}\p{Mark}]/u.test(chars[i - 1] ?? "") &&
+      /[\p{Letter}\p{Mark}]/u.test(chars[i + 1] ?? "")
     )
       continue;
     if (char === "\u200D" && pictographic(chars[i + 1] ?? "")) {
@@ -111,6 +122,7 @@ export function visibleSnapshotText(value: string, prompt = false): boolean {
       while (
         previous >= 0 &&
         (chars[previous] === "\uFE0F" ||
+          chars[previous] === "\uFE0E" ||
           /[\u{1F3FB}-\u{1F3FF}]/u.test(chars[previous] ?? ""))
       )
         previous--;
@@ -303,6 +315,7 @@ export function parseAgentSnapshot(
             (options.teamMember
               ? typeof e.body === "string"
               : text(e.body, 64 * 1024)) &&
+            visibleSnapshotText(e.body as string, true) &&
             (options.teamMember ||
               restorableMemoryEntry(e.slug as string, e.body as string)),
         ) ||
@@ -372,6 +385,7 @@ export function buildAgentSnapshot(
       "idle timeout",
       "turn timeout",
       "effort level",
+      "behavioral environment overrides",
     ];
     if (
       limitations.some(

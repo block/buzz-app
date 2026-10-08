@@ -19,11 +19,15 @@ import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
   parseAgentSnapshot,
+  snapshotPngArtwork,
 } from "../../features/agents/snapshot";
 import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
 import { uploadAvatar } from "../../features/profiles/avatar-upload";
 
-vi.mock("../../features/profiles/avatar-upload", () => ({
+vi.mock("../../features/profiles/avatar-upload", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../features/profiles/avatar-upload")
+  >()),
   uploadAvatar: vi.fn(),
 }));
 vi.mock("../../features/communities/api", async (importOriginal) => ({
@@ -1505,4 +1509,74 @@ it("does not create when opted-in memory exceeds the reader payload budget", asy
   expect(await screen.findByText("Invalid snapshot manifest.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
   expect(h.create).not.toHaveBeenCalled();
+});
+
+it("routes source-community PNG artwork through authenticated media and embeds its pixels", async () => {
+  const agent = portableAgent();
+  agent.picture = `https://relay.example.test/media/${"ab".repeat(32)}`;
+  const sources: string[] = [];
+  class LoadedImage {
+    crossOrigin = "";
+    set src(value: string) {
+      sources.push(value);
+    }
+    decode() {
+      return Promise.resolve();
+    }
+  }
+  vi.stubGlobal("Image", LoadedImage);
+  const pixels = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=",
+    ),
+    (char) => char.charCodeAt(0),
+  );
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: vi.fn(),
+  } as never);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+    (callback) => {
+      callback(new Blob([Uint8Array.from(pixels)], { type: "image/png" }));
+    },
+  );
+  let exported: Blob | undefined;
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = vi.fn((blob: Blob) => {
+        exported = blob;
+        return "blob:fixture";
+      });
+      static revokeObjectURL = vi.fn();
+    },
+  );
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => {});
+  try {
+    render(
+      <AgentSnapshotExport
+        agent={agent}
+        destination="https://other.example.test"
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I reviewed the portable configuration/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(exported).toBeDefined());
+    expect(sources).toEqual([
+      `/api/relay/${encodeURIComponent("https://relay.example.test")}/media?url=${encodeURIComponent(agent.picture)}`,
+    ]);
+    if (!exported) throw new Error("Missing PNG export");
+    const bytes = new Uint8Array(await (exported as Blob).arrayBuffer());
+    expect(await snapshotPngArtwork(bytes)).toEqual(bytes);
+    expect(parseAgentSnapshot(bytes).profile.avatarUrl).toBe(agent.picture);
+  } finally {
+    click.mockRestore();
+    vi.restoreAllMocks();
+  }
 });

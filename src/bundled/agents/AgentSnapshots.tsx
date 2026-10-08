@@ -4,7 +4,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { AgentControl, AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import { relayOrigin } from "../../features/communities/destination";
-import { uploadAvatar } from "../../features/profiles/avatar-upload";
+import {
+  avatarPreview,
+  uploadAvatar,
+} from "../../features/profiles/avatar-upload";
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
@@ -161,7 +164,8 @@ export function AgentSnapshotExport({
         try {
           const image = new Image();
           image.crossOrigin = "anonymous";
-          image.src = agent.picture;
+          image.src =
+            avatarPreview(agent.picture, agent.relayUrl) ?? agent.picture;
           await image.decode();
           const canvas = document.createElement("canvas");
           canvas.width = canvas.height = 512;

@@ -70,6 +70,7 @@ export function TemplateLibrary({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const trigger = useRef<HTMLElement | null>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   const newTemplate = useRef<HTMLButtonElement>(null);
@@ -87,7 +88,7 @@ export function TemplateLibrary({
     !kit.available || state.status !== "ready" || !catalog.agentsReady;
   async function previewFile(file: File) {
     if (!active() || !control?.previewTeam) return;
-    setError("");
+    setPreviewError("");
     try {
       if (file.size > 16 * 1024 * 1024)
         throw new Error("Team snapshot exceeds the size limit");
@@ -97,7 +98,7 @@ export function TemplateLibrary({
       if (mounted.current && active()) setPreview(value);
     } catch (error) {
       if (mounted.current && active())
-        setError(error instanceof Error ? error.message : String(error));
+        setPreviewError(error instanceof Error ? error.message : String(error));
     }
   }
   const open = (
@@ -201,6 +202,11 @@ export function TemplateLibrary({
                           Import team snapshot
                         </Button>
                       )}
+                    {type === "team" && previewError && (
+                      <p role="alert" className="text-body-sm text-danger">
+                        {previewError}
+                      </p>
+                    )}
                     {type === "team" && (
                       <Button
                         variant="ghost"

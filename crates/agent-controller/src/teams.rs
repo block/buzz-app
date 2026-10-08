@@ -306,8 +306,7 @@ impl Controller {
                     .iter()
                     .find(|a| &a.pubkey == id && a.relay_url == relay)
                     .ok_or("A team member is unavailable")?;
-                let effective = crate::agent_defaults::effective(agent, &defaults);
-                snapshot_member(&effective)
+                snapshot_member(agent, &defaults)
             })
             .collect::<Result<_>>()?;
         let snapshot = TeamSnapshot {
@@ -320,8 +319,12 @@ impl Controller {
         Ok(snapshot)
     }
 }
-fn snapshot_member(agent: &Agent) -> Result<MemberSnapshot> {
-    let record = &agent.imported["record"];
+fn snapshot_member(
+    agent: &Agent,
+    defaults: &crate::agent_defaults::AgentDefaults,
+) -> Result<MemberSnapshot> {
+    let effective = crate::agent_defaults::effective(agent, defaults);
+    let record = &effective.imported["record"];
     Ok(MemberSnapshot {
         format: "buzz-agent-snapshot".into(),
         version: 1,
@@ -337,7 +340,7 @@ fn snapshot_member(agent: &Agent) -> Result<MemberSnapshot> {
             respond_to: Some(agent.respond_to(false)?.into()),
             respond_to_allowlist: serde_json::from_value(record["respond_to_allowlist"].clone())
                 .unwrap_or_default(),
-            parallelism: record["parallelism"].as_u64().map(|n| n as u32),
+            parallelism: agent.view(defaults).launch_parallelism,
             idle_timeout_seconds: record["idle_timeout_seconds"].as_u64(),
             max_turn_duration_seconds: record["max_turn_duration_seconds"].as_u64(),
         },

@@ -45,6 +45,7 @@ impl Secret {
         &self,
         name: &str,
         picture: Option<&str>,
+        about: Option<&str>,
         auth: &str,
         existing: &[serde_json::Value],
     ) -> Result<serde_json::Value> {
@@ -59,6 +60,9 @@ impl Secret {
                 None,
             ),
         };
+        if let Some(about) = about {
+            content.insert("about".into(), json!(about));
+        }
         if let Some(picture) = picture {
             if picture.is_empty() {
                 content.remove("picture");

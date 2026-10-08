@@ -26,7 +26,11 @@ fn controller(root: &std::path::Path) -> Controller {
     )
 }
 fn member() -> MemberSnapshot {
-    snapshot_member(&crate::store::tests::fixture()).unwrap()
+    snapshot_member(
+        &crate::store::tests::fixture(),
+        &crate::agent_defaults::AgentDefaults::default(),
+    )
+    .unwrap()
 }
 fn edit(root: &std::path::Path) -> AgentEdit {
     AgentEdit {
@@ -96,6 +100,30 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         )
         .unwrap();
     assert!(exported.members[0].definition.source_is_builtin);
+    let target = control.creation_profile(&first.id).unwrap();
+    let initial = target.event(&first.key, &[]).unwrap();
+    assert_eq!(initial["kind"], 0);
+    let initial_content: serde_json::Value =
+        serde_json::from_str(initial["content"].as_str().unwrap()).unwrap();
+    assert_eq!(initial_content["about"], "Fixture profile");
+    let prior = first
+        .key
+        .profile(
+            "Fixture",
+            Some("https://example.test/avatar.png"),
+            Some("stale about"),
+            &target.auth,
+            &[],
+        )
+        .unwrap();
+    let retried = target.event(&first.key, &[prior]).unwrap();
+    let retried_content: serde_json::Value =
+        serde_json::from_str(retried["content"].as_str().unwrap()).unwrap();
+    assert_eq!(retried_content["about"], "Fixture profile");
+    assert_eq!(
+        retried_content["picture"],
+        "https://example.test/avatar.png"
+    );
     assert_eq!(
         exported.members[0].profile.about.as_deref(),
         Some("Fixture profile")
@@ -133,6 +161,57 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         .unwrap();
     assert_eq!(control.store.agents().unwrap().len(), 2);
 }
+#[test]
+fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let mut native = crate::store::tests::fixture();
+    let mut imported = native.clone();
+    imported.pubkey = "cd".repeat(32);
+    imported.id = crate::config::agent_id(&imported.pubkey, &imported.relay_url);
+    imported.imported = json!({"record": {"parallelism": 3}});
+    control
+        .store
+        .insert(vec![native.clone(), imported.clone()])
+        .unwrap();
+    let export = |control: &Controller, key: &str| {
+        control
+            .export_team(
+                TeamMeta {
+                    name: "Workers".into(),
+                    description: None,
+                    instructions: None,
+                },
+                &[key.to_owned()],
+                "wss://relay.example",
+            )
+            .unwrap()
+            .members
+            .remove(0)
+            .definition
+            .parallelism
+    };
+    assert_eq!(export(&control, &native.pubkey), Some(1));
+    assert_eq!(export(&control, &imported.pubkey), Some(3));
+    native
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "7".into());
+    imported
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "5".into());
+    control.store.remove(&native.id, native.revision).unwrap();
+    control
+        .store
+        .remove(&imported.id, imported.revision)
+        .unwrap();
+    control
+        .store
+        .insert(vec![native.clone(), imported.clone()])
+        .unwrap();
+    assert_eq!(export(&control, &native.pubkey), Some(7));
+    assert_eq!(export(&control, &imported.pubkey), Some(5));
+}
+
 #[test]
 fn export_is_portable_and_preview_does_not_create_or_start_agents() {
     let root = tempfile::tempdir().unwrap();

@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -141,6 +142,65 @@ it("shows the library on the page and returns from editing without a library dia
   );
   await waitFor(() => expect(trigger).toHaveFocus());
 });
+it("shows preview rejection beside import and clears it on retry", async () => {
+  const previewTeam = vi.fn(async (_content: string): Promise<TeamSnapshot> => {
+    throw new Error("Invalid team snapshot");
+  });
+  const state = { status: "ready" as const, entries: [entry] };
+  const kit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure: vi.fn(),
+    refresh: vi.fn(),
+    save: vi.fn(),
+  } as unknown as ChannelKit;
+  const { container } = render(
+    <TemplateLibrary
+      section="team"
+      kit={kit}
+      active={() => true}
+      catalog={{
+        kit: state,
+        agents: [],
+        agentsReady: true,
+        agentsComplete: true,
+        agentsPending: false,
+        error: undefined,
+        refresh: vi.fn(),
+      }}
+      control={{ previewTeam, create: vi.fn() } as unknown as AgentControl}
+      session={
+        {
+          viewer: "ab".repeat(32),
+          scope: `https://relay.example.test:${"ab".repeat(32)}`,
+        } as RelaySession
+      }
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = container.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement;
+  const file = new File(['{"broken":true}'], "team.json", {
+    type: "application/json",
+  });
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid team snapshot",
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  previewTeam.mockResolvedValueOnce({
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: { name: "Recovered" },
+    members: [],
+  });
+  fireEvent.change(input, { target: { files: [file] } });
+  await waitFor(() => expect(previewTeam).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("delete cancellation leaves the page and saved data intact", async () => {
   const user = userEvent.setup();
   const { save } = fixture(false, [entry], "ready", true, "team");

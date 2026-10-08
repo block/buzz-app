@@ -195,6 +195,9 @@ impl Controller {
             auth,
             name: agent.name,
             picture: agent.picture,
+            about: agent.imported["record"]["profile"]["about"]
+                .as_str()
+                .map(str::to_owned),
             revision: agent.revision,
         })
     }
@@ -210,6 +213,7 @@ pub struct CreationProfile {
     pub auth: String,
     pub name: String,
     pub picture: Option<String>,
+    pub about: Option<String>,
     pub revision: u64,
 }
 impl CreationProfile {
@@ -217,7 +221,13 @@ impl CreationProfile {
         if key.pubkey() != self.pubkey {
             return Err("Profile identity changed".into());
         }
-        key.profile(&self.name, self.picture.as_deref(), &self.auth, existing)
+        key.profile(
+            &self.name,
+            self.picture.as_deref(),
+            self.about.as_deref(),
+            &self.auth,
+            existing,
+        )
     }
     pub fn confirm(&self, existing: &[Value], event_id: &str) -> Result<()> {
         let current = crate::profile::current(existing, &self.pubkey)?;

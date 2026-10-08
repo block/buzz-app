@@ -166,6 +166,10 @@ export function Reports({ communityId }: { communityId?: string }) {
   );
 }
 
+type ResolveRequest = Extract<StaffRequest, { route: "resolveReport" }>;
+type ReopenRequest = Extract<StaffRequest, { route: "reopenReport" }>;
+type CancelRequest = Extract<StaffRequest, { route: "cancelReport" }>;
+
 function ReportDetail({
   id,
   onBack,
@@ -177,10 +181,38 @@ function ReportDetail({
 }) {
   const { context, canMutate } = useSession();
   const [detail, reload] = useRead({ route: "getReport", id }, [context, id]);
+  const notify = useToastNotification();
   const changed = () => {
     reload();
     onChanged();
   };
+  // The detail, not the action forms, handles finished writes: a form is
+  // gone once its action changes the report's status.
+  useWrite<ResolveRequest>(`resolve ${id}`, (outcome) => {
+    if (outcome.ok) {
+      notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");
+      return changed();
+    }
+    notify(describe(outcome.failure), "error");
+    // The relay records a failed enforcement before answering.
+    if (outcome.failure.code === "enforcement_failed") changed();
+  });
+  useWrite<ReopenRequest>(`reopen ${id}`, (outcome) => {
+    notify(
+      outcome.ok ? "Report reopened" : describe(outcome.failure),
+      outcome.ok ? "success" : "error",
+    );
+    if (outcome.ok) changed();
+  });
+  useWrite<CancelRequest>(`cancel ${id}`, (outcome) => {
+    notify(
+      outcome.ok
+        ? "Enforcement cancelled. The report is open again."
+        : `Cancel rejected: ${describe(outcome.failure)}`,
+      outcome.ok ? "success" : "error",
+    );
+    changed();
+  });
   return (
     <div className="flex flex-col gap-4">
       <Button size="sm" variant="ghost" onClick={onBack}>
@@ -191,20 +223,16 @@ function ReportDetail({
           <>
             <ReportFields report={report} />
             {report.activeAction && (
-              <Enforcement
-                reportId={report.id}
-                action={report.activeAction}
-                onChanged={changed}
-              />
+              <Enforcement reportId={report.id} action={report.activeAction} />
             )}
             {/* A reopened report may carry succeeded history and still be open. */}
             {canMutate && report.status === "open" && (
-              <Resolve key={report.id} report={report} onChanged={changed} />
+              <Resolve key={report.id} report={report} />
             )}
             {canMutate &&
               ["resolved", "dismissed", "escalated"].includes(
                 report.status,
-              ) && <Reopen report={report} onChanged={changed} />}
+              ) && <Reopen report={report} />}
           </>
         )}
       </Loaded>
@@ -280,23 +308,12 @@ const ENFORCEMENT: Record<ActionRecordDto["status"], string> = {
 function Enforcement({
   reportId,
   action,
-  onChanged,
 }: {
   reportId: string;
   action: ActionRecordDto;
-  onChanged(): void;
 }) {
   const { canMutate } = useSession();
-  const notify = useToastNotification();
-  const write = useWrite(`cancel ${action.id}`, (outcome) => {
-    notify(
-      outcome.ok
-        ? "Enforcement cancelled. The report is open again."
-        : `Cancel rejected: ${describe(outcome.failure)}`,
-      outcome.ok ? "success" : "error",
-    );
-    onChanged();
-  });
+  const write = useWrite<CancelRequest>(`cancel ${reportId}`);
   const cancel = () =>
     write.run({ route: "cancelReport", id: reportId, actionId: action.id });
   const message = action.errorMessage?.includes(
@@ -325,26 +342,8 @@ function Enforcement({
   );
 }
 
-type ResolveRequest = Extract<StaffRequest, { route: "resolveReport" }>;
-
-function Resolve({
-  report,
-  onChanged,
-}: {
-  report: ReportDto;
-  onChanged(): void;
-}) {
-  const notify = useToastNotification();
-  const write = useWrite<ResolveRequest>(`resolve ${report.id}`, (outcome) => {
-    if (outcome.ok) {
-      notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");
-      onChanged();
-      return;
-    }
-    notify(describe(outcome.failure), "error");
-    // The relay records a failed enforcement before answering.
-    if (outcome.failure.code === "enforcement_failed") onChanged();
-  });
+function Resolve({ report }: { report: ReportDto }) {
+  const write = useWrite<ResolveRequest>(`resolve ${report.id}`);
   const [action, setAction] = useState<ReportAction | null>(null);
   const [reason, setReason] = useState("");
   const [secs, setSecs] = useState("");
@@ -439,24 +438,9 @@ function Resolve({
   );
 }
 
-type ReopenRequest = Extract<StaffRequest, { route: "reopenReport" }>;
-
 /** Re-triage only: reopening never reverses enforcement already taken. */
-function Reopen({
-  report,
-  onChanged,
-}: {
-  report: ReportDto;
-  onChanged(): void;
-}) {
-  const notify = useToastNotification();
-  const write = useWrite<ReopenRequest>(`reopen ${report.id}`, (outcome) => {
-    notify(
-      outcome.ok ? "Report reopened" : describe(outcome.failure),
-      outcome.ok ? "success" : "error",
-    );
-    if (outcome.ok) onChanged();
-  });
+function Reopen({ report }: { report: ReportDto }) {
+  const write = useWrite<ReopenRequest>(`reopen ${report.id}`);
   const [reason, setReason] = useState("");
   const secret = containsSecretKey(reason);
   const submit = () =>

@@ -58,6 +58,72 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it.each([false, true])(
+  "keeps archived DMs hidden after an ordinary arrival (older reply retained: %s)",
+  async (olderReply) => {
+    const h = fixture({ withDm: true });
+    const root = message(h.viewer, "dm-room", "DM discussion", 24);
+    h.addEvent(root);
+    act(() => h.emit([root]));
+    if (olderReply) {
+      const previous = message(h.alice, "dm-room", "Earlier DM reply", 25, [
+        ["e", root.id, "", "reply"],
+      ]);
+      h.addEvent(previous);
+      act(() => h.emit([previous]));
+    }
+    const view = render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    await chooseFilter("DMs");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    const row = rows()[0];
+    if (!row) throw new Error("Missing DM row");
+    fireEvent.click(within(row).getByRole("button", { name: /^Archive / }));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    const fresh = message(
+      h.alice,
+      "dm-room",
+      "Ordinary DM arrival",
+      Math.floor(Date.now() / 1000) + 1,
+      olderReply ? [] : [["e", root.id, "", "reply"]],
+    );
+    h.addEvent(fresh);
+    act(() => h.emit([fresh]));
+    await waitFor(() =>
+      expect(
+        h.session.unread
+          .inbox()
+          .items.find((item) => item.channelId === "dm-room"),
+      ).toMatchObject({
+        thread: true,
+        target: { kind: "channel" },
+        messageIds: expect.arrayContaining([fresh.id]),
+      }),
+    );
+    // Changing filters flushes the mounted reconciliation effect before the
+    // negative assertion; both rendering and durable archive intent must hold.
+    await chooseFilter("All activity");
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    await chooseFilter("Archived", "Show");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    const mention = message(
+      h.alice,
+      "dm-room",
+      "Fresh explicit DM mention",
+      Math.floor(Date.now() / 1000) + 2,
+      [["p", h.viewer.pubkey]],
+    );
+    h.addEvent(mention);
+    act(() => h.emit([mention]));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    await chooseFilter("Inbox", "Show");
+    await waitFor(() => expect(rows()).toHaveLength(3));
+  },
+);
+
 it("archives a conversation durably, restores it, and reopens for participating replies", async () => {
   const h = fixture();
   const view = render(h.view);

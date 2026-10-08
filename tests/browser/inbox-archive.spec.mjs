@@ -181,6 +181,73 @@ test("Inbox archive survives reload and reopens Threads before fresh Mentions", 
   await expect(rows).toHaveCount(1);
 });
 
+// Browser-only: live DM delivery through the production broker and browser
+// reload must retain personal archive intent despite an older reply in the group.
+// Reply/top-level classification matrices remain in the mounted session tests.
+test.describe("DM archive delivery", () => {
+  test.use({ dmMembers: { "dm-peer": [0] } });
+
+  test("ordinary DM activity stays archived across reload until a fresh mention", async ({
+    page,
+    app,
+  }) => {
+    const dm = "dm-peer";
+    const root = app.sign({
+      kind: 9,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", dm]],
+      content: "Our DM discussion",
+    });
+    app.histories.get(`primary/${dm}`).push(root);
+    app.append("primary", dm, "Earlier DM reply", false, false, root.id);
+    await page.goto(app.origin);
+    await openPage(page, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    const rows = inbox
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem");
+    await choose(page, inbox, "Activity type", "DMs");
+    await expect(rows).toHaveCount(1);
+    await rows.getByRole("button", { name: /^Open / }).click();
+    await expect(
+      inbox.getByText("Earlier DM reply", { exact: true }),
+    ).toBeVisible();
+    await inbox.getByRole("button", { name: "Archive conversation" }).click();
+    await expect(rows).toHaveCount(0);
+    await choose(page, inbox, "Show", "Archived");
+    app.append("primary", dm, "New ordinary DM message", true, false);
+    // The new preview proves delivery and mounted reconciliation completed
+    // before asserting that Inbox remains empty, including after reload.
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("New ordinary DM message");
+    await choose(page, inbox, "Show", "Inbox");
+    await expect(rows).toHaveCount(0);
+    await page.reload();
+    await openPage(page, "Inbox");
+    await choose(page, inbox, "Show", "Archived");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("New ordinary DM message");
+    app.append(
+      "primary",
+      dm,
+      "Fresh explicit DM mention",
+      true,
+      false,
+      undefined,
+      undefined,
+      [["p", app.viewer]],
+    );
+    await choose(page, inbox, "Show", "Inbox");
+    await expect(rows).toHaveCount(1);
+    await choose(page, inbox, "Activity type", "Mentions");
+    const dmRows = inbox.locator('[data-inbox-row="dm-peer:dm-peer"]');
+    await expect(dmRows).toHaveCount(1);
+    await page.reload();
+    await openPage(page, "Inbox");
+    await expect(dmRows).toHaveCount(1);
+  });
+});
+
 // Browser-only: a saved grouped archive must not drive a render/storage loop when
 // the real unread projection currently exposes only unresolved singleton replies.
 test("saved grouped archive converges with unresolved Inbox evidence across reload", async ({

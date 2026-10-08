@@ -83,6 +83,44 @@ it("keeps non-participating replies and older mentions archived, but reopens for
   expect(h.archived()).toBe(false);
 });
 
+it("keeps DM replies archived without persisting ordinary reopening", () => {
+  const h = fixture();
+  const dm: InboxItem = {
+    ...h.item,
+    target: { kind: "channel", channelId: h.item.channelId },
+    thread: true,
+  };
+  updateArchive(h.scope, dm, true);
+  const revision = viewRevision(h.scope, archiveKey);
+  const fresh = {
+    ...dm,
+    messageIds: [...dm.messageIds, "b".repeat(64)],
+    messages: [
+      ...dm.messages,
+      { id: "b".repeat(64), createdAt: 30, mentioned: false },
+    ],
+  };
+  const index = archiveIndex(readArchives(revision));
+  expect(isArchived(index, fresh)).toBe(true);
+  reopenArchives(h.scope, [fresh]);
+  expect(viewRevision(h.scope, archiveKey)).toBe(revision);
+  const priorBug = archiveIndex(
+    readArchives(revision).map((archive) => ({ ...archive, reopened: true })),
+  );
+  expect(isArchived(priorBug, fresh)).toBe(true);
+  const mention = {
+    ...fresh,
+    messageIds: [...fresh.messageIds, "c".repeat(64)],
+    messages: [
+      ...fresh.messages,
+      { id: "c".repeat(64), createdAt: 31, mentioned: true },
+    ],
+  };
+  expect(isArchived(index, mention)).toBe(false);
+  reopenArchives(h.scope, [mention]);
+  expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([]);
+});
+
 it("reopens participating replies durably without resurfacing an old mention", () => {
   const h = fixture();
   const thread = { ...h.item, thread: true };

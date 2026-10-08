@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { CatalogKind } from "../../features/agents/catalog";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type {
@@ -103,6 +110,30 @@ export function CatalogShareSwitch({
   const { shared, change } = catalog.state(kind, d);
   const rejected = change?.delivery === "rejected";
   const checked = change && !rejected ? change.shared : shared;
+  // A confirmation Retry stays mounted, busy, while its re-read runs.
+  const [checking, setChecking] = useState<string>();
+  const confirming =
+    !!change &&
+    checking === change.operation &&
+    change.delivery === "queued" &&
+    !change.stalled;
+  // A notice control removed while focused hands focus to the switch.
+  // Sibling controls can leave in the same commit, so any focused removal
+  // claims the handoff; the layout effect below resets it.
+  const toggle = useRef<HTMLButtonElement>(null);
+  const handoff = useRef(false);
+  const notice = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    return () => {
+      handoff.current ||= document.activeElement === button;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!handoff.current) return;
+    handoff.current = false;
+    if (document.activeElement === document.body)
+      toggle.current?.focus({ preventScroll: true });
+  });
   const busy = (next: boolean) => {
     setPending(next);
     onPendingChange?.(next);
@@ -123,6 +154,7 @@ export function CatalogShareSwitch({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <SwitchPreferenceRow
+        ref={toggle}
         label="Share to catalog"
         description={description}
         checked={checked}
@@ -132,7 +164,11 @@ export function CatalogShareSwitch({
       {snapshot.status === "error" && (
         <div role="alert" className="flex flex-wrap items-center gap-2">
           <p className="m-0 text-body-sm">{snapshot.error}</p>
-          <Button size="compact" onClick={() => void catalog.refresh()}>
+          <Button
+            ref={notice}
+            size="compact"
+            onClick={() => void catalog.refresh()}
+          >
             Retry
           </Button>
         </div>
@@ -146,16 +182,22 @@ export function CatalogShareSwitch({
             })}
             {change.stalled && change.error && ` ${change.error}`}
           </p>
-          {change.stalled && (
+          {(change.stalled || confirming) && (
             <Button
+              ref={notice}
               size="compact"
-              onClick={() => catalog.retry(change.operation)}
+              loading={confirming}
+              onClick={() => {
+                setChecking(change.operation);
+                catalog.retry(change.operation);
+              }}
             >
               Retry
             </Button>
           )}
-          {(change.delivery === "accepted" || change.stalled) && (
+          {(change.delivery === "accepted" || change.stalled || confirming) && (
             <Button
+              ref={notice}
               size="compact"
               variant="ghost"
               onClick={() => void catalog.dismiss(change.operation)}
@@ -174,12 +216,14 @@ export function CatalogShareSwitch({
           {rejected && !error && (
             <>
               <Button
+                ref={notice}
                 size="compact"
                 onClick={() => catalog.retry(change.operation)}
               >
                 Retry
               </Button>
               <Button
+                ref={notice}
                 size="compact"
                 variant="ghost"
                 onClick={() => void catalog.dismiss(change.operation)}

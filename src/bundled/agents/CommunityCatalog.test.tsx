@@ -194,6 +194,163 @@ it("retries a failed confirmation read without publishing again", async () => {
   ).toHaveLength(1);
 });
 
+/** A switch whose strong head reads can fail or wait on the test. */
+function confirmingSwitch(extra?: React.ReactNode) {
+  const server = catalogRelay();
+  const writes = createOutbox(
+    alice.pubkey,
+    server.writer(alice),
+    memoryStorage(),
+    { timeoutMs: 1_000 },
+  );
+  const base = server.reader(alice);
+  let failing = false;
+  let next: Promise<void> | undefined;
+  const catalog = createCommunityCatalog({
+    reader: {
+      async read(...args: Parameters<typeof base.read>) {
+        if (args[0][0]?.consistency === "strong") {
+          const wait = next;
+          next = undefined;
+          await wait;
+          if (failing) throw new Error("offline");
+        }
+        return base.read(...args);
+      },
+    },
+    viewer: alice.pubkey,
+    outbox: writes.outbox,
+    local: writes.local,
+  });
+  owners.push(catalog, { dispose: () => writes.dispose() });
+  render(
+    <>
+      <CatalogShareSwitch
+        catalog={catalog.queries}
+        kind={30175}
+        d="helper"
+        name="Helper"
+        description="Shared."
+        content={() => agentBody}
+      />
+      {extra}
+    </>,
+  );
+  return {
+    server,
+    fail(value: boolean) {
+      failing = value;
+    },
+    /** Holds the next strong read until the returned release is called. */
+    defer() {
+      let release = () => {};
+      next = new Promise((resolve) => (release = resolve));
+      return () => release();
+    },
+  };
+}
+const unconfirmed =
+  /The relay accepted the update, but the catalog could not confirm it\./;
+async function stalledShare(control: ReturnType<typeof confirmingSwitch>) {
+  await waitFor(() => expect(enabled()).toBe(true));
+  const release = control.server.hold();
+  fireEvent.click(shareSwitch());
+  await screen.findByText(/Sharing Helper is queued/);
+  control.fail(true);
+  release();
+  await screen.findByText(unconfirmed);
+  return screen.getByRole("button", { name: "Retry" });
+}
+
+it("keeps confirmation Retry focused while checking and hands focus to the switch", async () => {
+  const control = confirmingSwitch();
+  const retry = await stalledShare(control);
+  retry.focus();
+  // Pending: the same control stays mounted, busy and focused.
+  let release = control.defer();
+  fireEvent.click(retry);
+  await waitFor(() => expect(retry.getAttribute("aria-busy")).toBe("true"));
+  expect(retry.isConnected).toBe(true);
+  expect(document.activeElement).toBe(retry);
+  // Repeated failure: still the same focused control, ready again.
+  release();
+  await screen.findByText(unconfirmed);
+  expect(screen.getByRole("button", { name: "Retry" })).toBe(retry);
+  expect(retry.getAttribute("aria-busy")).not.toBe("true");
+  expect(document.activeElement).toBe(retry);
+  // Success: the control goes away and focus lands on the switch.
+  control.fail(false);
+  release = control.defer();
+  fireEvent.click(retry);
+  await waitFor(() => expect(retry.getAttribute("aria-busy")).toBe("true"));
+  release();
+  await screen.findByText("Published Helper to the community catalog.");
+  expect(retry.isConnected).toBe(false);
+  expect(document.activeElement).toBe(shareSwitch());
+});
+
+it("leaves focus where the user moved it when confirmation succeeds", async () => {
+  const control = confirmingSwitch(<button type="button">Elsewhere</button>);
+  const retry = await stalledShare(control);
+  retry.focus();
+  control.fail(false);
+  const release = control.defer();
+  fireEvent.click(retry);
+  await waitFor(() => expect(retry.getAttribute("aria-busy")).toBe("true"));
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  elsewhere.focus();
+  release();
+  await screen.findByText("Published Helper to the community catalog.");
+  expect(document.activeElement).toBe(elsewhere);
+});
+
+it("hands focus to the switch when a focused Retry leaves with its Dismiss", async () => {
+  const server = catalogRelay();
+  const owner = client(server, alice);
+  renderSwitch(owner.catalog);
+  await waitFor(() => expect(enabled()).toBe(true));
+  server.refuse(true);
+  fireEvent.click(shareSwitch());
+  await screen.findByRole("alert");
+  const retry = screen.getByRole("button", { name: "Retry" });
+  const dismiss = screen.getByRole("button", { name: "Dismiss" });
+  retry.focus();
+  server.refuse(false);
+  const release = server.hold();
+  // Resending removes both rejected-notice controls in one commit.
+  fireEvent.click(retry);
+  await screen.findByText(/Sharing Helper is queued/);
+  expect(retry.isConnected).toBe(false);
+  expect(dismiss.isConnected).toBe(false);
+  expect(document.activeElement).toBe(shareSwitch());
+  release();
+  await screen.findByText("Published Helper to the community catalog.");
+});
+
+it("hands focus to the switch when a newer head supersedes the retried change", async () => {
+  const control = confirmingSwitch();
+  const retry = await stalledShare(control);
+  const dismiss = screen.getByRole("button", { name: "Dismiss" });
+  retry.focus();
+  // Another device publishes a newer head; confirmation keeps it, which
+  // retires this change and both of its controls together.
+  control.server.put(
+    signed(alice, {
+      kind: 30175,
+      tags: [["d", "helper"]],
+      content: agentBody,
+      created_at: Math.floor(Date.now() / 1000) + 60,
+    }),
+  );
+  control.fail(false);
+  fireEvent.click(retry);
+  await waitFor(() => expect(retry.isConnected).toBe(false));
+  expect(dismiss.isConnected).toBe(false);
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(checked()).toBe(false);
+  expect(document.activeElement).toBe(shareSwitch());
+});
+
 it("previews shared entries as plain text and adds an explicit copy", async () => {
   const server = catalogRelay();
   server.put(

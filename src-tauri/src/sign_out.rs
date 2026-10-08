@@ -136,7 +136,8 @@ fn lost(error: std::io::Error) -> Failure {
     eprintln!("buzz: instance lock: {error}");
     reopen()
 }
-// Test seam: runs wherever ownership is briefly let go.
+// Test seam: runs wherever ownership is briefly let go, and after the first
+// failed attempt to take it while waiting.
 #[cfg(test)]
 thread_local!(static HANDOFF: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default());
 fn handoff() {
@@ -154,6 +155,7 @@ fn wait_for<E>(mut attempt: impl FnMut() -> Result<(), E>) -> bool {
         if start.elapsed() >= WAIT {
             return false;
         }
+        handoff();
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -233,11 +235,11 @@ fn missing(result: std::io::Result<()>) -> std::io::Result<()> {
 /// earlier attempt that stopped part-way.
 fn move_aside(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let moved = trash(path);
-    if !moved.exists() {
+    if !moved.try_exists()? {
         missing(fs::rename(path, &moved))?;
     }
     if let Some(child) = kept {
-        if moved.join(child).exists() && !path.join(child).exists() {
+        if moved.join(child).try_exists()? && !path.join(child).try_exists()? {
             fs::create_dir_all(path)?;
             fs::rename(moved.join(child), path.join(child))?;
         }
@@ -247,11 +249,11 @@ fn move_aside(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
 
 fn move_back(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let moved = trash(path);
-    if !moved.exists() {
+    if !moved.try_exists()? {
         return Ok(());
     }
     if let Some(child) = kept {
-        if path.join(child).exists() {
+        if path.join(child).try_exists()? {
             fs::rename(path.join(child), moved.join(child))?;
         }
     }

@@ -109,7 +109,8 @@ webview storage, service or identity read:
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
 registry confirmed absent means its keys are already gone; failing to check it
-stops before anything moves. If renaming or the key delete fails, the renames are rolled back. On any failure
+stops before anything moves. Every other presence check in the wipe is fallible
+too: one that can't look fails the attempt, keeping the marker. If renaming or the key delete fails, the renames are rolled back. On any failure
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in

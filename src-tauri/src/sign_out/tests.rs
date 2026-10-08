@@ -305,13 +305,12 @@ fn child_instance() {
     println!("child: booted");
     let mut input = std::io::stdin().lines();
     input.next();
-    match instance.begin() {
-        Err(_) => println!("child: refused"),
-        Ok(()) => {
-            mark(&paths, true, false);
-            println!("child: signing out");
-            input.next();
-        }
+    if admitted_once_free(&instance) {
+        mark(&paths, true, false);
+        println!("child: signing out");
+        input.next();
+    } else {
+        println!("child: refused");
     }
 }
 /// `child_instance` in a separate process, driven line by line.
@@ -377,22 +376,22 @@ fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finish
     // parent lets the child go, then finishes it.
     let mut child = Child::spawn(dir.path());
     assert_eq!(child.go(), "child: signing out");
-    let input = child.input.take();
+    // Runs only once the launch has tried for the lock and is still waiting:
+    // it lets the child go and waits for it to exit before the launch retries.
+    let released = std::rc::Rc::new(Cell::new(false));
+    let flag = released.clone();
+    HANDOFF.set(Some(Box::new(move || {
+        child.finish();
+        flag.set(true);
+    })));
     let removed = Cell::new(false);
-    let started = Instant::now();
-    std::thread::scope(|scope| {
-        scope.spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            drop(input);
-        });
-        assert!(boot(&paths, no_agents, || {
-            removed.set(true);
-            Ok(())
-        })
-        .is_ok());
-    });
-    assert!(started.elapsed() >= Duration::from_millis(200));
-    child.finish();
+    assert!(boot(&paths, no_agents, || {
+        assert!(released.get(), "finished only after the child let go");
+        removed.set(true);
+        Ok(())
+    })
+    .is_ok());
+    assert!(released.get());
     assert!(removed.get());
     assert!(!paths.marker.exists());
     assert_eq!(
@@ -443,6 +442,42 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_requires_reopening() {
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
     assert_eq!(instance.begin(), Err(refuse(ALREADY)));
+}
+
+/// Reading the kept registry's details fails while traversing and deleting it
+/// stay allowed: the wipe must stop, not treat it as absent and delete it.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
+    let (dir, paths) = fixture();
+    mark(&paths, true, false);
+    let before = listing(dir.path());
+    let registry = paths.app_data.join(KEPT);
+    let chmod = |args: &[&str]| {
+        let status = std::process::Command::new("chmod")
+            .args(args)
+            .arg(&registry)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    chmod(&["+a", "everyone deny readattr"]);
+    assert!(registry.try_exists().is_err());
+    let result = finish_pending(&paths, no_agents, || panic!("the human key stays"));
+    // Removing every ACL entry needs no attribute read, unlike `-a`.
+    chmod(&["-N"]);
+    assert_eq!(result, Err(FAILED.into()));
+    assert_eq!(listing(dir.path()), before);
+
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert_eq!(
+        listing(dir.path()),
+        [
+            "app/",
+            "app/agent-controller/",
+            "app/agent-controller/agents.json"
+        ]
+    );
 }
 
 #[test]

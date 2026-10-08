@@ -1,3 +1,4 @@
+import { Person } from "./people";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MediaViewer } from "../../features/messages/MediaAttachment";
@@ -61,6 +62,9 @@ export function attachmentBudget(attachments: Attachment[]) {
   return { shown, hidden: attachments.length - shown.length };
 }
 
+/** The relay always returns at most this many, with no total. */
+export const FEEDBACK_LIMIT = 100;
+
 export function Feedback() {
   const { context } = useSession();
   const [selected, setSelected] = useState<string | null>(null);
@@ -81,6 +85,7 @@ export function Feedback() {
         ) : (
           <GroupedList
             items={items}
+            limit={FEEDBACK_LIMIT}
             render={(item) => (
               <li key={item.id}>
                 <button
@@ -171,8 +176,8 @@ function FeedbackBody({
             host={feedback.communityHost}
           />
         </Row>
-        <Row label="Submitter" mono>
-          {feedback.submitterPubkey}
+        <Row label="Submitter">
+          <Person pubkey={feedback.submitterPubkey} />
         </Row>
         <Row label="Category">{feedback.category}</Row>
         <Row label="Event ID" mono>

@@ -167,24 +167,40 @@ export function groupByCommunity<T extends Grouped>(items: T[]) {
   return [...groups.values()];
 }
 
+/**
+ * Each group's count. A list the relay cut off at `limit` (it returns no
+ * total) may hold more in any group, so counts then read as a lower bound.
+ */
 export function GroupedList<T extends Grouped>({
   items,
   render,
+  limit,
   headings = true,
 }: {
   items: T[];
   render(item: T): ReactNode;
+  limit: number;
   headings?: boolean;
 }) {
+  const capped = items.length >= limit;
   return (
     <div className="flex flex-col gap-4">
       {groupByCommunity(items).map((group) => (
         <section key={group.id ?? ""}>
-          {headings && (
-            <h4 className="mb-1.5">
-              <CommunityBadge id={group.id} host={group.host} />
-            </h4>
-          )}
+          <h4 className="mb-1.5 flex items-center gap-1.5">
+            {headings && <CommunityBadge id={group.id} host={group.host} />}
+            <span
+              className="rounded-full bg-secondary px-2 py-0.5 text-caption font-medium"
+              title={
+                capped
+                  ? "The relay returned its maximum; there may be more"
+                  : undefined
+              }
+            >
+              {group.items.length}
+              {capped && "+"}
+            </span>
+          </h4>
           <ul className="flex flex-col gap-1">{group.items.map(render)}</ul>
         </section>
       ))}

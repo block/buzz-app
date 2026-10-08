@@ -45,7 +45,7 @@ function fail(patch: Partial<StaffFailure>): StaffOutcome<unknown> {
       bodyEmpty: false,
       code: null,
       notSent: false,
-      authLost: false,
+      authLost: patch.status === 401 || patch.status === 403,
       message: "Rejected",
       ...patch,
     },
@@ -990,4 +990,15 @@ it("a first attempt refused before sending releases the write", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
   await screen.findByText(/DNS unavailable/);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
+it("a gateway 401 after a sent write re-checks access and keeps the write", async () => {
+  routes.directAction = () =>
+    fail({ category: "ambiguous", status: 401, authLost: true });
+  mountSwitchable();
+  await openCommunityActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(sent("probe")).toHaveLength(2));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  await expectIdenticalRetry("directAction");
 });

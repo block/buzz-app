@@ -1,5 +1,5 @@
 /** Portable buzz-agent-snapshot v1. No saved identity or local execution state crosses this boundary. */
-import { isPngRenderingChunk } from "../messages/image-metadata";
+import { cleanPng, pngChunks } from "../messages/image-metadata";
 import { harnessKind } from "./harness-presets";
 import type { AgentEdit, AgentView, ControlSnapshot } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
@@ -356,13 +356,31 @@ export function buildAgentSnapshot(
       (!Number.isInteger(agent.launchParallelism) ||
         agent.launchParallelism < 1 ||
         agent.launchParallelism > 32)) ||
-    // Older native hosts cannot attest that imported launch behavior is portable.
-    !Array.isArray(agent.snapshotExportLimitations) ||
-    agent.snapshotExportLimitations.length > 0 ||
     (agent.sessionPolicy === null && !defaultSessionPolicy)
   ) {
     throw new Error(
       "This agent has runtime, response, or environment settings that cannot be exported faithfully.",
+    );
+  }
+  // Only signed, fixed native reason names may enter a user-facing error.
+  const limitations = agent.snapshotExportLimitations;
+  if (!Array.isArray(limitations))
+    throw new Error("This agent cannot be exported faithfully on this host.");
+  if (limitations.length) {
+    const names = [
+      "team instructions",
+      "idle timeout",
+      "turn timeout",
+      "effort level",
+    ];
+    if (
+      limitations.some(
+        (name) => typeof name !== "string" || !names.includes(name),
+      )
+    )
+      throw new Error("This agent cannot be exported faithfully.");
+    throw new Error(
+      `This agent cannot be exported faithfully because of: ${limitations.join(", ")}. ${limitations.includes("effort level") ? "Check Agent defaults for inherited effort and remove it before exporting." : "Remove the listed settings before exporting."}`,
     );
   }
   for (const value of [
@@ -679,7 +697,7 @@ async function transparentSinglePixel(idat: Uint8Array[]): Promise<boolean> {
   return scanline[4] === 0;
 }
 
-/** Strip private metadata, retaining the chunks used by the avatar sanitizer for rendering. */
+/** Validate first, then let the existing avatar sanitizer own metadata and animation. */
 export async function snapshotPngArtwork(
   bytes: Uint8Array,
 ): Promise<Uint8Array | undefined> {
@@ -690,33 +708,28 @@ export async function snapshotPngArtwork(
     return undefined;
   // The caller parses the manifest first; keep this utility safe when used alone.
   parseAgentSnapshot(bytes);
-  const parts = [MAGIC];
-  const idat: Uint8Array[] = [];
-  let offset = 8;
-  let singleRgba = false;
-  while (offset + 12 <= bytes.length) {
-    const length = u32(bytes, offset);
-    const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
-    if (type === "IHDR") {
-      const data = bytes.subarray(offset + 8, offset + 8 + length);
-      singleRgba =
-        length === 13 &&
-        u32(data, 0) === 1 &&
-        u32(data, 4) === 1 &&
-        data[8] === 8 &&
-        data[9] === 6 &&
-        data[12] === 0;
-    }
-    if (type === "IDAT")
-      idat.push(bytes.subarray(offset + 8, offset + 8 + length));
-    if (isPngRenderingChunk(type))
-      parts.push(bytes.slice(offset, offset + length + 12));
-    offset += length + 12;
-    if (type === "IEND") break;
+  const chunks = pngChunks(bytes);
+  const animated = chunks.some(({ kind }) => kind === "acTL");
+  // Strip after checking the animated appearance contract, never before it.
+  const artwork = new Uint8Array(
+    await cleanPng(bytes, undefined, animated).arrayBuffer(),
+  );
+  const header = chunks[0]?.payload;
+  const singleRgba =
+    !animated &&
+    header?.length === 13 &&
+    u32(header, 0) === 1 &&
+    u32(header, 4) === 1 &&
+    header[8] === 8 &&
+    header[9] === 6 &&
+    header[12] === 0;
+  if (singleRgba) {
+    const idat = chunks
+      .filter(({ kind }) => kind === "IDAT")
+      .map(({ payload }) => payload);
+    if (await transparentSinglePixel(idat)) return undefined;
   }
-  return singleRgba && (await transparentSinglePixel(idat))
-    ? undefined
-    : concat(parts);
+  return artwork;
 }
 
 function pngManifest(bytes: Uint8Array) {

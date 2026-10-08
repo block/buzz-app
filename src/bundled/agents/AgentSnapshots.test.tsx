@@ -1376,7 +1376,10 @@ it("retains the source avatar URL for a differently compressed transparent PNG",
       onClose={() => {}}
     />,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Import" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
   expect(uploadAvatar).not.toHaveBeenCalled();
   expect(h.create.mock.calls[0]?.[3]).toEqual(

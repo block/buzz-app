@@ -838,6 +838,77 @@ it("retains indexed PNG palette and transparency while excluding private metadat
   expect(kinds).toEqual(["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
 });
 
+it("refuses animated ICC and oriented EXIF before stripping metadata", async () => {
+  const original = encodeAgentSnapshot(
+    buildAgentSnapshot(portableAgent()),
+    "png",
+  );
+  const exif = new Uint8Array(28);
+  exif.set(utf8.encode("Exif\0\0II"));
+  const tiff = new DataView(exif.buffer, 6);
+  tiff.setUint16(2, 42, true);
+  tiff.setUint32(4, 8, true);
+  tiff.setUint16(8, 1, true);
+  tiff.setUint16(10, 0x112, true);
+  tiff.setUint16(12, 3, true);
+  tiff.setUint32(14, 1, true);
+  tiff.setUint16(18, 6, true);
+  for (const [kind, payload, reason] of [
+    ["iCCP", utf8.encode("profile"), "ICC"],
+    ["eXIf", exif, "EXIF orientation"],
+  ] as const) {
+    const animated = replacePngPixels(original, (type, data) =>
+      type === "IHDR"
+        ? [
+            pngChunk(type, data),
+            pngChunk("acTL", new Uint8Array(8)),
+            pngChunk(kind, payload),
+          ]
+        : [pngChunk(type, data)],
+    );
+    await expect(snapshotPngArtwork(animated)).rejects.toThrow(reason);
+  }
+});
+
+it("retains a painted later animation frame despite a transparent first frame", async () => {
+  const original = encodeAgentSnapshot(
+    buildAgentSnapshot(portableAgent()),
+    "png",
+  );
+  const animated = replacePngPixels(original, (type, data) =>
+    type === "IHDR"
+      ? [
+          pngChunk(type, data),
+          pngChunk("acTL", new Uint8Array(8)),
+          pngChunk("fcTL", new Uint8Array(26)),
+        ]
+      : type === "IEND"
+        ? [
+            pngChunk("fcTL", new Uint8Array(26)),
+            pngChunk("fdAT", new Uint8Array([0, 0, 0, 1, 255])),
+            pngChunk(type, data),
+          ]
+        : [pngChunk(type, data)],
+  );
+  const artwork = await snapshotPngArtwork(animated);
+  expect(artwork).toBeDefined();
+  if (!artwork) throw new Error("Animated artwork was lost");
+  const kinds: string[] = [];
+  replacePngPixels(artwork, (type, data) => {
+    kinds.push(type);
+    return [pngChunk(type, data)];
+  });
+  expect(kinds).toEqual([
+    "IHDR",
+    "acTL",
+    "fcTL",
+    "IDAT",
+    "fcTL",
+    "fdAT",
+    "IEND",
+  ]);
+});
+
 it("keeps a transparent placeholder when its scanline is malformed", async () => {
   const source = buildAgentSnapshot(portableAgent());
   const image = replacePngPixels(
@@ -883,6 +954,23 @@ it("fails closed when the host cannot attest portable native settings", () => {
   );
   source.snapshotExportLimitations = [];
   expect(buildAgentSnapshot(source).definition.name).toBe(source.name);
+});
+
+it("names inherited effort without exposing unexpected native verdict values", () => {
+  const source = portableAgent();
+  source.snapshotExportLimitations = ["effort level"];
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    /effort level.*Agent defaults/,
+  );
+  source.snapshotExportLimitations = ["team instructions", "idle timeout"];
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    /team instructions, idle timeout.*Remove the listed settings/,
+  );
+  source.snapshotExportLimitations = ["private native text"];
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    "This agent cannot be exported faithfully.",
+  );
+  expect(() => buildAgentSnapshot(source)).not.toThrow("private native text");
 });
 
 it("accepts exact per-event plaintext boundary, rejects first byte beyond", () => {

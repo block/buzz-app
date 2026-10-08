@@ -52,6 +52,11 @@
   background: color-mix(in srgb, var(--text) 20%, transparent);
   background-clip: padding-box;
 }
+/* Part of the final measured item, so end alignment includes breathing room.
+   The spacer scrolls away with history instead of shortening its viewport. */
+.timelineEnd {
+  height: var(--space-3);
+}
 .feed ol {
   list-style: none;
   margin: 0;
@@ -675,7 +680,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-panel-inset);
-  padding-bottom: var(--space-panel-inset);
+  /* Scrollable end padding, not a fixed strip above the composer. */
+  padding-bottom: var(--space-3);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;

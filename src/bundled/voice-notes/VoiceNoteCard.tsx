@@ -68,6 +68,7 @@ function Player({
   const attempt = useRef(0);
   const [count, setCount] = useState(38);
   const [duration, setDuration] = useState(taggedDuration);
+  const [metadataReady, setMetadataReady] = useState(false);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -221,7 +222,7 @@ function Player({
             max={duration || 1}
             step={0.01}
             value={Math.min(time, duration || 1)}
-            disabled={!duration}
+            disabled={!duration || !metadataReady}
             aria-valuetext={`${formatVoiceNoteDuration(time)} of ${formatVoiceNoteDuration(duration)}`}
             onChange={(event) => {
               const element = audio.current;
@@ -280,10 +281,12 @@ function Player({
         src={source}
         preload="none"
         onLoadedMetadata={(event) => {
+          setMetadataReady(true);
           const value = event.currentTarget.duration;
           if (Number.isFinite(value) && value > 0) setDuration(value);
           applyVoiceNotePlaybackRate(event.currentTarget, rate);
         }}
+        onEmptied={() => setMetadataReady(false)}
         onTimeUpdate={(event) => {
           setTime(event.currentTarget.currentTime);
           paintProgress(event.currentTarget.currentTime, duration);
@@ -303,6 +306,7 @@ function Player({
           paintProgress(0, duration);
         }}
         onError={(event) => {
+          setMetadataReady(false);
           releaseAudio(event.currentTarget);
           attempt.current++;
           setError(true);

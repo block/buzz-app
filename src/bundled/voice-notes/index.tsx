@@ -11,7 +11,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "recorder",
     title: "Voice Notes",
     order: 10,
-    component: ({ session, disabled, capture }) =>
+    component: ({ session, disabled, capture, focus }) =>
       session.attachments && capture ? (
         <button
           type="button"
@@ -19,7 +19,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
           aria-label="Record voice note"
           title="Record voice note"
           disabled={disabled}
-          onClick={() => capture(VoiceCapture)}
+          onClick={() =>
+            capture(({ accept, cancel }) => (
+              <VoiceCapture
+                accept={(recording) => {
+                  const accepted = accept(recording);
+                  if (accepted) focus();
+                  return accepted;
+                }}
+                cancel={() => {
+                  cancel();
+                  focus();
+                }}
+              />
+            ))
+          }
         >
           <MicrophoneIcon size={18} aria-hidden="true" />
         </button>

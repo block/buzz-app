@@ -23,6 +23,10 @@ export function VoiceNoteRecorder({
   status: "requesting" | "recording" | "processing";
 }) {
   const discardCorners = useMediaCorners();
+  const discard = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    discard.current?.focus();
+  }, []);
   const waveform = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(38);
   const track = useRef<HTMLDivElement>(null);
@@ -66,6 +70,7 @@ export function VoiceNoteRecorder({
       <legend className="sr-only">{label ?? "Recording voice note"}</legend>
       <span ref={discardCorners} className={styles.discard}>
         <button
+          ref={discard}
           className={styles.iconButton}
           type="button"
           aria-label="Discard voice note"

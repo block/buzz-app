@@ -133,7 +133,13 @@ test("record, preview, send and play the chat card with speed and seeking", {
   tag: "@media-recorder",
 }, async ({ page }) => {
   const errors = watchPageErrors(page);
+  const initialCard = page
+    .getByRole("group", { name: "Voice note", exact: true })
+    .first();
+  await expect(initialCard.locator("audio")).toHaveJSProperty("readyState", 0);
+  await expect(initialCard.getByRole("slider")).toBeDisabled();
   await record(page);
+  await expect(page.getByRole("textbox")).toBeFocused();
   const composer = page.getByRole("form", {
     name: "Send a message to general",
   });
@@ -212,6 +218,7 @@ test("record, preview, send and play the chat card with speed and seeking", {
   await expect(speedButton).toHaveCSS("color", "rgb(255, 255, 255)");
   await firstCard.hover();
   await expect(speedButton).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(firstCard.getByRole("slider")).toBeEnabled();
   await firstCard.getByRole("slider").fill("1");
   await expect
     .poll(() =>
@@ -240,15 +247,20 @@ test("permission cancellation, denial and plugin removal release microphones", {
   await page.evaluate(() => {
     window.voiceMic.mode = "delay";
   });
-  await page
-    .getByRole("button", { name: "Record voice note", exact: true })
-    .click();
+  const recordButton = page.getByRole("button", {
+    name: "Record voice note",
+    exact: true,
+  });
+  await recordButton.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("status").filter({ hasText: "Waiting for microphone…" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Discard voice note", exact: true })
-    .click();
+  await expect(
+    page.getByRole("button", { name: "Discard voice note", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("textbox")).toBeFocused();
   await page.evaluate(() => window.voiceMic.release());
   await expect.poll(() => page.evaluate(() => window.voiceMic.stopped)).toBe(1);
   await page.evaluate(() => {
@@ -258,7 +270,11 @@ test("permission cancellation, denial and plugin removal release microphones", {
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("Allow Buzz");
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("textbox")).toBeFocused();
   await page.evaluate(() => {
     window.voiceMic.mode = "allow";
   });
@@ -270,11 +286,15 @@ test("permission cancellation, denial and plugin removal release microphones", {
   ).toBeEnabled();
   await page
     .getByRole("button", { name: "Disable Voice Notes", exact: true })
-    .click();
+    .focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Finish voice note", exact: true }),
   ).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.voiceMic.stopped)).toBe(2);
+  await expect(
+    page.getByRole("button", { name: "Enable Voice Notes", exact: true }),
+  ).toBeFocused();
   expect(await page.evaluate(() => window.voiceFixture.report.published)).toBe(
     0,
   );

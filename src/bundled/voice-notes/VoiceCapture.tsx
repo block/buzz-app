@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { StopIcon as Square } from "../../shared/design-system/icons";
 import type { ComposerCaptureProps } from "../../features/conversation/contracts";
@@ -13,6 +13,10 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
   current.current = { accept, cancel };
   const finishing = useRef(false);
   const [failed, setFailed] = useState(false);
+  const close = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (recorder.error || failed) close.current?.focus();
+  }, [recorder.error, failed]);
   useEffect(() => {
     // Strict Mode can dispose a mount immediately; do not open two permission requests.
     let active = true;
@@ -45,7 +49,7 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
           {recorder.error ??
             "Could not attach this voice note. Close and try again."}
         </span>
-        <button type="button" onClick={cancel}>
+        <button ref={close} type="button" onClick={cancel}>
           Close
         </button>
       </div>

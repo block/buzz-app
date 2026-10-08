@@ -555,7 +555,6 @@ export function InboxView({
         session.unread.generation() === generation &&
         !!channel &&
         !channel.cached &&
-        !channel.archived &&
         !!channel.members?.includes(scope.viewer) &&
         session.unread
           .inbox()

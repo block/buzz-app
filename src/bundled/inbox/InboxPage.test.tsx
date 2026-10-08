@@ -206,6 +206,48 @@ it("archives from the row without opening it, remembers filters, and clears an e
   ).not.toBeChecked();
 });
 
+it("archives and restores conversations in an archived member channel across remounts", async () => {
+  const h = fixture({ archivedRoom: true });
+  let view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(
+    h.session.channels.list().channels.find((channel) => channel.id === "room"),
+  ).toMatchObject({
+    archived: true,
+    members: expect.arrayContaining([h.viewer.pubkey]),
+  });
+  const threadRow = () =>
+    rows().find((row) => row.textContent?.includes("A thread update"));
+  const thread = threadRow();
+  if (!thread) throw new Error("Missing fixture thread row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+  await waitFor(() => expect(threadRow()).toBeUndefined());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+
+  view.unmount();
+  view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  await chooseFilter("Archived", "Show");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const archivedThread = threadRow();
+  if (!archivedThread) throw new Error("Missing archived thread row");
+  fireEvent.click(
+    within(archivedThread).getByRole("button", { name: /^Restore / }),
+  );
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  view.unmount();
+  render(h.view);
+  await screen.findByText("No archived conversations in this view");
+  await chooseFilter("Inbox", "Show");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(threadRow()).toBeDefined();
+});
+
 it("defaults saved filters field by field", async () => {
   const h = fixture();
   localStorage.setItem(
@@ -594,6 +636,7 @@ function fixture(
     withSenders?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
+    archivedRoom?: boolean;
     sessionChannel?: boolean;
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
@@ -702,22 +745,16 @@ function fixture(
       ],
       10,
     ),
-    metadata(
-      relayKey,
-      "room",
-      "Design",
-      10,
-      options.sessionChannel
+    metadata(relayKey, "room", "Design", 10, [
+      ...(options.sessionChannel
         ? [
             ["t", "stream"],
             ["private"],
             ["about", "Buzz session (buzz.sessions/v1)"],
           ]
-        : [
-            ["t", "stream"],
-            ...(options.archivedChannel ? [["archived", "true"]] : []),
-          ],
-    ),
+        : [["t", "stream"]]),
+      ...(options.archivedRoom || options.archivedChannel ? [["archived", "true"]] : []),
+    ]),
     profile(alice, { name: "Alice" }),
     ...roots,
     mention,

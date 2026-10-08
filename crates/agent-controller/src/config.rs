@@ -231,7 +231,33 @@ impl Agent {
                             == Some("buzz-agent")
                             && matches!(
                                 key.as_str(),
-                                "BUZZ_AGENT_SYSTEM_PROMPT" | "BUZZ_AGENT_MAX_CONTEXT_TOKENS"
+                                "BUZZ_AGENT_SYSTEM_PROMPT"
+                                    | "BUZZ_AGENT_SYSTEM_PROMPT_FILE"
+                                    | "BUZZ_AGENT_MAX_ROUNDS"
+                                    | "BUZZ_AGENT_MAX_OUTPUT_TOKENS"
+                                    | "BUZZ_AGENT_MAX_TOKEN_RECOVERIES"
+                                    | "BUZZ_AGENT_LLM_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_TOOL_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_MCP_INIT_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_MCP_RESTART_MAX_ATTEMPTS"
+                                    | "BUZZ_AGENT_MCP_RESTART_BASE_MS"
+                                    | "BUZZ_AGENT_MCP_RESTART_MAX_MS"
+                                    | "BUZZ_AGENT_MAX_SESSIONS"
+                                    | "BUZZ_AGENT_MAX_LINE_BYTES"
+                                    | "BUZZ_AGENT_MAX_HISTORY_BYTES"
+                                    | "BUZZ_AGENT_MAX_TOOL_RESULT_TEXT_BYTES"
+                                    | "BUZZ_AGENT_MAX_CONTEXT_TOKENS"
+                                    | "BUZZ_AGENT_MAX_HANDOFFS"
+                                    | "BUZZ_AGENT_MAX_PARALLEL_TOOLS"
+                                    | "BUZZ_AGENT_MAX_PENDING_PERMISSIONS"
+                                    | "BUZZ_AGENT_PERMISSION_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_HOOK_TIMEOUT_MS"
+                                    | "BUZZ_AGENT_STOP_MAX_REJECTIONS"
+                                    | "BUZZ_AGENT_REQUIRE_REPLY"
+                                    | "BUZZ_AGENT_NO_HINTS"
+                                    | "BUZZ_AGENT_THINKING_EFFORT"
+                                    | "BUZZ_AGENT_THINKING_SUMMARY"
+                                    | "BUZZ_AGENT_PROMPT_CACHING"
                             ))
                 }) {
                     limits.push("behavioral environment overrides");

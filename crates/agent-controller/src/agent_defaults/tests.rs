@@ -434,7 +434,11 @@ fn snapshot_export_limits_effective_behavior_overrides_without_exposing_values()
         for (harness, key) in [
             ("goose-acp", "BUZZ_ACP_SYSTEM_PROMPT"),
             ("buzz-agent", "BUZZ_AGENT_SYSTEM_PROMPT"),
+            ("buzz-agent", "BUZZ_AGENT_SYSTEM_PROMPT_FILE"),
             ("buzz-agent", "BUZZ_AGENT_MAX_CONTEXT_TOKENS"),
+            ("buzz-agent", "BUZZ_AGENT_MAX_HISTORY_BYTES"),
+            ("buzz-agent", "BUZZ_AGENT_NO_HINTS"),
+            ("buzz-agent", "BUZZ_AGENT_THINKING_EFFORT"),
         ] {
             let mut agent = fixture();
             agent.imported = Value::Null;

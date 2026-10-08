@@ -49,6 +49,6 @@ pub use runtime::{
     ModelContext,
 };
 pub use secret::{Credentials, Secret};
-pub use skills::ensure_buzz_cli_skill;
+pub use skills::ensure_buzz_skills;
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

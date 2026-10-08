@@ -111,14 +111,16 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
     id
 }
 #[test]
-fn native_host_provisions_cli_skill_before_agent_controls_are_used() {
+fn native_host_provisions_skills_before_agent_controls_are_used() {
     let (dir, _host, _app, _view) = fixture();
-    let skill = dir
-        .path()
-        .join("workspace/.agents/skills/buzz-cli/SKILL.md");
-    assert!(std::fs::read_to_string(skill)
-        .unwrap()
-        .contains("name: buzz-cli"));
+    for name in ["buzz-cli", "buzz-memory"] {
+        let skill = dir
+            .path()
+            .join(format!("workspace/.agents/skills/{name}/SKILL.md"));
+        assert!(std::fs::read_to_string(skill)
+            .unwrap()
+            .contains(&format!("name: {name}")));
+    }
 }
 
 #[test]

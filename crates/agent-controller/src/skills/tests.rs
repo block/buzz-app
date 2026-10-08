@@ -5,7 +5,7 @@ use std::fs;
 fn fresh_workspace_installs_discoverable_cli_guidance() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join(".buzz");
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     let skill = workspace.join(".agents/skills/buzz-cli/SKILL.md");
     let text = fs::read_to_string(&skill).expect("fresh installs must provide the CLI skill");
     assert!(text.starts_with("---\nname: buzz-cli\n"));
@@ -26,15 +26,44 @@ fn fresh_workspace_installs_discoverable_cli_guidance() {
             );
         }
     }
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     assert_eq!(fs::read_to_string(skill).unwrap(), text);
+}
+
+#[test]
+fn memory_skill_installs_discoverably_and_refreshes_on_its_own_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join(".buzz");
+    ensure_buzz_skills(&workspace).unwrap();
+    let memory = workspace.join(".agents/skills/buzz-memory/SKILL.md");
+    let text = fs::read_to_string(&memory).unwrap();
+    assert!(text.starts_with("---\nname: buzz-memory\n"));
+    assert!(text.contains("buzz mem patch <slug> --base-hash"));
+    let marker = memory.with_file_name(".skill-version");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "1\n");
+    #[cfg(unix)]
+    for provider in [".claude", ".codex", ".goose"] {
+        let discovered = workspace.join(provider).join("skills/buzz-memory/SKILL.md");
+        assert_eq!(
+            fs::canonicalize(discovered).unwrap(),
+            fs::canonicalize(&memory).unwrap()
+        );
+    }
+    // A stale memory marker refreshes only memory; current CLI edits survive.
+    let cli = workspace.join(".agents/skills/buzz-cli/SKILL.md");
+    fs::write(&cli, "cli edits").unwrap();
+    fs::write(&memory, "stale memory").unwrap();
+    fs::write(&marker, "0\n").unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
+    assert_eq!(fs::read_to_string(&memory).unwrap(), text);
+    assert_eq!(fs::read_to_string(&cli).unwrap(), "cli edits");
 }
 
 #[test]
 fn refresh_preserves_current_or_newer_edits_and_repairs_missing_content() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join(".buzz");
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     let skill = workspace.join(".agents/skills/buzz-cli/SKILL.md");
     let version = skill.with_file_name(".skill-version");
     let installed = fs::read_to_string(&skill).unwrap();
@@ -42,16 +71,16 @@ fn refresh_preserves_current_or_newer_edits_and_repairs_missing_content() {
     for marker in [current.as_str(), "999\n"] {
         fs::write(&skill, "user edits").unwrap();
         fs::write(&version, marker).unwrap();
-        ensure_buzz_cli_skill(&workspace).unwrap();
+        ensure_buzz_skills(&workspace).unwrap();
         assert_eq!(fs::read_to_string(&skill).unwrap(), "user edits");
         assert_eq!(fs::read_to_string(&version).unwrap(), marker);
     }
     fs::write(&version, "1\n").unwrap();
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     assert_eq!(fs::read_to_string(&skill).unwrap(), installed);
     fs::write(&version, "999\n").unwrap();
     fs::remove_file(&skill).unwrap();
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     assert_eq!(fs::read_to_string(&skill).unwrap(), installed);
     assert_eq!(fs::read_to_string(&version).unwrap(), "999\n");
 }
@@ -74,7 +103,7 @@ fn legacy_claude_layout_migrates_edits_and_supporting_files() {
                 fs::write(canonical.join("other.md"), "canonical resource").unwrap();
             }
         }
-        ensure_buzz_cli_skill(&workspace).unwrap();
+        ensure_buzz_skills(&workspace).unwrap();
         assert!(fs::symlink_metadata(&legacy)
             .unwrap()
             .file_type()
@@ -93,7 +122,7 @@ fn legacy_claude_layout_migrates_edits_and_supporting_files() {
                 "canonical resource"
             );
         }
-        ensure_buzz_cli_skill(&workspace).unwrap();
+        ensure_buzz_skills(&workspace).unwrap();
         assert_eq!(
             fs::read_to_string(legacy.join("SKILL.md")).unwrap(),
             "legacy user edits"
@@ -126,11 +155,15 @@ fn migration_refuses_conflicts_or_redirected_legacy_content_before_removing_file
             }
             symlink(outside, link).unwrap();
         }
-        assert!(ensure_buzz_cli_skill(&workspace).is_err());
+        assert!(ensure_buzz_skills(&workspace).is_err());
         assert_eq!(
             fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
             "canonical content"
         );
+        // The CLI failure does not block the independent memory skill.
+        assert!(workspace
+            .join(".claude/skills/buzz-memory/SKILL.md")
+            .is_file());
         if problem == "resource-conflict" {
             assert_eq!(
                 fs::read_to_string(legacy.join("reference.md")).unwrap(),
@@ -152,10 +185,27 @@ fn provider_customizations_survive_and_dangling_links_are_repaired() {
     let codex = workspace.join(".codex/skills");
     fs::create_dir_all(&codex).unwrap();
     symlink("missing", codex.join("buzz-cli")).unwrap();
-    ensure_buzz_cli_skill(&workspace).unwrap();
+    // Memory has no legacy layout: a real Claude directory is a custom skill.
+    let memory = workspace.join(".claude/skills/buzz-memory");
+    fs::create_dir_all(memory.join("references")).unwrap();
+    fs::write(memory.join("SKILL.md"), "custom memory skill").unwrap();
+    fs::write(memory.join("references/guide.md"), "custom guide").unwrap();
+    ensure_buzz_skills(&workspace).unwrap();
     assert_eq!(
         fs::read_to_string(custom.join("SKILL.md")).unwrap(),
         "custom Goose skill"
+    );
+    assert!(!fs::symlink_metadata(&memory)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(memory.join("SKILL.md")).unwrap(),
+        "custom memory skill"
+    );
+    assert_eq!(
+        fs::read_to_string(memory.join("references/guide.md")).unwrap(),
+        "custom guide"
     );
     assert!(codex.join("buzz-cli/SKILL.md").is_file());
 }
@@ -176,19 +226,19 @@ fn redirected_directories_and_skill_files_are_rejected_without_external_writes()
         };
         fs::create_dir_all(link.parent().unwrap()).unwrap();
         symlink(&outside, &link).unwrap();
-        assert!(ensure_buzz_cli_skill(&workspace).is_err(), "{redirected}");
+        assert!(ensure_buzz_skills(&workspace).is_err(), "{redirected}");
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
     }
     for redirected in ["SKILL.md", ".skill-version"] {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join(".buzz");
-        ensure_buzz_cli_skill(&workspace).unwrap();
+        ensure_buzz_skills(&workspace).unwrap();
         let file = workspace.join(".agents/skills/buzz-cli").join(redirected);
         let outside = dir.path().join("outside");
         fs::write(&outside, "untouched").unwrap();
         fs::remove_file(&file).unwrap();
         symlink(&outside, &file).unwrap();
-        assert!(ensure_buzz_cli_skill(&workspace).is_err());
+        assert!(ensure_buzz_skills(&workspace).is_err());
         assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");
     }
 }
@@ -214,7 +264,7 @@ fn redirected_provider_skips_only_its_link_and_preserves_external_content() {
             fs::create_dir_all(link.parent().unwrap()).unwrap();
             symlink(&outside, &link).unwrap();
             for _ in 0..2 {
-                ensure_buzz_cli_skill(&workspace).unwrap();
+                ensure_buzz_skills(&workspace).unwrap();
                 let canonical = workspace.join(".agents/skills/buzz-cli/SKILL.md");
                 let content = fs::read_to_string(&canonical).unwrap();
                 assert!(content.starts_with("---\nname: buzz-cli\n"));

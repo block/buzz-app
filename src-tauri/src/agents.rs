@@ -471,8 +471,8 @@ impl Host {
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
         // Provision before restoring agents; failures remain nonfatal, as in old Buzz.
-        if let Err(error) = buzz_agent_controller::ensure_buzz_cli_skill(&workspace) {
-            eprintln!("buzz: failed to install CLI skill: {error}");
+        if let Err(error) = buzz_agent_controller::ensure_buzz_skills(&workspace) {
+            eprintln!("buzz: failed to install bundled skills: {error}");
         }
         let app_data = root
             .parent()

@@ -1,3 +1,4 @@
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
@@ -40,11 +41,7 @@ export function TypingIndicator({
   const others = matching.length - names.length;
   return (
     <div className={styles.typing} role="status" aria-label="Typing activity">
-      <span className={styles.dots} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
+      <TypingDots />
       <span className={styles.label}>
         <span className={styles.names}>{names.join(", ")}</span>
         {others > 0 ? ` and ${others} others` : ""}

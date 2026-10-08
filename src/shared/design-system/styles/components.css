@@ -388,6 +388,13 @@
     color: var(--text-subtle);
   }
 
+  /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
+  .buzz-avatar[data-size="compact"] {
+    @apply text-caption;
+    width: 1.3125rem;
+    height: 1.3125rem;
+  }
+
   .buzz-avatar[data-size="small"] {
     @apply text-caption;
     width: 1.5rem;

@@ -132,6 +132,11 @@ export class ConversationService extends Service implements Conversation {
   }
   registerAccessory(value: ComposerAccessory) {
     validate(value);
+    if (
+      value.placement !== undefined &&
+      !["composer", "message"].includes(value.placement)
+    )
+      throw new Error("Invalid accessory placement");
     this.accessoryEntries.register(this.ctx, value);
   }
   registerTool(value: ComposerTool) {

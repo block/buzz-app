@@ -66,9 +66,26 @@ function fixture() {
   };
   const activity = {
     status: "ready",
-    records: [],
+    records: [
+      {
+        id: "start",
+        agent: a,
+        kind: "turn_started",
+        channelIds: ["c"],
+        receivedAt: 1000,
+        createdAt: 1,
+        plaintext: JSON.stringify({
+          kind: "turn_started",
+          turnId: "turn",
+          channelId: "c",
+          seq: 1,
+          timestamp: new Date(1000).toISOString(),
+          payload: { triggeringEventIds: ["1".repeat(64)] },
+        }),
+      },
+    ],
     turns: [],
-    typing: [{ channelId: "c", agent: a }],
+    typing: [],
     trimmed: 0,
   };
   const subscribe = (listener: () => void) => {
@@ -158,6 +175,18 @@ it("uses channel scope in link previews and activity, and participant scope in s
         session={f.session}
         scope="test"
         channelId="c"
+        message={{
+          id: "1".repeat(64),
+          channelId: "c",
+          authorId: a,
+          content: "hello",
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
         canOpen={() => true}
         open={() => true}
       />
@@ -167,15 +196,15 @@ it("uses channel scope in link previews and activity, and participant scope in s
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}`,
+      name: "View agent activity: Larry, status unknown",
     }),
   ).toBeVisible();
   act(() => f.setPresence("away"));
   expect(
-    screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}, Presence: away`,
-    }),
-  ).toBeVisible();
+    screen
+      .getByRole("button", { name: /View agent activity/ })
+      .querySelector("[data-avatar-stack] [title]"),
+  ).toHaveAttribute("title", "Larry");
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
     "Larry · rcaj",
@@ -184,10 +213,10 @@ it("uses channel scope in link previews and activity, and participant scope in s
     "Larry · rcaj, Larry · 04hu",
   );
   expect(
-    screen.getByRole("button", {
-      name: `View activity for Larry · rcaj ${a.slice(0, 12)}, Presence: away`,
-    }),
-  ).toBeVisible();
+    screen
+      .getByRole("button", { name: /View agent activity/ })
+      .querySelector("[data-avatar-stack] [title]"),
+  ).toHaveAttribute("title", "Larry · rcaj");
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {
   const f = fixture();

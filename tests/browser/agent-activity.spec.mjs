@@ -11,27 +11,33 @@ test.use({
 });
 
 const channelActivity = (page) =>
-  page.getByRole("region", {
-    name: "Agent activity in this channel",
+  page.locator("[data-channel-timeline]").getByRole("region", {
+    name: "Agent activity on this message",
     exact: true,
   });
 const agentEntry = (page, agent) =>
-  channelActivity(page).getByRole("button", {
-    name: new RegExp(
-      `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
-    ),
-  });
+  channelActivity(page)
+    .getByRole("button", { name: /^View agent activity:/ })
+    .filter({
+      has: page.getByRole("img", {
+        name: new RegExp(
+          `npub…${npubEncode(agent).slice(-3)}(?:, (?:online|away|offline))?$`,
+        ),
+      }),
+    });
 const activityPopup = (page) =>
-  page.getByRole("dialog").filter({
-    has: page.getByRole("button", { name: "View activity", exact: true }),
-  });
-const openProfileActivity = async (page, entry) => {
+  page.getByRole("dialog", { name: "Agent activity", exact: true });
+const openProfileActivity = async (page, entry, agent) => {
   await entry.click();
   const popup = activityPopup(page);
   await expect(popup).toBeVisible();
   await expect(popup.getByRole("tab")).toHaveCount(0);
   await popup
-    .getByRole("button", { name: "View activity", exact: true })
+    .getByRole("button", {
+      name: agent
+        ? new RegExp(`^View activity for npub…${npubEncode(agent).slice(-3)}$`)
+        : /^View activity for/,
+    })
     .click();
   await expect(
     page.getByRole("tab", { name: "Activity", selected: true, exact: true }),
@@ -53,6 +59,32 @@ const activity = (kind, channelId, turnId, payload) => ({
   turnId,
   ...(payload === undefined ? {} : { payload }),
 });
+
+// Message presentation requires a real explicit start, not a liveness heuristic.
+function messageObserver(app) {
+  const started = new Set();
+  const sequences = new Map();
+  const request = app.histories.get("primary/alpha").at(-1);
+  return (raw, key) => {
+    const id = `${getPublicKey(key)}:${raw.turnId}`;
+    if (!started.has(id)) {
+      app.observer(
+        {
+          ...activity("turn_started", "alpha", raw.turnId, {
+            triggeringEventIds: [request.id],
+          }),
+          timestamp: raw.timestamp,
+        },
+        key,
+      );
+      started.add(id);
+      sequences.set(id, 1);
+    }
+    const seq = (sequences.get(id) ?? 1) + 1;
+    sequences.set(id, seq);
+    return app.observer({ ...raw, seq }, key);
+  };
+}
 
 test("sidebar activity opens the working agent panel", async ({
   page,
@@ -107,7 +139,7 @@ test("mention picker demands the relay's protected archive snapshot", async ({
   ).toBe(true);
 });
 
-// The composer entry is the only channel launcher. Profile activity remains the
+// The triggering message is the activity launcher. Profile activity remains the
 // durable fallback after fresh working evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and resets on disable", async ({
   page,
@@ -130,6 +162,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   const secondKey = generateSecretKey();
   const first = getPublicKey(firstKey);
   const second = getPublicKey(secondKey);
+  const observe = messageObserver(app);
   const region = channelActivity(page);
   const firstEntry = agentEntry(page, first);
   const secondEntry = agentEntry(page, second);
@@ -147,13 +180,13 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
       .toBe(true);
-    unsafe = app.observer(
+    unsafe = observe(
       activity("turn_liveness", "alpha", "one", {
         text: '<img src=x onerror="window.telemetryExecuted=true">',
       }),
       firstKey,
     );
-    app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
+    observe(activity("turn_liveness", "alpha", "two"), secondKey);
     app.observer(
       {
         kind: "batch",
@@ -161,7 +194,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
         channelId: "alpha",
         payload: {
           events: [
-            activity("acp_read", "alpha", "one", "wanted child"),
+            { ...activity("acp_read", "alpha", "one", "wanted child"), seq: 3 },
             activity("acp_write", "beta", "other-channel", "other channel"),
           ],
         },
@@ -175,7 +208,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     expect(firstAuthors).not.toContain(second);
     // Neither agent publishes live presence in this fixture. Even if demand
     // cancels and retries the held snapshot, neither response can label it yet.
-    await expect(firstEntry).not.toHaveAccessibleName(/, Presence:/);
+    await expect(firstEntry.getByRole("img").first()).not.toHaveAccessibleName(
+      /, (online|away|offline)$/,
+    );
   } finally {
     firstSnapshot.resolve();
     app.relay.releasePresence();
@@ -188,7 +223,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
       ),
     )
     .toBe(true);
-  await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
+  await expect(
+    firstEntry.getByRole("img", { name: /, online$/ }).first(),
+  ).toBeVisible();
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   // A busy skip followed by a successful retry must not masquerade as recovery.
   expect(
@@ -196,28 +233,27 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
       url.endsWith("/presence-snapshot"),
     ),
   ).toHaveLength(app.report.presenceSnapshots.length);
-  await expect(firstEntry).toContainText("working");
+  await expect(firstEntry).toHaveAccessibleName(/working/);
   await expect(secondEntry).toBeVisible();
   await expect(region).toHaveCSS("border-top-width", "0px");
   await expect(region).toHaveCSS("border-right-width", "0px");
   await expect(region).toHaveCSS("border-bottom-width", "0px");
   await expect(region).toHaveCSS("border-left-width", "0px");
-  const workingIndicator = firstEntry.locator(".badge-pill-dots i").first();
+  const workingIndicator = firstEntry
+    .locator('span[aria-hidden="true"] > span')
+    .first();
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(workingIndicator).not.toHaveCSS("animation-name", "none");
-  await expect(workingIndicator).toHaveCSS("animation-duration", "1.2s");
+  await expect(workingIndicator).toHaveCSS("animation-duration", "1.4s");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(workingIndicator).toHaveCSS(
-    "animation-name",
-    "badge-pill-typing-fade",
-  );
-  await expect(firstEntry).toContainText("working");
+  await expect(workingIndicator).toHaveCSS("animation-name", "none");
+  await expect(firstEntry).toHaveAccessibleName(/working/);
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
   await firstEntry.hover();
   const popup = activityPopup(page);
   await expect(popup).toContainText(
-    "Working in this channel, including threads",
+    "Latest reported activity for this message.",
   );
   await expect(popup.getByRole("tab")).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -227,7 +263,11 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await firstEntry.press("Enter");
   await expect(popup).toBeVisible();
   await popup
-    .getByRole("button", { name: "View activity", exact: true })
+    .getByRole("button", {
+      name: new RegExp(
+        `^View activity for npub…${npubEncode(first).slice(-3)}$`,
+      ),
+    })
     .click();
   await expect(
     page.getByRole("tab", { name: "Activity", selected: true, exact: true }),
@@ -278,7 +318,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(panel.locator("pre code")).not.toContainText("other channel");
 
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await openProfileActivity(page, secondEntry);
+  await openProfileActivity(page, secondEntry, second);
   await expect(panel.locator("code").first()).toHaveText(second);
   await openRawRecords(panel);
   await expect(
@@ -286,7 +326,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await openProfileActivity(page, secondEntry);
+  await openProfileActivity(page, secondEntry, second);
   await expect(panel.locator("code").first()).toHaveText(second);
   await openRawRecords(panel);
 
@@ -316,7 +356,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
+  observe(activity("turn_liveness", "alpha", "after-reset"), firstKey);
   await page
     .getByRole("complementary", { name: "Settings sidebar" })
     .getByRole("button", { name: "Back", exact: true })
@@ -334,24 +374,24 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   // Stale evidence is unknown, not completed; one terminal turn must not hide
   // another active turn for the same agent. Capture survives closing the panel.
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  app.observer(activity("turn_completed", "alpha", "after-reset"), firstKey);
+  observe(activity("turn_completed", "alpha", "after-reset"), firstKey);
   await expect(agentEntry(page, first)).toHaveCount(0);
-  app.observer(
+  observe(
     {
       ...activity("turn_liveness", "alpha", "stale"),
       timestamp: new Date(Date.now() - 31_000).toISOString(),
     },
     firstKey,
   );
-  await expect(agentEntry(page, first)).toContainText("status unknown");
+  await expect(agentEntry(page, first)).toContainText("Status unknown");
   await expect(
-    agentEntry(page, first).locator(".badge-pill-dots i").first(),
-  ).toHaveCSS("animation-play-state", "paused");
-  app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
-  await expect(agentEntry(page, first)).toContainText("working");
-  app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
-  await expect(agentEntry(page, first)).toContainText("status unknown");
-  app.observer(activity("turn_completed", "alpha", "stale"), firstKey);
+    agentEntry(page, first).locator('span[aria-hidden="true"] > span'),
+  ).toHaveCount(0);
+  observe(activity("turn_liveness", "alpha", "fresh"), firstKey);
+  await expect(agentEntry(page, first)).toHaveAccessibleName(/working/);
+  observe(activity("turn_completed", "alpha", "fresh"), firstKey);
+  await expect(agentEntry(page, first)).toContainText("Status unknown");
+  observe(activity("turn_completed", "alpha", "stale"), firstKey);
   await expect(region).toHaveCount(0);
 });
 
@@ -370,11 +410,9 @@ for (const mode of ["light", "dark"]) {
     const agentKey = generateSecretKey();
     const agent = getPublicKey(agentKey);
     const secondKey = generateSecretKey();
-    app.observer(
-      activity("turn_liveness", "alpha", "second-layout"),
-      secondKey,
-    );
-    app.observer(
+    const observe = messageObserver(app);
+    observe(activity("turn_liveness", "alpha", "second-layout"), secondKey);
+    observe(
       activity("acp_read", "alpha", "layout", {
         text: "A long literal raw record. ".repeat(40),
       }),
@@ -395,7 +433,7 @@ for (const mode of ["light", "dark"]) {
         .getByRole("form", { name: "Send a message to Alpha", exact: true })
         .boundingBox();
       expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
-      const avatar = entry.locator(".buzz-avatar");
+      const avatar = entry.locator(".buzz-avatar").first();
       // Production CSS must retain a loadable SVG mask after bundling. A valid
       // mask-image string alone can still point to the HTML fallback route.
       await expect
@@ -418,13 +456,13 @@ for (const mode of ["light", "dark"]) {
       const inset = await entry.evaluate((element) =>
         parseFloat(getComputedStyle(element).paddingLeft),
       );
-      expect(entryBox.x).toBeCloseTo(formBox.x, 0);
-      expect(avatarBox.x).toBeCloseTo(formBox.x + inset, 0);
+      expect(entryBox.x).toBeGreaterThanOrEqual(formBox.x);
+      expect(avatarBox.x).toBeCloseTo(entryBox.x + inset, 0);
       const lastRow = await channelActivity(page)
         .getByRole("button")
         .last()
         .boundingBox();
-      expect(formBox.y - lastRow.y - lastRow.height).toBeCloseTo(4, 0);
+      expect(lastRow.y + lastRow.height).toBeLessThanOrEqual(formBox.y);
       await expect(page.locator("html")).toHaveAttribute(
         "data-color-mode",
         mode,
@@ -436,9 +474,7 @@ for (const mode of ["light", "dark"]) {
       // resize can keep WebKit's pointer over it, so make the next entry explicit.
       await page.mouse.move(0, 0);
       await entry.hover();
-      await expect(activityPopup(page)).toContainText(
-        "in this channel, including threads",
-      );
+      await expect(activityPopup(page)).toContainText("for this message");
       const popupBox = await activityPopup(page).boundingBox();
       expect(popupBox.x).toBeGreaterThanOrEqual(0);
       expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(width);
@@ -451,15 +487,14 @@ for (const mode of ["light", "dark"]) {
       await expect(
         page.getByRole("dialog", { includeHidden: true }).filter({
           has: page.getByRole("button", {
-            name: "View activity",
-            exact: true,
+            name: /^View activity for/,
             includeHidden: true,
           }),
         }),
       ).toHaveCount(0);
     }
 
-    await openProfileActivity(page, entry);
+    await openProfileActivity(page, entry, agent);
     const panel = activityPanel(page);
     await openRawRecords(panel);
     await panel.getByRole("button", { name: /acp_read/ }).click();
@@ -794,10 +829,10 @@ test.describe("thread activity", () => {
     historyCounts: { alpha: 2, beta: 1 }, // Thread fixtures replace the last two Alpha rows with roots.
   });
 
-  test("thread typing uses the existing route, stays isolated, and opens channel details above the composer", async ({
+  test("typing alone does not invent message activity and human typing remains separate", async ({
     page,
     app,
-  }, testInfo) => {
+  }) => {
     await open(page, app);
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
@@ -820,17 +855,17 @@ test.describe("thread activity", () => {
       thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
     ).toBeVisible();
     const region = thread.getByRole("region", {
-      name: "Agent activity in this thread",
+      name: "Agent activity on this message",
       exact: true,
     });
     const marker = page
       .locator('[data-channel-id="alpha"]')
       .getByRole("img", { name: /working in Alpha$/ });
-    const sendTyping = (threadId, signingKey = key, secondsAgo = 0) => {
+    const sendTyping = (threadId, signingKey = key) => {
       const event = finalizeEvent(
         {
           kind: 20002,
-          created_at: Math.floor(Date.now() / 1000) - secondsAgo,
+          created_at: Math.floor(Date.now() / 1000),
           content: "",
           tags: [
             ["h", "alpha"],
@@ -847,148 +882,39 @@ test.describe("thread activity", () => {
       app.relay.publish("primary", event);
       return event;
     };
-    // Owner telemetry recognizes the agent without claiming a working channel turn.
     app.observer(activity("turn_liveness", "alpha", "previous"), key);
-    await expect(agentEntry(page, agent)).toBeVisible();
-    app.observer(activity("turn_completed", "alpha", "previous"), key);
-    await expect(agentEntry(page, agent)).toHaveCount(0);
-    sendTyping(root.id, generateSecretKey());
+    await expect(marker).toBeVisible();
+    app.observer(
+      { ...activity("turn_completed", "alpha", "previous"), seq: 2 },
+      key,
+    );
+    await expect(marker).toHaveCount(0);
+    const human = generateSecretKey();
+    sendTyping(root.id, human);
     sendTyping("b".repeat(64));
+    const typingEvent = sendTyping(root.id);
+    const typing = thread.getByRole("status", { name: "Typing activity" });
+    await expect(typing).toContainText(getPublicKey(human).slice(0, 10));
+    await expect(typing).not.toContainText(agent.slice(0, 10));
     await expect(region).toHaveCount(0);
-    const typing = sendTyping(root.id);
-    await expect(region).toBeVisible();
-    await expect(marker).toHaveCount(0); // Thread-only fallback must not light channel scope.
     await expect(channelActivity(page)).toHaveCount(0);
-    await expect(page.locator(`[data-message-id="${typing.id}"]`)).toHaveCount(
-      0,
-    );
-    const entry = region.getByRole("button", {
-      name: new RegExp(agent.slice(0, 12)),
-    });
-    const form = thread.getByRole("form", {
-      name: "Reply to thread",
-      exact: true,
-    });
-    // Visible content can precede the dock's entrance finishing. Measure all
-    // alignment against the settled panel, not different animation frames.
-    await page.locator("[data-panel-dock]").evaluate(async (element) => {
-      await Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      );
-    });
-    const typingIndicator = thread.getByRole("status", {
-      name: "Typing activity",
-    });
-    await expect(typingIndicator).toBeVisible();
-    const entryBox = await entry.boundingBox(),
-      formBox = await form.boundingBox(),
-      typingBox = await typingIndicator.boundingBox();
-    expect(typingBox.y + typingBox.height).toBeLessThan(entryBox.y);
-    expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
-    expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
-    const inset = await entry.evaluate((element) =>
-      parseFloat(getComputedStyle(element).paddingLeft),
-    );
-    expect(entryBox.x).toBeCloseTo(formBox.x, 0);
-    expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      formBox.x + inset,
-      0,
-    );
-    await entry.focus();
-    await entry.press("Enter");
-    await expect(activityPopup(page)).toContainText("Working in this thread");
-    await expect(activityPopup(page).getByRole("tab")).toHaveCount(0);
-    await page.screenshot({
-      path: testInfo.outputPath("thread-activity-above-composer.png"),
-    });
-    await page.keyboard.press("Escape");
-    await expect(entry).toBeFocused();
-    await page.mouse.move(0, 0);
-    // A closing popup retains its desktop position until its exit completes.
+    await expect(marker).toHaveCount(0);
     await expect(
-      page.getByRole("dialog", { includeHidden: true }).filter({
-        has: page.getByRole("button", {
-          name: "View activity",
-          exact: true,
-          includeHidden: true,
-        }),
-      }),
+      page.locator(`[data-message-id="${typingEvent.id}"]`),
     ).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
-    sendTyping(root.id);
-    await expect(entry).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(390);
-    await expect(typingIndicator).toBeVisible();
-    const narrowEntry = await entry.boundingBox(),
-      narrowForm = await form.boundingBox(),
-      narrowTyping = await typingIndicator.boundingBox();
-    expect(narrowTyping.y + narrowTyping.height).toBeLessThan(narrowEntry.y);
-    expect(narrowTyping.x).toBeGreaterThanOrEqual(narrowForm.x);
-    expect(narrowTyping.x + narrowTyping.width).toBeLessThanOrEqual(
-      narrowForm.x + narrowForm.width,
-    );
-    expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
-      narrowForm.y,
-    );
-    expect(narrowForm.y - narrowEntry.y - narrowEntry.height).toBeCloseTo(4, 0);
-    expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      narrowForm.x +
-        (await entry.evaluate((element) =>
-          parseFloat(getComputedStyle(element).paddingLeft),
-        )),
-      0,
-    );
-    await page.screenshot({
-      path: testInfo.outputPath("thread-activity-narrow.png"),
-    });
     await page.setViewportSize({ width: 1440, height: 950 });
-    await openProfileActivity(page, entry);
-    await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
-    await expect(
-      activityPanel(page).getByRole("combobox", {
-        name: "Channel",
-        exact: true,
-      }),
-    ).toHaveText(/Alpha.*alpha/);
-    await page
-      .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
-      .click();
+    await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
     sendTyping();
     await expect(marker).toBeVisible();
-    const workingBox = await marker.boundingBox();
-    expect(workingBox).toEqual(
+    expect(await marker.boundingBox()).toEqual(
       expect.objectContaining({ width: 26, height: 15 }),
     );
-    await expect(channelActivity(page)).toBeVisible();
-    const channelBox = await channelActivity(page)
-      .getByRole("button")
-      .first()
-      .boundingBox();
-    const channelForm = await page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .boundingBox();
-    const channelTyping = page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .locator("..")
-      .getByRole("status", { name: "Typing activity" });
-    // The agent's activity row replaces its typing line. A human still gets
-    // the upstream typing layout above activity, without duplicating the agent.
-    await expect(channelTyping).toHaveCount(0);
-    const humanKey = generateSecretKey();
-    sendTyping(undefined, humanKey);
-    await expect(channelTyping).toBeVisible();
-    await expect(channelTyping).toContainText(
-      getPublicKey(humanKey).slice(0, 10),
-    );
-    await expect(channelTyping).not.toContainText(agent.slice(0, 10));
-    const channelTypingBox = await channelTyping.boundingBox();
-    expect(channelTypingBox.y + channelTypingBox.height).toBeLessThan(
-      channelBox.y,
-    );
-    expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
-    await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelActivity(page)).toHaveCount(0);
+    await expect(marker).toHaveCount(0, { timeout: 10000 });
+    await expect(region).toHaveCount(0);
   });
 });

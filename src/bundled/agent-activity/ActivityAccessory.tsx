@@ -1,21 +1,14 @@
-import { usePresenceStatus } from "../../features/presence/react";
-import {
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { AgentAvatar } from "../../features/agents/AgentAvatar";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { LoadedThreadMessages } from "../../features/messages/loaded-thread-messages";
-import { activityRecords } from "../../features/agents/activity-records";
+import type { activityRecords } from "../../features/agents/activity-records";
 import { activityTarget } from "../../features/agents/activity-target";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -24,56 +17,25 @@ import {
   PopoverDescription,
   PopoverClose,
 } from "../../shared/design-system/ui/Popover";
-import { ActivityStream } from "./ActivityStream";
-import { threadActivity } from "./thread-activity";
+import { currentActivity } from "./current-activity";
+import { messageActivity } from "./message-activity";
+import type { ActivityTurn } from "../../features/agents/activity";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 
-/** One bottom group per conversation. Exact identities, never one row per message. */
+/** Activity belongs to the exact triggering message, not the composer. */
 export function ActivityAccessory(props: ComposerAccessoryProps) {
-  const { session, channelId, threadRootId, canOpen } = props;
+  const { session, channelId, message, canOpen } = props;
   const snapshot = useSyncExternalStore(
     session.agentActivity.subscribe,
     session.agentActivity.snapshot,
   );
-  const messages = useContext(LoadedThreadMessages);
-  const entries = useMemo(() => {
-    if (threadRootId)
-      return threadActivity(snapshot, channelId, threadRootId, messages).filter(
-        (entry) =>
-          entry.working || entry.turns.some((turn) => turn.state === "unknown"),
-      );
-    const agents = new Set([
-      ...snapshot.turns
-        .filter(
-          (turn) => turn.channelId === channelId && turn.state !== "ended",
-        )
-        .map((turn) => turn.agent),
-      ...snapshot.typing
-        .filter((entry) => entry.channelId === channelId && !entry.threadRootId)
-        .map((entry) => entry.agent),
-    ]);
-    return [...agents].sort().map((agent) => ({
-      agent,
-      working:
-        snapshot.status === "listening" &&
-        (snapshot.turns.some(
-          (turn) =>
-            turn.agent === agent &&
-            turn.channelId === channelId &&
-            turn.state === "working",
-        ) ||
-          snapshot.typing.some(
-            (entry) =>
-              entry.agent === agent &&
-              entry.channelId === channelId &&
-              !entry.threadRootId,
-          )),
-      selected: {
-        records: activityRecords(snapshot.records, agent, channelId),
-      },
-    }));
-  }, [snapshot, channelId, threadRootId, messages]);
+  const messageId = message?.id;
+  const entries = useMemo(
+    () => (messageId ? messageActivity(snapshot, channelId, messageId) : []),
+    [snapshot, channelId, messageId],
+  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -99,101 +61,123 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
     <section
       className={styles.root}
       data-buzz-ui=""
-      aria-label={
-        threadRootId
-          ? "Agent activity in this thread"
-          : "Agent activity in this channel"
-      }
+      aria-label="Agent activity on this message"
     >
-      <div className={styles.agents}>
-        {visible.map((entry) => {
+      <ActivityBubble
+        key={`${channelId}:${message?.id ?? ""}`}
+        {...props}
+        entries={visible.map((entry) => {
           const name = names[keys.indexOf(entry.agent)] ?? "Agent";
-          const label =
-            names.filter((value) => value === name).length > 1
-              ? `${name} · ${suffixes.get(entry.agent)}`
-              : name;
-          return (
-            <ActivityEntry
-              key={entry.agent}
-              {...props}
-              agent={entry.agent}
-              name={label}
-              picture={profiles.get(entry.agent)?.picture}
-              working={entry.working}
-              records={entry.selected.records}
-            />
-          );
+          return {
+            agent: entry.agent,
+            name:
+              names.filter((value) => value === name).length > 1
+                ? `${name} · ${suffixes.get(entry.agent)}`
+                : name,
+            picture: profiles.get(entry.agent)?.picture,
+            working: entry.working,
+            records: entry.selected.records,
+            turns: entry.turns,
+          };
         })}
-      </div>
+      />
     </section>
   );
 }
-function ActivityEntry({
-  session,
-  channelId,
-  threadRootId,
-  canOpen,
-  open,
-  agent,
-  name,
-  picture,
-  working,
-  records,
-}: ComposerAccessoryProps & {
+
+type Entry = {
   agent: string;
   name: string;
   picture: string | undefined;
   working: boolean;
   records: ReturnType<typeof activityRecords>;
-}) {
-  const presence = usePresenceStatus(session.presence, agent);
+  turns: readonly ActivityTurn[];
+};
+
+function ActivityBubble({
+  entries,
+  ...props
+}: ComposerAccessoryProps & { entries: Entry[] }) {
   const [expanded, setExpanded] = useState(false);
-  const target = profileActivityViewTarget(agent);
-  useTypingReplacement(
-    { session, channelId, threadRootId, pubkey: agent },
-    working,
-  );
+  const working = entries.some((entry) => entry.working);
+  const unknown = entries.some((entry) => !entry.working);
   return (
     <PopoverRoot open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger
         openOnHover
         render={
-          <NavigationItem
-            icon={
-              <AgentAvatar
-                working={working}
-                src={picture ? (session.media(picture) ?? null) : null}
-                alt=""
-                fallback={name}
-                size="small"
-                shape="squircle"
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-            }
-            aria-label={`View activity for ${name} ${agent.slice(0, 12)}${presence === "unknown" ? "" : `, Presence: ${presence}`}`}
-            label={`${name} · ${working ? "working…" : "work status unknown"}`}
-          />
+          <Button
+            size="xs"
+            variant="subtle"
+            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.working ? "working" : "status unknown"}`).join("; ")}`}
+          >
+            <AvatarStack
+              items={entries.map((entry) => ({
+                id: entry.agent,
+                name: entry.name,
+                src: entry.picture
+                  ? props.session.media(entry.picture)
+                  : undefined,
+                shape: "squircle",
+              }))}
+            />
+            {working && <TypingDots />}
+            {unknown && <span>Status unknown</span>}
+          </Button>
         }
       />
-      <PopoverPopup side="top" aria-label={`Activity for ${name}`}>
-        <PopoverTitle>{name}</PopoverTitle>
+      <PopoverPopup side="top" aria-label="Agent activity">
+        <PopoverTitle>Agent activity</PopoverTitle>
         <PopoverDescription>
-          {working ? "Working" : "Activity interrupted or out of date"}
-          {threadRootId
-            ? " in this thread"
-            : " in this channel, including threads"}
+          Latest reported activity for this message.
         </PopoverDescription>
-        {expanded && <ActivityStream records={records} />}
-        {target && canOpen(target) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              if (open(target)) setExpanded(false);
-            }}
-          >
-            View activity
-          </Button>
+        {expanded && (
+          <div className={styles.previews}>
+            {entries.map((entry) => {
+              const target = profileActivityViewTarget(entry.agent);
+              const preview = entry.working
+                ? currentActivity(entry.records, entry.turns)
+                : undefined;
+              return (
+                <section
+                  key={entry.agent}
+                  aria-label={entry.name}
+                  className={styles.preview}
+                >
+                  <div className={styles.identity}>
+                    <ActivityAvatar
+                      session={props.session}
+                      entry={entry}
+                      size="small"
+                    />
+                    <span className="text-label-sm">{entry.name}</span>
+                  </div>
+                  <p className="text-body-sm">
+                    {!entry.working
+                      ? "Activity interrupted or out of date"
+                      : (preview?.title ?? "Waiting for activity details")}
+                  </p>
+                  {preview?.detail && (
+                    <p className={`text-body-sm ${styles.detail}`}>
+                      {preview.detail}
+                    </p>
+                  )}
+                  {target && props.canOpen(target) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`View activity for ${entry.name}`}
+                      onClick={() => {
+                        if (props.open(target)) setExpanded(false);
+                      }}
+                    >
+                      View activity
+                    </Button>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
         <PopoverClose
           render={
@@ -204,5 +188,61 @@ function ActivityEntry({
         />
       </PopoverPopup>
     </PopoverRoot>
+  );
+}
+
+/** Nonvisual composer contribution: agent typing belongs on messages, humans
+ * retain the ordinary typing indicator. Removal restores the default display. */
+export function ActivityTypingReplacement(props: ComposerAccessoryProps) {
+  const profiles = useSyncExternalStore(
+    props.session.profiles.subscribe,
+    props.session.profiles.snapshot,
+  );
+  const known = useKnownAgentPubkeys(props.session, profiles);
+  const activity = useSyncExternalStore(
+    props.session.agentActivity.subscribe,
+    props.session.agentActivity.snapshot,
+  );
+  const agents = new Set([
+    ...known,
+    ...activity.records.map((record) => record.agent),
+  ]);
+  return (
+    <>
+      {[...agents].map((agent) => (
+        <TypingReplacement key={agent} {...props} agent={agent} />
+      ))}
+    </>
+  );
+}
+function TypingReplacement({
+  session,
+  channelId,
+  threadRootId,
+  agent,
+}: ComposerAccessoryProps & { agent: string }) {
+  useTypingReplacement(
+    { session, channelId, threadRootId, pubkey: agent },
+    true,
+  );
+  return null;
+}
+
+function ActivityAvatar({
+  session,
+  entry,
+  size = "compact",
+}: Pick<ComposerAccessoryProps, "session"> & {
+  entry: Entry;
+  size?: "compact" | "small";
+}) {
+  return (
+    <Avatar
+      src={entry.picture ? session.media(entry.picture) : null}
+      alt={entry.name}
+      fallback={entry.name}
+      size={size}
+      shape="squircle"
+    />
   );
 }

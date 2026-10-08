@@ -1,28 +1,30 @@
 .root {
+  margin-block-start: var(--space-2);
   min-width: 0;
   flex-shrink: 0;
-  /* Leave 4px before the composer's 12px top margin. */
-  margin: var(--space-3) var(--space-4) calc(-1 * var(--space-2));
-  background: var(--surface-panel);
 }
-.agents {
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.previews {
   display: flex;
   flex-direction: column;
-  max-height: 8.25rem;
-  overflow-y: auto;
-  scrollbar-width: thin;
+  gap: var(--space-4);
 }
-.agents > button {
-  width: 100%;
+.preview {
   min-width: 0;
-  flex-shrink: 0;
-  justify-content: flex-start;
-  gap: var(--space-2);
-  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
 }
-@media (max-width: 40.625rem) {
-  .root {
-    /* The narrow composer has an 8px top margin. */
-    margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
-  }
+.preview p {
+  margin: 0;
+}
+.detail {
+  color: var(--text-subtle);
+  white-space: pre-wrap;
 }

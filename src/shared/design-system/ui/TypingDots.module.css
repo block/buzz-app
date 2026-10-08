@@ -1,0 +1,33 @@
+.dots {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+.dots > span {
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes typing-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dots > span {
+    animation: typing-pulse 1.4s ease-in-out infinite;
+  }
+
+  .dots > span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .dots > span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}

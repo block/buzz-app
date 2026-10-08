@@ -12,7 +12,7 @@ const connected: LiveSnapshot = {
   status: "connected",
   routes: [{ id: "observer", status: "live", replay: "unknown" }],
 };
-function fixture() {
+function fixture(findMessage?: Parameters<typeof createAgentActivity>[5]) {
   vi.useFakeTimers();
   vi.setSystemTime(1800000000000);
   const observe = vi.fn();
@@ -21,6 +21,9 @@ function fixture() {
     true,
     observe,
     (channel) => !(denied && channel === "a"),
+    undefined,
+    undefined,
+    findMessage,
   );
   const release = activity.queries.activate();
   activity.state(connected);
@@ -608,4 +611,46 @@ it("bounds retained management request IDs", () => {
 
   expect(receive).toHaveBeenCalledTimes(202);
   f.activity.dispose();
+});
+
+it("associates lifecycle with retained signed triggers and preserves it through completion", () => {
+  const root = "b".repeat(64),
+    request = "c".repeat(64);
+  const message = {
+    id: request,
+    pubkey: agent,
+    kind: 9,
+    created_at: 1800000000,
+    content: "work",
+    tags: [
+      ["h", "a"],
+      ["e", root, "", "reply"],
+    ],
+  };
+  let retained = false;
+  const f = fixture((id) => (retained && id === request ? message : undefined));
+  f.send(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: [request] },
+    }),
+  );
+  expect(f.snapshot().turns[0]?.requests).toEqual([]);
+  retained = true;
+  f.activity.messagesChanged([message]);
+  expect(f.snapshot().turns[0]?.requests).toEqual([
+    { messageId: request, threadRootId: root },
+  ]);
+  f.send(f.item("turn_completed"));
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "ended",
+    requests: [{ messageId: request, threadRootId: root }],
+  });
+  f.send(
+    f.item("turn_started", "other", {
+      channelId: "b",
+      payload: { triggeringEventIds: [request] },
+    }),
+  );
+  expect(f.snapshot().turns[1]?.requests).toEqual([]);
+  f.release();
 });

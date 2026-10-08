@@ -25,6 +25,8 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Roots established from retained signed triggering messages, not typing. */
+  requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
 type Typing = Readonly<{
   agent: string;
@@ -49,7 +51,13 @@ type Snapshot = Readonly<{
   typing: readonly Typing[];
   trimmed: number;
 }>;
-type Turn = Omit<ActivityTurn, "state"> & { ended: boolean; epoch: number };
+type Turn = Omit<ActivityTurn, "state" | "requests"> & {
+  requests?: ActivityTurn["requests"];
+  triggeringEventIds?: readonly string[];
+  ended: boolean;
+  epoch: number;
+  unresolvedTriggers?: readonly string[];
+};
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -72,6 +80,7 @@ export function createAgentActivity(
   canAccess: (channel: string) => boolean,
   notify = (listener: () => void) => listener(),
   resolveAccess?: (channel: string) => Promise<void>,
+  findMessage?: (id: string) => EventData | undefined,
 ) {
   let closed = false,
     leases = 0,
@@ -101,6 +110,31 @@ export function createAgentActivity(
     typing: [],
     trimmed,
   });
+  function associate(turn: Turn) {
+    const unresolved: string[] = [];
+    const requests = [...(turn.requests ?? [])];
+    for (const id of turn.unresolvedTriggers ?? []) {
+      const event = findMessage?.(id);
+      if (!event) {
+        unresolved.push(id);
+        continue;
+      }
+      if (![9, 40002, 40008].includes(event.kind)) continue;
+      const channels = event.tags.filter(([key]) => key === "h");
+      if (channels.length !== 1 || channels[0]?.[1] !== turn.channelId)
+        continue;
+      const reference = threadReference(event);
+      if (event.tags.some(([key]) => key === "e") && !reference) continue;
+      requests.push(
+        Object.freeze({
+          messageId: id,
+          threadRootId: reference?.rootId ?? event.id,
+        }),
+      );
+    }
+    turn.unresolvedTriggers = unresolved;
+    turn.requests = Object.freeze(requests);
+  }
   function publish() {
     const now = Date.now();
     const known = new Set(records.map((record) => record.agent));
@@ -114,6 +148,7 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
           state: turn.ended
             ? "ended"
             : status === "listening" &&
@@ -202,7 +237,27 @@ export function createAgentActivity(
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
-    turns.set(key, {
+    const triggers =
+      item.kind === "turn_started"
+        ? object(item.payload)?.triggeringEventIds
+        : previous?.triggeringEventIds;
+    const triggeringEventIds =
+      Array.isArray(triggers) &&
+      triggers.length <= 64 &&
+      triggers.every(
+        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
+      )
+        ? (triggers as string[])
+        : undefined;
+    const turn: Turn = {
+      ...(triggeringEventIds
+        ? {
+            triggeringEventIds,
+            requests: previous?.requests ?? [],
+            unresolvedTriggers:
+              previous?.unresolvedTriggers ?? triggeringEventIds,
+          }
+        : {}),
       agent,
       turnId: item.turnId,
       channelId: item.channelId,
@@ -211,7 +266,9 @@ export function createAgentActivity(
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
       epoch,
-    });
+    };
+    associate(turn);
+    turns.set(key, turn);
     if (turns.size > ACTIVITY_TURN_LIMIT) {
       const oldest = [...turns].sort(
         (a, b) => a[1].timestamp - b[1].timestamp,
@@ -388,6 +445,19 @@ export function createAgentActivity(
         trimmed++;
       }
       publish();
+    },
+    /** Trigger messages may arrive after telemetry. Resolve at content admission,
+     * not on the freshness timer, without retaining or fetching more messages. */
+    messagesChanged(events: readonly EventData[]) {
+      if (closed || !leases) return;
+      const ids = new Set(events.map((event) => event.id));
+      let changed = false;
+      for (const turn of turns.values()) {
+        if (!turn.unresolvedTriggers?.some((id) => ids.has(id))) continue;
+        associate(turn);
+        changed = true;
+      }
+      if (changed) publish();
     },
     /** Public typing is scope/freshness evidence only, never ownership evidence. */
     channelEvents(events: readonly EventData[]) {

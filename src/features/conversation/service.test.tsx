@@ -291,6 +291,7 @@ it("owns accessories through disable, replacement and failed activation", async 
       ctx.conversation.registerAccessory({
         id: "status",
         title: "Status",
+        placement: "message",
         component: Component,
       });
     },
@@ -315,6 +316,7 @@ it("owns accessories through disable, replacement and failed activation", async 
       ctx.conversation.registerAccessory({
         id: "status",
         title: "Status",
+        placement: "message",
         component: Component,
       });
       throw new Error("failed after registration");

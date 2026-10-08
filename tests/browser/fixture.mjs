@@ -2166,6 +2166,23 @@ export const test = base.extend({
           targetEvents.push(event);
           relay.publish("primary", event);
         },
+        // Relay-owned summary evidence, not a mutation of the client's row.
+        threadSummary(rootId, participants, replyCount) {
+          const event = sign(
+            39005,
+            [
+              ["h", "alpha"],
+              ["e", rootId],
+              ["d", rootId],
+            ],
+            JSON.stringify({ reply_count: replyCount, participants }),
+            relayKey,
+            Math.floor(Date.now() / 1000) + 1,
+          );
+          threadSummaries.push(event);
+          relay.publish("primary", event);
+          return event;
+        },
         reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");

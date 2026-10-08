@@ -25,12 +25,6 @@ import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 
-vi.mock("../../shared/design-system/ui/agent-thinking/ThinkingBadge", () => ({
-  ThinkingBadge: ({ children }: { children: React.ReactNode }) => (
-    <span className="badge-pill-root">{children}</span>
-  ),
-}));
-
 const row: ChannelMessage = {
   id: "root",
   channelId: "channel",
@@ -79,7 +73,7 @@ it.each([false, true])(
   },
 );
 
-it("keeps agent badges but omits human presence and status symbols from messages", () => {
+it("keeps plain agent presence without avatar activity, and omits human presence from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
   const status = vi.fn<() => "online" | "unknown">(() => "online");
@@ -128,8 +122,10 @@ it("keeps agent badges but omits human presence and status symbols from messages
       />,
     );
   const agent = show(true);
-  expect(agent).toContain('class="badge-pill-root"');
-  expect(agent).toContain('aria-label="Agent, available"');
+  expect(agent).not.toContain("agent-motion-avatar");
+  expect(agent).toContain('data-status="online"');
+  expect(agent).toContain('data-avatar-shape="squircle"');
+  expect(agent).toContain('aria-label="Agent, online"');
   const human = show(false);
   expect(human).not.toContain('data-status="online"');
   expect(human).not.toContain("data-compact");
@@ -167,11 +163,10 @@ it("keeps agent badges but omits human presence and status symbols from messages
   });
   expect(
     screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
-  ).toHaveAccessibleDescription("Presence: online Agent is thinking");
-  expect(document.querySelector(".agent-motion-avatar")).toHaveAttribute(
-    "aria-hidden",
-    "true",
-  );
+  ).toHaveAccessibleDescription("Presence: online");
+  expect(document.querySelector(".agent-motion-avatar")).toBeNull();
+  expect(document.querySelector('[data-status="online"]')).toBeInTheDocument();
+  expect(activityListeners.size).toBe(0);
   act(() => {
     working = false;
     for (const listener of activityListeners) listener();
@@ -1099,7 +1094,7 @@ it.each([undefined, "canonical-root"])(
   },
 );
 
-it("shows working dots only while a known agent types in this thread", () => {
+it("shows unbadged working-agent avatars and shared dots only while a known agent types in this thread", () => {
   // The viewer's own agents come from the library; no loaded row names them.
   // Another person's agent only declares itself in its profile.
   const agent = "a".repeat(64);
@@ -1108,7 +1103,7 @@ it("shows working dots only while a known agent types in this thread", () => {
   const cached = new Map([[foreign, { name: "Stranger", isAgent: true }]]);
   const library = {
     identities: [
-      { pubkey: agent, name: "Brain" },
+      { pubkey: agent, name: "Brain", avatar: "https://safe/brain" },
       { pubkey: other, name: "Pinky" },
     ],
   };
@@ -1136,12 +1131,37 @@ it("shows working dots only while a known agent types in this thread", () => {
       },
     },
   } as unknown as RelaySession;
-  const view = renderMessage({ session, onOpenThread: () => {} });
+  const media = vi.fn(() => "https://proxy/brain");
+  const view = renderMessage({ session, media, onOpenThread: () => {} });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",
     });
-    expect(working.querySelector("[data-thread-working]")).not.toBeNull();
+    const indicator = working.querySelector("[data-thread-working]");
+    expect(indicator).not.toBeNull();
+    expect(
+      indicator?.querySelectorAll('[data-avatar-shape="squircle"]'),
+    ).toHaveLength(1);
+    expect(indicator?.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://proxy/brain",
+    );
+    expect(media).toHaveBeenCalledWith("https://safe/brain", "small");
+    expect(indicator?.querySelector(".buzz-avatar-status-dot")).toBeNull();
+    expect(indicator?.querySelector("i")).toBeNull();
+    act(() => {
+      entries = [
+        { channelId: row.channelId, threadRootId: row.id, pubkey: agent },
+        { channelId: row.channelId, threadRootId: row.id, pubkey: other },
+      ];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      indicator?.querySelectorAll('[data-avatar-shape="squircle"]'),
+    ).toHaveLength(2);
+    expect(working).toHaveAccessibleName(
+      "View thread: 23 replies. Brain, Pinky working",
+    );
     act(() => {
       entries = [];
       for (const listener of listeners) listener();
@@ -1572,3 +1592,33 @@ it.each([
     }
   },
 );
+
+it("filters agent status reactions in the read-only fallback while retaining human counts", () => {
+  const agent = { id: "agent-reaction", authorId: "agent" };
+  const human = { id: "human-reaction", authorId: "human" };
+  try {
+    const view = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          reactions: [
+            { content: "👀", events: [agent, human] },
+            { content: "💬", events: [agent] },
+            { content: "✅", events: [agent] },
+          ],
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        agentPubkeys={new Set(["agent"])}
+      />,
+    );
+    expect(view.container.textContent).toContain("👀 1");
+    expect(view.container.textContent).not.toContain("💬");
+    expect(view.container.textContent).toContain("✅ 1");
+  } finally {
+    cleanup();
+  }
+});

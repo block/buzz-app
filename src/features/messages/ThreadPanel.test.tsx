@@ -189,11 +189,17 @@ function messagesHarness(
     },
   } as unknown as RelaySession;
   vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  const resizeObservers = new Set<() => void>();
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe() {}
-      disconnect() {}
+      constructor(private callback: () => void) {}
+      observe() {
+        resizeObservers.add(this.callback);
+      }
+      disconnect() {
+        resizeObservers.delete(this.callback);
+      }
     },
   );
   HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -274,6 +280,11 @@ function messagesHarness(
     },
     resize(value: number) {
       height = value;
+    },
+    deliverResize() {
+      act(() => {
+        for (const callback of resizeObservers) callback();
+      });
     },
     scroll(value: number) {
       element.scrollTop = value;
@@ -1106,4 +1117,22 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   expect(
     within(thread).getByRole("region", { name: "Thread messages" }),
   ).not.toHaveAttribute("data-positioning");
+});
+
+it("releases bottom following after a jump that included child-only resizing", () => {
+  vi.useFakeTimers();
+  const h = messagesHarness();
+  h.render();
+  h.scroll(2000);
+  fireEvent.click(screen.getByRole("button", { name: /Jump to latest/ }));
+  h.resize(4200);
+  h.deliverResize();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(h.element.scrollTop).toBe(3600);
+  // The completed jump must not leave a stale geometry guard swallowing this scroll.
+  h.scroll(2000);
+  h.resize(4300);
+  h.snapshot.replies = [{ ...row, id: "new", content: "new" }];
+  h.render();
+  expect(h.element.scrollTop).toBe(2000);
 });

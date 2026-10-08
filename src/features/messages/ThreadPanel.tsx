@@ -339,6 +339,36 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
+  const resizePosition = useRef<
+    | {
+        width: number;
+        height: number;
+        contentHeight: number;
+        anchor?: { element: HTMLElement; top: number };
+      }
+    | undefined
+  >(undefined);
+  const captureResizePosition = useCallback(() => {
+    const element = scroller.current;
+    if (!element || !positioned.current || !element.clientHeight) return;
+    const top = element.getBoundingClientRect().top;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((row) => row.getBoundingClientRect().bottom > top);
+    resizePosition.current = {
+      width: element.clientWidth,
+      height: element.clientHeight,
+      contentHeight: element.scrollHeight,
+      ...(row
+        ? {
+            anchor: {
+              element: row,
+              top: row.getBoundingClientRect().top - top,
+            },
+          }
+        : {}),
+    };
+  }, []);
   const jumpingToLatest = useRef(false);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -674,7 +704,9 @@ function ThreadMessages({
       setShowJumpToLatest(!bottom);
       if (bottom) setNewMessageCount(0);
     }
+    captureResizePosition();
   }, [
+    captureResizePosition,
     active,
     revealSelected,
     inlineReveal,
@@ -726,9 +758,51 @@ function ThreadMessages({
     ].find((element) => element.dataset.messageId === sent);
     if (row) {
       row.scrollIntoView({ block: "nearest" });
+      captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded]);
+  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  // Parent commits already position history, exact targets and own sends. Save
+  // their result; only child-only reflow and viewport resizing need correction.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const content = element?.querySelector("[data-thread-rows]");
+    if (!active || !initialPositioned || !element || !content) return;
+    const observer = new ResizeObserver(() => {
+      const previous = resizePosition.current;
+      if (!previous || !element.clientHeight || jumpingToLatest.current) return;
+      if (
+        previous.width === element.clientWidth &&
+        previous.height === element.clientHeight &&
+        previous.contentHeight === element.scrollHeight
+      )
+        return;
+      if (follow.current) {
+        element.scrollTop = element.scrollHeight;
+      } else if (previous.anchor && element.contains(previous.anchor.element)) {
+        correctScrollTop(
+          element,
+          previous.anchor.element.getBoundingClientRect().top -
+            element.getBoundingClientRect().top -
+            previous.anchor.top,
+        );
+      }
+      // Exact-history restoration must start from this corrected geometry,
+      // rather than applying the same child-only height delta a second time.
+      if (targetAnchor.current !== undefined)
+        targetAnchor.current = selectedOffset();
+      if (olderAnchor.current) {
+        const row = element.querySelector<HTMLElement>(
+          `[data-message-id="${olderAnchor.current.id}"]`,
+        );
+        if (row) olderAnchor.current.top = row.getBoundingClientRect().top;
+      }
+      captureResizePosition();
+    });
+    observer.observe(element);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
@@ -747,6 +821,7 @@ function ThreadMessages({
       if (!current || !jumpingToLatest.current) return;
       current.scrollTop = current.scrollHeight;
       jumpingToLatest.current = false;
+      captureResizePosition();
     }, 1000);
   };
   const keepReadingPosition = () => {
@@ -758,6 +833,8 @@ function ThreadMessages({
     olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
+    // A new reader gesture supersedes any queued resize restoration.
+    captureResizePosition();
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
@@ -936,10 +1013,21 @@ function ThreadMessages({
             ].find((row) => row.dataset.messageId === anchor.id);
             if (row) anchor.top = row.getBoundingClientRect().top;
           }
+          // A browser-generated scroll during reflow must not replace the
+          // reading intent before ResizeObserver has corrected the new geometry.
+          const previous = resizePosition.current;
+          if (
+            previous &&
+            (previous.width !== element.clientWidth ||
+              previous.height !== element.clientHeight ||
+              previous.contentHeight !== element.scrollHeight)
+          )
+            return;
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
           if (jumpingToLatest.current) return;
+          captureResizePosition();
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);

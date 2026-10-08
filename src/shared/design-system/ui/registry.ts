@@ -404,13 +404,36 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Show a person or agent with an image or stable fallback. Use a circle for a person and a squircle for an agent, based on identity data supplied by the caller.",
     behavior: "Base UI Avatar.",
-    variants: ["small", "default", "large", "fill", "circle", "squircle"],
+    variants: [
+      "compact",
+      "small",
+      "default",
+      "large",
+      "fill",
+      "circle",
+      "squircle",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/Avatar.tsx",
     baseUi: [BASE_UI_PARTS.avatar],
     composes: [],
+  },
+  {
+    slug: "avatar-stack",
+    name: "AvatarStack",
+    purpose:
+      "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
+    behavior:
+      "Decorative artwork composed from Avatar; identity data stays with the caller.",
+    variants: ["compact", "small", "circle", "squircle", "overflow count"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/AvatarStack.tsx",
+    baseUi: [],
+    composes: ["avatar"],
   },
   {
     slug: "preview-card",

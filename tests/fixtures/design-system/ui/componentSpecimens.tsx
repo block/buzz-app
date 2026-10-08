@@ -56,6 +56,7 @@ import { SwitchPreferenceRow } from "../../../../src/shared/design-system/ui/Swi
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../../../src/shared/design-system/ui/AvatarStack";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
@@ -193,6 +194,32 @@ function Specimen({
   );
 }
 
+function AvatarStackSpecimen() {
+  const items = [
+    { id: "alex", name: "Alex", shape: "circle" as const },
+    { id: "brain", name: "Brain", shape: "squircle" as const },
+    { id: "casey", name: "Casey", shape: "circle" as const },
+    { id: "helper", name: "Helper", shape: "squircle" as const },
+  ];
+  return (
+    <div className="component-specimen-row">
+      <Button
+        size="xs"
+        variant="subtle"
+        aria-label="Alex, Brain, Casey, and Helper"
+      >
+        <AvatarStack items={items} />
+      </Button>
+      <Button
+        variant="ghost"
+        aria-label="Thread with Alex, Brain, Casey, and Helper"
+      >
+        <AvatarStack items={items} size="small" /> 4 replies
+      </Button>
+    </div>
+  );
+}
+
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -265,7 +292,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Status badge and rounded cutout"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["small", "default", "large"] as const).map((size) => (
+  {(["compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -298,7 +325,7 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["small", "default", "large"] as const).map((size) => (
+          {(["compact", "small", "default", "large"] as const).map((size) => (
             <Specimen key={size} prop={`${size} · online`}>
               <Avatar
                 src={avatarUrl}
@@ -333,7 +360,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Agent shape (proposed)"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["small", "default", "large"] as const).map((size) => (
+  {(["compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -371,7 +398,7 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["small", "default", "large"] as const).map((size) => (
+          {(["compact", "small", "default", "large"] as const).map((size) => (
             <Specimen key={size} prop={`squircle · ${size} · online`}>
               <Avatar
                 src={avatarUrl}
@@ -1782,6 +1809,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   button: ButtonSpecimen,
   "icon-button": IconButtonSpecimen,
   avatar: AvatarSpecimen,
+  "avatar-stack": AvatarStackSpecimen,
   "preview-card": PreviewCardSpecimen,
   "inline-chip": InlineChipSpecimen,
   "full-page-surface": FullPageSurfaceSpecimen,

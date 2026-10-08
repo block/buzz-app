@@ -210,9 +210,7 @@ fn team_export_refuses_explicit_and_inherited_community_but_preserves_overrides(
         let mut agent = crate::store::tests::fixture();
         agent.session_policy = own;
         agent.session_policy_inherit = own.is_none();
-        let problem = snapshot_member(&agent, &defaults)
-            .err()
-            .expect("community export must fail");
+        let problem = snapshot_member(&agent, &defaults).expect_err("community export must fail");
         assert!(problem.to_string().contains("community"));
     }
     for own in [SessionPolicy::Channel, SessionPolicy::Thread] {

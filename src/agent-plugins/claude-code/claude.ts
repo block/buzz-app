@@ -37,10 +37,14 @@ export type Settled = Readonly<{
 
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
- * idle, and never as part of a Claude Code session that started the app. */
+ * idle, signed in as `claude auth login` left it, and never as part of a
+ * Claude Code session that started the app. */
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
+  // A key in the shell that launched the app would outrank the sign-in; the
+  // interactive CLI asks before using one, but stream-json mode uses it silently.
+  ANTHROPIC_API_KEY: null,
   CLAUDECODE: null,
   CLAUDE_CODE_SESSION_ID: null,
   CLAUDE_CODE_CHILD_SESSION: null,

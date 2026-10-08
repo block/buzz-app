@@ -990,24 +990,35 @@ fn native_export_refuses_and_hides_pi_goose_effort_overrides() {
         let exported = snapshot_member(&agent, &defaults).unwrap();
         assert_eq!(exported.definition.runtime.as_deref(), Some(harness));
 
-        for (own, inherited) in [(true, false), (false, true)] {
+        agent.extra.insert("effort".into(), "high".into());
+        assert_eq!(
+            snapshot_member(&agent, &defaults)
+                .unwrap()
+                .definition
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        for (own, value) in [
+            (true, "private-effort"),
+            (false, "private-effort"),
+            (true, ""),
+            (false, ""),
+        ] {
             agent.environment.clear();
             defaults.environment.clear();
-            if own {
-                agent
-                    .environment
-                    .insert("BUZZ_ACP_EFFORT_LEVEL".into(), "private-effort".into());
-            }
-            if inherited {
-                defaults
-                    .environment
-                    .insert("BUZZ_ACP_EFFORT_LEVEL".into(), "private-effort".into());
-            }
+            let environment = if own {
+                &mut agent.environment
+            } else {
+                &mut defaults.environment
+            };
+            environment.insert("BUZZ_ACP_EFFORT_LEVEL".into(), value.into());
             let error = snapshot_member(&agent, &defaults).err().unwrap();
             assert!(error.contains("environment-selected effort"));
             assert!(!error.contains("private-effort"));
             assert_eq!(agent.view(&defaults).launch_effort, None);
         }
+        agent.extra.remove("effort");
     }
 }
 

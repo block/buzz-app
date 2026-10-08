@@ -58,6 +58,7 @@ afterEach(() => {
 function fixture(
   options: {
     failRoster?: boolean;
+    archivedChannel?: boolean;
     withDm?: boolean;
     withSenders?: boolean;
     holdProfiles?: boolean;
@@ -179,7 +180,10 @@ function fixture(
             ["private"],
             ["about", "Buzz session (buzz.sessions/v1)"],
           ]
-        : [["t", "stream"]],
+        : [
+            ["t", "stream"],
+            ...(options.archivedChannel ? [["archived", "true"]] : []),
+          ],
     ),
     profile(alice, { name: "Alice" }),
     ...roots,
@@ -627,6 +631,41 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it.each(["Please review", "A thread update"])(
+  "reads and marks unread a conversation in an archived channel (%s)",
+  async (preview) => {
+    const h = fixture({ archivedChannel: true, withWriter: true });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const row = rows().find((item) => item.textContent?.includes(preview));
+    if (!row) throw new Error("Missing archived-channel conversation");
+    fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+    const detail = screen.getByRole("region", { name: "Inbox detail" });
+    await within(detail).findByText(
+      preview === "Please review" ? /Please review/ : "A thread update",
+    );
+    expect(within(detail).getByRole("textbox")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await waitFor(() =>
+      expect(
+        within(row).queryByRole("img", { name: "Unread" }),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Mark unread" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(row).getByRole("img", { name: "Unread" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  },
+);
+
 it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
   const h = fixture();
   render(h.view);

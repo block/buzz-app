@@ -65,7 +65,6 @@ export function InboxDetail({
   const available =
     !!channel &&
     !channel.cached &&
-    !channel.archived &&
     !channel.readOnly &&
     !!channel.members?.includes(scope.viewer);
   // Inbox keys this component by the captured visit. Revalidation withholds an

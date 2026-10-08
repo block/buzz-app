@@ -276,9 +276,13 @@ export type StaffResults = {
  * - `notSent`: refused before any byte left the app (bad input, context
  *   changed, address policy, DNS failure, signer locked). Safe to rebuild.
  * - `unauthorized`: 401, the relay did not accept the signature or roster.
+ *   After a sent write, only beta's own error envelope (with its
+ *   `WWW-Authenticate: Nostr` challenge) counts; otherwise `ambiguous`.
  * - `forbidden`: 403 (not staff, read-only mode, staff target refused).
+ *   After a sent write, only beta's `forbidden` envelope counts.
  * - `unsupported`: a complete, zero-byte 404 or 405. The route is absent.
- * - `rejected`: any other complete 4xx (including coded 404, 409, 422).
+ * - `rejected`: any other complete 4xx (including coded 404, 409, 422). After
+ *   a sent write, only with beta's exact error envelope; otherwise `ambiguous`.
  * - `intercepted`: an HTML page or redirect, such as an SSO or VPN gateway.
  * - `ambiguous`: transport error, 5xx, truncated or unreadable body. A write
  *   may have committed: retry with the same request.
@@ -304,6 +308,11 @@ export type StaffFailure = {
   code: string | null;
   /** True only when native code refused before sending anything. */
   notSent: boolean;
+  /**
+   * The response was a 401 or 403 from anyone (relay or gateway): re-check
+   * access. Independent of `category`; a sent write may still be ambiguous.
+   */
+  authLost: boolean;
   /** Plain-language detail, safe to show. */
   message: string;
 };

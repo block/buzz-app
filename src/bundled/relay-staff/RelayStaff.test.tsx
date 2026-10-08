@@ -45,6 +45,7 @@ function fail(patch: Partial<StaffFailure>): StaffOutcome<unknown> {
       bodyEmpty: false,
       code: null,
       notSent: false,
+      authLost: false,
       message: "Rejected",
       ...patch,
     },

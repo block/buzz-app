@@ -19,6 +19,7 @@ function notSent(error: unknown): StaffFailure {
     bodyEmpty: false,
     code: null,
     notSent: true,
+    authLost: false,
     message: typeof error === "string" ? error : "The request was not sent.",
   };
 }

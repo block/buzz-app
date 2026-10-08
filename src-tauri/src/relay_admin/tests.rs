@@ -270,7 +270,11 @@ async fn system_proxy_settings_cannot_redirect_the_connection() {
 #[tokio::test]
 async fn signature_binds_the_exact_url_method_and_body() {
     let fixture = fixture(vec![
-        reply("200 OK", "application/json", r#"{"state":"pending"}"#),
+        reply(
+            "202 Accepted",
+            "application/json",
+            r#"{"state":"pending","actionId":"a","replayed":false}"#,
+        ),
         reply(
             "200 OK",
             "application/json",
@@ -361,16 +365,20 @@ async fn a_lost_write_response_is_ambiguous_and_the_retry_keeps_its_request_id()
 
 #[tokio::test]
 async fn only_a_complete_empty_404_or_405_is_unsupported() {
-    let coded = r#"{"error":{"code":"not_found","message":"No such member","requestId":"x"}}"#;
+    let coded = format!(
+        r#"{{"error":{{"code":"not_found","message":"No such member","requestId":"{ID}"}}}}"#
+    );
     let fixture = fixture(vec![
         reply("404 Not Found", "text/plain", ""),
         reply("405 Method Not Allowed", "text/plain", ""),
-        reply("404 Not Found", "application/json", coded),
+        reply("404 Not Found", "application/json", &coded),
         Reply::Raw(b"HTTP/1.1 404 Not Found\r\ncontent-length: 50\r\n\r\n{".to_vec()),
         reply(
             "409 Conflict",
             "application/json",
-            r#"{"error":{"code":"request_id_conflict","message":"m","requestId":"x"}}"#,
+            &format!(
+                r#"{{"error":{{"code":"request_id_conflict","message":"m","requestId":"{ID}"}}}}"#
+            ),
         ),
         reply("403 Forbidden", "application/json", ""),
         reply("401 Unauthorized", "application/json", ""),
@@ -730,7 +738,7 @@ fn route_bodies() -> Vec<(Value, String, &'static str)> {
         (json!({ "route": "getReport", "id": ID }), REPORT.into(), r#"{"id":"r"}"#),
         (json!({ "route": "resolveReport", "id": ID, "action": "ban", "requestId": ID }), resolution.clone(), r#"{"status":"resolved","activeAction":{"status":"teleported"}}"#),
         (json!({ "route": "reopenReport", "id": ID, "requestId": ID }), r#"{"status":"open"}"#.into(), "[]"),
-        (json!({ "route": "cancelReport", "id": ID, "actionId": ID }), resolution, r#"{"ok":true}"#),
+        (json!({ "route": "cancelReport", "id": ID, "actionId": ID }), format!(r#"{{"status":"open","activeAction":{action}}}"#), r#"{"status":"resolved","activeAction":null}"#),
         (json!({ "route": "listFeedback" }), r#"[{"id":"f","communityId":null,"communityHost":null,"submitterPubkey":"p","bodySummary":"b","status":"new","receivedAt":"t"}]"#.into(), r#"[{"id":"f"}]"#),
         (json!({ "route": "getFeedback", "id": ID }), r#"{"id":"f","communityId":null,"communityHost":null,"eventId":"e","submitterPubkey":"p","body":"b","status":"reviewed","tags":[],"eventCreatedAt":"t","receivedAt":"t"}"#.into(), r#"{"id":"f","status":"lost"}"#),
         (json!({ "route": "setFeedbackStatus", "id": ID, "status": "archived" }), r#"{"status":"archived"}"#.into(), r#"{"status":"burned"}"#),
@@ -1028,4 +1036,370 @@ fn save_reports_cancellation_success_and_disk_errors() {
     let not_a_path = save_to(Some(Err("not a file path".into())), b"x");
     assert_eq!(not_a_path["state"], "failed");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn review_pass2_json_gateway_401_403_after_write_are_uncertain() {
+    let fixture = fixture(vec![
+        reply(
+            "401 Unauthorized",
+            "application/json",
+            r#"{"gateway":"session expired"}"#,
+        ),
+        reply(
+            "403 Forbidden",
+            "application/json",
+            r#"{"gateway":"access denied"}"#,
+        ),
+    ])
+    .await;
+    let net = net(&fixture, vec![lo(); 2]);
+    let host = IdentityHost::fixture();
+    let mut failures = Vec::new();
+    for _ in 0..2 {
+        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
+        println!("gateway JSON {:?}: {:?}", failure.status, failure.category);
+        if failure.category != Category::Ambiguous {
+            failures.push(failure.status);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "untrusted gateway replies drop write: {failures:?}"
+    );
+}
+
+#[tokio::test]
+async fn review_pass2_bad_nested_fields_and_statuses_are_not_successes() {
+    let mut cases = Vec::new();
+    for (req, good, _) in route_bodies() {
+        let route = req["route"].as_str().unwrap();
+        let mut value: Value = if good.is_empty() {
+            continue;
+        } else {
+            serde_json::from_str(&good).unwrap()
+        };
+        match route {
+            "getReport" => {
+                value["message"] = json!({"authorPubkey":"a","content":{},"createdAt":"t"});
+            }
+            "resolveReport" => {
+                value["activeAction"]["errorMessage"] = json!({"oops":true});
+            }
+            "cancelReport" | "reopenReport" => {
+                value["status"] = json!("teleported");
+            }
+            "searchMembers" => {
+                value["items"][0]["displayName"] = json!({"oops":true});
+            }
+            "getMember" => {
+                value["role"] = json!({"oops":true});
+            }
+            _ => continue,
+        }
+        cases.push((req, value.to_string()));
+    }
+    let fixture = fixture(
+        cases
+            .iter()
+            .map(|(_, body)| reply("200 OK", "application/json", body))
+            .collect(),
+    )
+    .await;
+    let net = net(&fixture, vec![lo(); cases.len()]);
+    let host = IdentityHost::fixture();
+    let mut admitted = Vec::new();
+    for (req, body) in cases {
+        let result = run(&net, &host, &fixture, &request(req.clone())).await;
+        if result.is_ok() {
+            println!("admitted {req}: {body}");
+            admitted.push(req["route"].clone());
+        }
+    }
+    assert!(
+        admitted.is_empty(),
+        "malformed successes admitted: {admitted:?}"
+    );
+}
+
+/// beta's `ErrorEnvelope`, with its `WWW-Authenticate: Nostr` challenge.
+fn beta_error(status: &str, code: &str, challenge: bool) -> Reply {
+    let header = if challenge {
+        "application/json\r\nwww-authenticate: Nostr"
+    } else {
+        "application/json"
+    };
+    let body = format!(r#"{{"error":{{"code":"{code}","message":"m","requestId":"{ID}"}}}}"#);
+    reply(status, header, &body)
+}
+
+#[tokio::test]
+async fn only_the_relays_own_error_envelope_settles_a_sent_write() {
+    use Category as C;
+    let cases: Vec<(Reply, C)> = vec![
+        (
+            reply(
+                "401 Unauthorized",
+                "application/json",
+                r#"{"gateway":"session expired"}"#,
+            ),
+            C::Ambiguous,
+        ),
+        (
+            reply(
+                "403 Forbidden",
+                "application/json",
+                r#"{"gateway":"access denied"}"#,
+            ),
+            C::Ambiguous,
+        ),
+        (
+            reply("401 Unauthorized", "application/json", ""),
+            C::Ambiguous,
+        ),
+        (reply("403 Forbidden", "application/json", ""), C::Ambiguous),
+        // Envelope-looking bodies that are not beta's exact shape.
+        (
+            reply(
+                "409 Conflict",
+                "application/json",
+                r#"{"error":{"code":"conflict"}}"#,
+            ),
+            C::Ambiguous,
+        ),
+        (
+            reply(
+                "409 Conflict",
+                "application/json",
+                r#"{"error":{"code":"conflict","message":"m","requestId":"nope"}}"#,
+            ),
+            C::Ambiguous,
+        ),
+        (
+            reply(
+                "409 Conflict",
+                "application/json",
+                &format!(
+                    r#"{{"error":{{"code":"conflict","message":"m","requestId":"{ID}","via":"gw"}}}}"#
+                ),
+            ),
+            C::Ambiguous,
+        ),
+        (beta_error("409 Conflict", "Conflict!", false), C::Ambiguous),
+        (
+            beta_error("401 Unauthorized", "unauthorized", false),
+            C::Ambiguous,
+        ),
+        (
+            beta_error("401 Unauthorized", "forbidden", true),
+            C::Ambiguous,
+        ),
+        (
+            beta_error("403 Forbidden", "unauthorized", false),
+            C::Ambiguous,
+        ),
+        // beta's genuine rejections.
+        (
+            beta_error("401 Unauthorized", "unauthorized", true),
+            C::Unauthorized,
+        ),
+        (
+            beta_error("403 Forbidden", "forbidden", false),
+            C::Forbidden,
+        ),
+        (
+            beta_error("409 Conflict", "request_id_conflict", false),
+            C::Rejected,
+        ),
+        (
+            beta_error("400 Bad Request", "invalid_action_for_target", false),
+            C::Rejected,
+        ),
+        (
+            beta_error("422 Unprocessable Entity", "enforcement_failed", false),
+            C::Rejected,
+        ),
+        (beta_error("404 Not Found", "not_found", false), C::Rejected),
+        (reply("404 Not Found", "text/plain", ""), C::Unsupported),
+    ];
+    let fixture = fixture(cases.iter().map(|(r, _)| r.clone()).collect()).await;
+    let net = net(&fixture, vec![lo(); cases.len()]);
+    let host = IdentityHost::fixture();
+    for (i, (_, want)) in cases.iter().enumerate() {
+        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
+        assert_eq!(failure.category, *want, "case {i}");
+        assert_eq!(
+            failure.auth_lost,
+            matches!(failure.status, Some(401 | 403)),
+            "case {i}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_read_401_or_403_from_anyone_reports_lost_access() {
+    let fixture = fixture(vec![
+        reply("401 Unauthorized", "application/json", r#"{"gateway":"x"}"#),
+        reply("403 Forbidden", "application/json", ""),
+    ])
+    .await;
+    let net = net(&fixture, vec![lo(); 2]);
+    let host = IdentityHost::fixture();
+    let probe = request(json!({ "route": "probe" }));
+    for want in [Category::Unauthorized, Category::Forbidden] {
+        let failure = run(&net, &host, &fixture, &probe).await.unwrap_err();
+        assert_eq!((failure.category, failure.auth_lost), (want, true));
+    }
+}
+
+/// Every field and status a route's DTO defines is checked, nested and
+/// nullable ones included; unknown extra fields are not.
+#[test]
+fn each_dto_field_and_status_is_checked() {
+    let bad = |route: &str| -> Vec<(&'static str, Value)> {
+        let s = || json!({});
+        match route {
+            "probe" => vec![
+                ("/status", json!("teapot")),
+                ("/authMode", json!("x")),
+                ("/role", json!("king")),
+                ("/source", json!("x")),
+                ("/canAct", s()),
+                ("/canStaff", json!(null)),
+            ],
+            "listReports" => vec![
+                ("/0/status", json!("lost")),
+                ("/0/note", s()),
+                ("/0/channelId", s()),
+                ("/0/resolvedBy", s()),
+                ("/0/actionId", json!(1)),
+                ("/0/targetAuthorPubkey", s()),
+            ],
+            "getReport" => vec![
+                (
+                    "/message",
+                    json!({"authorPubkey":"a","content":{},"createdAt":"t"}),
+                ),
+                (
+                    "/message",
+                    json!({"authorPubkey":"a","content":"c","createdAt":"t","deletedAt":{}}),
+                ),
+                ("/message", json!({"content":"c","createdAt":"t"})),
+                ("/resolvedAt", s()),
+                ("/activeAction", json!({"status":"succeeded"})),
+            ],
+            "resolveReport" => vec![
+                ("/status", json!("teleported")),
+                ("/activeAction/errorMessage", s()),
+                ("/activeAction/reason", s()),
+                ("/activeAction/expiresAt", json!(5)),
+                ("/activeAction/status", json!("x")),
+                ("/activeAction/action", json!("x")),
+                ("/activeAction/actorRole", json!("x")),
+            ],
+            "reopenReport" => vec![
+                ("/status", json!("teleported")),
+                ("/status", json!("resolved")),
+            ],
+            "cancelReport" => vec![
+                ("/status", json!("teleported")),
+                ("/status", json!("resolved")),
+                ("/activeAction", json!(null)),
+                ("/activeAction/errorMessage", s()),
+            ],
+            "listFeedback" => vec![
+                ("/0/status", json!("x")),
+                ("/0/category", s()),
+                ("/0/communityHost", s()),
+            ],
+            "getFeedback" => vec![
+                ("/status", json!("lost")),
+                ("/category", s()),
+                ("/communityId", s()),
+            ],
+            "setFeedbackStatus" => vec![("/status", json!("burned"))],
+            "listOperators" => vec![
+                ("/0/effectiveRole", json!("king")),
+                ("/0/sources", json!(["x"])),
+            ],
+            "putOperator" => vec![("/effectiveRole", json!("king"))],
+            "deleteOperator" => vec![("/deleted", json!(true))],
+            "listRestrictions" => vec![
+                ("/items/0/banned", json!("yes")),
+                ("/items/0/banExpiresAt", s()),
+                ("/items/0/banReason", s()),
+                ("/items/0/mutedUntil", s()),
+                ("/items/0/muteReason", s()),
+            ],
+            "directAction" => vec![
+                ("/state", json!("queued")),
+                ("/state", json!("pending")),
+                ("/replayed", json!("no")),
+                ("/actionId", json!(null)),
+            ],
+            "listCommunities" => vec![("/items/0/icon", s()), ("/items/0/host", json!(null))],
+            "searchMembers" => vec![
+                ("/items/0/displayName", s()),
+                ("/items/0/nip05", s()),
+                ("/items/0/avatarUrl", s()),
+            ],
+            "getMember" => vec![
+                ("/role", s()),
+                ("/role", json!("king")),
+                ("/profile", json!({"displayName":{}})),
+                ("/profile", json!({"about":1})),
+                ("/mutedUntil", s()),
+                ("/isStaff", json!("no")),
+            ],
+            "getEvent" => vec![
+                ("/deletedAt", s()),
+                ("/channelId", s()),
+                ("/kind", json!("one")),
+            ],
+            _ => vec![],
+        }
+    };
+    for (req, good, _) in route_bodies() {
+        let route = req["route"].as_str().unwrap().to_owned();
+        let req = request(req);
+        if good.is_empty() {
+            assert!(shape::valid(&req, 204, None), "{route}");
+            continue;
+        }
+        let good: Value = serde_json::from_str(&good).unwrap();
+        let mut extra = good.clone();
+        if let Some(o) = extra.as_object_mut() {
+            o.insert("futureField".into(), json!({"any": 1}));
+        }
+        assert!(shape::valid(&req, 200, Some(&good)), "{route}");
+        assert!(shape::valid(&req, 200, Some(&extra)), "{route} extra field");
+        let cases = bad(&route);
+        assert!(!cases.is_empty(), "{route} has no corruption cases");
+        for (pointer, value) in cases {
+            let mut body = good.clone();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            let slot = body
+                .pointer_mut(parent)
+                .unwrap_or_else(|| panic!("{route}{pointer}"));
+            match slot {
+                Value::Array(a) => a[key.parse::<usize>().unwrap()] = value.clone(),
+                other => other[key] = value.clone(),
+            }
+            assert!(
+                !shape::valid(&req, 200, Some(&body)),
+                "{route}{pointer} = {value}"
+            );
+        }
+    }
+    // A direct action's state must match its status: 200 succeeded, 202 pending.
+    let direct = request(
+        json!({ "route": "directAction", "communityHost": "c.example", "action": "ban", "target": PK, "requestId": ID }),
+    );
+    let pending = json!({"state":"pending","actionId":"a","replayed":false});
+    let succeeded = json!({"state":"succeeded","actionId":"a","replayed":true});
+    assert!(shape::valid(&direct, 202, Some(&pending)));
+    assert!(!shape::valid(&direct, 200, Some(&pending)));
+    assert!(!shape::valid(&direct, 202, Some(&succeeded)));
+    // Only lifting a restriction may be empty.
+    assert!(!shape::valid(&direct, 204, None));
 }

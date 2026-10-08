@@ -361,8 +361,8 @@ export function parseAgentSnapshot(
  * agent defaults it inherits. Null while those defaults are unknown. */
 export function effectiveSessionPolicy(
   agent: Pick<AgentView, "sessionPolicy">,
-  defaultSessionPolicy?: "channel" | "thread",
-): "channel" | "thread" | null {
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]>,
+): AgentView["sessionPolicy"] {
   return agent.sessionPolicy ?? defaultSessionPolicy ?? null;
 }
 
@@ -371,9 +371,13 @@ export function buildAgentSnapshot(
   agent: AgentView,
   level: MemoryLevel = "none",
   memories: readonly Pick<MemoryEntry, "slug" | "body">[] = [],
-  defaultSessionPolicy?: "channel" | "thread",
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]>,
 ): AgentSnapshot {
   const sessionPolicy = effectiveSessionPolicy(agent, defaultSessionPolicy);
+  if (sessionPolicy === "community")
+    throw new Error(
+      "Public community conversation context cannot be exported faithfully in snapshot v1. Choose channel or thread context before sharing.",
+    );
   if (
     agent.harness.command !== "buzz-agent" ||
     agent.respondTo !== "owner-only" ||

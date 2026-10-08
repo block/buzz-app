@@ -183,6 +183,48 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
     assert_eq!(control.store.agents().unwrap().len(), 2);
 }
 #[test]
+fn community_policy_is_not_portable_in_team_snapshot_v1() {
+    let mut snapshot = TeamSnapshot {
+        format: "buzz-team-snapshot".into(),
+        version: 1,
+        team: TeamMeta {
+            name: "Crew".into(),
+            description: None,
+            instructions: None,
+        },
+        members: vec![member()],
+    };
+    snapshot.members[0].definition.session_policy = SessionPolicy::Community;
+    assert!(snapshot.validate().is_err());
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    assert!(TeamSnapshot::decode(&bytes).is_err());
+}
+
+#[test]
+fn team_export_refuses_explicit_and_inherited_community_but_preserves_overrides() {
+    let defaults = crate::agent_defaults::AgentDefaults {
+        session_policy: SessionPolicy::Community,
+        ..Default::default()
+    };
+    for own in [Some(SessionPolicy::Community), None] {
+        let mut agent = crate::store::tests::fixture();
+        agent.session_policy = own;
+        agent.session_policy_inherit = own.is_none();
+        let problem = snapshot_member(&agent, &defaults)
+            .err()
+            .expect("community export must fail");
+        assert!(problem.to_string().contains("community"));
+    }
+    for own in [SessionPolicy::Channel, SessionPolicy::Thread] {
+        let mut agent = crate::store::tests::fixture();
+        agent.session_policy = Some(own);
+        agent.session_policy_inherit = false;
+        let exported = snapshot_member(&agent, &defaults).unwrap();
+        assert_eq!(exported.definition.session_policy, own);
+    }
+}
+
+#[test]
 fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
     let root = tempfile::tempdir().unwrap();
     let mut control = controller(root.path());

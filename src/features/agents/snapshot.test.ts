@@ -668,6 +668,39 @@ it("blocks credential-like allowed values and unsupported source behavior at exp
   );
 });
 
+it.each(["community", null] as const)(
+  "refuses effective community policy in snapshot v1 (own: %s)",
+  (own) => {
+    const agent = portableAgent();
+    agent.sessionPolicy = own;
+    expect(() => buildAgentSnapshot(agent, "none", [], "community")).toThrow(
+      /community.*cannot be exported faithfully/i,
+    );
+  },
+);
+
+it.each(["channel", "thread"] as const)(
+  "exports explicit %s policy over community defaults",
+  (own) => {
+    const agent = portableAgent();
+    agent.sessionPolicy = own;
+    expect(
+      buildAgentSnapshot(agent, "none", [], "community").definition
+        .sessionPolicy,
+    ).toBe(own);
+  },
+);
+
+it("rejects community in a received snapshot v1", () => {
+  const manifest = buildAgentSnapshot(portableAgent());
+  expect(() =>
+    parse({
+      ...manifest,
+      definition: { ...manifest.definition, sessionPolicy: "community" },
+    }),
+  ).toThrow(/Invalid snapshot manifest/);
+});
+
 it("resolves inherited source session policy and rejects invisible prompt controls", () => {
   const inherited = portableAgent();
   inherited.sessionPolicy = null;

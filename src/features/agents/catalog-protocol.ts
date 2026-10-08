@@ -150,8 +150,15 @@ export async function memberKey(id: string): Promise<string> {
 /** Field order is the wire order; keys absent here can never leak. An agent
  * that inherits its conversation context shares the defaults it runs with,
  * as snapshot export does. */
-function persona(agent: AgentView, defaultSessionPolicy?: SessionPolicy) {
+function persona(
+  agent: AgentView,
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]>,
+) {
   const sessionPolicy = effectiveSessionPolicy(agent, defaultSessionPolicy);
+  if (sessionPolicy === "community")
+    throw new Error(
+      "Public community conversation context cannot be shared in catalog v1. Choose channel or thread context before sharing.",
+    );
   if (!sessionPolicy)
     throw new Error(
       `Agent defaults for '${agent.name}' are unavailable. Refresh agents and try again.`,
@@ -214,7 +221,7 @@ function checkDefinition(name: string, prompt: string, label = "Agent") {
 
 export function agentCatalogContent(
   agent: AgentView,
-  defaultSessionPolicy?: SessionPolicy,
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]>,
 ): string {
   checkDefinition(agent.name, agent.systemPrompt);
   const content = JSON.stringify(persona(agent, defaultSessionPolicy));
@@ -235,7 +242,7 @@ export interface CatalogTeamSource {
 export async function teamCatalogContent(
   team: CatalogTeamSource,
   members: readonly AgentView[],
-  defaultSessionPolicy?: SessionPolicy,
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]>,
 ): Promise<string> {
   const fail = (reason: string) => {
     throw new Error(reason);

@@ -916,14 +916,22 @@ it("adds a catalog team through the shared importer only while its listed head i
   expect(viewer.catalog.snapshot().teams).toEqual([]);
 });
 
-it.each(["channel", "thread"] as const)(
-  "shares an inheriting agent through the real direct-share catalog switch with %s defaults",
-  async (sessionPolicy) => {
+it.each([
+  [null, "channel", "channel"],
+  [null, "thread", "thread"],
+  [null, "community", null],
+  ["community", "thread", null],
+  ["channel", "community", "channel"],
+  ["thread", "community", "thread"],
+] as const)(
+  "projects own %s over %s defaults through the real direct-share catalog switch",
+  async (own, sessionPolicy, expected) => {
     const server = catalogRelay();
     const owner = client(server, alice, `https://catalog.test:${alice.pubkey}`);
     const fixture = controlFixture();
     fixture.agent.relayUrl = "wss://catalog.test";
     fixture.agent.harness.command = "buzz-agent";
+    fixture.agent.sessionPolicy = own;
     fixture.data.defaultSettings = {
       harness: "buzz-agent",
       provider: "",
@@ -958,6 +966,19 @@ it.each(["channel", "thread"] as const)(
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     await waitFor(() => expect(enabled()).toBe(true));
     fireEvent.click(shareSwitch());
+    if (expected === null) {
+      await screen.findByText(
+        /community conversation context cannot be shared in catalog v1/,
+      );
+      expect(screen.getByRole("button", { name: "Copy link" })).toBeDisabled();
+      const viewer = client(server, bob);
+      await viewer.catalog.refresh();
+      expect(viewer.catalog.snapshot().agents).toEqual([]);
+      expect(
+        owner.catalog.state(30175, fixture.agent.pubkey).change,
+      ).toBeUndefined();
+      return;
+    }
     await screen.findByText(
       `Published ${fixture.agent.name} to the community catalog.`,
     );
@@ -967,7 +988,7 @@ it.each(["channel", "thread"] as const)(
       expect.objectContaining({
         agent: expect.objectContaining({
           displayName: fixture.agent.name,
-          sessionPolicy,
+          sessionPolicy: expected,
         }),
       }),
     ]);

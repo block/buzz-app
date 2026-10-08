@@ -249,7 +249,7 @@ export function AgentShareSwitch({
   agent: AgentView;
   name: string;
   /** The agent defaults an inheriting agent runs with. */
-  defaultSessionPolicy: "channel" | "thread" | undefined;
+  defaultSessionPolicy: NonNullable<AgentView["sessionPolicy"]> | undefined;
 }) {
   if (!sameCommunityAgents([agent], session.scope).length) return null;
   return (

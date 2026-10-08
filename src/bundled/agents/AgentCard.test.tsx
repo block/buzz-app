@@ -22,6 +22,43 @@ import { AgentCard } from "./AgentCard";
 
 afterEach(cleanup);
 
+it.each(["tile", "row"] as const)(
+  "shows an accessible restart-required badge only for drifted managed %s cards",
+  (layout) => {
+    const fixture = controlFixture();
+    const drifted = {
+      ...fixture.agent,
+      restartDiff: [
+        {
+          field: "systemPrompt",
+          change: { kind: "text", beforeChars: 18, afterChars: 21 },
+        },
+      ],
+    } satisfies AgentView;
+    const card = (agent: AgentView) => (
+      <AgentCard
+        name="Agent"
+        identities={[agent]}
+        editable={[agent]}
+        layout={layout}
+      />
+    );
+    const view = render(card(drifted));
+    const article = screen.getByRole("article", { name: "Agent Agent" });
+    const badge = within(article).getByRole("status", {
+      name: "Restart required",
+    });
+
+    expect(badge).toBeVisible();
+    expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+
+    view.rerender(card({ ...drifted, restartDiff: [] }));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+  },
+);
+
 it("badges a single agent only while live presence is known", () => {
   const pubkey = "a".repeat(64);
   let status: PresenceStatus = "unknown";

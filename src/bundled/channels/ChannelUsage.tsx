@@ -6,7 +6,12 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { useUsageArchive } from "../../features/agents/use-usage-archive";
-import type { UsageRecord, UsageSession } from "../../features/agents/usage";
+import { aggregateSessionUsage } from "../../features/agents/usage";
+import type {
+  Counters,
+  UsageRecord,
+  UsageSession,
+} from "../../features/agents/usage";
 import styles from "./ChannelUsage.module.css";
 
 const number = (value?: number) =>
@@ -27,14 +32,7 @@ function total(record: UsageRecord | null) {
     return `Input ${number(counters.inputTokens)} / Output ${number(counters.outputTokens)}`;
   return "—";
 }
-function Breakdown({
-  record,
-  kind,
-}: {
-  record: UsageRecord | null;
-  kind: "turn" | "cumulative";
-}) {
-  const counts = record?.[kind];
+function Breakdown({ counts }: { counts: Counters | null | undefined }) {
   return (
     <dl className={styles.breakdown}>
       <dt>Provider total tokens</dt>
@@ -94,7 +92,7 @@ function Turns({ group, name }: { group: UsageSession; name: string }) {
                 ) : !row.turn ? (
                   <p>Per-turn usage unavailable.</p>
                 ) : (
-                  <Breakdown record={row} kind="turn" />
+                  <Breakdown counts={row.turn} />
                 )}
                 <details>
                   <summary>Identifiers and provenance</summary>
@@ -151,6 +149,7 @@ export function ChannelUsage({
   const group =
     groups.find((group) => group.key === selected) ??
     (groups.length === 1 ? groups[0] : undefined);
+  const totals = aggregateSessionUsage(groups);
   const label = (id: string) => resolve(id, formatPublicKey(id) ?? "Agent");
   return (
     <div className={styles.owner}>
@@ -197,24 +196,42 @@ export function ChannelUsage({
               Close
             </Button>
           </div>
-          <p>Session totals may include other threads.</p>
-          {groups.length > 1 && (
-            <fieldset className={styles.sessions} aria-label="Select session">
-              {groups.map((entry, index) => (
-                <Button
-                  key={entry.key}
-                  size="sm"
-                  variant={entry.key === group?.key ? "subtle" : "ghost"}
-                  aria-pressed={entry.key === group?.key}
-                  onClick={() => setSelected(entry.key)}
-                >
-                  {entry.sessionId
-                    ? `Session ${index + 1}`
-                    : `Unidentified session ${index + 1}`}
-                </Button>
-              ))}
-            </fieldset>
-          )}
+          <section aria-label="All session totals">
+            <h3>
+              Totals across {groups.length}{" "}
+              {groups.length === 1 ? "session" : "sessions"}
+            </h3>
+            <p>
+              Latest reported counters per session, not thread attribution.
+              Cache counts are part of input. — means not reported for every
+              session.
+            </p>
+            {totals.complete < groups.length && (
+              <p>
+                Incomplete: {totals.complete} of {groups.length} sessions have
+                trustworthy cumulative counters.
+              </p>
+            )}
+            <Breakdown counts={totals.counters} />
+          </section>
+          <div className={styles.sessionPicker}>
+            <Select
+              label="Session"
+              variant="compact"
+              value={group?.key ?? ""}
+              placeholder="Select session"
+              groups={[
+                {
+                  label: "",
+                  options: groups.map((entry, index) => ({
+                    value: entry.key,
+                    label: `${entry.sessionId ? "Session" : "Unidentified session"} ${index + 1} · ${entry.turns.length} ${entry.turns.length === 1 ? "turn" : "turns"} · ${entry.turns[0] ? date(entry.turns[0].timestamp) : "No turns"}`,
+                  })),
+                },
+              ]}
+              onValueChange={setSelected}
+            />
+          </div>
           {group && (
             <div key={group.key}>
               <p>
@@ -234,7 +251,7 @@ export function ChannelUsage({
                 {group.latest ? date(group.latest.timestamp) : "Not reported"}
               </p>
               {!group.latest && <p>Session counters unavailable.</p>}
-              <Breakdown record={group.latest} kind="cumulative" />
+              <Breakdown counts={group.latest?.cumulative} />
               <p>Cache counts are part of input, not additional tokens.</p>
               <details>
                 <summary>Session identity and pricing provenance</summary>

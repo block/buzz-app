@@ -71,11 +71,12 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
     .getByRole("option", { name: /sessions/ })
     .allTextContents();
   await page.getByRole("option", { name: choices[0] }).click();
-  const sessions = pane.getByRole("group", { name: "Select session" });
-  await sessions.getByRole("button", { name: "Session 2" }).click();
-  await expect(
-    sessions.getByRole("button", { name: "Session 2" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  const totals = pane.getByRole("region", { name: "All session totals" });
+  await expect(totals.getByText("Totals across 2 sessions")).toBeVisible();
+  const sessions = pane.getByRole("combobox", { name: "Session" });
+  await sessions.click();
+  await page.getByRole("option", { name: /Session 2 ·/ }).click();
+  await expect(sessions).toContainText("Session 2");
   const details = pane.getByRole("region", { name: "Session usage details" });
   await expect(details).toBeVisible();
   // A long identifier must wrap in its value column, not squeeze labels to letters.

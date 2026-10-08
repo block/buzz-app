@@ -1,6 +1,6 @@
 import type { ArchivePage } from "../archive/types";
 
-type Counters = Readonly<{
+export type Counters = Readonly<{
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
@@ -223,5 +223,43 @@ export function projectUsageWithUnreadable(
           a.key.localeCompare(b.key),
       ),
     unreadable,
+  };
+}
+
+/** Sum each session's latest trusted snapshot once; unknown fields stay unknown. */
+export function aggregateSessionUsage(groups: readonly UsageSession[]): {
+  counters: Counters;
+  complete: number;
+} {
+  const keys = [
+    "totalTokens",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "costUsd",
+  ] as const;
+  const snapshots = groups.map((group) => group.latest?.cumulative ?? null);
+  const counters: Partial<Record<(typeof keys)[number], number>> = {};
+  for (const key of keys) {
+    // Never silently turn an absent counter into zero or mix incompatible coverage.
+    if (
+      snapshots.length &&
+      snapshots.every((item) => item?.[key] !== undefined)
+    ) {
+      const sum = snapshots.reduce(
+        (value, item) => value + (item?.[key] ?? 0),
+        0,
+      );
+      if (
+        Number.isFinite(sum) &&
+        (key === "costUsd" || Number.isSafeInteger(sum))
+      )
+        counters[key] = sum;
+    }
+  }
+  return {
+    counters,
+    complete: snapshots.filter((item) => item !== null).length,
   };
 }

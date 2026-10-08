@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { decodeUsage, projectUsage, projectUsageWithUnreadable } from "./usage";
+import {
+  aggregateSessionUsage,
+  decodeUsage,
+  projectUsage,
+  projectUsageWithUnreadable,
+} from "./usage";
 import type { ArchivePage } from "../archive/types";
 const agent = (n: number) => n.toString(16).padStart(64, "0");
 const frame = (n: number, payload: Record<string, unknown>, owner = agent(1)) =>
@@ -195,5 +200,66 @@ describe("channel usage projection", () => {
       projectUsage([bad, other, channelLess, unreliable], "selected")[0]
         ?.turns[0]?.turn,
     ).toBeNull();
+  });
+});
+
+describe("cross-session totals", () => {
+  it("uses each latest cumulative snapshot once, not the sum of every turn", () => {
+    const groups = projectUsage(
+      [
+        frame(1, {
+          sessionId: "a",
+          turnSeq: 1,
+          cumulative: { totalTokens: 10, inputTokens: 8, costUsd: 0.01 },
+        }),
+        frame(2, {
+          sessionId: "a",
+          turnSeq: 2,
+          cumulative: { totalTokens: 15, inputTokens: 12, costUsd: 0.02 },
+        }),
+        frame(3, {
+          sessionId: "b",
+          turnSeq: 1,
+          cumulative: { totalTokens: 20, inputTokens: 18, costUsd: 0 },
+        }),
+      ],
+      "selected",
+    );
+    expect(aggregateSessionUsage(groups)).toEqual({
+      counters: { totalTokens: 35, inputTokens: 30, costUsd: 0.02 },
+      complete: 2,
+    });
+  });
+  it("does not publish partial numbers for missing or conflicting session snapshots", () => {
+    const groups = projectUsage(
+      [
+        frame(1, {
+          sessionId: "a",
+          turnSeq: 1,
+          cumulative: { totalTokens: 10, inputTokens: 8 },
+        }),
+        frame(2, {
+          sessionId: "b",
+          turnSeq: 1,
+          cumulative: { inputTokens: 3 },
+        }),
+        frame(3, {
+          sessionId: "c",
+          turnSeq: 1,
+          cumulative: { totalTokens: 5 },
+        }),
+        frame(4, {
+          sessionId: "c",
+          turnSeq: 1,
+          cumulative: { totalTokens: 7 },
+        }),
+      ],
+      "selected",
+    );
+    expect(aggregateSessionUsage(groups)).toEqual({
+      counters: {},
+      complete: 2,
+    });
+    expect(aggregateSessionUsage([])).toEqual({ counters: {}, complete: 0 });
   });
 });

@@ -740,7 +740,12 @@ turn deltas are shown only when reliable. Unknown counters are not zero and cach
 counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
 
 The Usage tab's agent dropdown shows each agent's latest total or session count;
-selecting an agent reveals its session details.
+selecting an agent reveals an aggregate of the latest trustworthy cumulative
+snapshot from each of its sessions. Counters missing in any session remain unknown
+rather than silently understating the total. The outlined Session dropdown then
+selects one session for provenance and turn detail without filling the pane with
+session buttons. The aggregate may cover other threads and is limited to loaded
+archive history.
 
 The channel's **Channel actions → View channel usage** item opens a dedicated
 **Usage** tab in the channel's side pane. It is available only while this

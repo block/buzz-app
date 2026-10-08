@@ -93,12 +93,26 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         let event = agent.sign(&key, kind, "hi".into(), tags).unwrap();
         assert_eq!(event["kind"], kind);
         assert_eq!(event["pubkey"], agent.pubkey);
-        let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+        let mut tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+        let ms = tags.remove(tags.iter().position(|tag| tag[0] == "ms").unwrap());
+        assert_eq!(ms[0], "ms");
+        assert!(ms[1].parse::<u16>().unwrap() < 1000);
         assert_eq!(
             tags,
             [vec!["h".to_owned(), "channel".to_owned()], saved.clone()]
         );
     }
+    // A plugin cannot pick its own `ms`, and events outside a channel get none.
+    let forged = vec![
+        vec!["h".to_owned(), "channel".to_owned()],
+        vec!["ms".to_owned(), "999".to_owned()],
+    ];
+    let event = agent.sign(&key, 9, "hi".into(), forged).unwrap();
+    let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+    assert_eq!(tags.iter().filter(|tag| tag[0] == "ms").count(), 1);
+    let event = agent.sign(&key, 0, "{}".into(), vec![]).unwrap();
+    let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+    assert!(tags.iter().all(|tag| tag[0] != "ms"));
     for kind in [1, 3, 9000, 30078, 40002] {
         assert!(agent.sign(&key, kind, String::new(), vec![]).is_err());
     }

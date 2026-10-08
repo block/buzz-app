@@ -73,16 +73,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const { event } = trigger;
       const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channel || !config.reply.trim()) return;
-      const root =
-        event.tags.find((tag) => tag[0] === "e" && tag[3] === "root")?.[1] ??
-        event.id;
+      // Reply in the trigger's thread, or start one under the trigger. Buzz
+      // threads by the NIP-10 `reply` marker (a lone `root` tag is top-level),
+      // and a thread reply written by the app carries only `reply` to its root.
+      const marked = (marker: string) =>
+        event.tags.reduce<string | undefined>(
+          (found, tag) =>
+            tag[0] === "e" && tag[3] === marker ? tag[1] : found,
+          undefined,
+        );
+      const parent = marked("reply");
+      const root = parent ? (marked("root") ?? parent) : event.id;
       await agent.publish({
         kind: 9,
         content: config.reply,
         tags: [
           ["h", channel],
-          ["e", root, "", "root"],
-          ...(root === event.id ? [] : [["e", event.id, "", "reply"]]),
+          ...(root === event.id ? [] : [["e", root, "", "root"]]),
+          ["e", event.id, "", "reply"],
           ["p", event.pubkey],
         ],
       });

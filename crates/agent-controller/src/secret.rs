@@ -78,14 +78,27 @@ impl Secret {
             ],
         )
     }
-    /// A plain signed event; callers bound the kind and size.
+    /// A plain signed event; callers bound the kind and size. A channel event
+    /// (one with an `h` tag) gets the `ms` tag the app's own outbox adds, read
+    /// from the same clock as `created_at`, so the timeline orders it by
+    /// millisecond instead of placing it at the start of its second.
     pub(crate) fn signed(
         &self,
         kind: u16,
         content: String,
-        tags: Vec<Vec<String>>,
+        mut tags: Vec<Vec<String>>,
     ) -> Result<serde_json::Value> {
-        self.sign_event(kind, content, tags)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?;
+        tags.retain(|tag| tag.first().map(String::as_str) != Some("ms"));
+        if tags
+            .iter()
+            .any(|tag| tag.first().map(String::as_str) == Some("h"))
+        {
+            tags.push(vec!["ms".into(), now.subsec_millis().to_string()]);
+        }
+        self.sign_event_at(kind, content, tags, now.as_secs())
     }
     fn sign_event(
         &self,
@@ -102,15 +115,24 @@ impl Secret {
         tags: Vec<Vec<String>>,
         previous: Option<u64>,
     ) -> Result<serde_json::Value> {
-        use secp256k1::Keypair;
-        use serde_json::json;
-        use sha2::{Digest, Sha256};
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "System clock is unavailable")?
             .as_secs();
         // NIP-01 ties choose the lower event ID. A replacement must be newer.
         let created_at = previous.map_or(created_at, |at| created_at.max(at.saturating_add(1)));
+        self.sign_event_at(kind, content, tags, created_at)
+    }
+    fn sign_event_at(
+        &self,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+        created_at: u64,
+    ) -> Result<serde_json::Value> {
+        use secp256k1::Keypair;
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
         let serialized =
             serde_json::to_vec(&json!([0, self.pubkey, created_at, kind, tags, content]))
                 .map_err(|_| "Could not encode agent event")?;

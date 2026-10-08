@@ -388,11 +388,13 @@ fn isolated_agent_ipc_probe() {
         return;
     }
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
-    #[cfg(unix)]
     use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
         .manage(Uploads::default())
+        .manage(Spools::new(Ok(
+            std::env::temp_dir().join(format!("buzz-spool-ipc-{}", uuid::Uuid::new_v4()))
+        )))
         .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
@@ -415,38 +417,62 @@ fn isolated_agent_ipc_probe() {
         )
         .map(|body| body.deserialize::<serde_json::Value>().unwrap())
     };
-    // Empty uploads must fail before copying or networking, preserving the
-    // prepared response shape and releasing upload admission for the same ID.
-    for prepared in [false, true] {
-        let mut headers = tauri::http::HeaderMap::new();
-        headers.insert("x-buzz-community", "https://relay.test".parse().unwrap());
-        headers.insert("x-buzz-upload-id", "empty".parse().unwrap());
-        if prepared {
-            headers.insert("x-buzz-preparation", "video:mov".parse().unwrap());
-        }
-        let result = get_ipc_response(
-            &view,
-            tauri::webview::InvokeRequest {
-                cmd: "relay_upload".into(),
-                callback: tauri::ipc::CallbackFn(0),
-                error: tauri::ipc::CallbackFn(1),
-                url: view.url().unwrap(),
-                body: tauri::ipc::InvokeBody::Raw(Vec::new()),
-                headers,
-                invoke_key: INVOKE_KEY.into(),
-            },
-        );
-        if prepared {
-            let response = result.unwrap().deserialize::<serde_json::Value>().unwrap();
-            assert_eq!(response["status"], 413);
-            assert_eq!(response["body"], r#"{"code":"size"}"#);
-        } else {
-            assert_eq!(
-                result.unwrap_err(),
-                serde_json::json!("File exceeds the supported upload limit")
-            );
-        }
-    }
+    // Empty uploads fail before allocating storage or networking.
+    assert_eq!(
+        invoke(
+            "relay_upload_begin",
+            serde_json::json!({"id":"empty", "size":0})
+        )
+        .unwrap_err(),
+        serde_json::json!("File exceeds the supported upload limit")
+    );
+    invoke(
+        "relay_upload_begin",
+        serde_json::json!({"id":"chunked", "size":3}),
+    )
+    .unwrap();
+    let mut headers = tauri::http::HeaderMap::new();
+    headers.insert("x-buzz-upload-id", "chunked".parse().unwrap());
+    headers.insert("x-buzz-upload-offset", "0".parse().unwrap());
+    get_ipc_response(
+        &view,
+        tauri::webview::InvokeRequest {
+            cmd: "relay_upload_chunk".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: view.url().unwrap(),
+            body: tauri::ipc::InvokeBody::Raw(b"abc".to_vec()),
+            headers: headers.clone(),
+            invoke_key: INVOKE_KEY.into(),
+        },
+    )
+    .unwrap();
+    headers.insert("x-buzz-community", "https://relay.test".parse().unwrap());
+    // Fixed-mode rejection proves finalization/cleanup without an external server.
+    headers.insert("x-buzz-preparation", "video:not-allowed".parse().unwrap());
+    let response = get_ipc_response(
+        &view,
+        tauri::webview::InvokeRequest {
+            cmd: "relay_upload".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: view.url().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({})),
+            headers,
+            invoke_key: INVOKE_KEY.into(),
+        },
+    )
+    .unwrap()
+    .deserialize::<serde_json::Value>()
+    .unwrap();
+    assert_eq!(response["body"], r#"{"code":"video"}"#);
+    assert!(app.state::<Uploads>().lock().active.is_empty());
+    invoke(
+        "relay_upload_begin",
+        serde_json::json!({"id":"chunked", "size":3}),
+    )
+    .unwrap();
+    invoke("relay_upload_cancel", serde_json::json!({"id":"chunked"})).unwrap();
     let public = invoke("identity_restore", serde_json::json!({})).unwrap();
     #[cfg(unix)]
     {
@@ -2119,6 +2145,21 @@ async fn media_proxy_passes_relay_denials_through_without_a_body() {
     task.join().unwrap();
 }
 
+async fn upload(
+    host: &IdentityHost,
+    url: Url,
+    kind: Option<&str>,
+    bytes: Vec<u8>,
+    progress: Option<UploadProgress>,
+) -> Result<RelayResponse> {
+    validate_upload_size(bytes.len())?;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source");
+    std::fs::write(&path, bytes).unwrap();
+    let hash = upload_spool::hash_file(&path)?;
+    upload_file(host, url, kind, path, hash, progress).await
+}
+
 #[tokio::test]
 async fn upload_signs_the_exact_bytes_it_sends() {
     let (base, task) = fixture_server(
@@ -2199,12 +2240,17 @@ async fn upload_reports_bytes_handed_to_the_connection() {
     );
 }
 
-#[test]
-fn single_chunk_upload_reports_its_whole_body() {
+#[tokio::test]
+async fn single_chunk_upload_reports_its_whole_body() {
     let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reports.clone();
-    let chunks = progress_chunks(vec![0; 5263], move |sent| sink.lock().unwrap().push(sent));
-    assert_eq!(chunks.count(), 1);
+    use futures_util::StreamExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source");
+    std::fs::write(&path, vec![0; 5263]).unwrap();
+    let file = std::fs::File::open(path).unwrap();
+    let chunks = file_chunks(file, 5263, move |sent| sink.lock().unwrap().push(sent));
+    assert_eq!(chunks.collect::<Vec<_>>().await.len(), 1);
     assert_eq!(
         *reports.lock().unwrap(),
         [UploadSent {
@@ -2214,14 +2260,21 @@ fn single_chunk_upload_reports_its_whole_body() {
     );
 }
 
-#[test]
-fn progress_reports_change_by_whole_percent_only() {
+#[tokio::test]
+async fn progress_reports_change_by_whole_percent_only() {
     let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reports.clone();
-    let chunks = progress_chunks(vec![0; 1000 * UPLOAD_CHUNK], move |sent| {
+    use futures_util::StreamExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len((1000 * UPLOAD_CHUNK) as u64).unwrap();
+    drop(file);
+    let file = std::fs::File::open(path).unwrap();
+    let chunks = file_chunks(file, (1000 * UPLOAD_CHUNK) as u64, move |sent| {
         sink.lock().unwrap().push(sent.sent)
     });
-    assert_eq!(chunks.count(), 1000);
+    assert_eq!(chunks.collect::<Vec<_>>().await.len(), 1000);
     let reports = reports.lock().unwrap();
     // Percent 0 (first nine chunks) through 100, once each.
     assert_eq!(reports.len(), 101);
@@ -2350,16 +2403,16 @@ async fn measure_preference_batch_decode() {
     );
 }
 
-#[tokio::test]
-async fn upload_hash_moves_the_buffer_and_keeps_exact_bytes() {
-    let bytes = vec![0xa5; 1024 * 1024];
-    let pointer = bytes.as_ptr() as usize;
-    let expected = format!("{:x}", Sha256::digest(&bytes));
-    let (body, hash) = hash_upload(bytes).await.unwrap();
-    assert_eq!(body.as_ptr() as usize, pointer);
-    assert_eq!(hash, expected);
-    assert!(body.iter().all(|byte| *byte == 0xa5));
-    assert!(hash_upload(Vec::new()).await.is_err());
+#[test]
+fn upload_hash_reads_exact_bytes_from_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source");
+    std::fs::write(&path, b"upload bytes").unwrap();
+    let (size, hash) = upload_spool::hash_file(&path).unwrap();
+    assert_eq!(size, 12);
+    assert_eq!(hash, format!("{:x}", Sha256::digest(b"upload bytes")));
+    std::fs::write(&path, []).unwrap();
+    assert!(upload_spool::hash_file(&path).is_err());
     assert!(validate_upload_size(0).is_err());
     assert!(validate_upload_size(MAX_UPLOAD + 1).is_err());
     assert!(validate_upload_size(MAX_UPLOAD).is_ok());
@@ -2565,4 +2618,308 @@ fn git_authorization_covers_only_this_communitys_repositories() {
             "{repository}"
         );
     }
+}
+
+#[tokio::test]
+async fn spool_processing_cleans_after_upstream_and_conversion_failures() {
+    for preparation in [None, Some("video:avi")] {
+        let parent = tempfile::tempdir().unwrap();
+        let spools = Spools::new(Ok(parent.path().to_owned()));
+        let uploads = Uploads::default();
+        spools.begin(&uploads, "failure", 3).unwrap();
+        spools.append("failure", 0, b"bad").unwrap();
+        let (spool, mut cancel) = spools.take("failure").unwrap();
+        let path = spool.directory.path().to_owned();
+        // Closed loopback port for upstream failure; invalid AVI for conversion.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!("http://{}/upload", listener.local_addr().unwrap())).unwrap();
+        drop(listener);
+        let result = process_spool(
+            &IdentityHost::fixture(),
+            url,
+            spool,
+            None,
+            preparation,
+            None,
+            &mut cancel,
+        )
+        .await;
+        if preparation.is_some() {
+            assert!(result.unwrap().status >= 400);
+        } else {
+            assert!(result.is_err());
+        }
+        assert!(!path.exists());
+        assert!(spools.begin(&uploads, "next", 3).is_ok());
+    }
+}
+
+#[tokio::test]
+async fn cancelled_spool_processing_never_starts_upstream_and_cleans() {
+    let parent = tempfile::tempdir().unwrap();
+    let spools = Spools::new(Ok(parent.path().to_owned()));
+    let uploads = Uploads::default();
+    spools.begin(&uploads, "cancel", 3).unwrap();
+    spools.append("cancel", 0, b"abc").unwrap();
+    let (spool, mut cancel) = spools.take("cancel").unwrap();
+    let path = spool.directory.path().to_owned();
+    uploads.cancel("cancel");
+    assert!(process_spool(
+        &IdentityHost::fixture(),
+        Url::parse("https://relay.test/upload").unwrap(),
+        spool,
+        None,
+        None,
+        None,
+        &mut cancel
+    )
+    .await
+    .is_err());
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn converted_spool_streams_signed_output_then_removes_both_files() {
+    let program =
+        crate::host_command::resolve_program("ffmpeg", &crate::host_command::effective_path());
+    if !program.exists() {
+        eprintln!("ffmpeg unavailable: converted-spool integration not executed");
+        return;
+    }
+    let parent = tempfile::tempdir().unwrap();
+    let input = parent.path().join("input.avi");
+    assert!(std::process::Command::new(program)
+        .args([
+            "-y",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=16x16:r=1",
+            "-t",
+            "1",
+            "-c:v",
+            "mpeg4"
+        ])
+        .arg(&input)
+        .status()
+        .unwrap()
+        .success());
+    let bytes = std::fs::read(&input).unwrap();
+    let spools = Spools::new(Ok(parent.path().join("spools")));
+    let uploads = Uploads::default();
+    spools.begin(&uploads, "converted", bytes.len()).unwrap();
+    for (index, chunk) in bytes.chunks(UPLOAD_CHUNK).enumerate() {
+        spools
+            .append("converted", index * UPLOAD_CHUNK, chunk)
+            .unwrap();
+    }
+    let (spool, mut cancel) = spools.take("converted").unwrap();
+    let path = spool.directory.path().to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = Url::parse(&format!("http://{}/upload", listener.local_addr().unwrap())).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut block = [0; 4096];
+        loop {
+            let read = socket.read(&mut block).unwrap();
+            assert!(read > 0);
+            bytes.extend_from_slice(&block[..read]);
+            if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                let header = String::from_utf8(bytes[..end].to_vec()).unwrap();
+                let size: usize = header
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                if bytes.len() == end + 4 + size {
+                    socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                        )
+                        .unwrap();
+                    return (header, bytes[end + 4..].to_vec());
+                }
+            }
+        }
+    });
+    let response = process_spool(
+        &IdentityHost::fixture(),
+        url,
+        spool,
+        None,
+        Some("video:avi"),
+        None,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status, 200);
+    let (header, body) = server.join().unwrap();
+    assert!(body.windows(4).any(|part| part == b"ftyp"));
+    assert_ne!(body, bytes);
+    assert!(header.lines().any(|line| line == "content-type: video/mp4"));
+    let hash = format!("{:x}", Sha256::digest(&body));
+    assert_eq!(tag(&blossom_event(&header), "x"), [hash.as_str()]);
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn running_upstream_cancellation_closes_request_and_cleans_spool() {
+    let parent = tempfile::tempdir().unwrap();
+    let spools = Spools::new(Ok(parent.path().to_owned()));
+    let uploads = Uploads::default();
+    spools.begin(&uploads, "running", 3).unwrap();
+    spools.append("running", 0, b"abc").unwrap();
+    let (spool, mut cancel) = spools.take("running").unwrap();
+    let path = spool.directory.path().to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = Url::parse(&format!("http://{}/upload", listener.local_addr().unwrap())).unwrap();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut block = [0; 4096];
+        loop {
+            let read = socket.read(&mut block).unwrap();
+            assert!(read > 0);
+            bytes.extend_from_slice(&block[..read]);
+            if bytes.ends_with(b"abc") {
+                break;
+            }
+        }
+        entered.send(()).unwrap();
+        // Stall the response, not the scheduler: cancellation must close it.
+        socket.read(&mut block).unwrap()
+    });
+    let host = IdentityHost::fixture();
+    let work = process_spool(&host, url, spool, None, None, None, &mut cancel);
+    tokio::pin!(work);
+    tokio::select! {
+        _ = ready => uploads.cancel("running"),
+        _ = &mut work => panic!("upload settled before fixture gate"),
+    }
+    assert_eq!(work.await.err().unwrap(), "Upload cancelled");
+    assert_eq!(
+        tokio::task::spawn_blocking(move || server.join().unwrap())
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn upload_ingress_commands_validate_raw_chunks_and_finalize_owned_bytes() {
+    use tauri::{
+        test::{get_ipc_response, mock_builder, INVOKE_KEY},
+        Manager as _,
+    };
+    let parent = tempfile::tempdir().unwrap();
+    let app = mock_builder()
+        .manage(Uploads::default())
+        .manage(Spools::new(Ok(parent.path().to_owned())))
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let invoke = |command: &str, body, id: Option<&str>, offset: Option<&str>| {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(id) = id {
+            headers.insert("x-buzz-upload-id", id.parse().unwrap());
+        }
+        if let Some(offset) = offset {
+            headers.insert("x-buzz-upload-offset", offset.parse().unwrap());
+        }
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: command.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body,
+                headers,
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+    };
+    for (id, offset, body) in [
+        (
+            "missing-offset",
+            None,
+            tauri::ipc::InvokeBody::Raw(b"abc".to_vec()),
+        ),
+        (
+            "invalid-offset",
+            Some("bad"),
+            tauri::ipc::InvokeBody::Raw(b"abc".to_vec()),
+        ),
+        (
+            "json",
+            Some("0"),
+            tauri::ipc::InvokeBody::Json(serde_json::json!([1, 2, 3])),
+        ),
+        (
+            "large",
+            Some("0"),
+            tauri::ipc::InvokeBody::Raw(vec![0; UPLOAD_CHUNK + 1]),
+        ),
+        ("empty", Some("0"), tauri::ipc::InvokeBody::Raw(Vec::new())),
+    ] {
+        invoke(
+            "relay_upload_begin",
+            tauri::ipc::InvokeBody::Json(serde_json::json!({"id": id, "size": 3})),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(invoke("relay_upload_chunk", body, Some(id), offset).is_err());
+        assert!(app.state::<Spools>().take(id).is_err());
+        assert!(app.state::<Uploads>().lock().active.is_empty());
+    }
+    assert!(invoke(
+        "relay_upload_chunk",
+        tauri::ipc::InvokeBody::Raw(vec![1]),
+        None,
+        Some("0")
+    )
+    .is_err());
+    invoke(
+        "relay_upload_begin",
+        tauri::ipc::InvokeBody::Json(serde_json::json!({"id": "valid", "size": 3})),
+        None,
+        None,
+    )
+    .unwrap();
+    invoke(
+        "relay_upload_chunk",
+        tauri::ipc::InvokeBody::Raw(b"a".to_vec()),
+        Some("valid"),
+        Some("0"),
+    )
+    .unwrap();
+    invoke(
+        "relay_upload_chunk",
+        tauri::ipc::InvokeBody::Raw(b"bc".to_vec()),
+        Some("valid"),
+        Some("1"),
+    )
+    .unwrap();
+    let (spool, _) = app.state::<Spools>().take("valid").unwrap();
+    assert_eq!(std::fs::read(spool.source()).unwrap(), b"abc");
+    assert_eq!(spool.hash, format!("{:x}", Sha256::digest(b"abc")));
+    app.state::<Uploads>().finish("valid");
 }

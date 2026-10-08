@@ -89,6 +89,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_archive",
         "relay_agent_memories_read",
         "relay_agent_library",
+        "relay_upload_begin",
+        "relay_upload_chunk",
         "relay_upload",
         "relay_upload_cancel",
         "media_download",

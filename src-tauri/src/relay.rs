@@ -25,6 +25,8 @@ pub(crate) use channel_writes::{
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_preparation;
+mod upload_spool;
+pub(crate) use upload_spool::Spools;
 mod project_git;
 pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
 type Result<T> = std::result::Result<T, String>;
@@ -894,6 +896,12 @@ impl Uploads {
         uploads.pending.insert(id.into(), now);
     }
 
+    pub(crate) fn cancel_all(&self) {
+        for (_, sender) in self.lock().active.drain() {
+            let _ = sender.send(());
+        }
+    }
+
     fn finish(&self, id: &str) {
         self.lock().active.remove(id);
     }
@@ -908,104 +916,159 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
         .ok_or_else(|| "Invalid upload ID".into())
 }
 
-/// Prepares media when requested, then hashes, signs (`t=upload` + `x`) and
-/// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
-/// descriptor validation, as it does for the dev broker.
+/// Allocate only host-owned storage; callers never supply filesystem paths.
+#[tauri::command]
+pub(crate) async fn relay_upload_begin<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+    size: usize,
+) -> Result<()> {
+    use tauri::Manager as _;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Spools>()
+            .begin(&app.state::<Uploads>(), &id, size)
+    })
+    .await
+    .map_err(|_| "Upload receiving could not complete")?
+}
+
+/// One acknowledged IPC chunk at a time. Bound and validate in the host too.
+#[tauri::command]
+pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<()> {
+    use tauri::Manager as _;
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
+    let id = upload_id(header("x-buzz-upload-id"))?.to_owned();
+    let chunk: Result<_> = (|| {
+        let offset = header("x-buzz-upload-offset")
+            .and_then(|v| v.parse::<usize>().ok())
+            .ok_or("Invalid upload chunk")?;
+        let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+            return Err("Upload body must be raw bytes".into());
+        };
+        if body.is_empty() || body.len() > UPLOAD_CHUNK {
+            return Err("Invalid upload chunk".into());
+        }
+        Ok((offset, body.clone()))
+    })();
+    tauri::async_runtime::spawn_blocking(move || {
+        let spools = app.state::<Spools>();
+        let uploads = app.state::<Uploads>();
+        let result = chunk.and_then(|(offset, bytes)| spools.append(&id, offset, &bytes));
+        if result.is_err() {
+            spools.cancel(&uploads, &id);
+        }
+        result
+    })
+    .await
+    .map_err(|_| "Upload receiving could not complete")?
+}
+
+/// Finalize the received spool, convert on disk when requested, and stream it.
 #[tauri::command]
 pub(crate) async fn relay_upload<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
+    spools: tauri::State<'_, Spools>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<RelayResponse> {
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
     let id = upload_id(header("x-buzz-upload-id"))?;
-    // A raw body cannot carry a Channel argument, so its ID travels as a header.
-    let progress = header("x-buzz-upload-progress")
-        .map(|value| {
-            value
-                .parse::<tauri::ipc::JavaScriptChannelId>()
-                .map(|channel| channel.channel_on(webview))
-                .map_err(|_| "Invalid upload progress channel".to_string())
-        })
-        .transpose()?;
-    let url = origin(header("x-buzz-community").unwrap_or_default())?
-        .join("/upload")
-        .map_err(|_| "Invalid relay path")?;
-    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("Upload body must be raw bytes".into());
-    };
-    // Tauri sets raw IPC `Content-Type` itself, so the file type travels separately.
-    let kind = header("x-buzz-content-type");
-    let preparation = header("x-buzz-preparation").map(str::to_owned);
-    let Some(mut cancelled) = uploads.start(id)? else {
-        return Err("Upload cancelled".into());
-    };
-    // Dropping the request future closes the connection, so a cancelled upload
-    // stops sending and releases its buffer.
-    let result = if let Err(error) = validate_upload_size(body.len()) {
-        // Preserve preparation's structured size error, but reject before copying
-        // the IPC buffer. Cancellation/admission still takes precedence.
-        if preparation.is_some() {
-            Ok(RelayResponse {
-                status: media_preparation::PreparationError::Size.status(),
-                headers: BTreeMap::new(),
-                body: serde_json::json!({"code": "size"}).to_string(),
+    let result = async {
+        let progress = header("x-buzz-upload-progress")
+            .map(|value| {
+                value
+                    .parse::<tauri::ipc::JavaScriptChannelId>()
+                    .map(|channel| channel.channel_on(webview))
+                    .map_err(|_| "Invalid upload progress channel".to_string())
             })
-        } else {
-            Err(error)
-        }
-    } else if let Some(mode) = preparation.as_deref() {
-        upload_prepared(
+            .transpose()?;
+        let url = origin(header("x-buzz-community").unwrap_or_default())?
+            .join("/upload")
+            .map_err(|_| "Invalid relay path")?;
+        let (spool, mut cancelled) = spools.take(id)?;
+        process_spool(
             host.inner(),
             url,
-            body.clone(),
-            mode,
+            spool,
+            header("x-buzz-content-type"),
+            header("x-buzz-preparation"),
             progress,
             &mut cancelled,
         )
         .await
-    } else {
-        tokio::select! {
-            result = upload(host.inner(), url, kind, body.clone(), progress) => result,
-            _ = &mut cancelled => Err("Upload cancelled".into()),
-        }
-    };
+    }
+    .await;
+    spools.discard(id);
     uploads.finish(id);
     result
 }
 
-#[tauri::command]
-pub(crate) fn relay_upload_cancel(uploads: tauri::State<'_, Uploads>, id: String) -> Result<()> {
-    uploads.cancel(upload_id(Some(&id))?);
-    Ok(())
-}
-
-async fn upload_prepared(
+async fn process_spool(
     host: &IdentityHost,
     url: Url,
-    body: Vec<u8>,
-    mode: &str,
+    spool: upload_spool::Spool,
+    kind: Option<&str>,
+    preparation: Option<&str>,
     progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
-    let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
-        Ok(value) => value,
-        Err(media_preparation::PreparationError::Cancelled) => {
-            return Err("Upload cancelled".into())
+    if cancelled.try_recv().is_ok() {
+        return Err("Upload cancelled".into());
+    }
+    let (path, kind) = if let Some(mode) = preparation {
+        match media_preparation::prepare_file(
+            &spool.source(),
+            spool.size,
+            spool.directory.path(),
+            mode,
+            cancelled,
+        )
+        .await
+        {
+            Ok(value) => (value.0, Some(value.1)),
+            Err(media_preparation::PreparationError::Cancelled) => {
+                return Err("Upload cancelled".into())
+            }
+            Err(error) => {
+                return Ok(RelayResponse {
+                    status: error.status(),
+                    headers: BTreeMap::new(),
+                    body: serde_json::json!({"code": error.code()}).to_string(),
+                })
+            }
         }
-        Err(error) => {
-            return Ok(RelayResponse {
-                status: error.status(),
-                headers: BTreeMap::new(),
-                body: serde_json::json!({ "code": error.code() }).to_string(),
-            })
-        }
+    } else {
+        (spool.source(), kind)
+    };
+    let hash = if path == spool.source() {
+        (spool.size, spool.hash.clone())
+    } else {
+        // Hash in bounded blocks; the spool remains owned until it settles.
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || upload_spool::hash_file(&path))
+            .await
+            .map_err(|_| "Upload hashing could not complete")??
     };
     tokio::select! {
-        result = upload(host, url, Some(kind), body, progress) => result,
-        _ = cancelled => Err("Upload cancelled".into()),
+        result = upload_file(host, url, kind, path, hash, progress) => result,
+        _ = &mut *cancelled => Err("Upload cancelled".into()),
     }
+}
+
+#[tauri::command]
+pub(crate) fn relay_upload_cancel(
+    uploads: tauri::State<'_, Uploads>,
+    spools: tauri::State<'_, Spools>,
+    id: String,
+) -> Result<()> {
+    let id = upload_id(Some(&id))?;
+    // Never free a processing slot until the running future has stopped.
+    spools.cancel(&uploads, id);
+    Ok(())
 }
 
 fn validate_upload_size(size: usize) -> Result<()> {
@@ -1015,19 +1078,6 @@ fn validate_upload_size(size: usize) -> Result<()> {
     Ok(())
 }
 
-async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
-    validate_upload_size(body.len())?;
-    // A supported video can be 500 MiB. Hash it off the async executor, moving
-    // the same allocation back to the HTTP body rather than making another copy.
-    tokio::task::spawn_blocking(move || {
-        let hash = format!("{:x}", Sha256::digest(&body));
-        (body, hash)
-    })
-    .await
-    .map_err(|_| "Upload hashing could not complete".into())
-}
-
-/// Byte counts for the calling webview's upload progress bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct UploadSent {
     sent: u64,
@@ -1036,40 +1086,58 @@ pub(crate) struct UploadSent {
 type UploadProgress = tauri::ipc::Channel<UploadSent>;
 const UPLOAD_CHUNK: usize = 64 * 1024;
 
-/// Streams the body in chunks. Each report counts the bytes handed to the
-/// connection once its chunk is yielded, so the last chunk reports `total`
-/// without relying on another poll. Reports are limited to whole-percent changes.
-fn progress_chunks(
-    body: Vec<u8>,
-    report: impl Fn(UploadSent) + Send + 'static,
-) -> impl Iterator<Item = std::io::Result<bytes::Bytes>> + Send + 'static {
-    let body = bytes::Bytes::from(body);
-    let total = body.len() as u64;
-    let mut reported = None;
-    (0..body.len().div_ceil(UPLOAD_CHUNK)).map(move |index| {
-        let start = index * UPLOAD_CHUNK;
-        let end = usize::min(start + UPLOAD_CHUNK, body.len());
-        let sent = end as u64;
-        let percent = sent * 100 / total;
-        if reported != Some(percent) {
-            reported = Some(percent);
-            report(UploadSent { sent, total });
+fn file_chunks(
+    file: std::fs::File,
+    total: u64,
+    report: impl Fn(UploadSent) + Send + Sync + 'static,
+) -> impl futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + Send {
+    use std::io::Read;
+    let report = std::sync::Arc::new(report);
+    futures_util::stream::try_unfold((file, 0u64, None), move |(mut file, sent, reported)| {
+        let mut buffer = vec![0; UPLOAD_CHUNK];
+        let report = report.clone();
+        async move {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                if sent != total {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "Upload spool was truncated",
+                    ));
+                }
+                return Ok(None);
+            }
+            let sent = sent + read as u64;
+            if sent > total {
+                return Err(std::io::Error::other("Upload spool changed"));
+            }
+            let percent = sent * 100 / total;
+            if reported != Some(percent) {
+                report(UploadSent { sent, total });
+            }
+            buffer.truncate(read);
+            Ok(Some((
+                bytes::Bytes::from(buffer),
+                (file, sent, Some(percent)),
+            )))
         }
-        Ok(body.slice(start..end))
     })
 }
 
-async fn upload(
+async fn upload_file(
     host: &IdentityHost,
     url: Url,
     kind: Option<&str>,
-    body: Vec<u8>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
+    validate_upload_size(size)?;
     let kind = kind
         .filter(|kind| valid_type(kind))
         .unwrap_or("application/octet-stream");
-    let (body, hash) = hash_upload(body).await?;
+    let file = std::fs::File::open(path)
+        .map_err(|_| "Media preparation could not access temporary storage")?;
     let auth = blossom_auth(
         host,
         &url,
@@ -1080,24 +1148,23 @@ async fn upload(
     .await?;
     let response = client()?
         .put(url)
-        // Matches UPLOAD_TIMEOUT_MS; the shared client's 30 s suits JSON calls only.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth)
         .header("Content-Type", kind)
         .header("X-SHA-256", hash)
-        .header(reqwest::header::CONTENT_LENGTH, body.len())
-        .body(match progress {
-            Some(channel) => reqwest::Body::wrap_stream(futures_util::stream::iter(
-                progress_chunks(body, move |sent| {
+        .header(reqwest::header::CONTENT_LENGTH, size)
+        .body(reqwest::Body::wrap_stream(file_chunks(
+            file,
+            size as u64,
+            move |sent| {
+                if let Some(channel) = &progress {
                     let _ = channel.send(sent);
-                }),
-            )),
-            None => body.into(),
-        })
+                }
+            },
+        )))
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;
-    // A Blossom descriptor is small; the shared validator rejects anything else.
     read_response(response, 8192).await
 }
 

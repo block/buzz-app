@@ -136,7 +136,7 @@ export function nativeMediaUrl(url: string): string {
   return convertFileSrc(url, "buzz-media");
 }
 
-/** Raw IPC bytes; native code hashes, signs and sends them to `PUT /upload`.
+/** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
  * Aborting settles at once and tells native code to drop the request. */
 async function nativeUpload(
   origin: string,
@@ -145,7 +145,6 @@ async function nativeUpload(
   preparation?: string,
   progress?: UploadProgress,
 ) {
-  const bytes = await file.arrayBuffer();
   signal.throwIfAborted();
   const id = crypto.randomUUID();
   let abort = () => {};
@@ -158,31 +157,63 @@ async function nativeUpload(
     if (signal.aborted) abort();
   });
   try {
-    const result = await Promise.race([
-      invoke<{
+    const send = async () => {
+      await invoke("relay_upload_begin", { id, size: file.size });
+      signal.throwIfAborted();
+      // Acknowledgement supplies backpressure on every platform, including
+      // WebKit's JSON IPC fallback. Never read the complete File into JS.
+      const chunkSize = 64 * 1024;
+      for (let offset = 0; offset < file.size; offset += chunkSize) {
+        signal.throwIfAborted();
+        const bytes = await file
+          .slice(offset, offset + chunkSize)
+          .arrayBuffer();
+        signal.throwIfAborted();
+        await invoke("relay_upload_chunk", bytes, {
+          headers: {
+            "x-buzz-upload-id": id,
+            "x-buzz-upload-offset": String(offset),
+          },
+        });
+      }
+      signal.throwIfAborted();
+      return invoke<{
         status: number;
         headers: Record<string, string>;
         body: string;
-      }>("relay_upload", bytes, {
-        headers: {
-          "x-buzz-upload-id": id,
-          "x-buzz-community": origin,
-          "x-buzz-content-type": file.type || "application/octet-stream",
-          ...(preparation ? { "x-buzz-preparation": preparation } : {}),
-          ...(progress && {
-            "x-buzz-upload-progress": new Channel<{
-              sent: number;
-              total: number;
-            }>(({ sent, total }) => progress(sent, total)).toJSON(),
-          }),
+      }>(
+        "relay_upload",
+        {},
+        {
+          headers: {
+            "x-buzz-upload-id": id,
+            "x-buzz-community": origin,
+            "x-buzz-content-type": file.type || "application/octet-stream",
+            ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+            ...(progress && {
+              "x-buzz-upload-progress": new Channel<{
+                sent: number;
+                total: number;
+              }>(({ sent, total }) => {
+                if (!signal.aborted) progress(sent, total);
+              }).toJSON(),
+            }),
+          },
         },
-      }),
-      aborted,
-    ]);
+      );
+    };
+    const result = await Promise.race([send(), aborted]);
     return new Response(result.body, {
       status: result.status,
       headers: result.headers,
     });
+  } catch (error) {
+    if (!signal.aborted)
+      void invoke("relay_upload_cancel", { id }).catch(() => {});
+    if (typeof error === "string" && /temporary storage/.test(error))
+      throw new UploadError("io");
+    if (error === "Uploads are busy") throw new UploadError("capacity");
+    throw error;
   } finally {
     signal.removeEventListener("abort", abort);
   }

@@ -39,6 +39,8 @@
     "allow-relay-archive",
     "allow-relay-agent-memories-read",
     "allow-relay-agent-library",
+    "allow-relay-upload-begin",
+    "allow-relay-upload-chunk",
     "allow-relay-upload",
     "allow-relay-upload-cancel",
     "allow-media-download",

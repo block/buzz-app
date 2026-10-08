@@ -1,23 +1,16 @@
+import {
+  extendsName,
+  matchPerson,
+  normalizeName,
+} from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
 };
-const normalized = (text: string) => text.trim().toLowerCase();
+const normalized = normalizeName;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-function nameMatch(text: string, needle: string) {
-  if (!needle) return 0;
-  const name = normalized(text);
-  const words = name.split(/\s+/u);
-  return name === needle
-    ? 0
-    : name.startsWith(needle)
-      ? 1
-      : words.includes(needle)
-        ? 2
-        : words.some((word) => word.startsWith(needle))
-          ? 3
-          : Infinity;
-}
+const nameMatch = (text: string, query: string) =>
+  query ? (matchPerson(text, query)?.tier ?? Infinity) : 0;
 function baseMatch(choice: MentionChoice, query: string) {
   return Math.min(
     ...choice.aliases.map((name) => nameMatch(name, normalized(query))),
@@ -98,9 +91,7 @@ export function exactMention(choices: readonly MentionChoice[], query: string) {
   if (
     matches.length !== 1 ||
     choices.some((c) =>
-      [...c.aliases, c.label].some((name) =>
-        normalized(name).startsWith(`${needle} `),
-      ),
+      [...c.aliases, c.label].some((name) => extendsName(name, needle)),
     )
   )
     return;

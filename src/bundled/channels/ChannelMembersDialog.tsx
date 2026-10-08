@@ -47,6 +47,7 @@ import {
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
+import { matchPerson } from "../../features/search/person-match";
 
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
@@ -570,10 +571,21 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
+  // Filters the fully loaded member list.
   const matches = (key: string, name: string) =>
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
+  // People to add use the shared name rule, like the relay's people page; a
+  // whole key or npub finds its owner.
+  const addable = (key: string, ...names: (string | undefined)[]) => {
+    const typed = query.trim().toLowerCase();
+    return (
+      names.some((name) => name && matchPerson(name, query)) ||
+      typed === key ||
+      typed === npubEncode(key)
+    );
+  };
   const currentMembers = [...members].sort(
     (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
   );
@@ -618,7 +630,7 @@ export function ChannelMembersDialog({
   );
   if (query.trim())
     for (const agent of agents.identities) {
-      if (matches(agent.pubkey, label(agent.pubkey, agent.name)))
+      if (addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name))
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
           name: agent.name,

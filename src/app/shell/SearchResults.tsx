@@ -20,6 +20,7 @@ import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
+import { matchPerson } from "../../features/search/person-match";
 import {
   isChannelUuid,
   isHexPubkey,
@@ -202,11 +203,26 @@ export function SearchResults({
   const operatorChannelId = isChannelUuid(operatorChannel)
     ? operatorChannel
     : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
+  // The author picker also matches a selectable agent by its own name, so a
+  // completed from: name resolves against the same names.
+  const agentSnapshot = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
   const search = useSearchMessages(
     session,
     query,
     scopedChannelId,
     operatorChannelId,
+    new Map(
+      agentSnapshot.selectable
+        .filter(
+          (agent) =>
+            !archiveHides(session.archives, agent.pubkey, session.viewer),
+        )
+        .map((agent) => [agent.pubkey, agent.name]),
+    ),
   );
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
@@ -298,12 +314,19 @@ export function SearchResults({
       authorSuggestions?.query === query ? authorSuggestions.remote : [],
     ),
   ]);
+  // A selectable agent also matches by its own name, as in @ mentions.
+  const authorTier = (pubkey: string, name: string) =>
+    Math.min(
+      ...[name, selectableAgents.get(pubkey)?.name].map((alias) =>
+        alias === undefined
+          ? Infinity
+          : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
+      ),
+    );
   const authorChoices =
     authorToken && showAuthorPicker && authorSuggestions?.query === query
       ? [...candidates]
-          .filter(([, profile]) =>
-            profile.name.toLowerCase().startsWith(authorNeedle),
-          )
+          .filter(([pubkey, profile]) => authorTier(pubkey, profile.name) < 4)
           .filter(
             ([pubkey]) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
@@ -312,10 +335,8 @@ export function SearchResults({
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
             ([left, leftProfile], [right, rightProfile]) =>
-              Number(rightProfile.name.trim().toLowerCase() === authorNeedle) -
-                Number(
-                  leftProfile.name.trim().toLowerCase() === authorNeedle,
-                ) ||
+              Number(authorTier(right, rightProfile.name) === 0) -
+                Number(authorTier(left, leftProfile.name) === 0) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
               Number(members.includes(right)) - Number(members.includes(left)),

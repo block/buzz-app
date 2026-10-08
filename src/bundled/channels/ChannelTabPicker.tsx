@@ -15,6 +15,7 @@ import {
   pickerText,
   readSearchUsage,
   recordChoice,
+  searchOrder,
 } from "../../features/search/usage";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import {
@@ -109,8 +110,8 @@ export function ChannelTabPicker({
             run: () => choose(channel.id),
           }));
   // Everything here is on this device, so fuzzy matches are stable: "bgp"
-  // finds buzz-github-prs. Order as Command-K does: an exact name, then the
-  // earlier choice for this text, then match quality lifted by usage.
+  // finds buzz-github-prs. Order with the shared search order, as Command-K
+  // does.
   const matched = all.flatMap((choice) => {
     const match = needle ? matchName(choice.label, needle) : undefined;
     return !needle || match ? [{ choice, match }] : [];
@@ -120,13 +121,9 @@ export function ChannelTabPicker({
     new Set(matched.map(({ choice }) => choice.key)),
   );
   const rankOf = ({ choice, match }: (typeof matched)[number]) =>
-    !match
-      ? 0
-      : match.rank === 0
-        ? -2
-        : choice.key === picked
-          ? -1
-          : match.rank - usage.boost(choice.key);
+    match
+      ? searchOrder(usage, picked, { key: choice.key, rank: match.rank })
+      : 0;
   const results = matched
     .map((row) => ({ ...row, rank: rankOf(row) }))
     .sort((a, b) => a.rank - b.rank);

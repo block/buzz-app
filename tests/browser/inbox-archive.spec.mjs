@@ -200,6 +200,9 @@ test.describe("DM archive delivery", () => {
     });
     app.histories.get(`primary/${dm}`).push(root);
     app.append("primary", dm, "Earlier DM reply", false, false, root.id);
+    // app.append advances signed event time one second per message. Pin Date,
+    // not timers, so startup speed cannot put Archive after the fresh mention.
+    await page.clock.setFixedTime(new Date((root.created_at + 1) * 1000));
     await page.goto(app.origin);
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });

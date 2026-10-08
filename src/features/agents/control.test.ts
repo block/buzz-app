@@ -47,28 +47,6 @@ function codexEdit() {
   draft.configuration = { mode: "default" };
   return agentEdit(draft);
 }
-it("returns the completed native request without authorizing or committing another agent", async () => {
-  const fixture = controlFixture();
-  fixture.host.prepareCreate = vi.fn(async () => ({
-    ...fixture.agent,
-    completed: true,
-  }));
-  fixture.host.commitCreate = vi.fn();
-  const authorize = vi.spyOn(communityApi, "communityRequest");
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  const created = await control.create?.(
-    "request",
-    fixture.agent.relayUrl,
-    "owner",
-    agentEdit(agentDraft(fixture.agent)),
-  );
-  expect(created?.id).toBe(fixture.agent.id);
-  expect(authorize).not.toHaveBeenCalled();
-  expect(fixture.host.commitCreate).not.toHaveBeenCalled();
-  control.dispose();
-});
-
 it.each(["default", "advanced"] as const)(
   "creates and saves Codex %s using ordinary native controls without a validation service",
   async (mode) => {
@@ -97,69 +75,15 @@ it.each(["default", "advanced"] as const)(
       "request",
       fixture.agent.relayUrl,
       "owner",
-      edit,
     );
     expect(fixture.host.commitCreate).toHaveBeenCalledExactlyOnceWith(
       "request",
       edit,
       "[]",
+      undefined,
     );
     await control.save(fixture.agent.id, fixture.agent.revision, edit);
     expect(save).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, 1, edit);
-    control.dispose();
-  },
-);
-
-it.each(["prepare", "authorize"] as const)(
-  "an abort during Codex %s prevents a late create commit",
-  async (held) => {
-    const fixture = controlFixture();
-    const prepared = deferred<{ id: string; pubkey: string }>();
-    const authorized = deferred<{ auth: string[] }>();
-    fixture.host.prepareCreate = vi.fn().mockImplementationOnce(() =>
-      held === "prepare"
-        ? prepared.promise
-        : Promise.resolve({
-            id: fixture.agent.id,
-            pubkey: fixture.agent.pubkey,
-          }),
-    );
-    fixture.host.commitCreate = vi.fn();
-    const authorize = vi
-      .spyOn(communityApi, "communityRequest")
-      .mockImplementation(() => authorized.promise);
-    const control = createAgentControl(fixture.host);
-    await control.refresh();
-    const abort = new AbortController();
-    const creating = control
-      .create?.(
-        "request",
-        fixture.agent.relayUrl,
-        "owner",
-        codexEdit(),
-        undefined,
-        abort.signal,
-      )
-      .catch(() => {});
-    if (held === "prepare") {
-      await vi.waitFor(() =>
-        expect(fixture.host.prepareCreate).toHaveBeenCalledTimes(1),
-      );
-    } else {
-      await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce());
-    }
-    abort.abort();
-    if (held === "prepare")
-      prepared.resolve({
-        id: fixture.agent.id,
-        pubkey: fixture.agent.pubkey,
-      });
-    else authorized.resolve({ auth: [] });
-    await creating;
-
-    expect(fixture.host.commitCreate).not.toHaveBeenCalled();
-    expect(control.snapshot().status).toBe("ready");
-    expect(control.snapshot().error).toBeNull();
     control.dispose();
   },
 );

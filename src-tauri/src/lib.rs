@@ -66,8 +66,7 @@ mod managed_npm;
 mod pi_models;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
-    agent_control_create_authorize, agent_control_create_commit, agent_control_create_discard,
-    agent_control_create_prepare, agent_control_create_recovery, agent_control_create_resume,
+    agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
@@ -512,9 +511,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_publish_profile,
         agent_control_create_authorize,
         agent_control_create_commit,
-        agent_control_create_recovery,
-        agent_control_create_resume,
-        agent_control_create_discard,
         agent_control_creation_profile,
         agent_control_snapshot_memory_write,
         agent_control_team_preview,

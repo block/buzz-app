@@ -30,25 +30,17 @@ and visible through existing error/retry controls. A saved native Codex record
 cannot remove or change its integration marker to escape its configuration
 contract. Stopped agents stay stopped on Save.
 
-Start rechecks the saved binding, installed versions, CLI sign-in and ACP
-initialization. It does not send a test prompt. The runtime's normal conversation
-path owns inference. Its failures remain visible in existing status/log controls.
+Start resolves the saved binding and launches it, as for Claude Code; it does
+not probe versions or sign-in and does not send a test prompt. The runtime's
+normal conversation path owns inference. Adapter, login, and inference failures
+remain visible in existing status/log controls.
 
-## Create recovery
+## Create
 
-The existing native Create recovery owner remains. Before writing a Codex key,
-the host persists a nonsecret journal binding the request ID, relay destination,
-owner, identity, and exact submitted edit. The journal stores a hash, not
-plaintext settings or authentication. Resume requires the original input and
-fresh signed owner authorization, verifies the durable key, and reuses the
-identity. Duplicate completed requests use the durable receipt. Changed input
-is rejected, and missing keys require explicit discard.
-
-Recovery no longer resolves the current installation or account: a configuration
-can be saved while tools are unavailable. The commitment format is version 2.
-Pending journals from the unreleased validation stack require explicit discard
-and a fresh Create. Existing saved agents remain readable. Old completed receipts
-are not silently accepted for a different input or used to create another identity.
+Codex uses the same prepare, authorize, and commit Create flow as every other
+harness, with no Codex-specific recovery journal. A configuration can be saved
+while tools are unavailable. A `pendingCreate` journal left in the agent store
+by an earlier unreleased build is preserved as unknown data and ignored.
 
 ## Deliberately removed
 
@@ -61,8 +53,8 @@ remain in place.
 
 ## Acceptance boundaries
 
-Controlled tests exercise native IPC persistence, authorization, failed durable
-writes, fresh-host recovery, revision conflicts and configuration intent. The
+Controlled tests exercise native IPC persistence, authorization, credential I/O
+outside the agent operation queue, revision conflicts and configuration intent. The
 saved-adapter regression exercises real controller resolution after a global
 adapter appears and after the saved adapter is removed. Browser fixtures exercise
 Create/Edit wiring and keyboard model/effort selection. They do not establish

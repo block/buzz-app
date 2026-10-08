@@ -9,20 +9,10 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       run: (ticket, request) => invoke("agent_models_run", { ticket, request }),
       cancel: (ticket) => invoke("agent_models_cancel", { ticket }),
     },
-    prepareCreate: (requestId, destination, owner, edit) =>
-      invoke("agent_control_create_prepare", {
-        requestId,
-        destination,
-        owner,
-        edit,
-      }),
+    prepareCreate: (requestId, destination, owner) =>
+      invoke("agent_control_create_prepare", { requestId, destination, owner }),
     commitCreate: (requestId, edit, auth, bundle) =>
       invoke("agent_control_create_commit", { requestId, edit, auth, bundle }),
-    createRecovery: () => invoke("agent_control_create_recovery"),
-    resumeCreate: (requestId, edit, auth) =>
-      invoke("agent_control_create_resume", { requestId, edit, auth }),
-    discardCreate: (requestId) =>
-      invoke("agent_control_create_discard", { requestId }),
     exportTeam: (snapshot, members, community, memoryLevel = "none") =>
       invoke("agent_control_team_export", {
         snapshot,
@@ -68,11 +58,7 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     checkClaudeAuth: () => invoke("claude_auth_status"),
     checkCodexAuth: () => invoke("codex_auth_status"),
     save: (id, expectedRevision, edit) =>
-      invoke("agent_control_save", {
-        id,
-        expectedRevision,
-        edit,
-      }),
+      invoke("agent_control_save", { id, expectedRevision, edit }),
     saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),
     delete: (id, expectedRevision) =>
       invoke("agent_control_delete", { id, expectedRevision }),

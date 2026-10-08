@@ -190,40 +190,6 @@ if (codexPreviewMode) {
     });
     return structuredClone(fixture.data);
   };
-  let pendingRecovery = fixtureParams.has("recovery")
-    ? {
-        requestId: "fixture-recovery",
-        agentId: "codex-recovered",
-        pubkey: "bc".repeat(32),
-        destination: "wss://relay.example.test",
-        owner: "de".repeat(32),
-      }
-    : null;
-  fixture.host.createRecovery = async () => structuredClone(pendingRecovery);
-  fixture.host.discardCreate = async (requestId) => {
-    if (pendingRecovery?.requestId !== requestId)
-      throw "Synthetic recovery no longer exists.";
-    pendingRecovery = null;
-  };
-  fixture.host.resumeCreate = async (requestId, edit) => {
-    if (pendingRecovery?.requestId !== requestId)
-      throw "Synthetic recovery no longer exists.";
-    fixture.data.agents.push({
-      ...structuredClone(fixture.agent),
-      id: pendingRecovery.agentId,
-      pubkey: pendingRecovery.pubkey,
-      name: edit.name,
-      systemPrompt: edit.systemPrompt,
-      workspace: edit.workspace,
-      harness: { ...edit.harness, environmentKeys: [] },
-      enabled: false,
-      status: "stopped",
-      runningRevision: null,
-      profilePending: false,
-    });
-    pendingRecovery = null;
-    return structuredClone(fixture.data);
-  };
   fixture.host.action = async (id, action) => {
     const agent = fixture.data.agents.find((candidate) => candidate.id === id);
     if (!agent) throw "Synthetic agent no longer exists.";

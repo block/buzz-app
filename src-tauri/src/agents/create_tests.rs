@@ -6,7 +6,7 @@ struct MemoryCredentials {
     keys: Mutex<BTreeMap<String, Secret>>,
     denied: AtomicBool,
     adds: AtomicUsize,
-    fail_record: Mutex<Option<PathBuf>>,
+    gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
 impl Credentials for MemoryCredentials {
     fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
@@ -15,6 +15,10 @@ impl Credentials for MemoryCredentials {
     fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>, String> {
         if self.denied.load(Ordering::SeqCst) {
             return Err(IMPORT_GATE.into());
+        }
+        if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+            entered.send(()).unwrap();
+            release.recv().unwrap();
         }
         self.keys
             .lock()
@@ -29,9 +33,6 @@ impl Credentials for MemoryCredentials {
             .lock()
             .unwrap()
             .insert(id.into(), Secret::parse(&key.hex(), key.pubkey())?);
-        if let Some(path) = self.fail_record.lock().unwrap().take() {
-            std::fs::create_dir(path).unwrap();
-        }
         Ok(())
     }
     fn delete(&self, id: &str, _: &str) -> Result<(), String> {
@@ -94,62 +95,28 @@ fn commit(
 }
 
 #[test]
-fn credential_denial_keeps_existing_harness_create_retry_usable() {
-    for command in ["buzz-agent", "goose", "/fixture/buzz-pi-acp"] {
-        let root = tempfile::tempdir().unwrap();
-        let credentials = Arc::new(MemoryCredentials::default());
-        let (_host, _app, view) = app_at(root.path(), credentials.clone());
-        let request = request(&view, &edit(root.path(), command));
-        let prepared = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
-        let auth = authorize(&view, &request, &prepared);
-        credentials.denied.store(true, Ordering::SeqCst);
-        assert_eq!(
-            commit(&view, &request, &auth).unwrap_err(),
-            json!(IMPORT_GATE)
-        );
-        assert!(invoke(&view, "agent_control_create_recovery", json!({}))
-            .unwrap()
-            .is_null());
-        credentials.denied.store(false, Ordering::SeqCst);
-        let retried = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
-        assert_eq!(retried, prepared);
-        let result = commit(&view, &request, &auth).unwrap();
-        assert_eq!(result["agents"].as_array().unwrap().len(), 1);
-        assert_eq!(result["agents"][0]["id"], prepared["id"]);
-        assert_eq!(credentials.adds.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[test]
-fn committed_create_survives_response_failure_and_fresh_host_retry() {
+fn create_commit_releases_admission_during_credential_io() {
     let root = tempfile::tempdir().unwrap();
     let credentials = Arc::new(MemoryCredentials::default());
-    let (host, app, view) = app_at(root.path(), credentials.clone());
+    let (host, _app, view) = app_at(root.path(), credentials.clone());
     let request = request(&view, &edit(root.path(), "buzz-agent"));
     let prepared = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
     let auth = authorize(&view, &request, &prepared);
-    // Agent persistence succeeds; the following snapshot cannot read defaults.
-    std::fs::write(root.path().join("store/defaults.json"), "invalid").unwrap();
-    assert!(commit(&view, &request, &auth).is_err());
-    std::fs::remove_file(root.path().join("store/defaults.json")).unwrap();
-    // The mock app retains State clones; explicitly drop the entire native host.
-    *host.0.lock().unwrap() = Err("Simulated app termination".into());
-    drop(view);
-    drop(app);
-    drop(host);
-    let (_host, _app, view) = app_at(root.path(), credentials.clone());
-    let replay = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
-    assert_eq!(replay["id"], prepared["id"]);
-    assert_eq!(replay["completed"], true);
-    let snapshot = commit(&view, &request, &auth).unwrap();
-    assert_eq!(snapshot["agents"].as_array().unwrap().len(), 1);
-    assert_eq!(credentials.adds.load(Ordering::SeqCst), 1);
-    let mut changed = request.clone();
-    changed["edit"]["name"] = json!("Different");
-    assert!(invoke(&view, "agent_control_create_prepare", changed).is_err());
-    let mut other_owner = request.clone();
-    other_owner["owner"] = json!("ab".repeat(32));
-    assert!(invoke(&view, "agent_control_create_prepare", other_owner).is_err());
+    let (entered, acquired) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    *credentials.gate.lock().unwrap() = Some((entered, wait));
+    let committing = {
+        let view = view.clone();
+        std::thread::spawn(move || commit(&view, &request, &auth))
+    };
+    acquired.recv().unwrap();
+    // A Keychain prompt can wait on the user; Stop and refresh must not queue
+    // behind it.
+    assert!(host.2.try_lock().is_ok());
+    assert!(tauri::async_runtime::block_on(run(host.clone(), |host| host.snapshot())).is_ok());
+    release.send(()).unwrap();
+    let result = committing.join().unwrap().unwrap();
+    assert_eq!(result["agents"][0]["id"], prepared["id"]);
 }
 
 #[cfg(unix)]
@@ -164,59 +131,27 @@ fn codex_edit(root: &std::path::Path) -> Value {
 
 #[test]
 #[cfg(unix)]
-fn codex_create_and_edit_without_tools_preserve_identity_recovery_and_revision_checks() {
-    let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().to_path_buf();
+fn codex_create_and_edit_without_tools_preserve_revision_checks() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
     let credentials = Arc::new(MemoryCredentials::default());
-    let expected_id = {
-        let (host, _app, view) = app_at(&root, credentials.clone());
-        let request = request(&view, &codex_edit(&root));
-        // No adapter or CLI exists at the selected path. Create must not run
-        // inference or require readiness; runtime failures belong to Start.
-        assert!(!root.join("tools/codex-acp").exists());
-        let prepared = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
-        let auth = authorize(&view, &request, &prepared);
-        // Fail the record write after the key is durable, leaving only the
-        // on-disk journal and synthetic secure storage for the next host.
-        *credentials.fail_record.lock().unwrap() = Some(root.join("store/agents.previous.json"));
-        assert!(commit(&view, &request, &auth).is_err());
-        assert!(invoke(&view, "agent_control_create_recovery", json!({}))
-            .unwrap()
-            .is_object());
-        assert_eq!(credentials.adds.load(Ordering::SeqCst), 1);
-        *host.0.lock().unwrap() = Err("Simulated app termination".into());
-        prepared["id"].clone()
-    };
-    std::fs::remove_dir(root.join("store/agents.previous.json")).unwrap();
-    let (_host, _app, view) = app_at(&root, credentials.clone());
-    let recovery = invoke(&view, "agent_control_create_recovery", json!({})).unwrap();
-    let auth = authorize(&view, &recovery, &recovery);
-    // Signing again demonstrably changes bytes; both authorize the same key.
-    assert_ne!(auth, authorize(&view, &recovery, &recovery));
-    let mut edit = codex_edit(&root);
-    edit["name"] = json!("Changed");
-    let resume = |edit: Value, auth: &Value| {
-        invoke(
-            &view,
-            "agent_control_create_resume",
-            json!({"requestId":recovery["requestId"],"edit":edit,"auth":auth.to_string()}),
-        )
-    };
-    assert!(resume(edit, &auth).is_err());
-    let mut forged = auth.clone();
-    forged[3] = json!("00".repeat(64));
-    assert!(resume(codex_edit(&root), &forged).is_err());
-    let result = resume(codex_edit(&root), &auth).unwrap();
+    let (_host, _app, view) = app_at(root, credentials.clone());
+    let request = request(&view, &codex_edit(root));
+    // No adapter or CLI exists at the selected path. Create must not run
+    // inference or check tools; runtime failures belong to Start.
+    assert!(!root.join("tools/codex-acp").exists());
+    let prepared = invoke(&view, "agent_control_create_prepare", request.clone()).unwrap();
+    let auth = authorize(&view, &request, &prepared);
+    let result = commit(&view, &request, &auth).unwrap();
+    let expected_id = prepared["id"].clone();
     assert_eq!(result["agents"].as_array().unwrap().len(), 1);
     assert_eq!(result["agents"][0]["id"], expected_id);
+    assert_eq!(result["agents"][0]["harness"]["integration"], "codex");
     assert_eq!(credentials.adds.load(Ordering::SeqCst), 1);
-    assert!(invoke(&view, "agent_control_create_recovery", json!({}))
-        .unwrap()
-        .is_null());
     // Advanced execution changes save without tools or account access, but
     // stale revisions and attempts to strip the native integration still fail.
     let before = result["agents"][0].clone();
-    let mut edit = codex_edit(&root);
+    let mut edit = codex_edit(root);
     edit["systemPrompt"] = json!("Updated instructions");
     edit["harness"]["model"] = json!("model-a");
     edit["harness"]["configuration"] =

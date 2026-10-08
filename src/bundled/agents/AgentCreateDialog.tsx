@@ -2,11 +2,9 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   agentFailureReason,
-  agentSafeFailure,
   type AgentControl,
   type AgentControlState,
   type CatalogSeed,
-  type CodexCreateRecovery,
   type CloneSettings,
   type AgentView,
 } from "../../features/agents/control";
@@ -28,7 +26,6 @@ import {
   rememberAdded,
 } from "./CommunityCatalog";
 import { AgentSettingsFields } from "./AgentSettingsFields";
-import { relayOrigin } from "../../features/communities/destination";
 import {
   agentDraft,
   agentEdit,
@@ -107,13 +104,7 @@ export function seededDraft(
   };
 }
 
-type CreatePhase =
-  | "recovering"
-  | "discarding"
-  | "creating"
-  | "starting"
-  | "publishing"
-  | "checking";
+type CreatePhase = "creating" | "starting" | "publishing" | "checking";
 
 export function AgentCreateDialog({
   control,
@@ -184,45 +175,13 @@ export function AgentCreateDialog({
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
   const [error, setError] = useState<string>();
   const [phase, setPhase] = useState<CreatePhase | null>(null);
-  const [recovery, setRecovery] = useState<CodexCreateRecovery | null>(null);
-  const [recoveryLoading, setRecoveryLoading] = useState(
-    !!control.createRecovery,
-  );
-  const active = useRef<AbortController | null>(null);
-  const submitting = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
-    void control
-      .createRecovery?.()
-      .then((pending) => {
-        if (mounted.current) setRecovery(pending);
-      })
-      .catch((problem) => {
-        if (mounted.current)
-          setError(
-            problem instanceof Error
-              ? problem.message
-              : "Couldn’t check pending agent creation.",
-          );
-      })
-      .finally(() => {
-        if (mounted.current) setRecoveryLoading(false);
-      });
     return () => {
       mounted.current = false;
-      active.current?.abort();
     };
-  }, [control]);
-  let resumable = false;
-  if (recovery?.owner === owner) {
-    try {
-      resumable =
-        relayOrigin(recovery.destination) === relayOrigin(destination);
-    } catch {
-      // Native recovery stays visible and discardable when either target is invalid.
-    }
-  }
+  }, []);
   const available = !!(
     destination &&
     owner &&
@@ -232,26 +191,18 @@ export function AgentCreateDialog({
   const runtimeBlocked =
     !state.data?.runtimeAvailable && (!saved || nextStep === "start");
   const busy = phase !== null;
-  const blocked =
-    busy || recoveryLoading || state.busy || state.status !== "ready";
+  const blocked = busy || state.busy || state.status !== "ready";
   const create = async (publication?: AgentPublication) => {
     if (
-      submitting.current ||
       blocked ||
       runtimeBlocked ||
       (publication &&
         (!catalogSession ||
           selectedPublication?.eventId !== publication.eventId ||
           alreadyAdded)) ||
-      (!saved &&
-        (recovery
-          ? !resumable || !control.resumeCreate
-          : !available || !control.create))
+      (!saved && (!available || !control.create))
     )
       return;
-    submitting.current = true;
-    const request = new AbortController();
-    active.current = request;
     setError(undefined);
     let step: "creating" | "starting" | "publishing" = "creating";
     let agent = saved;
@@ -277,22 +228,9 @@ export function AgentCreateDialog({
             );
           return;
         }
-        if (recovery && resumable && control.resumeCreate) {
-          setPhase("recovering");
-          agent = await control.resumeCreate(recovery, edit, request.signal);
-        } else {
-          setPhase("creating");
-          if (!control.create) return;
-          agent = await control.create(
-            requestId,
-            destination,
-            owner,
-            edit,
-            undefined,
-            request.signal,
-          );
-        }
-        if (mounted.current) setRecovery(null);
+        setPhase("creating");
+        if (!control.create) return;
+        agent = await control.create(requestId, destination, owner, edit);
         onCreated?.(agent);
         if (publication && catalogSession)
           rememberAdded(
@@ -344,11 +282,6 @@ export function AgentCreateDialog({
       if (mounted.current) setPhase("checking");
       await control.refresh();
       if (!mounted.current) return;
-      const safe = agentSafeFailure(problem);
-      if (safe) {
-        setError(safe);
-        return;
-      }
       const detail = agentFailureReason(problem);
       const reason = detail && ` ${detail}`;
       const refreshed = control.snapshot();
@@ -382,29 +315,14 @@ export function AgentCreateDialog({
         );
       }
     } finally {
-      if (active.current === request) active.current = null;
-      submitting.current = false;
-      if (mounted.current) {
-        setPhase(null);
-        if (!agent && control.createRecovery)
-          void control
-            .createRecovery()
-            .then((pending) => {
-              if (mounted.current) setRecovery(pending);
-            })
-            .catch(() => {});
-      }
+      if (mounted.current) setPhase(null);
     }
-  };
-  const close = () => {
-    active.current?.abort();
-    onClose();
   };
   return (
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !dirty && !blocked) close();
+        if (!open && !dirty && !blocked) onClose();
       }}
     >
       <Dialog.Portal>

@@ -23,41 +23,6 @@ impl Credentials for RejectingCredentials {
     }
 }
 
-struct AbsentCredentials;
-impl Credentials for AbsentCredentials {
-    fn delete(&self, _: &str, _: &str) -> Result<(), String> {
-        Ok(())
-    }
-    fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
-        unreachable!()
-    }
-    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
-        Ok(None)
-    }
-    fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
-        unreachable!()
-    }
-}
-
-#[test]
-fn journal_without_a_durable_key_requires_explicit_discard() {
-    let pending = buzz_agent_controller::PendingCreateRecovery {
-        request_id: uuid::Uuid::new_v4().to_string(),
-        agent_id: "pending".into(),
-        pubkey: "ab".repeat(32),
-        destination: "wss://relay.example".into(),
-        owner: "cd".repeat(32),
-        commitment: "ef".repeat(32),
-    };
-    assert_eq!(
-        read_create_recovery_key(&AbsentCredentials, &pending)
-            .err()
-            .unwrap(),
-        "The pending create has no durable key; discard it and create again"
-    );
-    discard_create_recovery_key(&AbsentCredentials, &pending).unwrap();
-}
-
 impl AgentHost {
     fn open(paths: Result<(PathBuf, PathBuf, PathBuf), String>) -> Self {
         Self::open_with_bundle(paths, Err(RUNTIME_GATE.into()))
@@ -2636,7 +2601,7 @@ fn poisoned_native_state_is_not_reported_as_transient_contention() {
 #[tokio::test]
 async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     use tauri::Manager;
-    let (dir, host, app, _view) = fixture();
+    let (_dir, host, app, _view) = fixture();
     let (entered, acquired) = tokio::sync::oneshot::channel();
     let (release, wait) = std::sync::mpsc::channel();
     let snapshot = tokio::spawn(run(host.clone(), move |h| {
@@ -2646,18 +2611,11 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     }));
     acquired.await.unwrap();
     let request_id = uuid::Uuid::new_v4().to_string();
-    let edit: AgentEdit = serde_json::from_value(json!({
-        "name": "Created", "systemPrompt": "", "workspace": dir.path(),
-        "harness": {"command": "buzz-agent", "args": [], "model": "sample", "provider": "sample"},
-        "environment": {}
-    }))
-    .unwrap();
     let mut creating = std::pin::pin!(agent_control_create_prepare(
         app.state(),
         request_id.clone(),
         "wss://relay.example".into(),
         "ab".repeat(32),
-        edit.clone(),
     ));
     assert_pending(creating.as_mut()).await;
     release.send(()).unwrap();
@@ -2668,7 +2626,6 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
         request_id,
         "wss://relay.example".into(),
         "ab".repeat(32),
-        edit,
     )
     .await
     .unwrap();
@@ -2683,12 +2640,10 @@ fn native_create_authorization_binds_the_prepared_key_owner_and_identity() {
     let other = "cd".repeat(32);
     let prepare = |owner: &str| {
         let request = uuid::Uuid::new_v4().to_string();
-        let edit = json!({"name":"Created","systemPrompt":"","workspace":dir.path(),
-            "harness":{"command":"buzz-agent","args":[],"model":"chosen","provider":"databricks_v2"},"environment":{}});
         let prepared = invoke(
             &view,
             "agent_control_create_prepare",
-            json!({"requestId": request, "destination": "https://relay.example", "owner": owner, "edit": edit}),
+            json!({"requestId": request, "destination": "https://relay.example", "owner": owner}),
         )
         .unwrap();
         (request, prepared["pubkey"].as_str().unwrap().to_owned())
@@ -2746,11 +2701,6 @@ fn native_create_authorization_binds_the_prepared_key_owner_and_identity() {
     );
     // The unchanged verifier accepts the real attestation; only synthetic custody refuses.
     assert_eq!(commit(&auth), json!(IMPORT_GATE));
-    // Existing harnesses retain their ordinary Retry path; no Codex journal
-    // may strand these forms after a credential refusal.
-    assert!(invoke(&view, "agent_control_create_recovery", json!({}))
-        .unwrap()
-        .is_null());
 }
 
 #[tokio::test]
@@ -2772,90 +2722,6 @@ async fn dropped_caller_does_not_release_a_running_native_operation() {
     assert_pending(next.as_mut()).await;
     release.send(()).unwrap();
     assert!(next.await.is_ok());
-}
-
-#[tokio::test]
-async fn aborted_discard_keeps_native_lane_until_credential_io_retires() {
-    use tauri::Manager;
-    struct BlockingAbsent {
-        entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-        release: Mutex<std::sync::mpsc::Receiver<()>>,
-    }
-    impl Credentials for BlockingAbsent {
-        fn delete(&self, _: &str, _: &str) -> Result<(), String> {
-            Ok(())
-        }
-        fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
-            unreachable!()
-        }
-        fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
-            if let Some(entered) = self.entered.lock().unwrap().take() {
-                entered.send(()).unwrap();
-                self.release.lock().unwrap().recv().unwrap();
-            }
-            Ok(None)
-        }
-        fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
-            unreachable!()
-        }
-    }
-
-    let dir = tempfile::tempdir().unwrap();
-    let (entered, acquired) = tokio::sync::oneshot::channel();
-    let (release, wait) = std::sync::mpsc::channel();
-    let credentials = Arc::new(BlockingAbsent {
-        entered: Mutex::new(Some(entered)),
-        release: Mutex::new(wait),
-    });
-    let host = AgentHost::open_with_credentials(
-        Ok((
-            dir.path().join("store"),
-            dir.path().join("legacy"),
-            dir.path().join("workspace"),
-        )),
-        Err(RUNTIME_GATE.into()),
-        credentials,
-    );
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let pending = buzz_agent_controller::PendingCreateRecovery {
-        request_id: request_id.clone(),
-        agent_id: format!(
-            "{}-{}",
-            "ab".repeat(32),
-            "733db93c5a38b650794422a480fab67f1dd8f6f40112c360f9814dfaec3bfcbb"
-        ),
-        pubkey: "ab".repeat(32),
-        destination: "wss://relay.example".into(),
-        owner: "cd".repeat(32),
-        commitment: "ef".repeat(32),
-    };
-    host.with(|host| host.controller.stage_create_recovery(pending.clone()))
-        .unwrap();
-    let app = mock_builder()
-        .manage(host.clone())
-        .manage(crate::harness_setup::HarnessSetup::default())
-        .manage(crate::agent_models::ModelHost::new(Ok(dir
-            .path()
-            .join("models"))))
-        .manage(crate::identity::IdentityHost::fixture())
-        .invoke_handler(crate::commands())
-        .build(crate::app_context())
-        .unwrap();
-
-    let mut discard = Box::pin(agent_control_create_discard(app.state(), request_id));
-    assert_pending(discard.as_mut()).await;
-    acquired.await.unwrap();
-    drop(discard);
-    assert!(host.2.try_lock().is_err());
-    let mut replacement = std::pin::pin!(run(host.clone(), |host| host.snapshot()));
-    assert_pending(replacement.as_mut()).await;
-    release.send(()).unwrap();
-    assert!(replacement.await.is_ok());
-    assert_eq!(
-        host.with(|host| host.controller.pending_create_recovery())
-            .unwrap(),
-        Some(pending)
-    );
 }
 
 #[tokio::test]
@@ -2990,6 +2856,7 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
         );
     }
 }
+
 #[cfg(windows)]
 #[test]
 fn windows_claude_manual_setup_uses_runnable_launchers() {
@@ -3287,6 +3154,9 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[path = "create_tests.rs"]
+mod creation;
 
 #[test]
 fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {

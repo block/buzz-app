@@ -219,13 +219,6 @@ export interface HarnessInstallReport {
   output: string;
   error: string | null;
 }
-export interface CodexCreateRecovery {
-  requestId: string;
-  agentId: string;
-  pubkey: string;
-  destination: string;
-  owner: string;
-}
 
 export type CommunityResolution = {
   pubkey: string;
@@ -264,13 +257,7 @@ export interface AgentControlHost {
     requestId: string,
     destination: string,
     owner: string,
-    edit: AgentEdit,
-  ): Promise<{
-    id?: string;
-    pubkey?: string;
-    saved?: boolean;
-    completed?: boolean;
-  }>;
+  ): Promise<{ id: string; pubkey: string; saved?: boolean }>;
   commitCreate?(
     requestId: string,
     edit: AgentEdit,
@@ -296,13 +283,6 @@ export interface AgentControlHost {
     community: string,
   ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
-  createRecovery?(): Promise<CodexCreateRecovery | null>;
-  resumeCreate?(
-    requestId: string,
-    edit: AgentEdit,
-    auth: string,
-  ): Promise<ControlSnapshot>;
-  discardCreate?(requestId: string): Promise<void>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
     id: string,
@@ -375,7 +355,6 @@ export interface AgentControl {
     owner: string,
     edit: AgentEdit,
     bundle?: BundleMember,
-    signal?: AbortSignal,
   ): Promise<AgentView>;
   exportTeam?(
     snapshot: TeamSnapshot,
@@ -396,24 +375,13 @@ export interface AgentControl {
     community: string,
   ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
-  createRecovery?(): Promise<CodexCreateRecovery | null>;
-  resumeCreate?(
-    recovery: CodexCreateRecovery,
-    edit: AgentEdit,
-    signal?: AbortSignal,
-  ): Promise<AgentView>;
-  discardCreate?(requestId: string): Promise<void>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
-  save(
-    id: string,
-    expectedRevision: number,
-    edit: AgentEdit,
-  ): Promise<ControlSnapshot>;
+  save: AgentControlHost["save"];
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
@@ -455,13 +423,6 @@ export function agentFailureReason(problem: unknown): string {
     : "";
 }
 
-/** A rejected preflight is definitive and safe to correct without refreshing. */
-export function agentSafeFailure(problem: unknown): string {
-  return problem instanceof Error && problem.cause === safeOperation
-    ? problem.message
-    : "";
-}
-
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
   if (
@@ -482,13 +443,6 @@ export function canStopAgent(state: AgentControlState, id: string): boolean {
 
 export const agentControlUnavailable =
   "Local agent controls require the desktop app. This browser cannot run or manage agent processes.";
-
-const safeOperation = Symbol("safe agent operation failure");
-class SafeOperationError extends Error {
-  constructor(message: string) {
-    super(message, { cause: safeOperation });
-  }
-}
 
 /** Own once at app composition. Disposing this projection never stops native agents. */
 export function createAgentControl(
@@ -603,7 +557,6 @@ export function createAgentControl(
       apply(result);
       return result;
     } catch (error) {
-      if (error instanceof SafeOperationError) throw error;
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail =
         typeof error === "string"
@@ -689,9 +642,8 @@ export function createAgentControl(
   const installClaude = host?.installClaude;
   const installCodex = host?.installCodex;
   const checkClaudeAuth = host?.checkClaudeAuth;
-  const writeSnapshotMemory = host?.writeSnapshotMemory;
   const checkCodexAuth = host?.checkCodexAuth;
-
+  const writeSnapshotMemory = host?.writeSnapshotMemory;
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
@@ -735,41 +687,24 @@ export function createAgentControl(
             owner: string,
             edit: AgentEdit,
             bundle?: BundleMember,
-            signal?: AbortSignal,
           ) => {
             let id = "";
             const data = await run(
               async (native) => {
                 if (!native.prepareCreate || !native.commitCreate)
                   throw new Error("Agent creation is unavailable.");
-                if (signal?.aborted)
-                  throw new SafeOperationError(
-                    "Agent creation was cancelled. No new identity was saved.",
-                  );
                 const prepared = await native.prepareCreate(
                   requestId,
                   destination,
                   owner,
-                  edit,
                 );
-                if (disposed || signal?.aborted)
-                  throw new SafeOperationError(
-                    "Agent creation was cancelled. No new identity was saved.",
-                  );
-                if (!prepared.id || !prepared.pubkey)
-                  throw new Error("Agent creation was not prepared.");
                 id = prepared.id;
-                if (prepared.saved || prepared.completed)
-                  return native.snapshot();
+                if (prepared.saved) return native.snapshot();
                 const result = await communityRequest<{ auth: string[] }>(
                   destination,
                   "authorize-agent",
                   { pubkey: prepared.pubkey, owner },
                 );
-                if (disposed || signal?.aborted)
-                  throw new SafeOperationError(
-                    "Agent creation was cancelled. The prepared identity was not committed.",
-                  );
                 return native.commitCreate(
                   requestId,
                   edit,
@@ -847,77 +782,6 @@ export function createAgentControl(
               throw new Error("Team preview is unavailable.");
             return host.previewTeam(content);
           },
-        }
-      : {}),
-    ...(host?.createRecovery
-      ? {
-          createRecovery: async () => {
-            if (disposed) throw new Error(agentControlUnavailable);
-            const recovery = host.createRecovery;
-            if (!recovery) return null;
-            return recovery();
-          },
-        }
-      : {}),
-    ...(host?.resumeCreate
-      ? {
-          resumeCreate: async (
-            recovery: CodexCreateRecovery,
-            edit: AgentEdit,
-            signal?: AbortSignal,
-          ) => {
-            const id = recovery.agentId;
-            const data = await run(
-              async (native) => {
-                if (!native.resumeCreate)
-                  throw new Error("Agent creation recovery is unavailable.");
-                if (signal?.aborted)
-                  throw new SafeOperationError(
-                    "Agent creation recovery was cancelled. The pending request is unchanged.",
-                  );
-                const result = await communityRequest<{ auth: string[] }>(
-                  recovery.destination,
-                  "authorize-agent",
-                  { pubkey: recovery.pubkey, owner: recovery.owner },
-                );
-                if (disposed || signal?.aborted)
-                  throw new SafeOperationError(
-                    "Agent creation recovery was cancelled. The pending request is unchanged.",
-                  );
-                return native.resumeCreate(
-                  recovery.requestId,
-                  edit,
-                  JSON.stringify(result.auth),
-                );
-              },
-              ready,
-              false,
-              undefined,
-              true,
-            );
-            const agent = data.agents.find((candidate) => candidate.id === id);
-            if (!agent)
-              throw new Error(
-                "Creation recovery was not confirmed; refresh agents before trying again.",
-              );
-            return agent;
-          },
-        }
-      : {}),
-    ...(host?.discardCreate
-      ? {
-          discardCreate: (requestId: string) =>
-            run(
-              async (native) => {
-                if (!native.discardCreate)
-                  throw new Error("Agent creation recovery is unavailable.");
-                await native.discardCreate(requestId);
-              },
-              () => {},
-              false,
-              undefined,
-              true,
-            ),
         }
       : {}),
     ...(host?.publishProfile

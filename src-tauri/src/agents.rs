@@ -5,7 +5,6 @@ use buzz_agent_controller::{
     LegacySource, NewAgent, PlatformCredentials, ProcessStatus, RuntimeBundle, Store,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -504,14 +503,6 @@ struct MentionReplay {
     floor: u64,
 }
 
-struct PendingCreate {
-    request_id: String,
-    destination: String,
-    owner: String,
-    prepared: Arc<NewAgent>,
-    input: serde_json::Value,
-}
-
 pub(crate) struct Host {
     inventory_warnings: Vec<String>,
     pub(crate) controller: Controller,
@@ -528,7 +519,7 @@ pub(crate) struct Host {
     acted: BTreeSet<String>,
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
     log_challenges: BTreeMap<String, LogChallenge>,
-    creating: Option<PendingCreate>,
+    creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
 impl Host {
@@ -1519,22 +1510,8 @@ pub(crate) async fn agent_control_create_prepare(
     request_id: String,
     destination: String,
     owner: String,
-    edit: AgentEdit,
 ) -> Result<serde_json::Value, String> {
     run(state.inner().clone(), move |host| {
-        if let Some(receipt) = checked_create_receipt(host, &request_id, &edit)? {
-            if receipt.destination != NewAgent::validate_target(&destination, &owner)? || receipt.owner != owner {
-                return Err("Create request belongs to another destination or owner".into());
-            }
-            return Ok(serde_json::json!({"id": receipt.agent_id, "pubkey": receipt.pubkey, "completed": true}));
-        }
-        if let Some(pending) = host.controller.pending_create_recovery()? {
-            return Err(if pending.request_id == request_id {
-                "This create requires recovery; resume or discard it before retrying".into()
-            } else {
-                "Another agent creation requires recovery first".into()
-            });
-        }
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
         }
@@ -1544,93 +1521,19 @@ pub(crate) async fn agent_control_create_prepare(
         {
             return Ok(serde_json::json!({"id": agent.id, "pubkey": agent.pubkey, "saved": true}));
         }
-        let input = serde_json::to_value(&edit).map_err(|_| "Invalid agent draft")?;
-        if let Some(pending) = host
-            .creating
-            .as_ref()
-            .filter(|pending| pending.request_id == request_id)
-        {
-            if pending.input != input || !pending.prepared.matches(&destination, &owner)? {
-                return Err("Create settings changed; start again".into());
-            }
-            return Ok(serde_json::json!({
-                "id": pending.prepared.id,
-                "pubkey": pending.prepared.key.pubkey()
-            }));
+        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+            host.creating = Some((
+                request_id,
+                Arc::new(NewAgent::prepare(&destination, &owner)?),
+            ));
         }
-        let canonical = NewAgent::validate_target(&destination, &owner)?;
-        let prepared = Arc::new(NewAgent::prepare(&canonical, &owner)?);
-        let response = serde_json::json!({"id": prepared.id, "pubkey": prepared.key.pubkey()});
-        host.creating = Some(PendingCreate {
-            request_id,
-            destination: canonical,
-            owner,
-            prepared,
-            input,
-        });
-        Ok(response)
+        let agent = &host.creating.as_ref().ok_or("Create request expired")?.1;
+        if !agent.matches(&destination, &owner)? {
+            return Err("Create destination or owner changed".into());
+        }
+        Ok(serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()}))
     })
     .await
-}
-
-fn bind_create_recovery(
-    mut record: buzz_agent_controller::PendingCreateRecovery,
-    edit: &AgentEdit,
-) -> Result<buzz_agent_controller::PendingCreateRecovery, String> {
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "requestId": record.request_id,
-        "destination": record.destination,
-        "owner": record.owner,
-        "agentId": record.agent_id,
-        "pubkey": record.pubkey,
-        "edit": edit,
-        "version": 2,
-    }))
-    .map_err(|_| "Could not bind the create recovery request")?;
-    record.commitment = format!("{:x}", Sha256::digest(bytes));
-    Ok(record)
-}
-
-fn checked_create_receipt(
-    host: &Host,
-    request_id: &str,
-    edit: &AgentEdit,
-) -> Result<Option<buzz_agent_controller::PendingCreateRecovery>, String> {
-    let Some(receipt) = host.controller.completed_create_request(request_id)? else {
-        return Ok(None);
-    };
-    if bind_create_recovery(receipt.clone(), edit)? != receipt {
-        return Err("Create request already completed with different settings".into());
-    }
-    Ok(Some(receipt))
-}
-
-fn read_create_recovery_key(
-    credentials: &dyn Credentials,
-    pending: &buzz_agent_controller::PendingCreateRecovery,
-) -> Result<buzz_agent_controller::Secret, String> {
-    credentials
-        .read(&pending.agent_id, &pending.pubkey)?
-        .ok_or_else(|| "The pending create has no durable key; discard it and create again".into())
-}
-
-fn discard_create_recovery_key(
-    credentials: &dyn Credentials,
-    pending: &buzz_agent_controller::PendingCreateRecovery,
-) -> Result<(), String> {
-    if credentials
-        .read(&pending.agent_id, &pending.pubkey)?
-        .is_some()
-    {
-        credentials.delete(&pending.agent_id, &pending.pubkey)?;
-    }
-    if credentials
-        .read(&pending.agent_id, &pending.pubkey)?
-        .is_some()
-    {
-        return Err("Pending credential cleanup could not be confirmed".into());
-    }
-    Ok(())
 }
 /// Owner attestation for the pending create's generated key only. The
 /// identity may read OS credentials, so the agent host stays unlocked.
@@ -1643,22 +1546,11 @@ pub(crate) async fn agent_control_create_authorize(
     pubkey: String,
 ) -> Result<Vec<String>, String> {
     let (owner, pubkey) = run(state.inner().clone(), move |host| {
-        if let Some(pending) = host.controller.pending_create_recovery()? {
-            if pending.pubkey != pubkey
-                || pending.destination != NewAgent::validate_target(&destination, &owner)?
-                || pending.owner != owner
-            {
-                return Err("Authorization does not match the pending create request".into());
-            }
-            return Ok((owner, pubkey));
-        }
-        let pending = host
+        let (_, prepared) = host
             .creating
             .as_ref()
             .ok_or("Create request expired; reopen Add agent")?;
-        if pending.prepared.key.pubkey() != pubkey
-            || !pending.prepared.matches(&destination, &owner)?
-        {
+        if prepared.key.pubkey() != pubkey || !prepared.matches(&destination, &owner)? {
             return Err("Authorization does not match the pending create request".into());
         }
         Ok((owner, pubkey))
@@ -1678,195 +1570,42 @@ pub(crate) async fn agent_control_create_commit(
         bundle.validate()?;
     }
     let owner = state.inner().clone();
-    let lane = owner.2.clone().lock_owned().await;
-    if let Some(snapshot) = owner.with(|host| {
-        checked_create_receipt(host, &request_id, &edit)?
-            .map(|_| host.snapshot())
-            .transpose()
-    })? {
-        return Ok(snapshot);
-    }
-    let (prepared, credentials, request_id, edit, auth, recovery) = owner.with(|host| {
-        let pending = host
+    let (prepared, credentials, request_id, edit, auth) = run(owner.clone(), move |host| {
+        let (_, prepared) = host
             .creating
             .as_ref()
-            .filter(|pending| pending.request_id == request_id)
+            .filter(|(id, _)| id == &request_id)
             .ok_or("Create request expired; reopen Add agent")?;
-        let input = serde_json::to_value(&edit).map_err(|_| "Invalid agent draft")?;
-        if input != pending.input {
-            return Err("Create settings changed; start again".into());
-        }
-        let prepared = &pending.prepared;
         prepared.validate(edit.clone(), &auth)?;
-        let recovery = bind_create_recovery(
-            buzz_agent_controller::PendingCreateRecovery {
-                request_id: request_id.clone(),
-                agent_id: prepared.id.clone(),
-                pubkey: prepared.key.pubkey().into(),
-                destination: pending.destination.clone(),
-                owner: pending.owner.clone(),
-                commitment: String::new(),
-            },
-            &edit,
-        )?;
-        if edit.harness.integration == Some(buzz_agent_controller::HarnessIntegration::Codex) {
-            host.controller.stage_create_recovery(recovery.clone())?;
-        }
         Ok((
             prepared.clone(),
             host.credentials.clone(),
             request_id,
             edit,
             auth,
-            recovery,
         ))
-    })?;
+    })
+    .await?;
     let saved = prepared.clone();
-    let (_lane, saved) = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         credentials.retry();
-        let result = saved.save_key(credentials.as_ref());
-        (lane, result)
+        saved.save_key(credentials.as_ref())
     })
     .await
-    .map_err(|_| "Native credential operation failed")?;
-    saved?;
-    owner.with(move |host| {
-        let pending = host
-            .creating
-            .as_ref()
-            .filter(|pending| pending.request_id == request_id)
-            .ok_or("Create request was replaced")?;
-        let input = serde_json::to_value(&edit).map_err(|_| "Invalid agent draft")?;
-        if pending.input != input {
-            return Err("Create settings changed; start again".into());
-        }
-        if host.creating.as_ref().map(|pending| &pending.request_id) != Some(&request_id) {
+    .map_err(|_| "Native credential operation failed")??;
+    run(owner, move |host| {
+        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
         }
         if let Some(bundle) = bundle {
             host.controller
                 .create_bundle_member(&prepared, edit, &auth, &request_id, &bundle)?;
-        } else if edit.harness.integration == Some(buzz_agent_controller::HarnessIntegration::Codex)
-        {
-            host.controller
-                .finish_create_recovery(&prepared, edit, &auth, &recovery)?;
         } else {
-            host.controller
-                .create_requested(&prepared, edit, &auth, &recovery)?;
+            host.controller.create(&prepared, edit, &auth)?;
         }
-        host.creating = None;
         host.snapshot()
     })
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CreateRecoveryView {
-    request_id: String,
-    agent_id: String,
-    pubkey: String,
-    destination: String,
-    owner: String,
-}
-
-impl From<buzz_agent_controller::PendingCreateRecovery> for CreateRecoveryView {
-    fn from(value: buzz_agent_controller::PendingCreateRecovery) -> Self {
-        Self {
-            request_id: value.request_id,
-            agent_id: value.agent_id,
-            pubkey: value.pubkey,
-            destination: value.destination,
-            owner: value.owner,
-        }
-    }
-}
-
-#[tauri::command]
-pub(crate) async fn agent_control_create_recovery(
-    state: tauri::State<'_, AgentHost>,
-) -> Result<Option<CreateRecoveryView>, String> {
-    run(state.inner().clone(), |host| {
-        Ok(host.controller.pending_create_recovery()?.map(Into::into))
-    })
     .await
-}
-
-#[tauri::command]
-pub(crate) async fn agent_control_create_resume(
-    state: tauri::State<'_, AgentHost>,
-    request_id: String,
-    edit: AgentEdit,
-    auth: String,
-) -> Result<Snapshot, String> {
-    let owner = state.inner().clone();
-    let lane = owner.2.clone().lock_owned().await;
-    let (pending, credentials) = owner.with(|host| {
-        let pending = host
-            .controller
-            .pending_create_recovery()?
-            .filter(|pending| pending.request_id == request_id)
-            .ok_or("Create recovery request no longer exists")?;
-        let expected = bind_create_recovery(pending.clone(), &edit)?;
-        if expected != pending {
-            return Err(
-                "Create recovery input changed; use the original settings or discard it".into(),
-            );
-        }
-        Ok((pending, host.credentials.clone()))
-    })?;
-    let key_pending = pending.clone();
-    let (_lane, key) = tauri::async_runtime::spawn_blocking(move || {
-        credentials.retry();
-        let result = read_create_recovery_key(credentials.as_ref(), &key_pending);
-        (lane, result)
-    })
-    .await
-    .map_err(|_| "Native credential recovery failed")?;
-    let key = key?;
-    let prepared = NewAgent::recover(&pending.destination, &pending.owner, &pending.agent_id, key)?;
-    owner.with(move |host| {
-        let expected = bind_create_recovery(pending.clone(), &edit)?;
-        if expected != pending {
-            return Err(
-                "Create recovery input changed; use the original settings or discard it".into(),
-            );
-        }
-        host.controller
-            .finish_create_recovery(&prepared, edit, &auth, &pending)?;
-        host.creating = None;
-        host.snapshot()
-    })
-}
-
-#[tauri::command]
-pub(crate) async fn agent_control_create_discard(
-    state: tauri::State<'_, AgentHost>,
-    request_id: String,
-) -> Result<Option<CreateRecoveryView>, String> {
-    let owner = state.inner().clone();
-    let lane = owner.2.clone().lock_owned().await;
-    let (pending, credentials) = owner.with(|host| {
-        let pending = host
-            .controller
-            .pending_create_recovery()?
-            .filter(|pending| pending.request_id == request_id)
-            .ok_or("Create recovery request no longer exists")?;
-        Ok((pending, host.credentials.clone()))
-    })?;
-    let key_pending = pending.clone();
-    let (_lane, discarded) = tauri::async_runtime::spawn_blocking(move || {
-        credentials.retry();
-        let result = discard_create_recovery_key(credentials.as_ref(), &key_pending);
-        (lane, result)
-    })
-    .await
-    .map_err(|_| "Native credential recovery failed")?;
-    discarded?;
-    owner.with(move |host| {
-        host.controller.discard_create_recovery(&pending)?;
-        host.creating = None;
-        Ok(None)
-    })
 }
 #[tauri::command]
 pub(crate) async fn agent_control_creation_profile(

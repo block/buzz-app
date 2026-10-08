@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentControl } from "../../features/agents/control";
@@ -55,116 +55,8 @@ function codexFixture() {
   return fixture;
 }
 
-it("matches native wss recovery to the https form destination and resumes the same identity", async () => {
-  const fixture = codexFixture();
-  const recovery = {
-    requestId: "pending-request",
-    agentId: "recovered-agent",
-    pubkey: "cd".repeat(32),
-    destination: "wss://relay.example.test",
-    owner: "de".repeat(32),
-  };
-  fixture.host.createRecovery = vi.fn(async () => recovery);
-  const resume = vi.fn(async (_requestId, edit) => {
-    fixture.data.agents.push({
-      ...structuredClone(fixture.agent),
-      id: recovery.agentId,
-      pubkey: recovery.pubkey,
-      name: edit.name,
-      relayUrl: recovery.destination,
-      enabled: false,
-      status: "stopped",
-      runningRevision: null,
-      profilePending: false,
-    });
-    return structuredClone(fixture.data);
-  });
-  fixture.host.resumeCreate = resume;
-  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  const onClose = vi.fn();
-  render(
-    <AgentCreateDialog
-      control={control}
-      state={control.snapshot()}
-      destination="https://relay.example.test"
-      owner={recovery.owner}
-      source={fixture.agent}
-      onClose={onClose}
-    />,
-  );
-  const user = userEvent.setup();
-
-  expect(
-    await screen.findByText(/previous agent creation is ready to resume/i),
-  ).toBeVisible();
-  const submit = screen.getByRole("button", { name: "Create agent" });
-  expect(submit).toBeEnabled();
-  await user.click(submit);
-  await waitFor(() => expect(resume).toHaveBeenCalledOnce());
-  expect(resume).toHaveBeenCalledWith(
-    recovery.requestId,
-    expect.objectContaining({
-      name: "Fixture agent copy",
-      harness: expect.objectContaining({ integration: "codex" }),
-    }),
-    "[]",
-  );
-  control.dispose();
-});
-
-it("discards an inaccessible pending creation before enabling a fresh Create", async () => {
-  const fixture = codexFixture();
-  const recovery = {
-    requestId: "other-request",
-    agentId: "other-agent",
-    pubkey: "cd".repeat(32),
-    destination: "wss://other.example.test",
-    owner: "ab".repeat(32),
-  };
-  fixture.host.createRecovery = vi.fn(async () => recovery);
-  const discard = vi.fn(async () => {});
-  fixture.host.discardCreate = discard;
-  fixture.host.prepareCreate = vi.fn(async () => ({
-    id: "unused",
-    pubkey: "ef".repeat(32),
-  }));
-  fixture.host.commitCreate = vi.fn(async () => structuredClone(fixture.data));
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  render(
-    <AgentCreateDialog
-      control={control}
-      state={control.snapshot()}
-      destination="https://relay.example.test"
-      owner={"de".repeat(32)}
-      source={fixture.agent}
-      onClose={() => {}}
-    />,
-  );
-  const user = userEvent.setup();
-
-  expect(
-    await screen.findByText(/another community or owner must be discarded/i),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
-  await user.click(
-    screen.getByRole("button", { name: "Discard pending creation" }),
-  );
-  await waitFor(() => expect(discard).toHaveBeenCalledWith(recovery.requestId));
-  await waitFor(() =>
-    expect(
-      screen.queryByText(/another community or owner must be discarded/i),
-    ).not.toBeInTheDocument(),
-  );
-  expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled();
-  control.dispose();
-});
-
 it("creates Codex directly without an inference validation phase", async () => {
   const fixture = codexFixture();
-  fixture.host.createRecovery = vi.fn(async () => null);
   fixture.host.prepareCreate = vi.fn(async () => ({
     id: "created",
     pubkey: "ef".repeat(32),

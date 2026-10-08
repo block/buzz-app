@@ -581,66 +581,6 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
 }
 
 #[test]
-fn fresh_controller_finishes_exact_journaled_identity_and_retires_recovery() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("config");
-    let owner: Vec<String> = serde_json::from_str(&crate::secret::test_attestation(PUB)).unwrap();
-    let prepared = crate::NewAgent::prepare("wss://relay.example", &owner[1]).unwrap();
-    let saved = agent(dir.path());
-    let edit = AgentEdit {
-        name: saved.name,
-        picture: None,
-        system_prompt: saved.system_prompt,
-        session_policy: Some(None),
-        workspace: saved.workspace,
-        harness: saved.harness,
-        environment: BTreeMap::new(),
-    };
-    let auth = crate::secret::test_attestation(prepared.key.pubkey());
-    let pending = crate::PendingCreateRecovery {
-        request_id: "123e4567-e89b-12d3-a456-426614174000".into(),
-        agent_id: prepared.id.clone(),
-        pubkey: prepared.key.pubkey().into(),
-        destination: "wss://relay.example".into(),
-        owner: owner[1].clone(),
-        commitment: "ab".repeat(32),
-    };
-    let mut controller = Controller::new(
-        Store::open(root.clone()).unwrap(),
-        Arc::new(Memory),
-        Err("No fixture runtime".into()),
-        dir.path().join("ownership"),
-    );
-    controller.stage_create_recovery(pending.clone()).unwrap();
-    drop(controller);
-
-    let mut reopened = Controller::new(
-        Store::open(root.clone()).unwrap(),
-        Arc::new(Memory),
-        Err("No fixture runtime".into()),
-        dir.path().join("ownership"),
-    );
-    assert_eq!(
-        reopened.pending_create_recovery().unwrap(),
-        Some(pending.clone())
-    );
-    let recovered = crate::NewAgent::recover(
-        &pending.destination,
-        &pending.owner,
-        &pending.agent_id,
-        prepared.key,
-    )
-    .unwrap();
-    reopened
-        .finish_create_recovery(&recovered, edit, &auth, &pending)
-        .unwrap();
-    drop(reopened);
-
-    let store = Store::open(root).unwrap();
-    assert!(store.pending_create().unwrap().is_none());
-    assert_eq!(store.agents().unwrap()[0].id, pending.agent_id);
-}
-#[test]
 #[cfg(unix)]
 fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
     let dir = tempfile::tempdir().unwrap();

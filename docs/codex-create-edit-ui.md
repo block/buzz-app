@@ -29,22 +29,21 @@ Duplicate retains Codex integration, mode, model and effort while omitting ident
 credentials and write-only environment values. Codex remains configured per agent;
 device-wide defaults are unchanged.
 
-Interrupted Create can resume with original input and fresh owner authorization,
-or be explicitly discarded. The UI stores no key, authorization payload or
-plaintext settings. See [persistence and execution](codex-validation-execution.md).
+Create uses the ordinary flow shared by every harness. See
+[persistence and execution](codex-validation-execution.md).
 
 ## Automated coverage
 
 - Control and component tests cover Default/Advanced Create and Save without a
-  validation service, ordinary pending states, cancellation before commit, retained
-  drafts and identity continuity.
-- Native invoke tests cover Create with unavailable tools, a failed durable write,
-  fresh-host recovery, changed-input/forged-authorization rejection, one durable
-  identity, Advanced Save, stale revisions and integration-marker preservation.
+  validation service, ordinary pending states, retained drafts and identity
+  continuity.
+- Native invoke tests cover Create with unavailable tools, one durable identity,
+  credential I/O outside the agent operation queue, Advanced Save, stale
+  revisions and integration-marker preservation.
 - The browser agent-control journey uses keyboard selection for the native
   harness, model and effort, creates one fixture identity, then edits it. The
   removed validation cancellation step belongs to the removed validation service;
-  ordinary create cancellation and lookup cancellation retain lower-layer tests.
+  lookup cancellation retains lower-layer tests.
 
 These use synthetic credentials/host boundaries and controlled executables.
 They do not prove a live account, OS credential storage, runtime restart or relay
@@ -66,5 +65,5 @@ configuration.
 5. With an existing managed adapter saved, install a different global adapter.
    Verify the existing agent continues to use its saved path; new selection uses
    global discovery. Removing the saved adapter should fail Start without fallback.
-6. Duplicate and, where available, resume/discard an interrupted Create. Verify
-   duplicate settings and recovery identity continuity.
+6. Duplicate a Codex agent. Verify the duplicate keeps its settings and gets a
+   new identity.

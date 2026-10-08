@@ -151,6 +151,7 @@ pub(crate) async fn claude_auth_status<R: tauri::Runtime>(
 ) -> Option<bool> {
     use tauri::Manager as _;
     let app_data = app.path().app_data_dir().ok()?;
+    prepare_tools_path().await;
     let setup = claude_setup(&app_data);
     let path = claude_auth_path(&setup)?;
     probe_claude_auth(setup.cli.as_ref()?, &path).await
@@ -660,6 +661,7 @@ impl AgentHost {
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
     ) -> Self {
+        buzz_agent_controller::warm_tools_path();
         Self::initialize_with(move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
@@ -857,6 +859,7 @@ impl AgentHost {
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::GooseModelContext, String> {
+        prepare_tools_path().await;
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
@@ -873,6 +876,7 @@ impl AgentHost {
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::pi::PiContext, String> {
+        prepare_tools_path().await;
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
@@ -894,6 +898,11 @@ impl AgentHost {
         }
         Ok(())
     }
+}
+async fn prepare_tools_path() {
+    // Shell startup may take seconds; neither the controller nor FIFO admission
+    // is held while this shared, bounded attempt runs.
+    let _ = tauri::async_runtime::spawn_blocking(buzz_agent_controller::prepare_tools_path).await;
 }
 async fn run<T: Send + 'static>(
     state: AgentHost,
@@ -940,6 +949,7 @@ pub(crate) async fn agent_control_read_log(
 pub(crate) async fn agent_control_snapshot(
     state: tauri::State<'_, AgentHost>,
 ) -> Result<Snapshot, String> {
+    prepare_tools_path().await;
     run(state.inner().clone(), |host| host.snapshot()).await
 }
 #[tauri::command]
@@ -1217,11 +1227,20 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        let pi = host.controller.pi_launch_context(&id, request.2);
-        Ok((request, ticket, host.credentials.clone(), pi))
+        Ok((request, ticket, host.credentials.clone()))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials, pi) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    prepare_tools_path().await;
+    let target = id.clone();
+    let pi = run(owner.clone(), move |host| {
+        host.starts
+            .get(&target)
+            .filter(|pending| pending.ticket == ticket)
+            .ok_or(START_CANCELLED)?;
+        Ok(host.controller.pi_launch_context(&target, revision))
+    })
+    .await?;
     let probed_pi = matches!(&pi, Ok(Some(_)));
     let preflight = match pi {
         Ok(Some(pi)) => crate::pi_models::verify(pi)

@@ -5,16 +5,16 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub(crate) fn tools_path() -> Result<OsString> {
+pub fn tools_path() -> Result<OsString> {
     #[cfg(windows)]
     return Ok(std::env::var_os("PATH").unwrap_or_default());
     #[cfg(unix)]
     {
-        // Desktop discovery asks for several tools per refresh. Run startup files
-        // once per host process, not once per candidate executable.
-        static LOGIN_PATH: std::sync::OnceLock<Option<OsString>> = std::sync::OnceLock::new();
-        let shell =
-            LOGIN_PATH.get_or_init(|| login_path(&shell(), std::time::Duration::from_secs(2)));
+        let shell = login_cache()
+            .0
+            .lock()
+            .ok()
+            .and_then(|state| state.path.clone());
         let inherited = std::env::var_os("PATH");
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let local = home
@@ -26,10 +26,71 @@ pub(crate) fn tools_path() -> Result<OsString> {
                 .chain(shell.iter().flat_map(std::env::split_paths))
                 .chain(inherited.iter().flat_map(std::env::split_paths))
                 .chain(
-                    ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from),
+                    [
+                        "/opt/homebrew/bin",
+                        "/usr/local/bin",
+                        "/usr/bin",
+                        "/bin",
+                        "/usr/sbin",
+                        "/sbin",
+                    ]
+                    .map(PathBuf::from),
                 ),
         )
     }
+}
+
+/// Begin startup discovery without holding native agent-operation admission.
+pub fn warm_tools_path() {
+    #[cfg(unix)]
+    {
+        let (state, completed) = login_cache();
+        let Ok(mut state) = state.lock() else { return };
+        if state.path.is_some() || state.running {
+            return;
+        }
+        state.running = true;
+        if std::thread::Builder::new()
+            .name("agent-tool-path".into())
+            .spawn(move || {
+                let path = login_path(&shell(), std::time::Duration::from_secs(15));
+                if let Ok(mut state) = login_cache().0.lock() {
+                    state.path = path;
+                    state.running = false;
+                    completed.notify_all();
+                }
+            })
+            .is_err()
+        {
+            state.running = false;
+            completed.notify_all();
+        }
+    }
+}
+
+/// Explicit discovery/launch waits run outside native admission. Only successful
+/// results are cached; a later refresh can retry a failed attempt.
+pub fn prepare_tools_path() {
+    warm_tools_path();
+    #[cfg(unix)]
+    {
+        let (state, completed) = login_cache();
+        if let Ok(state) = state.lock() {
+            let _unused = completed.wait_while(state, |state| state.running);
+        }
+    }
+}
+#[cfg(unix)]
+#[derive(Default)]
+struct LoginCache {
+    path: Option<OsString>,
+    running: bool,
+}
+#[cfg(unix)]
+fn login_cache() -> &'static (std::sync::Mutex<LoginCache>, std::sync::Condvar) {
+    static CACHE: std::sync::OnceLock<(std::sync::Mutex<LoginCache>, std::sync::Condvar)> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
 }
 
 /// Keep caller-owned bundle/runtime entries first; never interpret an empty or
@@ -91,7 +152,7 @@ fn passwd_shell() -> Option<PathBuf> {
 #[cfg(unix)]
 fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<OsString> {
     use std::io::{Read, Seek, SeekFrom};
-    use std::os::unix::{ffi::OsStringExt, process::CommandExt};
+    use std::os::unix::ffi::OsStringExt;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
     // Rc files can emit banners or retain stdout in helpers. A bounded private
@@ -102,7 +163,7 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
     probe
         .args([
             "-ilc",
-            "printf '\\0BUZZ_TOOL_PATH\\0'; /usr/bin/printenv PATH; printf '\\0'",
+            "printf '\\0BUZZ_TOOL_PATH\\0'; command printenv PATH; printf '\\0'",
         ])
         .env_clear()
         .env("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
@@ -110,8 +171,7 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
         .current_dir("/")
         .stdin(Stdio::null())
         .stdout(output.try_clone().ok()?)
-        .stderr(Stdio::null())
-        .process_group(0);
+        .stderr(Stdio::null());
     for key in [
         "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR",
     ] {
@@ -125,7 +185,7 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
     {
         probe.current_dir(home);
     }
-    let mut child = probe.spawn().ok()?;
+    let mut child = crate::process::Process::spawn(&mut probe).ok()?;
     let deadline = Instant::now() + timeout;
     let success = loop {
         if output.metadata().map_or(true, |m| m.len() > 64 * 1024) {
@@ -138,13 +198,9 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
         }
     };
-    // Retire the shell's helper group on success as well as timeout.
-    // SAFETY: process_group(0) made the spawned child its group leader.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+    // Startup jobs may have their own job-control groups. Retire the entire
+    // owned session on success as well as timeout, using listener ownership.
+    child.kill().ok()?;
     if !success {
         return None;
     }
@@ -211,5 +267,209 @@ mod tests {
             );
         }
         assert!(login_path(&root.path().join("missing"), Duration::from_millis(100)).is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn login_probe_retires_real_shell_job_groups_on_success_and_timeout() {
+        use std::process::Command;
+        use std::time::Duration;
+        const FIXTURE: &str = "BUZZ_LOGIN_JOB_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let timeout = std::env::var("BUZZ_LOGIN_TIMEOUT").unwrap() == "yes";
+            let result = login_path(&shell(), Duration::from_millis(500));
+            let pid: i32 = std::fs::read_to_string(root.join("helper.pid"))
+                .expect("startup did not create the helper")
+                .trim()
+                .parse()
+                .unwrap();
+            let leader: i32 = std::fs::read_to_string(root.join("shell.pid"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let status = Command::new("/bin/ps")
+                .args(["-p", &pid.to_string(), "-o", "stat="])
+                .output()
+                .unwrap();
+            let live = status.status.success()
+                && !String::from_utf8_lossy(&status.stdout)
+                    .trim()
+                    .starts_with('Z');
+            let group = unsafe { libc::getpgid(pid) };
+            // Only our recorded fixture helper is retired on failure.
+            if live {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+            assert_eq!(result.is_none(), timeout, "unexpected probe result");
+            assert!(!live, "startup helper survived probe: pid={pid} pgid={group} shell={leader} timeout={timeout}");
+            return;
+        }
+        let mut failures = Vec::new();
+        for shell in ["/bin/bash", "/usr/bin/zsh"] {
+            if !std::path::Path::new(shell).is_file() {
+                continue; // zsh is not installed on every supported Unix host.
+            }
+            for timeout in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let startup = format!(
+                    "{}\n/bin/sleep 120 &\nprintf '%s\\n' $! > '{}/helper.pid'\nprintf '%s\\n' $$ > '{}/shell.pid'\n{}\n",
+                    if shell.ends_with("zsh") { "setopt MONITOR NO_HUP" } else { "set -m" },
+                    root.path().display(), root.path().display(),
+                    if timeout { "/bin/sleep 30" } else { "export PATH=/usr/bin:/bin" },
+                );
+                std::fs::write(
+                    root.path().join(if shell.ends_with("zsh") {
+                        ".zshrc"
+                    } else {
+                        ".bash_profile"
+                    }),
+                    startup,
+                )
+                .unwrap();
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "runtime::path::tests::login_probe_retires_real_shell_job_groups_on_success_and_timeout", "--nocapture"])
+                    .env(FIXTURE, root.path()).env("HOME", root.path()).env("ZDOTDIR", root.path())
+                    .env("SHELL", shell).env("BUZZ_LOGIN_TIMEOUT", if timeout { "yes" } else { "no" })
+                    .output().unwrap();
+                if !output.status.success() {
+                    failures.push(format!(
+                        "{shell} timeout={timeout}\n{}{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn failed_shell_discovery_can_be_retried() {
+        const FIXTURE: &str = "BUZZ_LOGIN_RETRY_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            prepare_tools_path();
+            assert!(!std::env::split_paths(&tools_path().unwrap())
+                .any(|p| p == root.join("recovered tools")));
+            crate::test_executable::write_executable(
+                &root.join("shell"),
+                format!(
+                    "#!/bin/sh\nprintf '\\0BUZZ_TOOL_PATH\\0{}:/usr/bin:/bin\\0'\n",
+                    root.join("recovered tools").display()
+                ),
+            );
+            prepare_tools_path();
+            assert!(
+                std::env::split_paths(&tools_path().unwrap())
+                    .any(|p| p == root.join("recovered tools")),
+                "failed PATH was cached permanently"
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        crate::test_executable::write_executable(&root.path().join("shell"), "#!/bin/sh\nexit 1\n");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::path::tests::failed_shell_discovery_can_be_retried",
+                "--nocapture",
+            ])
+            .env(FIXTURE, root.path())
+            .env("HOME", root.path())
+            .env("SHELL", root.path().join("shell"))
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    #[test]
+    #[cfg(unix)]
+    fn shell_discovery_accepts_startup_longer_than_two_seconds() {
+        const FIXTURE: &str = "BUZZ_LOGIN_SLOW_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            prepare_tools_path();
+            assert!(
+                std::env::split_paths(&tools_path().unwrap()).any(|p| p == root.join("slow tools")),
+                "valid slow shell PATH was lost"
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        crate::test_executable::write_executable(
+            &root.path().join("shell"),
+            format!(
+                "#!/bin/sh\n/bin/sleep 3\nprintf '\\0BUZZ_TOOL_PATH\\0{}:/usr/bin:/bin\\0'\n",
+                root.path().join("slow tools").display()
+            ),
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::path::tests::shell_discovery_accepts_startup_longer_than_two_seconds",
+                "--nocapture",
+            ])
+            .env(FIXTURE, root.path())
+            .env("HOME", root.path())
+            .env("SHELL", root.path().join("shell"))
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fallback_path_includes_discovery_directories() {
+        let paths: Vec<_> = std::env::split_paths(&tools_path().unwrap()).collect();
+        for dir in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            assert!(
+                paths.contains(&PathBuf::from(dir)),
+                "fallback omitted {dir}"
+            );
+        }
+    }
+    #[test]
+    #[cfg(unix)]
+    fn login_probe_resolves_printenv_from_shell_path() {
+        let root = tempfile::tempdir().unwrap();
+        crate::test_executable::write_executable(
+            &root.path().join("printenv"),
+            "#!/bin/sh\nprintf '/shell-resolved-printenv/bin\\n'\n",
+        );
+        let shell = root.path().join("shell");
+        crate::test_executable::write_executable(
+            &shell,
+            format!(
+                "#!/bin/sh\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n",
+                root.path().display()
+            ),
+        );
+        assert_eq!(
+            login_path(&shell, std::time::Duration::from_secs(1)).as_deref(),
+            Some(OsStr::new("/shell-resolved-printenv/bin"))
+        );
     }
 }

@@ -429,15 +429,20 @@ pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
 }
 
 fn installed_names(names: &[String]) -> Option<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    dirs.extend(std::env::split_paths(&tools_path().ok()?));
-    dirs.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
+    let dirs: Vec<_> = std::env::split_paths(&tools_path().ok()?).collect();
+    // Preserve Windows discovery; Unix discovery and launch share one PATH.
+    #[cfg(windows)]
+    let dirs = {
+        let mut dirs = dirs;
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.insert(0, PathBuf::from(home).join(".local/bin"));
+        }
+        dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+        dirs
+    };
     dirs.into_iter()
         .filter(|p| p.is_absolute())
         .flat_map(|p| names.iter().map(move |name| p.join(name)))

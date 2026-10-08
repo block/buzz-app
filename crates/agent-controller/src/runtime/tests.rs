@@ -1158,15 +1158,44 @@ fn launch_path_puts_bundled_tools_before_platform_tools() {
         .unwrap();
     let env: BTreeMap<_, _> = command.get_envs().collect();
     let path = env[std::ffi::OsStr::new("PATH")].unwrap();
-    let mut expected = vec![tools.path().to_owned()];
+    let paths = std::env::split_paths(path).collect::<Vec<_>>();
+    assert_eq!(paths.first(), Some(&tools.path().to_owned()));
     if cfg!(windows) {
-        // Native PATH is where Git Bash and user tools live; system keys come along.
+        let mut expected = vec![tools.path().to_owned()];
         expected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         assert!(env.contains_key(std::ffi::OsStr::new("SystemRoot")));
+        assert_eq!(paths, expected);
     } else {
-        expected.extend(std::env::split_paths(&tools_path().unwrap()));
+        for dir in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            assert!(paths.contains(&PathBuf::from(dir)), "launch omitted {dir}");
+        }
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|h| h.is_absolute())
+        {
+            assert!(paths.contains(&home.join(".local/bin")));
+        }
+        for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|p| p.is_absolute())
+        {
+            assert!(
+                paths.contains(&dir),
+                "launch omitted inherited directory {dir:?}"
+            );
+        }
+        assert!(paths.iter().all(|p| p.is_absolute()));
+        assert_eq!(
+            paths.iter().collect::<std::collections::HashSet<_>>().len(),
+            paths.len()
+        );
     }
-    assert_eq!(std::env::split_paths(path).collect::<Vec<_>>(), expected);
 }
 
 #[test]
@@ -1276,6 +1305,7 @@ fn external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides()
         return;
     };
     let root = PathBuf::from(root);
+    crate::prepare_tools_path();
     let runtime = bundle(&root);
     let bin = root.join("tools");
     fs::create_dir_all(&bin).unwrap();
@@ -3499,6 +3529,7 @@ fn launch_discovers_login_shell_tools_without_inheriting_credentials() {
         return;
     };
     let root = PathBuf::from(root);
+    crate::prepare_tools_path();
     let runtime = bundle(&root);
     let mut saved = agent(&root);
     // An explicit tool path adds tools without displacing the bundled runtime.

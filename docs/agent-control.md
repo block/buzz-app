@@ -246,13 +246,15 @@ flag exclusions and the supported deployment boundary.
 ## Installed machine tools
 
 Local agents retain access to installed tools without inheriting the desktop's
-identity or provider-credential environment. On Unix the controller reads the
-user's interactive login-shell PATH once per app process, using a cleared
-environment and a two-second bounded probe. It merges that PATH with inherited
-machine tool directories, `~/.local/bin`, and a system fallback. Restart the app
-after changing shell startup PATH configuration. An unavailable or failed shell
-probe falls back to the inherited and system directories. Windows retains its
-native tool PATH.
+identity or provider-credential environment. On Unix the controller warms the
+user's interactive login-shell PATH in the background with a cleared environment
+and a fifteen-second bound. Discovery and Start wait outside the native operation
+queue; Stop remains available during shell startup. Only successful probes are
+cached for the app process; **Check again** can retry a failed probe. Restart the
+app after changing an already-discovered shell PATH. An unavailable or failed
+probe falls back to inherited machine directories, `~/.local/bin`, Homebrew, and
+system directories. Startup helpers are retired with the probe's owned session,
+including separate job-control groups. Windows retains its native tool PATH.
 
 Bundled Buzz tools and harness-owned pinned runtimes remain first. Explicit
 agent PATH directories are also included, but cannot displace those tools.

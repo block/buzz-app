@@ -47,6 +47,8 @@ pub struct Candidate {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    /// The imported prompt drops a team section old Buzz baked into it.
+    pub strips_team_instructions: bool,
 }
 /// Reviewed text only. Never project legacy environment, commands, arguments,
 /// credentials, paths, owner authorization or retained source records for cloning.
@@ -98,7 +100,7 @@ impl Imports {
         let definition = source_definition(&data, record)?;
         Ok(CloneSettings {
             name: string(record, "name").into(),
-            system_prompt: string(definition, "system_prompt").into(),
+            system_prompt: imported_prompt(string(definition, "system_prompt")).into(),
         })
     }
     pub fn discard(&mut self) {
@@ -141,6 +143,10 @@ impl Imports {
                 pubkey: key.into(),
                 relay_url: relay.clone(),
                 name: string(record, "name").into(),
+                strips_team_instructions: source_definition(&data, record).is_ok_and(|d| {
+                    imported_prompt(string(d, "system_prompt")).len()
+                        != string(d, "system_prompt").len()
+                }),
             });
         }
         self.sequence = self
@@ -359,6 +365,16 @@ fn source_definition<'a>(data: &'a Source, record: &'a Value) -> Result<&'a Valu
             .ok_or("Linked agent definition is missing; source left unchanged")?
     })
 }
+/// Old Buzz once baked team instructions into stored prompts behind this exact
+/// producer boundary. The runtime now adds the team section itself, so a copied
+/// suffix would reach the agent twice. Byte-exact: a bare `---` or a heading
+/// elsewhere is the author's own content. Applied to the imported copy only.
+const BAKED_TEAM_DELIMITER: &str = "\n\n---\n# Team Instructions\n";
+fn imported_prompt(prompt: &str) -> &str {
+    prompt
+        .rfind(BAKED_TEAM_DELIMITER)
+        .map_or(prompt, |at| &prompt[..at])
+}
 fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -> Result<Agent> {
     let definition = source_definition(data, record)?;
     let fallback = |key| {
@@ -426,7 +442,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         pubkey,
         relay_url,
         name: string(record, "name").into(),
-        system_prompt: string(definition, "system_prompt").into(),
+        system_prompt: imported_prompt(string(definition, "system_prompt")).into(),
         session_policy: None,
         session_policy_inherit: false,
         workspace: workspace.display().to_string(),

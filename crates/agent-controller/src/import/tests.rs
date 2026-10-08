@@ -1098,3 +1098,62 @@ fn import_excludes_overlapping_destinations_before_credentials_through_commit() 
     assert_eq!(fs::read(dest.path().join("agents.json")).unwrap(), before);
     assert_eq!(store.agents().unwrap().len(), 1);
 }
+#[test]
+fn imported_prompt_strips_only_the_last_exact_baked_team_suffix() {
+    let baked = "\n\n---\n# Team Instructions\n";
+    assert_eq!(imported_prompt(&format!("role{baked}team")), "role");
+    assert_eq!(
+        imported_prompt(&format!("role{baked}old{baked}team")),
+        format!("role{baked}old")
+    );
+    assert_eq!(imported_prompt(&format!("{baked}team")), "");
+    for own in [
+        "no delimiter at all",
+        "role\n\n---\nauthor rule",
+        "role\n---\n# Team Instructions\nauthor heading",
+        "# Team Instructions\nauthor heading",
+    ] {
+        assert_eq!(imported_prompt(own), own);
+    }
+}
+#[test]
+fn import_strips_baked_team_suffix_from_the_copy_and_flags_it_in_preview() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/managed-agents.json");
+    let mut records: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    records[0]["system_prompt"] = json!("role\n\n---\n# Team Instructions\nbaked team");
+    fs::write(&path, serde_json::to_vec(&records).unwrap()).unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut imports = Imports::default();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    assert!(preview.candidates[0].strips_team_instructions);
+    assert!(!serde_json::to_string(&preview)
+        .unwrap()
+        .contains("baked team"));
+    let clone = Imports::clone_settings(LegacySource::Installed, old.path().into(), PUB).unwrap();
+    assert_eq!(clone.system_prompt, "role");
+    let mut store = Store::open(dest.path().into()).unwrap();
+    imports
+        .commit(
+            &preview.token,
+            &[preview.candidates[0].id.clone()],
+            &mut store,
+            &Memory::default(),
+        )
+        .unwrap();
+    assert_eq!(store.agents().unwrap()[0].system_prompt, "role");
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+#[test]
+fn preview_does_not_flag_a_prompt_without_the_baked_suffix() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let preview = team_preview(&mut Imports::default(), old.path(), dest.path());
+    assert!(!preview.candidates[0].strips_team_instructions);
+}

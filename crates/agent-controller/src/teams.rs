@@ -43,6 +43,8 @@ pub struct Definition {
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub max_turn_duration_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 fn channel_policy() -> SessionPolicy {
     SessionPolicy::Channel
@@ -196,6 +198,9 @@ impl TeamSnapshot {
             {
                 return Err("Invalid team member snapshot".into());
             }
+            if let Some(effort) = &d.effort {
+                crate::config::validate_effort(effort)?;
+            }
             crate::import::team_text(&json!(d.system_prompt))?;
             for picture in [&member.profile.avatar_data_url, &member.profile.avatar_url]
                 .into_iter()
@@ -339,15 +344,6 @@ fn snapshot_member(
     let effective = crate::agent_defaults::effective(agent, defaults);
     let runtime = crate::agent_defaults::harness_kind(&effective.harness.command)
         .ok_or("Team member harness is not portable")?;
-    if crate::agent_defaults::effort(&effective).is_some_and(|effort| !effort.is_empty())
-        || (matches!(runtime, "pi" | "goose")
-            && effective
-                .environment
-                .get("BUZZ_ACP_EFFORT_LEVEL")
-                .is_some_and(|effort| !effort.is_empty()))
-    {
-        return Err("Team member effort is not portable".into());
-    }
     if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {
         return Err("Team member environment-selected model or provider is not portable".into());
     }
@@ -371,6 +367,7 @@ fn snapshot_member(
             parallelism: workers,
             idle_timeout_seconds: record["idle_timeout_seconds"].as_u64(),
             max_turn_duration_seconds: record["max_turn_duration_seconds"].as_u64(),
+            effort: crate::agent_defaults::launch_effort(agent).map(str::to_owned),
         },
         profile: Profile {
             display_name: agent.name.clone(),

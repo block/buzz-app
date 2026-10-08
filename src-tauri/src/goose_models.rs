@@ -459,6 +459,7 @@ mod tests {
                 None,
                 None,
                 AgentEdit {
+                    effort: None,
                     name: "Probe".into(),
                     picture: None,
                     system_prompt: String::new(),

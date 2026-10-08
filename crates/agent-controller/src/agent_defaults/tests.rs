@@ -89,6 +89,33 @@ fn blank_fields_inherit_for_the_same_harness_and_agent_values_win() {
 }
 
 #[test]
+fn imported_portable_effort_is_saved_and_wins_over_older_sources() {
+    let mut agent = fixture();
+    agent.imported = serde_json::json!({"record":{"effort_level":"low"}});
+    let edit = |effort: &str| crate::config::AgentEdit {
+        effort: Some(effort.into()),
+        name: agent.name.clone(),
+        picture: None,
+        system_prompt: agent.system_prompt.clone(),
+        session_policy: None,
+        workspace: agent.workspace.clone(),
+        harness: agent.harness.clone(),
+        environment: BTreeMap::new(),
+    };
+    for invalid in ["", "high\n"] {
+        assert!(agent.clone().apply(edit(invalid)).is_err());
+    }
+    let next = edit("high");
+    agent.apply(next).unwrap();
+    let out = effective(&agent, &defaults("buzz-agent"));
+    assert_eq!(effort(&out), Some("high"));
+    assert_eq!(
+        out.view(&defaults("buzz-agent")).launch_effort.as_deref(),
+        Some("high")
+    );
+}
+
+#[test]
 fn selectors_do_not_cross_harnesses_but_environment_does() {
     let mut agent = fixture();
     agent.harness.command = "/opt/tools/goose".into();
@@ -409,7 +436,6 @@ fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_reco
         serde_json::json!({"teamInstructions":"legacy team rules"}),
         serde_json::json!({"record":{"idle_timeout_seconds":30}}),
         serde_json::json!({"record":{"max_turn_duration_seconds":60}}),
-        serde_json::json!({"record":{"effort_level":"high"}}),
     ] {
         agent.imported = imported;
         let view = serde_json::to_value(agent.view(&AgentDefaults::default())).unwrap();
@@ -424,7 +450,7 @@ fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_reco
         agent
             .view(&defaults("buzz-agent"))
             .snapshot_export_limitations,
-        vec!["effort level"]
+        Vec::<&str>::new()
     );
 }
 

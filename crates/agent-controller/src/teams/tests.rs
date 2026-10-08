@@ -34,6 +34,7 @@ fn member() -> MemberSnapshot {
 }
 fn edit(root: &std::path::Path) -> AgentEdit {
     AgentEdit {
+        effort: None,
         name: "Fixture".into(),
         system_prompt: "INDIVIDUAL_MARKER".into(),
         picture: None,
@@ -60,11 +61,15 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
     snapshot.profile.about = Some("Fixture profile".into());
     snapshot.definition.respond_to = Some("allowlist".into());
     snapshot.definition.respond_to_allowlist = vec!["ab".repeat(32)];
+    snapshot.definition.effort = Some("high".into());
     for (request, prepared) in [("request-one", &first), ("request-two", &second)] {
         control
             .create_bundle_member(
                 prepared,
-                edit(root.path()),
+                AgentEdit {
+                    effort: snapshot.definition.effort.clone(),
+                    ..edit(root.path())
+                },
                 &crate::secret::test_attestation(prepared.key.pubkey()),
                 request,
                 &BundleMember {
@@ -100,6 +105,10 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         )
         .unwrap();
     assert!(exported.members[0].definition.source_is_builtin);
+    assert_eq!(
+        exported.members[0].definition.effort.as_deref(),
+        Some("high")
+    );
     let target = control.creation_profile(&first.id).unwrap();
     let initial = target.event(&first.key, &[]).unwrap();
     assert_eq!(initial["kind"], 0);
@@ -942,16 +951,16 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
         .unwrap_err()
         .contains("harness"));
     agent.harness.command = "buzz-agent".into();
+    let effort = |agent: &Agent, defaults: &crate::agent_defaults::AgentDefaults| {
+        snapshot_member(agent, defaults).unwrap().definition.effort
+    };
+    assert_eq!(effort(&agent, &defaults), None);
     agent.imported["record"]["effort_level"] = json!("high");
-    assert!(snapshot_member(&agent, &defaults)
-        .unwrap_err()
-        .contains("effort"));
+    assert_eq!(effort(&agent, &defaults).as_deref(), Some("high"));
     agent.imported["record"]["effort_level"] = serde_json::Value::Null;
     let mut inherited = defaults.clone();
-    inherited.effort = "high".into();
-    assert!(snapshot_member(&agent, &inherited)
-        .unwrap_err()
-        .contains("effort"));
+    inherited.effort = "medium".into();
+    assert_eq!(effort(&agent, &inherited).as_deref(), Some("medium"));
     agent
         .environment
         .insert("BUZZ_AGENT_MODEL".into(), "synthetic-secret-model".into());
@@ -969,7 +978,7 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
 }
 
 #[test]
-fn native_export_rejects_effective_pi_goose_effort_without_leaking_values() {
+fn native_export_carries_effective_pi_goose_effort_overrides() {
     let mut agent = crate::store::tests::fixture();
     let mut defaults = crate::agent_defaults::AgentDefaults::default();
     for (harness, command) in [("pi", "buzz-pi-acp"), ("goose", "goose")] {
@@ -985,16 +994,23 @@ fn native_export_rejects_effective_pi_goose_effort_without_leaking_values() {
             "BUZZ_ACP_EFFORT_LEVEL".into(),
             "private-agent-effort".into(),
         );
-        let error = snapshot_member(&agent, &defaults).unwrap_err();
-        assert!(error.contains("effort") && !error.contains("private-agent-effort"));
+        let effort = |defaults: &crate::agent_defaults::AgentDefaults, agent: &Agent| {
+            snapshot_member(agent, defaults).unwrap().definition.effort
+        };
+        assert_eq!(
+            effort(&defaults, &agent).as_deref(),
+            Some("private-agent-effort")
+        );
 
         agent.environment.clear();
         defaults.environment.insert(
             "BUZZ_ACP_EFFORT_LEVEL".into(),
             "private-inherited-effort".into(),
         );
-        let error = snapshot_member(&agent, &defaults).unwrap_err();
-        assert!(error.contains("effort") && !error.contains("private-inherited-effort"));
+        assert_eq!(
+            effort(&defaults, &agent).as_deref(),
+            Some("private-inherited-effort")
+        );
     }
 }
 

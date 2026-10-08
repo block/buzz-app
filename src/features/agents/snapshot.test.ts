@@ -951,12 +951,36 @@ it("fails closed when the host cannot attest portable native settings", () => {
   expect(buildAgentSnapshot(source).definition.name).toBe(source.name);
 });
 
-it("names inherited effort without exposing unexpected native verdict values", () => {
+it.each(["json", "png"] as const)(
+  "carries the effective effort level through a %s snapshot",
+  (format) => {
+    const source = portableAgent();
+    source.launchEffort = "high";
+    const snapshot = buildAgentSnapshot(source);
+    expect(snapshot.definition.effort).toBe("high");
+    const wire = parseAgentSnapshot(encodeAgentSnapshot(snapshot, format));
+    expect(snapshotImportEdit(wire, destination).effort).toBe("high");
+    source.launchEffort = null;
+    expect(buildAgentSnapshot(source).definition).not.toHaveProperty("effort");
+  },
+);
+
+it("imports a snapshot without effort unchanged and refuses an invalid one", () => {
+  const old = parse({
+    ...buildAgentSnapshot(portableAgent()),
+    definition: { name: "Portable", effort: null },
+    profile: { displayName: "Portable" },
+  });
+  expect(old.definition).not.toHaveProperty("effort");
+  expect(snapshotImportEdit(old, destination)).not.toHaveProperty("effort");
+  for (const effort of ["", "x".repeat(65), "high\u0007"])
+    expect(() =>
+      parse({ ...old, definition: { name: "Portable", effort } }),
+    ).toThrow();
+});
+
+it("names native export limits without exposing unexpected native verdict values", () => {
   const source = portableAgent();
-  source.snapshotExportLimitations = ["effort level"];
-  expect(() => buildAgentSnapshot(source)).toThrow(
-    /effort level.*Agent defaults/,
-  );
   source.snapshotExportLimitations = ["team instructions", "idle timeout"];
   expect(() => buildAgentSnapshot(source)).toThrow(
     /team instructions, idle timeout.*Remove the listed settings/,

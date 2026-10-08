@@ -199,11 +199,26 @@ pub(crate) fn effective(agent: &Agent, defaults: &AgentDefaults) -> Agent {
     out
 }
 
-/// The agent's imported effort wins over an inherited default.
+/// The agent's own effort (from a portable import, else an old Buzz import)
+/// wins over an inherited default.
 pub(crate) fn effort(agent: &Agent) -> Option<&str> {
-    agent.imported["record"]["effort_level"]
-        .as_str()
+    agent
+        .extra
+        .get(crate::config::OWN_EFFORT)
+        .and_then(Value::as_str)
+        .or_else(|| agent.imported["record"]["effort_level"].as_str())
         .or_else(|| agent.extra.get(INHERITED_EFFORT)?.as_str())
+}
+
+/// Effort the next start applies on an effective clone: Pi and Goose
+/// behavior overrides win, as at launch.
+pub(crate) fn launch_effort(agent: &Agent) -> Option<&str> {
+    matches!(harness_kind(&agent.harness.command), Some("pi" | "goose"))
+        .then(|| agent.environment.get("BUZZ_ACP_EFFORT_LEVEL"))
+        .flatten()
+        .map(String::as_str)
+        .filter(|effort| !effort.is_empty())
+        .or_else(|| effort(agent).filter(|effort| !effort.is_empty()))
 }
 
 #[cfg(test)]

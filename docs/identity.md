@@ -120,7 +120,10 @@ so another build never acts on it. If the marker can't be written nothing has
 changed; if agents can't be stopped, Buzz exits natively, and the next launch
 finishes the sign-out.
 
-A native exit runs the same best-effort teardown as Quit, then shows a native
+Once the marker is written, and before any native exit, the native signer is
+closed for the rest of the process: the cached key is dropped and every key
+operation (signing, agent authorization, export, restore, import or create)
+refuses, including jobs queued before it closed. A native exit runs the same best-effort teardown as Quit, then shows a native
 alert and exits however that went; the dialog never offers a retry or Cancel
 once this instance's locks or agents are in an unknown state. Agents don't
 outlive Buzz: each runs under a supervisor that stops it when Buzz's socket

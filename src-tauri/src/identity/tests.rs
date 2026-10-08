@@ -444,3 +444,38 @@ fn remove_key_deletes_then_confirms_absence() {
     assert!(remove_key(&store).is_err());
     assert!(store.saved.lock().unwrap().is_some());
 }
+
+#[tokio::test]
+async fn closing_refuses_every_key_operation_including_jobs_queued_before_it() {
+    let host = IdentityHost::fixture();
+    let owner = host.viewer().await.unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let template = || {
+        serde_json::from_value(serde_json::json!({
+            "kind": 1, "content": "", "tags": [], "created_at": 0
+        }))
+        .unwrap()
+    };
+    // Queued while another operation holds the identity, run after it closes.
+    let queued = {
+        let mut running = host.0.lock().unwrap();
+        let queued = tokio::spawn({
+            let host = host.clone();
+            async move { host.sign(template()).await }
+        });
+        running.close();
+        queued
+    };
+    assert!(queued.await.unwrap().is_err());
+    host.close();
+    assert!(host.sign(template()).await.is_err());
+    assert!(host.viewer().await.is_err());
+    assert!(host.authorize_agent(owner, agent).await.is_err());
+    assert!(host.with_key(|_, _| Ok(())).await.is_err());
+    assert!(with_identity(host.clone(), |identity| identity.export())
+        .await
+        .is_err());
+    assert!(with_identity(host, |identity| identity.save(None))
+        .await
+        .is_err());
+}

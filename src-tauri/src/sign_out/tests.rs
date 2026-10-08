@@ -490,18 +490,19 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
         assert_eq!(child.go(), "child: signing out");
         child.finish();
     })));
-    let exited = Cell::new(false);
+    let (closed, exited) = (Cell::new(false), Cell::new(false));
     let result = run(attempt(
         &instance,
         &paths,
         PLAIN,
+        || closed.set(true),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
             exited.set(true);
             async { Err(refuse("exited")) }
         },
     ));
-    assert!(exited.get());
+    assert!(closed.get() && exited.get());
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
@@ -844,11 +845,18 @@ fn preparation_commits_the_marker_before_stopping_agents() {
     let (_dir, paths) = fixture();
     let marker = paths.marker.clone();
     let stopped = Cell::new(false);
-    run(prepare(&paths, choices(true), || {
-        assert!(marker.exists());
-        stopped.set(true);
-        async { Ok(()) }
-    }))
+    let closed = Cell::new(false);
+    run(prepare(
+        &paths,
+        choices(true),
+        || closed.set(true),
+        || {
+            assert!(marker.exists());
+            assert!(closed.get(), "signing closes before agents stop");
+            stopped.set(true);
+            async { Ok(()) }
+        },
+    ))
     .unwrap();
     assert!(stopped.get());
 }
@@ -860,6 +868,7 @@ fn a_marker_write_failure_stops_nothing() {
     let failure = run(prepare(
         &paths,
         choices(true),
+        || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
     .unwrap_err();
@@ -872,18 +881,19 @@ fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let exited = Cell::new(false);
+    let (closed, exited) = (Cell::new(false), Cell::new(false));
     let result = run(attempt(
         &instance,
         &paths,
         choices(false),
+        || closed.set(true),
         || async { Err("controller stuck".to_owned()) },
         || {
             exited.set(true);
             async { Err(refuse("exited")) }
         },
     ));
-    assert!(exited.get());
+    assert!(closed.get() && exited.get());
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
 }
@@ -917,7 +927,7 @@ fn a_pending_erase_waits_for_every_agent_supervisor_to_let_go() {
             Ok(())
         },
     );
-    assert!(finished.is_ok());
+    assert_eq!(finished.err(), None);
     assert_eq!(removed.get(), 2);
     assert!(!paths.marker.exists());
 }
@@ -1057,6 +1067,7 @@ fn a_linked_wipe_folder_refuses_before_any_marker() {
     let failure = run(prepare(
         &paths,
         choices(false),
+        || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
     .unwrap_err();

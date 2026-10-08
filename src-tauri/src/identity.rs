@@ -280,6 +280,9 @@ enum State {
     Unread,
     Missing,
     Ready(Key),
+    /// Signing out: the key is dropped and nothing reads, saves or uses one
+    /// again until Buzz restarts.
+    Closed,
 }
 struct Identity {
     state: State,
@@ -287,6 +290,9 @@ struct Identity {
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
+        if matches!(self.state, State::Closed) {
+            return Err("Buzz is signing out".into());
+        }
         if matches!(self.state, State::Unread) {
             self.state = match self.store.read()? {
                 None => State::Missing,
@@ -315,6 +321,9 @@ impl Identity {
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
+    }
+    fn close(&mut self) {
+        self.state = State::Closed;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -907,6 +916,13 @@ impl IdentityHost {
             }
         })
         .await
+    }
+}
+impl IdentityHost {
+    /// Close signing for the rest of this process. Taken under the same lock
+    /// every operation holds while it runs, so jobs already queued refuse too.
+    pub(crate) fn close(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).close();
     }
 }
 impl Default for IdentityHost {

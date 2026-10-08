@@ -602,10 +602,11 @@ fn fenced() -> Failure {
     }
 }
 
-/// Commit intent, then stop agents. Deleting is left to the next launch.
+/// Commit intent, close signing, then stop agents. Deleting is left to the next launch.
 async fn prepare<S>(
     paths: &Paths,
     choices: Choices,
+    close: impl FnOnce(),
     shutdown: impl FnOnce() -> S,
 ) -> Result<(), Failure>
 where
@@ -619,6 +620,8 @@ where
         eprintln!("buzz: could not write sign-out marker: {error}");
         refuse(NOT_PREPARED)
     })?;
+    // Committed: the key is removed at the next launch, so it signs nothing more.
+    close();
     shutdown().await.map_err(|error| {
         eprintln!("buzz: agents did not stop: {error}");
         fenced()
@@ -626,11 +629,13 @@ where
 }
 
 /// Admit, commit and stop agents. A refusal before the marker withdraws; any
-/// fenced failure, before or after it, goes to `exit` and never to the dialog.
+/// fenced failure, before or after it, closes signing and goes to `exit`, never
+/// to the dialog.
 async fn attempt<S, E>(
     instance: &Instance,
     paths: &Paths,
     choices: Choices,
+    close: impl Fn(),
     shutdown: impl FnOnce() -> S,
     exit: impl FnOnce() -> E,
 ) -> Result<(), Failure>
@@ -639,17 +644,22 @@ where
     E: Future<Output = Result<(), Failure>>,
 {
     let result = match instance.begin(choices) {
-        Ok(()) => prepare(paths, choices, shutdown).await.map_err(|failure| {
-            if failure.fenced {
-                failure
-            } else {
-                instance.abort(choices, failure)
-            }
-        }),
+        Ok(()) => prepare(paths, choices, &close, shutdown)
+            .await
+            .map_err(|failure| {
+                if failure.fenced {
+                    failure
+                } else {
+                    instance.abort(choices, failure)
+                }
+            }),
         Err(failure) => Err(failure),
     };
     match result {
-        Err(failure) if failure.fenced => exit().await,
+        Err(failure) if failure.fenced => {
+            close();
+            exit().await
+        }
         other => other,
     }
 }
@@ -740,9 +750,15 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         .await
         .map_err(|error| error.to_string())?
     };
-    attempt(&instance, &paths, choices, shutdown, || {
-        exit_fenced(app.clone())
-    })
+    let identity = app.state::<crate::identity::IdentityHost>().inner().clone();
+    attempt(
+        &instance,
+        &paths,
+        choices,
+        || identity.close(),
+        shutdown,
+        || exit_fenced(app.clone()),
+    )
     .await?;
     app.request_restart();
     Ok(())

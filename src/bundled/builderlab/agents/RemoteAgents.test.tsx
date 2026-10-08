@@ -255,6 +255,156 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     screen.queryByRole("region", { name: "Remote agents" }),
   ).not.toBeInTheDocument();
 });
+it("edits listed instructions, preserves a dirty draft across refresh, cancels and clears", async () => {
+  const h = await fixture();
+  let instructions = "Original instructions.";
+  const second = {
+    ...row,
+    agent_id: "two",
+    agent_name: "Second",
+    agent_pubkey: "bc".repeat(32),
+    status: 3,
+  };
+  h.request.mockImplementation(async (input) => {
+    if (input.url.endsWith("/update-agent")) {
+      instructions = JSON.parse(input.body ?? "{}").agent_instructions;
+      return { status: 200, headers: {}, body: "{}" };
+    }
+    return response([{ ...row, agent_instructions: instructions }, second]);
+  });
+  render(
+    <StrictMode>
+      <RemoteAgents {...h} active={() => true} />
+    </StrictMode>,
+  );
+  const user = userEvent.setup();
+  const edit = await screen.findByRole("button", { name: "Edit instructions" });
+  await waitFor(() => expect(edit).toBeEnabled());
+  await user.click(edit);
+  const draft = screen.getByRole("textbox", {
+    name: "Agent instructions for Helper",
+  });
+  expect(draft).toHaveValue(instructions);
+  expect(
+    screen.getByRole("button", { name: "Save instructions" }),
+  ).toBeDisabled();
+  await user.clear(draft);
+  await user.type(draft, "Unsaved draft.");
+  await user.click(screen.getByRole("button", { name: "Refresh agents" }));
+  await waitFor(() => expect(draft).toBeEnabled());
+  expect(draft).toHaveValue("Unsaved draft.");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  const restored = screen.getByRole("textbox", {
+    name: "Agent instructions for Helper",
+  });
+  expect(restored).toHaveValue("Original instructions.");
+  expect(
+    h.request.mock.calls.every(([input]) => input.url.endsWith("/list-agents")),
+  ).toBe(true);
+  await user.clear(restored);
+  await user.type(restored, "   ");
+  expect(
+    screen.getByRole("button", { name: "Save instructions" }),
+  ).toBeDisabled();
+  await user.clear(restored);
+  await user.click(screen.getByRole("button", { name: "Save instructions" }));
+  await screen.findByRole("button", { name: "Edit instructions" });
+  expect(
+    screen
+      .getAllByRole("listitem")
+      .map((item) => within(item).getByText(/ · /).textContent),
+  ).toEqual(["Helper · Active", "Second · Revoked"]);
+  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  expect(
+    screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
+  ).toHaveValue("");
+  expect(
+    h.request.mock.calls.filter(([input]) =>
+      input.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(1);
+  expect(h.community.publish).not.toHaveBeenCalled();
+  expect(h.authorize).not.toHaveBeenCalled();
+});
+it.each(["new login", "deletion"])(
+  "fences a held instruction save after %s",
+  async (cause) => {
+    const h = await fixture();
+    render(<RemoteAgents {...h} active={() => true} />);
+    const user = userEvent.setup();
+    const edit = await screen.findByRole("button", {
+      name: "Edit instructions",
+    });
+    await waitFor(() => expect(edit).toBeEnabled());
+    await user.click(edit);
+    await user.type(
+      screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
+      "Private draft.",
+    );
+    const held = deferred<HostResponse>();
+    h.request.mockReturnValueOnce(held.promise);
+    try {
+      await user.click(
+        screen.getByRole("button", { name: "Save instructions" }),
+      );
+      await waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
+      if (cause === "new login") {
+        act(() => h.session.signOut());
+        await act(async () => h.session.signIn());
+        await screen.findByRole("button", { name: "Edit instructions" });
+        await act(async () => held.resolve(response([], 503)));
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("textbox", {
+            name: "Agent instructions for Helper",
+          }),
+        ).not.toBeInTheDocument();
+        await user.click(
+          screen.getByRole("button", { name: "Edit instructions" }),
+        );
+        expect(
+          screen.getByRole("textbox", {
+            name: "Agent instructions for Helper",
+          }),
+        ).toHaveValue("");
+      } else {
+        // Another window deletes this identity while the update is in transport.
+        await h.enrollment.remove(
+          {
+            id: row.agent_id,
+            name: row.agent_name,
+            pubkey: row.agent_pubkey,
+            status: "Active",
+          },
+          { delete: vi.fn(async () => {}) },
+          new AbortController().signal,
+          () => true,
+        );
+        await act(async () =>
+          held.resolve({ status: 200, headers: {}, body: "{}" }),
+        );
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Agent deletion has started",
+        );
+        expect(
+          screen.getByRole("textbox", {
+            name: "Agent instructions for Helper",
+          }),
+        ).toHaveValue("Private draft.");
+        await user.click(
+          screen.getByRole("button", { name: "Save instructions" }),
+        );
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled(),
+        );
+        expect(h.request).toHaveBeenCalledTimes(2);
+      }
+    } finally {
+      await act(async () => held.resolve(response([], 503)));
+    }
+  },
+);
 it("shows a held loading state and retries a failed read", async () => {
   const h = await fixture();
   const held = deferred<HostResponse>();
@@ -285,14 +435,16 @@ it.each(["sign-out", "unmount"])(
   },
 );
 
-it("keeps creation controls locked through registration, attestation and relay confirmation", async () => {
+it("creates with instructions, locks controls through setup and retries a failed save without recreating", async () => {
   const h = await fixture("https://community.example");
+  const update = vi.spyOn(h.client, "updateInstructions");
   h.request.mockResolvedValueOnce(response([]));
   render(<RemoteAgents {...h} active={() => true} />);
   await screen.findByText("No remote agents yet.");
   const held = deferred<HostResponse>();
   const attestation = deferred<HostResponse>();
   const publication = deferred<void>();
+  const instructionsSave = deferred<HostResponse>();
   const publish = h.community.publish.getMockImplementation();
   if (!publish) throw new Error("Missing publisher");
   h.community.publish.mockImplementationOnce(async (event) => {
@@ -301,7 +453,8 @@ it("keeps creation controls locked through registration, attestation and relay c
   });
   h.request
     .mockReturnValueOnce(held.promise)
-    .mockReturnValueOnce(attestation.promise);
+    .mockReturnValueOnce(attestation.promise)
+    .mockReturnValueOnce(instructionsSave.promise);
   const user = userEvent.setup();
   const registered = {
     status: 200,
@@ -320,8 +473,15 @@ it("keeps creation controls locked through registration, attestation and relay c
       screen.getByRole("textbox", { name: "Agent name" }),
       "Helper",
     );
+    await user.type(
+      screen.getByRole("textbox", { name: "Agent instructions (optional)" }),
+      "Review carefully.",
+    );
     await user.click(screen.getByRole("button", { name: "Create agent" }));
     expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Agent instructions (optional)" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Refresh agents" }),
     ).toBeDisabled();
@@ -343,16 +503,56 @@ it("keeps creation controls locked through registration, attestation and relay c
     expect(
       await screen.findByText("Registration confirmed in this community."),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ pubkey: row.agent_pubkey, status: "Active" }),
+        "Review carefully.",
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
+    ).toBeDisabled();
+    await act(async () =>
+      instructionsSave.resolve({ status: 503, headers: {}, body: "{}" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 503");
+    expect(
+      screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
+    ).toHaveValue("Review carefully.");
+    h.request.mockResolvedValueOnce({ status: 200, headers: {}, body: "{}" });
+    await user.click(screen.getByRole("button", { name: "Save instructions" }));
+    await screen.findByRole("button", { name: "Edit instructions" });
+    expect(
+      h.request.mock.calls.filter(([input]) =>
+        input.url.endsWith("/register-agent"),
+      ),
+    ).toHaveLength(1);
+    expect(update).toHaveBeenCalledTimes(2);
   } finally {
     await act(async () => {
       held.resolve(registered);
       attestation.resolve({ status: 200, headers: {}, body: '{"status":1}' });
       publication.resolve();
+      instructionsSave.resolve({ status: 200, headers: {}, body: "{}" });
     });
   }
   expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Agent name" })).toBeEnabled();
+  expect(
+    screen.getByRole("textbox", { name: "Agent instructions (optional)" }),
+  ).toHaveValue("");
+  await user.click(screen.getByRole("button", { name: "Edit instructions" }));
+  expect(
+    screen.getByRole("textbox", { name: "Agent instructions for Helper" }),
+  ).toHaveValue("Review carefully.");
   expect(screen.getByRole("button", { name: "Refresh agents" })).toBeEnabled();
+  expect(JSON.stringify(h.community.publish.mock.calls)).not.toContain(
+    "Review carefully.",
+  );
+  expect(JSON.stringify(Object.values(localStorage))).not.toContain(
+    "Review carefully.",
+  );
 });
 
 it.each(["Active", "Revoked"])(
@@ -394,6 +594,17 @@ it.each(["Active", "Revoked"])(
     const user = userEvent.setup();
     const secondRow = screen.getByText("Second · Active").closest("li");
     if (!secondRow) throw new Error("Missing second agent row");
+    if (status === "Active") {
+      await user.click(
+        within(secondRow).getByRole("button", { name: "Edit instructions" }),
+      );
+      await user.type(
+        within(secondRow).getByRole("textbox", {
+          name: "Agent instructions for Second",
+        }),
+        "Unsaved edit.",
+      );
+    }
     await user.click(
       within(secondRow).getByRole("button", { name: "Retry community setup" }),
     );
@@ -403,6 +614,10 @@ it.each(["Active", "Revoked"])(
     expect(
       screen.getByText("Community registration pending."),
     ).toBeInTheDocument();
+    if (status === "Active")
+      expect(
+        screen.getByRole("textbox", { name: "Agent instructions for Second" }),
+      ).toHaveValue("Unsaved edit.");
     refused = false;
     h.request.mockResolvedValue(
       response([{ ...row, status: status === "Active" ? 2 : 3 }, second]),
@@ -473,6 +688,10 @@ it.each(["attestation", "enrollment storage"])(
         screen.getByRole("textbox", { name: "Agent name" }),
         "Helper",
       );
+      await user.type(
+        screen.getByRole("textbox", { name: "Agent instructions (optional)" }),
+        "Keep this draft.",
+      );
       await user.click(screen.getByRole("button", { name: "Create agent" }));
       await waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
       if (failure === "enrollment storage")
@@ -489,6 +708,7 @@ it.each(["attestation", "enrollment storage"])(
         expect(h.community.publish).not.toHaveBeenCalled();
         vi.restoreAllMocks();
       }
+      const update = vi.spyOn(h.client, "updateInstructions");
       h.request.mockResolvedValueOnce({
         status: 200,
         headers: {},
@@ -500,6 +720,21 @@ it.each(["attestation", "enrollment storage"])(
         expect(
           await screen.findByText("Registration confirmed in this community."),
         ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pubkey: row.agent_pubkey,
+            status: "Active",
+          }),
+          "Keep this draft.",
+          expect.any(AbortSignal),
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Edit instructions" }),
+        ).toBeEnabled(),
+      );
       expect(
         h.request.mock.calls.filter(([input]) =>
           input.url.endsWith("/register-agent"),

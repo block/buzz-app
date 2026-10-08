@@ -105,7 +105,11 @@ webview storage, service or identity read:
    were removed.
 3. The human item is deleted and a fresh read must find it absent.
 4. The renamed folders and anything recreated in place are deleted, then the
-   marker.
+   marker. Kept agents keep only what they need to be identified and start
+   again: the agent list with their settings (`agents.json`), the shared agent
+   defaults (`defaults.json`) and their keys in the keychain. Everything else in
+   `agent-controller`, including saved Databricks logins, logs and anything
+   added there later, is deleted; a kept Databricks agent must reconnect.
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
 registry confirmed absent means its keys are already gone; failing to check it

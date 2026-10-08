@@ -572,6 +572,39 @@ fn agent_keys_go_first_and_an_interruption_retries_without_moving_anything() {
 }
 
 #[test]
+fn kept_agents_keep_only_their_list_settings_and_keys() {
+    let (dir, paths) = fixture();
+    let controller = paths.app_data.join(KEPT);
+    for file in [
+        "defaults.json",
+        "agents.previous.json",
+        "controller.lock",
+        "buzz-agent/oauth/databricks/0123abcd.json",
+        "logs/agent.log",
+        "runs/agent-1/tmp/scratch",
+        "run-controls/agent-1/launch-protection.json",
+        "control-write/staged",
+        "something-new",
+    ] {
+        let path = controller.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "x").unwrap();
+    }
+    mark(&paths, true, false);
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert_eq!(
+        listing(dir.path()),
+        [
+            "app/",
+            "app/agent-controller/",
+            "app/agent-controller/agents.json",
+            "app/agent-controller/defaults.json"
+        ]
+    );
+    assert_eq!(fs::read(controller.join("agents.json")).unwrap(), b"agents");
+}
+
+#[test]
 fn kept_agents_keep_their_keys() {
     let (_dir, paths) = fixture();
     mark(&paths, true, false);

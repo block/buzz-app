@@ -21,6 +21,11 @@ const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try 
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
 const ALREADY: &str = "Buzz is already signing out.";
 const KEPT: &str = "agent-controller";
+/// What a kept agent needs to be identified and start again: the agent list
+/// with each agent's settings, and the shared agent defaults. Its keys live in
+/// the keychain. Anything else in `KEPT` (saved logins, logs, run folders, and
+/// whatever is added later) is wiped.
+const KEPT_FILES: [&str; 2] = ["agents.json", "defaults.json"];
 /// Named for the storage every Buzz shares whatever its identifier: the default
 /// plugin folder and the fixed agent key service. It is the release app's name too.
 const LOCK: &str = ".dev.local.buzz.foundation.instance.lock";
@@ -262,18 +267,24 @@ fn move_back(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     fs::rename(moved, path)
 }
 
-/// Delete `path` except its kept child, whether it is the original or was recreated.
+/// Delete `path` except its kept child's `KEPT_FILES`, whether it is the
+/// original or was recreated.
 fn clear(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let Some(kept) = kept else {
         return missing(fs::remove_dir_all(path));
     };
+    clear_except(path, &[kept])?;
+    clear_except(&path.join(kept), &KEPT_FILES)
+}
+
+fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
     let entries = match fs::read_dir(path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         other => other?,
     };
     for entry in entries {
         let entry = entry?;
-        if entry.file_name() == kept {
+        if keep.iter().any(|name| entry.file_name() == *name) {
             continue;
         }
         if entry.file_type()?.is_dir() {

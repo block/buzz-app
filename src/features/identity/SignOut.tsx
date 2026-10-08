@@ -130,6 +130,8 @@ export function SignOutDialog({
               storage on this device only. It can’t reach your clipboard, keys
               you exported, or relay data; your npub and its history stay on the
               relays.
+              {!removeAgents &&
+                " Kept agents keep their list, settings and keys; their saved logins and logs are wiped."}
             </p>
           </>
         )}

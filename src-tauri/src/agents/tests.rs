@@ -3174,3 +3174,29 @@ fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
     assert!(!missing.contains("different Buzz identity"), "{missing}");
     assert_ne!(missing, IMPORT_GATE);
 }
+
+#[test]
+fn failed_imported_prompt_cleanup_still_opens_the_controller_with_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(&root).unwrap();
+    seed(dir.path());
+    let path = root.join("agents.json");
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    doc["agents"][0]["systemPrompt"] = "role\n\n---\n# Team Instructions\nold".into();
+    doc["agents"][0]["imported"] = json!({"global": {}});
+    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+    // A directory here makes the cleanup's backup write fail.
+    std::fs::create_dir(root.join("agents.previous.json")).unwrap();
+    let host = AgentHost::open(Ok((
+        root,
+        dir.path().join("legacy"),
+        dir.path().join("workspace"),
+    )));
+    let value = serde_json::to_value(host.with(|host| host.snapshot()).unwrap()).unwrap();
+    assert_eq!(value["agents"].as_array().unwrap().len(), 1);
+    assert!(value["inventoryWarnings"][0]
+        .as_str()
+        .unwrap()
+        .contains("Could not remove old Buzz team text"));
+}

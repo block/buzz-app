@@ -462,7 +462,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
             .get("auth_tag")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "harness": custom, "teamInstructions": team_instructions(data, record)? }),
+        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "teamSuffixCleaned": true, "harness": custom, "teamInstructions": team_instructions(data, record)? }),
         extra: BTreeMap::new(),
     })
 }

@@ -5007,7 +5007,10 @@ describe("project resource picker", () => {
     for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
       fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
       expect(search).toHaveFocus();
-      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      // fireEvent returns false when a handler cancelled the default.
+      expect(fireEvent.keyDown(search, { key: "Enter", ...composition })).toBe(
+        true,
+      );
       expect(p.validations).toHaveLength(0);
     }
     // Keyboard: focus stays in search with the row highlighted; Enter

@@ -306,6 +306,12 @@ export function ResourcePicker({
                   aria-controls={highlight.listId}
                   {...highlight.fieldProps}
                   onKeyDown={(event) => {
+                    // A composition key belongs to the input method.
+                    if (
+                      event.nativeEvent.isComposing ||
+                      event.nativeEvent.keyCode === 229
+                    )
+                      return;
                     if (event.key === "Enter") event.preventDefault();
                     // Shift+Enter and Shift+arrows stay text keys, as before.
                     const handled = !event.shiftKey && highlight.keyDown(event);

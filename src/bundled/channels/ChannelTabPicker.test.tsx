@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChannelTabPicker, isChannelTabTool } from "./ChannelTabPicker";
@@ -28,7 +34,7 @@ const tool: RegisteredPanel = {
   component: () => null,
 };
 const channels = [
-  { id: "alpha", name: "Alpha", channelType: "channel" },
+  { id: "alpha", name: "Alpha", channelType: "stream" },
   { id: "dm", name: "Ada", channelType: "dm" },
 ] as ChannelSummary[];
 it("filters by category and query and opens only the chosen registered tool", async () => {
@@ -207,4 +213,37 @@ it("puts the earlier choice for this text after an exact name", async () => {
   expect(screen.getByRole("status")).toHaveTextContent(
     "debug-log. Press Enter to open.",
   );
+});
+it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const user = userEvent.setup(),
+    choose = vi.fn();
+  render(
+    <ChannelTabPicker
+      channels={
+        [
+          { id: "alpha", name: "Alpha", channelType: "stream" },
+          { id: "beta", name: "Beta", channelType: "stream" },
+        ] as ChannelSummary[]
+      }
+      tools={[]}
+      icon={() => null}
+      choose={choose}
+      chooseTool={vi.fn()}
+    />,
+  );
+  const first = screen.getByRole("button", { name: "Alpha" });
+  const last = screen.getByRole("button", { name: "Beta" });
+  for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+    await user.tab();
+  expect(first).toHaveFocus();
+  // Down on a focused row moves the highlight and focus together.
+  await user.keyboard("{ArrowDown}");
+  expect(last).toHaveFocus();
+  // A pointer highlight moves focus too, so Enter opens the highlighted row.
+  fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+  fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+  expect(first).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(choose).toHaveBeenCalledExactlyOnceWith("alpha");
 });

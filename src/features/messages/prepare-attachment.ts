@@ -10,6 +10,7 @@ import {
   cleanGif,
   cleanPng,
   pngChunks,
+  pngNeedsPixelTransform,
   snapshotChunk,
   webpChunks,
   webpNeedsPixelTransform,
@@ -34,12 +35,9 @@ export async function prepareAttachment(
   if (type === "image/png") {
     const chunks = pngChunks(bytes);
     snapshot = stripSnapshotMetadata ? undefined : snapshotChunk(chunks);
-    if (stripSnapshotMetadata || chunks.some((c) => c.kind === "acTL"))
-      output = cleanPng(
-        bytes,
-        snapshot,
-        chunks.some((c) => c.kind === "acTL"),
-      );
+    const animated = chunks.some((c) => c.kind === "acTL");
+    if (animated || (stripSnapshotMetadata && !pngNeedsPixelTransform(chunks)))
+      output = cleanPng(bytes, snapshot, animated);
   }
   if (type === "image/webp") {
     const chunks = webpChunks(bytes);

@@ -732,7 +732,7 @@ it("rejects escaped memory event overflow before identity creation", () => {
   ).toThrow("Invalid snapshot manifest");
 });
 
-it("extracts PNG pixels without portable metadata and preserves JSON placeholder fallback", async () => {
+it("detects transparent PNG placeholders and ignores JSON artwork", async () => {
   const manifest = buildAgentSnapshot(portableAgent());
   const empty = encodeAgentSnapshot(manifest, "png");
   expect(await snapshotPngArtwork(empty)).toBeUndefined();
@@ -761,7 +761,7 @@ it("rejects aggregate reader DTO overflow even when entry array fits", () => {
   ).not.toThrow();
 });
 
-it("extracts real PNG artwork while stripping snapshot metadata", async () => {
+it("passes validated PNG artwork to the avatar sanitizer without changing pixels", async () => {
   const source = buildAgentSnapshot(portableAgent());
   const pixels = Uint8Array.from(
     atob(
@@ -771,10 +771,8 @@ it("extracts real PNG artwork while stripping snapshot metadata", async () => {
   );
   const png = encodeAgentSnapshot(source, "png", pixels);
   const extracted = await snapshotPngArtwork(png);
-  expect(extracted).toEqual(pixels);
-  expect(new TextDecoder().decode(extracted)).not.toContain(
-    "buzz_agent_snapshot",
-  );
+  expect(extracted).toEqual(png);
+  expect(new TextDecoder().decode(extracted)).toContain("buzz_agent_snapshot");
 });
 
 // Build CRC-valid PNG chunks without relying on the reference encoder's zlib output.
@@ -811,7 +809,7 @@ function replacePngPixels(
   return result;
 }
 
-it("retains indexed PNG palette and transparency while excluding private metadata", async () => {
+it("retains indexed PNG palette and transparency for avatar sanitization", async () => {
   const source = buildAgentSnapshot(portableAgent());
   const original = encodeAgentSnapshot(source, "png");
   const indexed = replacePngPixels(original, (type, data) => {
@@ -835,7 +833,7 @@ it("retains indexed PNG palette and transparency while excluding private metadat
     kinds.push(type);
     return [pngChunk(type, data)];
   });
-  expect(kinds).toEqual(["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);
+  expect(kinds).toEqual(["IHDR", "PLTE", "tRNS", "tEXt", "IDAT", "IEND"]);
 });
 
 it("refuses animated ICC and oriented EXIF before stripping metadata", async () => {
@@ -902,6 +900,7 @@ it("retains a painted later animation frame despite a transparent first frame", 
     "IHDR",
     "acTL",
     "fcTL",
+    "tEXt",
     "IDAT",
     "fcTL",
     "fdAT",
@@ -933,11 +932,7 @@ it("recognizes differently compressed transparent placeholders, not painted 1x1 
         : [pngChunk(type, data)],
     );
     expect(await snapshotPngArtwork(image)).toEqual(
-      alpha === 0
-        ? undefined
-        : replacePngPixels(image, (type, data) =>
-            type === "tEXt" ? [] : [pngChunk(type, data)],
-          ),
+      alpha === 0 ? undefined : image,
     );
   }
 });

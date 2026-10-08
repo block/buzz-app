@@ -710,10 +710,9 @@ export async function snapshotPngArtwork(
   parseAgentSnapshot(bytes);
   const chunks = pngChunks(bytes);
   const animated = chunks.some(({ kind }) => kind === "acTL");
-  // Strip after checking the animated appearance contract, never before it.
-  const artwork = new Uint8Array(
-    await cleanPng(bytes, undefined, animated).arrayBuffer(),
-  );
+  // Check animated appearance before handing the original container to upload;
+  // still PNGs with ICC/orientation must be redrawn there, not pre-stripped.
+  cleanPng(bytes, undefined, animated);
   const header = chunks[0]?.payload;
   const singleRgba =
     !animated &&
@@ -729,7 +728,7 @@ export async function snapshotPngArtwork(
       .map(({ payload }) => payload);
     if (await transparentSinglePixel(idat)) return undefined;
   }
-  return artwork;
+  return bytes;
 }
 
 function pngManifest(bytes: Uint8Array) {

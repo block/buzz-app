@@ -82,6 +82,13 @@ const pngRendering = new Set([
 export function isPngRenderingChunk(kind: string): boolean {
   return !(kind.charCodeAt(0) & 32) || pngRendering.has(kind);
 }
+export function pngNeedsPixelTransform(chunks: Chunk[]): boolean {
+  return chunks.some(
+    (chunk) =>
+      chunk.kind === "iCCP" ||
+      (chunk.kind === "eXIf" && oriented(chunk.payload)),
+  );
+}
 export function cleanPng(
   bytes: Uint8Array,
   snapshot?: Uint8Array,

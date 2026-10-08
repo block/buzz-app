@@ -1290,7 +1290,9 @@ it("uploads portable PNG artwork before creation but gives inline avatar precede
   expect(uploaded?.type).toBe("image/png");
   expect(uploaded).toBeDefined();
   if (!uploaded) throw new Error("PNG artwork was not uploaded");
-  expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(pixels);
+  expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(
+    encodeAgentSnapshot(snapshot, "png", pixels),
+  );
   expect(h.create.mock.calls[0]?.[3]).toEqual(
     expect.objectContaining({
       picture: "https://relay.example.test/media/avatar.png",

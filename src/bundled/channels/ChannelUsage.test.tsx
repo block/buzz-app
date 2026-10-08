@@ -190,7 +190,7 @@ it("keeps incomplete cross-session counters unknown and handles a hundred sessio
   expect(within(totals).getAllByText("—").length).toBe(6);
   const picker = screen.getByRole("combobox", { name: "Session" });
   await user.click(picker);
-  expect(screen.getAllByRole("option")).toHaveLength(100);
+  expect(await screen.findAllByRole("option")).toHaveLength(100);
   await user.click(screen.getByRole("option", { name: /Session 99 ·/ }));
   expect(screen.getByText("Latest reported session counters")).toBeTruthy();
 });

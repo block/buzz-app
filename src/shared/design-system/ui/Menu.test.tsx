@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -15,6 +16,9 @@ import { ChoiceRow } from "./ChoiceRow";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
   MenuRoot,
   MenuTrigger,
   MenuPopup,
@@ -210,4 +214,36 @@ test("rich choices retain their names and selected state while disabled choices 
   await user.click(unavailable);
   expect(change).not.toHaveBeenCalled();
   expect(unavailable).toHaveAttribute("aria-disabled", "true");
+});
+
+test("submenus open on hover without waiting for a delay", async () => {
+  const user = userEvent.setup();
+  render(
+    <MenuRoot>
+      <MenuTrigger>Actions</MenuTrigger>
+      <MenuPopup>
+        <MenuSubmenu>
+          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
+          <MenuSubmenuPopup>
+            <MenuItem>Recent</MenuItem>
+          </MenuSubmenuPopup>
+        </MenuSubmenu>
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await user.click(screen.getByRole("button", { name: "Actions" }));
+  const trigger = await screen.findByRole("menuitem", { name: "Sort" });
+  vi.useFakeTimers();
+  try {
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("menuitem", { name: "Recent" })).toBeVisible();
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
 });

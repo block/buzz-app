@@ -339,7 +339,13 @@ fn snapshot_member(
     let effective = crate::agent_defaults::effective(agent, defaults);
     let runtime = crate::agent_defaults::harness_kind(&effective.harness.command)
         .ok_or("Team member harness is not portable")?;
-    if crate::agent_defaults::effort(&effective).is_some_and(|effort| !effort.is_empty()) {
+    if crate::agent_defaults::effort(&effective).is_some_and(|effort| !effort.is_empty())
+        || (matches!(runtime, "pi" | "goose")
+            && effective
+                .environment
+                .get("BUZZ_ACP_EFFORT_LEVEL")
+                .is_some_and(|effort| !effort.is_empty()))
+    {
         return Err("Team member effort is not portable".into());
     }
     if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {

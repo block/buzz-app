@@ -969,6 +969,36 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
 }
 
 #[test]
+fn native_export_rejects_effective_pi_goose_effort_without_leaking_values() {
+    let mut agent = crate::store::tests::fixture();
+    let mut defaults = crate::agent_defaults::AgentDefaults::default();
+    for (harness, command) in [("pi", "buzz-pi-acp"), ("goose", "goose")] {
+        agent.harness.command = command.into();
+        agent.harness.model.clear();
+        agent.harness.provider.clear();
+        agent.environment.clear();
+        defaults.environment.clear();
+        let exported = snapshot_member(&agent, &defaults).unwrap();
+        assert_eq!(exported.definition.runtime.as_deref(), Some(harness));
+
+        agent.environment.insert(
+            "BUZZ_ACP_EFFORT_LEVEL".into(),
+            "private-agent-effort".into(),
+        );
+        let error = snapshot_member(&agent, &defaults).unwrap_err();
+        assert!(error.contains("effort") && !error.contains("private-agent-effort"));
+
+        agent.environment.clear();
+        defaults.environment.insert(
+            "BUZZ_ACP_EFFORT_LEVEL".into(),
+            "private-inherited-effort".into(),
+        );
+        let error = snapshot_member(&agent, &defaults).unwrap_err();
+        assert!(error.contains("effort") && !error.contains("private-inherited-effort"));
+    }
+}
+
+#[test]
 fn merged_existing_profile_overflow_keeps_import_about_pending() {
     let root = tempfile::tempdir().unwrap();
     let mut control = controller(root.path());

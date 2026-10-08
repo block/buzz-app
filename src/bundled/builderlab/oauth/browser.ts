@@ -43,7 +43,6 @@ export type BrowserBridge = {
   begin(options: {
     authorizationUrl: string;
     callbackPath: string;
-    useState?: boolean;
   }): Promise<{ id: string; callbackUrl: string }>;
   wait(id: string): Promise<OAuthCallback>;
   cancel(id: string): Promise<void>;
@@ -76,7 +75,6 @@ export async function browserCredential(
     const attempt = await bridge.begin({
       authorizationUrl: login.href,
       callbackPath: path,
-      useState: true,
     });
     id = attempt.id;
     signal.addEventListener("abort", cancel, { once: true });

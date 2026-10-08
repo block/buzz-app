@@ -60,6 +60,8 @@ export interface AgentView {
   respondTo: "owner-only" | "allowlist" | "anyone" | null;
   /** Imported provider backend id; null for local agents. */
   backend: string | null;
+  /** Redacted native effective behavior not representable by standalone snapshots. */
+  snapshotExportLimitations?: string[];
   acpCommand: string | null;
   mcpCommand: string | null;
   /** Model/provider the next start uses from saved selectors or build

@@ -395,3 +395,35 @@ fn an_invalid_pi_default_pair_is_refused_before_it_is_saved() {
     chosen.provider = "global-provider".into();
     saved.apply(chosen).unwrap();
 }
+
+#[test]
+fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_records() {
+    let mut agent = fixture();
+    agent.harness.command = "buzz-agent".into();
+    agent.imported = Value::Null;
+    assert!(agent
+        .view(&AgentDefaults::default())
+        .snapshot_export_limitations
+        .is_empty());
+    for imported in [
+        serde_json::json!({"teamInstructions":"legacy team rules"}),
+        serde_json::json!({"record":{"idle_timeout_seconds":30}}),
+        serde_json::json!({"record":{"max_turn_duration_seconds":60}}),
+        serde_json::json!({"record":{"effort_level":"high"}}),
+    ] {
+        agent.imported = imported;
+        let view = serde_json::to_value(agent.view(&AgentDefaults::default())).unwrap();
+        assert!(!view["snapshotExportLimitations"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(view.get("imported").is_none());
+    }
+    agent.imported = Value::Null;
+    assert_eq!(
+        agent
+            .view(&defaults("buzz-agent"))
+            .snapshot_export_limitations,
+        vec!["effort level"]
+    );
+}

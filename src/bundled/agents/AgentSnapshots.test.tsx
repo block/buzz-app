@@ -1257,3 +1257,93 @@ it("defaults a reference snapshot with omitted session policy to channel", async
     expect.objectContaining({ sessionPolicy: "channel" }),
   );
 });
+
+it("uploads portable PNG artwork before creation but gives inline avatar precedence", async () => {
+  vi.mocked(uploadAvatar).mockClear();
+  const pixels = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=",
+    ),
+    (char) => char.charCodeAt(0),
+  );
+  const snapshot = buildAgentSnapshot({
+    ...portableAgent(),
+    picture: "https://cdn.example.test/a.png?v=1",
+  });
+  const h = importControl();
+  vi.mocked(uploadAvatar).mockResolvedValue(
+    "https://relay.example.test/media/avatar.png",
+  );
+  const { unmount } = render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "png", pixels)}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  const uploaded = vi.mocked(uploadAvatar).mock.calls[0]?.[0];
+  expect(uploaded?.type).toBe("image/png");
+  expect(uploaded).toBeDefined();
+  if (!uploaded) throw new Error("PNG artwork was not uploaded");
+  expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(pixels);
+  expect(h.create.mock.calls[0]?.[3]).toEqual(
+    expect.objectContaining({
+      picture: "https://relay.example.test/media/avatar.png",
+    }),
+  );
+  unmount();
+  vi.mocked(uploadAvatar).mockClear();
+  const inline = {
+    ...snapshot,
+    profile: {
+      ...snapshot.profile,
+      avatarDataUrl: "data:image/png;base64,aW5saW5l",
+    },
+  };
+  const second = importControl();
+  render(
+    <AgentSnapshotImport
+      control={second.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(inline, "png", pixels)}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  await waitFor(() => expect(second.create).toHaveBeenCalledOnce());
+  const inlineFile = vi.mocked(uploadAvatar).mock.calls[0]?.[0];
+  expect(inlineFile).toBeDefined();
+  if (!inlineFile) throw new Error("Inline avatar was not uploaded");
+  expect(new TextDecoder().decode(await inlineFile.arrayBuffer())).toBe(
+    "inline",
+  );
+});
+
+it("does not create when opted-in memory exceeds the reader payload budget", async () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const body = "\\".repeat(40_000);
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      ...source,
+      memory: { level: "core", entries: [{ slug: "core", body }] },
+    }),
+  );
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={bytes}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByText("Invalid snapshot manifest.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+});

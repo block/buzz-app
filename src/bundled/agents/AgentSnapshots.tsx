@@ -10,6 +10,7 @@ import {
   encodeAgentSnapshot,
   MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
+  snapshotPngArtwork,
   snapshotImportEdit,
   snapshotLimitations,
   type AgentSnapshot,
@@ -351,6 +352,7 @@ export function AgentSnapshotImport({
 }) {
   const requestId = useRef(crypto.randomUUID());
   const [snapshot, setSnapshot] = useState<AgentSnapshot>();
+  const [artwork, setArtwork] = useState<Uint8Array>();
   const [restoreMemory, setRestoreMemory] = useState(false);
   const [fileError, setFileError] = useState("");
   const [memoryError, setMemoryError] = useState("");
@@ -369,9 +371,11 @@ export function AgentSnapshotImport({
     setRestoreMemory(false);
     try {
       setSnapshot(parseAgentSnapshot(receivedBytes));
+      setArtwork(snapshotPngArtwork(receivedBytes));
       setFileError("");
     } catch (error) {
       setSnapshot(undefined);
+      setArtwork(undefined);
       setFileError(
         error instanceof Error ? error.message : "Invalid snapshot JSON.",
       );
@@ -380,6 +384,7 @@ export function AgentSnapshotImport({
   const read = async (file?: File) => {
     setFileError("");
     setSnapshot(undefined);
+    setArtwork(undefined);
     setRestoreMemory(false);
     const readId = crypto.randomUUID();
     requestId.current = readId;
@@ -389,10 +394,13 @@ export function AgentSnapshotImport({
       return;
     }
     try {
-      const parsed = parseAgentSnapshot(
-        new Uint8Array(await file.arrayBuffer()),
-      );
-      if (requestId.current === readId) setSnapshot(parsed);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const parsed = parseAgentSnapshot(bytes);
+      const pixels = snapshotPngArtwork(bytes);
+      if (requestId.current === readId) {
+        setSnapshot(parsed);
+        setArtwork(pixels);
+      }
     } catch (error) {
       if (requestId.current !== readId) return;
       setFileError(
@@ -476,10 +484,19 @@ export function AgentSnapshotImport({
         const mime = header?.slice("data:".length).split(";", 1)[0];
         if (!encoded || !mime)
           throw new Error("Snapshot avatar data is malformed.");
-        const raw = atob(encoded);
-        const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+        const bytes = Uint8Array.from(atob(encoded), (char) =>
+          char.charCodeAt(0),
+        );
         picture = await uploadAvatar(
           new File([bytes], "snapshot-avatar", { type: mime }),
+          destination,
+          new AbortController().signal,
+        );
+      } else if (artwork) {
+        picture = await uploadAvatar(
+          new File([Uint8Array.from(artwork)], "snapshot-avatar.png", {
+            type: "image/png",
+          }),
           destination,
           new AbortController().signal,
         );

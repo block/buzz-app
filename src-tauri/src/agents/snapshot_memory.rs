@@ -32,6 +32,26 @@ fn validate(entries: &[SnapshotMemoryEntry]) -> Result<()> {
     if entries.iter().any(|entry| !valid_slug(&entry.slug)) {
         return Err("Invalid snapshot memory slug".into());
     }
+    for entry in entries {
+        buzz_agent_controller::validate_snapshot_memory_envelope(&entry.slug, &entry.body)
+            .map_err(|_| "Snapshot memory envelope exceeds the readable limit")?;
+    }
+    // Same serialized DTO budget as the native reader. Reserve a full u64 timestamp;
+    // publication confirms each entry by reading this exact representation back.
+    let reader_bytes = entries
+        .iter()
+        .map(|entry| {
+            serde_json::to_vec(&serde_json::json!({
+                "slug":entry.slug, "body":entry.body,
+                "eventId":"0".repeat(64), "createdAt":u64::MAX
+            }))
+            .map_or(usize::MAX, |bytes| bytes.len())
+        })
+        .try_fold(0usize, |sum, bytes| sum.checked_add(bytes))
+        .ok_or("Snapshot memory exceeds the readable limit")?;
+    if reader_bytes > 1024 * 1024 {
+        return Err("Snapshot memory exceeds the readable limit".into());
+    }
     let mut slugs = BTreeSet::new();
     if entries.iter().any(|entry| !slugs.insert(&entry.slug)) {
         return Err("Duplicate snapshot memory slug".into());

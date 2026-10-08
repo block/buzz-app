@@ -71,6 +71,8 @@ pub struct AgentView {
     pub respond_to: Option<String>,
     /// Imported provider backend id; local agents have none.
     pub backend: Option<String>,
+    /// Names only. Never expose imported records or team instructions through IPC.
+    pub snapshot_export_limitations: Vec<&'static str>,
     pub acp_command: Option<String>,
     pub mcp_command: Option<String>,
     /// Model/provider the next start passes to the worker from saved selectors,
@@ -205,6 +207,26 @@ impl Agent {
                 .then(|| self.imported["record"]["backend"]["id"].as_str())
                 .flatten()
                 .map(str::to_owned),
+            snapshot_export_limitations: {
+                let record = &self.imported["record"];
+                let mut limits = Vec::new();
+                if crate::import::team_text(&self.imported["teamInstructions"])
+                    .map_or(true, |text| !text.is_empty())
+                {
+                    limits.push("team instructions");
+                }
+                if !record["idle_timeout_seconds"].is_null() {
+                    limits.push("idle timeout");
+                }
+                if !record["max_turn_duration_seconds"].is_null() {
+                    limits.push("turn timeout");
+                }
+                if crate::agent_defaults::effort(&effective).is_some_and(|value| !value.is_empty())
+                {
+                    limits.push("effort level");
+                }
+                limits
+            },
             acp_command: None,
             mcp_command: None,
             launch_model: launch.model,

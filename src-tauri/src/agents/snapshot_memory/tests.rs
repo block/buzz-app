@@ -298,3 +298,55 @@ async fn restore_target_rejects_foreign_owner_legacy_identity_revision_and_shutd
             .is_err()
     );
 }
+
+#[test]
+fn rejects_escaped_memory_event_before_native_write() {
+    let entries = vec![SnapshotMemoryEntry {
+        slug: "core".into(),
+        body: "\\".repeat(40_000),
+    }];
+    assert!(validate(&entries).is_err());
+    assert!(validate(&[SnapshotMemoryEntry {
+        slug: "core".into(),
+        body: "x".repeat(30_000),
+    }])
+    .is_ok());
+}
+
+#[test]
+fn rejects_reader_dto_aggregate_before_memory_publication() {
+    let entries: Vec<_> = (0..40)
+        .map(|i| SnapshotMemoryEntry {
+            slug: format!("mem/{i}"),
+            body: "x".repeat(30_000),
+        })
+        .collect();
+    assert!(validate(&entries).is_err());
+    assert!(validate(&entries[..30]).is_ok());
+}
+
+#[test]
+fn per_event_envelope_boundary_matches_native_reader() {
+    let (mut low, mut high) = (0, 65_535);
+    while low < high {
+        let middle = (low + high + 1) / 2;
+        if buzz_agent_controller::validate_snapshot_memory_envelope("mem/a", &"x".repeat(middle))
+            .is_ok()
+        {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    let valid = low;
+    assert!(validate(&[SnapshotMemoryEntry {
+        slug: "mem/a".into(),
+        body: "x".repeat(valid)
+    }])
+    .is_ok());
+    assert!(validate(&[SnapshotMemoryEntry {
+        slug: "mem/a".into(),
+        body: "x".repeat(valid + 1)
+    }])
+    .is_err());
+}

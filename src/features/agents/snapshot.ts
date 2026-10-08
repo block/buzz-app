@@ -16,6 +16,29 @@ const MAGIC = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
 const keyword = encoder.encode("buzz_agent_snapshot\0");
+const PLACEHOLDER_PIXEL = new Uint8Array([
+  0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0, 0x00, 0x05, 0x00,
+  0x01,
+]);
+// NIP-44 v2 at 65,536 plaintext bytes changes to the extended length prefix;
+// its base64 payload then exceeds the native reader’s 87,472-byte cap.
+const MAX_MEMORY_PLAINTEXT_BYTES = 65_535;
+export function restorableMemoryEntry(slug: string, body: string): boolean {
+  return (
+    encoder.encode(
+      JSON.stringify(
+        slug === "core" ? { slug, profile: body } : { slug, value: body },
+      ),
+    ).length <= MAX_MEMORY_PLAINTEXT_BYTES
+  );
+}
+
+// The reader counts each retained DTO, including the signed event ID and
+// timestamp. Reserve the longest u64 timestamp to avoid depending on the source clock.
+const memoryReaderEntryBytes = (slug: string, body: string) =>
+  encoder.encode(
+    JSON.stringify({ slug, body, eventId: "0".repeat(64), createdAt: 0 }),
+  ).length + 19;
 
 export type MemoryLevel = "none" | "core" | "everything";
 export interface AgentSnapshot {
@@ -282,11 +305,19 @@ export function parseAgentSnapshot(
             memorySlug(e.slug) &&
             (options.teamMember
               ? typeof e.body === "string"
-              : text(e.body, 64 * 1024)),
+              : text(e.body, 64 * 1024)) &&
+            (options.teamMember ||
+              restorableMemoryEntry(e.slug as string, e.body as string)),
         ) ||
         (m.level === "none" && m.entries.length !== 0) ||
         (m.level === "core" && m.entries.some((e) => e.slug !== "core")) ||
         new Set(m.entries.map((e) => e.slug)).size !== m.entries.length ||
+        (!options.teamMember &&
+          m.entries.reduce(
+            (sum: number, e) => sum + memoryReaderEntryBytes(e.slug, e.body),
+            0,
+          ) >
+            1024 * 1024) ||
         (options.teamMember
           ? m.entries.reduce(
               (sum: number, e) =>
@@ -328,6 +359,9 @@ export function buildAgentSnapshot(
       (!Number.isInteger(agent.launchParallelism) ||
         agent.launchParallelism < 1 ||
         agent.launchParallelism > 32)) ||
+    // Older native hosts cannot attest that imported launch behavior is portable.
+    !Array.isArray(agent.snapshotExportLimitations) ||
+    agent.snapshotExportLimitations.length > 0 ||
     (agent.sessionPolicy === null && !defaultSessionPolicy)
   ) {
     throw new Error(
@@ -617,6 +651,44 @@ export function encodeAgentSnapshot(
   parseAgentSnapshot(png);
   return png;
 }
+/** Preserve only PNG pixel-bearing chunks; never carry the embedded manifest or metadata into avatar upload. */
+export function snapshotPngArtwork(bytes: Uint8Array): Uint8Array | undefined {
+  if (
+    bytes.length < 8 ||
+    !bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])
+  )
+    return undefined;
+  // The caller parses the manifest first; keep this utility safe when used alone.
+  parseAgentSnapshot(bytes);
+  const parts = [MAGIC];
+  let offset = 8;
+  let imageData = 0;
+  let placeholderHeader = false;
+  let placeholderPixel = false;
+  while (offset + 12 <= bytes.length) {
+    const length = u32(bytes, offset);
+    const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      placeholderHeader =
+        length === 13 && u32(data, 0) === 1 && u32(data, 4) === 1;
+    }
+    if (type === "IDAT") {
+      imageData++;
+      placeholderPixel =
+        length === PLACEHOLDER_PIXEL.length &&
+        data.every((byte, i) => byte === PLACEHOLDER_PIXEL[i]);
+    }
+    if (["IHDR", "IDAT", "IEND"].includes(type))
+      parts.push(bytes.slice(offset, offset + length + 12));
+    offset += length + 12;
+    if (type === "IEND") break;
+  }
+  return placeholderHeader && imageData === 1 && placeholderPixel
+    ? undefined
+    : concat(parts);
+}
+
 function pngManifest(bytes: Uint8Array) {
   let offset = 8,
     found: Uint8Array | undefined,

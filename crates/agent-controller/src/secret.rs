@@ -3,6 +3,22 @@ use bech32::{primitives::decode::CheckedHrpstring, Bech32};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroizing;
 
+/// NIP-44 v2: 65,535 bytes pad to 65,536 with a two-byte prefix;
+/// base64(1 version + 32 nonce + 2 length + 65,536 padded + 32 MAC)
+/// is exactly 87,472 bytes, the native reader cap. At 65,536 the prefix grows
+/// to six bytes and the result exceeds that cap. Count JSON escaping and UTF-8.
+pub fn validate_snapshot_memory_envelope(slug: &str, body: &str) -> Result<()> {
+    let plaintext = if slug == "core" {
+        serde_json::json!({"slug":slug,"profile":body})
+    } else {
+        serde_json::json!({"slug":slug,"value":body})
+    };
+    if plaintext.to_string().len() > 65_535 {
+        return Err("Snapshot memory envelope exceeds the readable limit".into());
+    }
+    Ok(())
+}
+
 /// No Debug/Serialize: secret bytes never belong in a command result or log.
 pub struct Secret {
     bytes: Zeroizing<[u8; 32]>,
@@ -179,6 +195,7 @@ impl Secret {
         } else {
             serde_json::json!({"slug":slug,"value":body})
         };
+        validate_snapshot_memory_envelope(slug, body)?;
         let mut nonce = [0; 32];
         getrandom::fill(&mut nonce).map_err(|_| "Could not encrypt snapshot memory")?;
         let encrypted = base64::Engine::encode(

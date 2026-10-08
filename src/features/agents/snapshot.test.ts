@@ -8,6 +8,8 @@ import {
   MAX_AGENT_SNAPSHOT_PNG_BYTES,
   parseAgentSnapshot,
   snapshotImportEdit,
+  snapshotPngArtwork,
+  restorableMemoryEntry,
   snapshotLimitations,
 } from "./snapshot";
 const portableAgent = () => {
@@ -706,4 +708,104 @@ it("uses supplied PNG artwork as pixels and never copies its snapshot metadata",
   expect(parseAgentSnapshot(image).profile.displayName).toBe("Another");
   const text = new TextDecoder().decode(image);
   expect(text.match(/buzz_agent_snapshot/g)).toHaveLength(1);
+});
+
+it("rejects escaped memory event overflow before identity creation", () => {
+  const source = buildAgentSnapshot(portableAgent(), "core", []);
+  const body = "\\".repeat(40_000);
+  expect(restorableMemoryEntry("core", body)).toBe(false);
+  expect(() =>
+    parse({
+      ...source,
+      memory: { level: "core", entries: [{ slug: "core", body }] },
+    }),
+  ).toThrow("Invalid snapshot manifest");
+  expect(() =>
+    encodeAgentSnapshot(
+      {
+        ...source,
+        memory: { level: "core", entries: [{ slug: "core", body }] },
+      },
+      "json",
+    ),
+  ).toThrow("Invalid snapshot manifest");
+});
+
+it("extracts PNG pixels without portable metadata and preserves JSON placeholder fallback", () => {
+  const manifest = buildAgentSnapshot(portableAgent());
+  const empty = encodeAgentSnapshot(manifest, "png");
+  expect(snapshotPngArtwork(empty)).toBeUndefined();
+  expect(
+    snapshotPngArtwork(encodeAgentSnapshot(manifest, "json")),
+  ).toBeUndefined();
+  expect(
+    snapshotPngArtwork(encodeAgentSnapshot(manifest, "png", empty)),
+  ).toBeUndefined();
+});
+
+it("rejects aggregate reader DTO overflow even when entry array fits", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const entries = Array.from({ length: 40 }, (_, i) => ({
+    slug: `mem/${i}`,
+    body: "x".repeat(30_000),
+  }));
+  const manifest = { ...source, memory: { level: "everything", entries } };
+  expect(restorableMemoryEntry("mem/0", "x".repeat(30_000))).toBe(true);
+  expect(() => parse(manifest)).toThrow("Invalid snapshot manifest");
+  expect(() =>
+    parse({
+      ...manifest,
+      memory: { level: "everything", entries: entries.slice(0, 30) },
+    }),
+  ).not.toThrow();
+});
+
+it("extracts real PNG artwork while stripping snapshot metadata", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const pixels = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=",
+    ),
+    (char) => char.charCodeAt(0),
+  );
+  const png = encodeAgentSnapshot(source, "png", pixels);
+  const extracted = snapshotPngArtwork(png);
+  expect(extracted).toEqual(pixels);
+  expect(new TextDecoder().decode(extracted)).not.toContain(
+    "buzz_agent_snapshot",
+  );
+});
+
+it("fails closed when the host cannot attest portable native settings", () => {
+  const source = portableAgent();
+  delete source.snapshotExportLimitations;
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    "cannot be exported faithfully",
+  );
+  source.snapshotExportLimitations = ["team instructions"];
+  expect(() => buildAgentSnapshot(source)).toThrow(
+    "cannot be exported faithfully",
+  );
+  source.snapshotExportLimitations = [];
+  expect(buildAgentSnapshot(source).definition.name).toBe(source.name);
+});
+
+it("accepts exact per-event plaintext boundary, rejects first byte beyond", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const make = (size: number) => ({
+    ...source,
+    memory: {
+      level: "everything",
+      entries: [{ slug: "mem/a", body: "x".repeat(size) }],
+    },
+  });
+  let low = 0,
+    high = 65_535;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (restorableMemoryEntry("mem/a", "x".repeat(middle))) low = middle;
+    else high = middle - 1;
+  }
+  expect(() => parse(make(low))).not.toThrow();
+  expect(() => parse(make(low + 1))).toThrow("Invalid snapshot manifest");
 });

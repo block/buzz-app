@@ -32,6 +32,8 @@ import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import meManifest from "./me/manifest.json";
+import * as me from "./me";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -51,6 +53,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...meManifest, apiVersion: 1 },
+    module: me,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...builderlabManifest, apiVersion: 1 },
     module: builderlab,

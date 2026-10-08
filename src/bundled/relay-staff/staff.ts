@@ -32,6 +32,7 @@ export function createStaff(
 ) {
   const listeners = new Set<() => void>();
   const access = new Map<string, Access>();
+  const held = new Map<string, Map<string, unknown>>();
   let discovery: Discovery | null = null;
   let retained = 0;
   const emit = () => {
@@ -71,6 +72,10 @@ export function createStaff(
     return { relay: now.relay, origin, signer: now.signer };
   };
   const key = (context: StaffContext) => `${context.signer} ${context.origin}`;
+  const contextKey = () => {
+    const now = context();
+    return now && `${key(now)} ${now.relay}`;
+  };
 
   return {
     backend,
@@ -92,9 +97,27 @@ export function createStaff(
     /** Re-run discovery when the selected relay or identity changes. */
     refresh() {
       if (retained) discover();
-      else emit();
+      // An identity switch on the same relay changes the context, not discovery.
+      emit();
     },
     context,
+    /** Snapshot that changes whenever the signer, admin host or relay does. */
+    contextKey,
+    /**
+     * Unresolved writes for exactly this signer, admin host and relay. Kept in
+     * memory for the app session, outside every view and authorization state,
+     * so a retry resends the same request and never goes out under another
+     * identity or host.
+     */
+    held(context: StaffContext) {
+      const id = `${key(context)} ${context.relay}`;
+      let writes = held.get(id);
+      if (!writes) {
+        writes = new Map();
+        held.set(id, writes);
+      }
+      return writes;
+    },
     access(context: StaffContext) {
       return access.get(key(context)) ?? null;
     },

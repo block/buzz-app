@@ -353,15 +353,19 @@ function Resolve({
     action !== "timeout" || (Number.isInteger(duration) && duration > 0);
 
   const submit = async () => {
-    if (!action) return;
-    const outcome = await write.run({
-      route: "resolveReport",
-      id: report.id,
-      action,
-      requestId: crypto.randomUUID(),
-      ...(reason.trim() ? { reason: reason.trim() } : {}),
-      ...(action === "timeout" ? { expirationSecs: duration } : {}),
-    });
+    // A frozen request is resent as is; only a new action reads the form.
+    const outcome = await write.run(
+      action
+        ? {
+            route: "resolveReport",
+            id: report.id,
+            action,
+            requestId: crypto.randomUUID(),
+            ...(reason.trim() ? { reason: reason.trim() } : {}),
+            ...(action === "timeout" ? { expirationSecs: duration } : {}),
+          }
+        : undefined,
+    );
     if (!outcome) return;
     if (outcome.ok) {
       notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");

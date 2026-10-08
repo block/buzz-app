@@ -18,9 +18,14 @@ connection" section of [identity.md](identity.md) for the address rules.
    `admin_api` host. Discovery is unsigned.
 2. Opening the card sends the first signed request, `probe`. Its result is
    remembered per (identity, admin host): reopening the card does not probe
-   again, and switching identity or community starts over.
-3. Any 401 or 403 re-probes in the background. An unchanged result keeps the
-   current session so open views do not reload.
+   again. The card follows the selected community's relay and the signed-in
+   identity; changing either one, including an identity switch on the same
+   relay, replaces the console and probes for the new identity unless its role
+   is already remembered.
+3. A 401 or 403 from any signed request the console sends (reads, writes,
+   attachment previews and Save) re-probes in the background. An unchanged
+   result keeps the current session so open views do not reload and the
+   re-probe cannot repeat itself.
 4. Probe outcomes: authorized, access denied (shows the key to give an
    operator), no admin API on the advertised host, or unreachable
    (network, TLS, DNS, or a VPN or SSO gateway).
@@ -44,7 +49,8 @@ connection" section of [identity.md](identity.md) for the address rules.
   Restrictions (lift a ban, clear a timeout), Members and Actions (ban, timeout,
   delete a message after an event preview).
 - **Operators** (operators only): add, change and remove staff. Staff set in
-  relay configuration can't be changed here. Changing your own entry re-probes.
+  relay configuration can't be changed here, and a read-only relay shows the
+  list without any controls. Changing your own entry re-probes.
 
 A relay that answers a route with a complete, empty 404 or 405 lacks it. The
 console says so in place ("This relay doesn't support community browsing yet.",
@@ -56,11 +62,16 @@ available.
 Resolve, reopen and direct actions freeze the whole request, including a
 `requestId` minted once. An outcome `unresolved()` reports (an ambiguous
 response, or a `pending` direct action) keeps it, so **Retry** resends the same
-request. The direct-action controller lives above the tabs, so leaving a
-community page keeps a reviewed action. A request that was never sent, or a
-definite rejection, releases it. `request_id_conflict` is shown as an error and
+request as it is, without reading the form again. Unresolved writes are held in
+memory for the app session, keyed by the identity, admin host and relay they
+were made for, outside the card and its access state. Leaving a report or
+community page, closing and reopening the card, or losing and regaining access
+all bring back the same request; it is never offered or sent under another
+identity or admin host. Nothing is saved to disk. A request that was never
+sent, or a definite rejection, releases it. `request_id_conflict` is shown as an error and
 is never resent under a new ID without the user starting a new action.
 
-Every read is tied to the identity, admin host, community and search it was
-made for; a late answer to an earlier one is dropped. Search and reason fields
+A late answer to a read is dropped once the identity, admin host, community or
+search it was made for has changed: a new search or identity cancels it, and a
+new relay or community replaces the view that asked. Search and reason fields
 refuse a pasted `nsec` on the device.

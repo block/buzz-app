@@ -9,7 +9,9 @@ import {
 } from "react";
 import {
   unresolved,
+  type AttachmentRef,
   type ProbeDto,
+  type SaveResult,
   type StaffContext,
   type StaffFailure,
   type StaffOutcome,
@@ -25,11 +27,13 @@ export type Session = {
   /** False when the relay runs with admin auth disabled: the console is read-only. */
   canMutate: boolean;
   isOperator: boolean;
-  /** Frozen writes by key; outlives the views that started them. */
-  frozen: Map<string, StaffRequest>;
+  /** Unresolved writes by key for this context; see `Staff.held`. */
+  frozen: Map<string, unknown>;
   request<R extends StaffRequest>(
     request: R,
   ): Promise<StaffOutcome<StaffResults[R["route"]]>>;
+  attachment(ref: AttachmentRef): Promise<StaffOutcome<Uint8Array>>;
+  saveAttachment(ref: AttachmentRef): Promise<SaveResult>;
 };
 
 const SessionContext = createContext<Session | null>(null);
@@ -41,29 +45,44 @@ export function useSession() {
   return session;
 }
 
-/** Wraps requests so any authorization loss re-checks the role in the background. */
+/**
+ * Every signed operation goes through here, so a 401 or 403 from any of them
+ * re-checks the role in the background. An unchanged role keeps the session
+ * (see `Staff.probe`), so the re-check cannot loop.
+ */
 export function createSession(
   staff: Staff,
   context: StaffContext,
   probe: ProbeDto,
-  frozen: Map<string, StaffRequest>,
 ): Session {
+  const checked = (failure: StaffFailure | null) => {
+    if (
+      failure?.category === "unauthorized" ||
+      failure?.category === "forbidden"
+    )
+      void staff.probe(context, true);
+  };
   return {
     staff,
     context,
     probe,
-    frozen,
+    frozen: staff.held(context),
     canMutate: probe.authMode === "nip98",
     isOperator: probe.role === "operator",
     async request(request) {
       const outcome = await staff.backend.request(context, request);
-      if (
-        !outcome.ok &&
-        (outcome.failure.category === "unauthorized" ||
-          outcome.failure.category === "forbidden")
-      )
-        void staff.probe(context, true);
+      checked(outcome.ok ? null : outcome.failure);
       return outcome;
+    },
+    async attachment(ref) {
+      const outcome = await staff.backend.attachment(context, ref);
+      checked(outcome.ok ? null : outcome.failure);
+      return outcome;
+    },
+    async saveAttachment(ref) {
+      const result = await staff.backend.saveAttachment(context, ref);
+      checked(result.state === "failed" ? result.failure : null);
+      return result;
     },
   };
 }
@@ -136,12 +155,13 @@ export function useFrozenWrite<R extends StaffRequest>(key: string) {
   );
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  /** Resends the frozen request if there is one; otherwise freezes `fresh`. */
   const run = async (
-    fresh: R,
+    fresh?: R,
   ): Promise<StaffOutcome<StaffResults[R["route"]]> | null> => {
-    if (inFlight.current) return null;
-    inFlight.current = true;
     const request = (store.get(key) as R | undefined) ?? fresh;
+    if (!request || inFlight.current) return null;
+    inFlight.current = true;
     store.set(key, request);
     setFrozen(request);
     setBusy(true);

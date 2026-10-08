@@ -31,7 +31,7 @@ const configBacked = (operator: OperatorDto) =>
   operator.sources.some((source) => source !== "db");
 
 export function Operators() {
-  const { context, staff, request } = useSession();
+  const { context, staff, request, canMutate } = useSession();
   const [list, reload] = useRead({ route: "listOperators" }, [context]);
   const [input, setInput] = useState("");
   const [role, setRole] = useState<StaffRole>("moderator");
@@ -75,37 +75,41 @@ export function Operators() {
     <Loaded read={list}>
       {(operators) => (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2 rounded-md border px-3 py-2.5">
-            <p className="text-caption font-medium text-secondary">Add staff</p>
-            <div className="flex items-center gap-2">
-              <Input
-                aria-label="Public key"
-                placeholder="npub or 64-hex public key"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-              />
-              <Select
-                label="Role"
-                variant="compact"
-                value={role}
-                groups={ROLES}
-                onValueChange={(value) => setRole(value as StaffRole)}
-              />
-              <Button
-                size="sm"
-                loading={working !== null && working === pubkey}
-                disabled={!pubkey}
-                onClick={() => void add(operators)}
-              >
-                Add
-              </Button>
-            </div>
-            {secret && (
-              <p className="text-caption text-danger">
-                That looks like a private key. Never paste it here.
+          {canMutate && (
+            <div className="flex flex-col gap-2 rounded-md border px-3 py-2.5">
+              <p className="text-caption font-medium text-secondary">
+                Add staff
               </p>
-            )}
-          </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  aria-label="Public key"
+                  placeholder="npub or 64-hex public key"
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                />
+                <Select
+                  label="Role"
+                  variant="compact"
+                  value={role}
+                  groups={ROLES}
+                  onValueChange={(value) => setRole(value as StaffRole)}
+                />
+                <Button
+                  size="sm"
+                  loading={working !== null && working === pubkey}
+                  disabled={!pubkey}
+                  onClick={() => void add(operators)}
+                >
+                  Add
+                </Button>
+              </div>
+              {secret && (
+                <p className="text-caption text-danger">
+                  That looks like a private key. Never paste it here.
+                </p>
+              )}
+            </div>
+          )}
           {error && (
             <p className="text-body-sm text-danger" role="alert">
               {error}
@@ -135,7 +139,7 @@ export function Operators() {
                         .map((source) => SOURCES[source])
                         .join(", ")}
                     </span>
-                    {fixed ? (
+                    {fixed || !canMutate ? (
                       <span className="text-caption">
                         {operator.effectiveRole}
                       </span>
@@ -158,19 +162,21 @@ export function Operators() {
                         }
                       />
                     )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={fixed || working === operator.pubkey}
-                      title={
-                        fixed
-                          ? "Set in relay configuration; cannot be removed here"
-                          : undefined
-                      }
-                      onClick={() => setRemoving(operator)}
-                    >
-                      Remove
-                    </Button>
+                    {canMutate && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={fixed || working === operator.pubkey}
+                        title={
+                          fixed
+                            ? "Set in relay configuration; cannot be removed here"
+                            : undefined
+                        }
+                        onClick={() => setRemoving(operator)}
+                      >
+                        Remove
+                      </Button>
+                    )}
                   </li>
                 );
               })}

@@ -505,7 +505,7 @@ it("config-backed staff can't be removed, and removing yourself re-probes", asyn
       { pubkey: fixedKey, effectiveRole: "operator", sources: ["config"] },
       { pubkey: signer, effectiveRole: "operator", sources: ["db"] },
     ]);
-  routes.deleteOperator = () => ok(null);
+  routes.deleteOperator = () => ok({ deleted: signer });
   mount();
   fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
   await waitFor(() =>

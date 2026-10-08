@@ -27,6 +27,7 @@ function fixture(t) {
     "scripts/fix-appimage.sh",
     "scripts/verify-runtime-bundle.mjs",
     "runtime/agent-runtime.json",
+    "runtime/community-session.patch",
   ])
     copyFileSync(new URL(`../../${name}`, import.meta.url), join(root, name));
   const source = join(root, "src-tauri/resources/agent-runtime");
@@ -42,7 +43,10 @@ function fixture(t) {
   writeFileSync(
     join(source, "manifest.json"),
     JSON.stringify({
-      version: 2,
+      version: 3,
+      patchSha256: createHash("sha256")
+        .update(readFileSync(join(root, "runtime/community-session.patch")))
+        .digest("hex"),
       revision: spec.revision,
       goose: spec.goose,
       target: "x86_64-unknown-linux-gnu",

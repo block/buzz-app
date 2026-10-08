@@ -105,7 +105,10 @@ for (const target of ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]) {
       files[name] = createHash("sha256").update(tool).digest("hex");
     }
     const manifest = {
-      version: 2,
+      version: 3,
+      patchSha256: createHash("sha256")
+        .update(readFileSync(new URL("runtime/community-session.patch", root)))
+        .digest("hex"),
       revision: spec.revision,
       goose: spec.goose,
       target,
@@ -120,12 +123,18 @@ for (const target of ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]) {
         { cwd: root, encoding: "utf8" },
       );
     save();
-    assert.equal(run().status, 0);
+    {
+      const result = run();
+      assert.equal(result.status, 0, result.stderr);
+    }
     const name = Object.keys(files)[0];
     writeFileSync(join(directory, name), "bundler transformed bytes");
     assert.notEqual(run().status, 0);
     writeFileSync(join(directory, name), spec.tools[0], { mode: 0o755 });
-    assert.equal(run().status, 0);
+    {
+      const result = run();
+      assert.equal(result.status, 0, result.stderr);
+    }
     manifest.revision = "0".repeat(40);
     save();
     assert.notEqual(run().status, 0);

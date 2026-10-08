@@ -1190,6 +1190,11 @@ function ReadySidebar({
                         ? () => preferences.removeSection(section.key.slice(6))
                         : undefined
                     }
+                    removalFocus={() =>
+                      sidebar.list.current?.querySelector<HTMLButtonElement>(
+                        '[data-sidebar-section="channels"] button',
+                      )
+                    }
                     createChannel={
                       isChannelSectionKey(section.key)
                         ? {

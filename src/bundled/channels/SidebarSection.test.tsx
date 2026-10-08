@@ -218,6 +218,46 @@ it("holds confirmation while removing, shows failure, and permits explicit retry
   );
   expect(remove).toHaveBeenCalledTimes(2);
 });
+it.each(["Cancel", "Escape"])(
+  "restores section focus after failure then %s",
+  async (dismiss) => {
+    const user = userEvent.setup();
+    const remove = vi
+      .fn()
+      .mockRejectedValue(new Error("Publication not confirmed"));
+    render(
+      <SidebarSection
+        sectionKey="group:work"
+        title="Work"
+        open
+        onToggle={() => {}}
+        onRemove={remove}
+      >
+        <button type="button">General</button>
+      </SidebarSection>,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "More actions for Work",
+    });
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove section" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Remove Work?" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Publication not confirmed",
+    );
+    if (dismiss === "Cancel")
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    else await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(remove).toHaveBeenCalledOnce();
+  },
+);
+
 it("never offers removal for built-in sections even when a callback is supplied", async () => {
   const user = userEvent.setup();
   const remove = vi.fn();

@@ -44,6 +44,7 @@ export function SidebarSection({
   dropRef,
   dropTarget = false,
   onRemove,
+  removalFocus,
   children,
 }: {
   sectionKey: string;
@@ -54,6 +55,7 @@ export function SidebarSection({
   open: boolean;
   onToggle: (open: boolean) => void;
   onRemove?: (() => unknown) | undefined;
+  removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
@@ -70,6 +72,7 @@ export function SidebarSection({
 }) {
   const id = useId();
   const cancelRemove = useRef<HTMLButtonElement>(null);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -142,6 +145,7 @@ export function SidebarSection({
         <div className={styles.sectionActions}>
           <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
             <MenuTrigger
+              ref={actionsTrigger}
               render={(props) => (
                 <IconButton
                   {...props}
@@ -238,7 +242,11 @@ export function SidebarSection({
               dismissOnOutsideClick
               preventClose={removing}
               initialFocus={cancelRemove}
-              finalFocus={false}
+              finalFocus={() =>
+                actionsTrigger.current?.isConnected
+                  ? actionsTrigger.current
+                  : (removalFocus?.() ?? false)
+              }
               title={`Remove ${title}?`}
               description={`Assigned channels will move back to Channels. This does not delete any channels or saved templates.`}
               actions={

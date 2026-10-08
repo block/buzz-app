@@ -40,6 +40,9 @@ for (const personal of [false, true]) {
       ).toBeFocused();
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: `More actions for ${title}` }),
+      ).toBeFocused();
       expect(app.report.sidebarPublications ?? []).toHaveLength(0);
       await expect(group).toBeVisible();
       await page
@@ -53,6 +56,9 @@ for (const personal of [false, true]) {
         .click();
       await expect(dialog).toHaveCount(0);
       await expect(group).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "More actions for Channels" }),
+      ).toBeFocused();
       await expect(
         page.locator(
           `[data-sidebar-section="channels"] [data-channel-id="${channel}"]`,

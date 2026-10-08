@@ -54,6 +54,8 @@ zeroize = "1.9"
 nostr = { version = "=0.45.5", default-features = false, features = ["std", "nip44", "os-rng"] }
 tempfile = "3"
 fs2 = "0.4"
+arboard = { version = "3", features = ["wayland-data-control"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 
 [dev-dependencies]

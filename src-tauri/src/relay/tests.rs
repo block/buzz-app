@@ -1688,6 +1688,116 @@ fn native_downloads_only_accept_authenticated_media_urls() {
 }
 
 #[test]
+fn clipboard_decodes_pixels_and_rejects_invalid_or_oversized_images() {
+    use image::{ImageEncoder as _, Rgba, RgbaImage};
+    let pixels = RgbaImage::from_fn(2, 1, |x, _| {
+        if x == 0 {
+            Rgba([255, 0, 0, 255])
+        } else {
+            Rgba([0, 80, 200, 128])
+        }
+    });
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(pixels.as_raw(), 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert_eq!(
+        clipboard_pixels(&png).unwrap(),
+        (2, 1, pixels.clone().into_raw())
+    );
+    let mut webp = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
+        .write_image(pixels.as_raw(), 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert_eq!(clipboard_pixels(&webp).unwrap(), (2, 1, pixels.into_raw()));
+    assert!(clipboard_pixels(b"not an image").is_err());
+    assert!(clipboard_pixels(&vec![0; 50 * 1024 * 1024 + 1]).is_err());
+
+    // A valid, compressible image exceeds the 50 MiB expanded RGBA cap.
+    let huge = RgbaImage::from_pixel(4096, 4096, Rgba([1, 2, 3, 255]));
+    let mut encoded = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut encoded)
+        .write_image(huge.as_raw(), 4096, 4096, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert!(encoded.len() < 50 * 1024 * 1024);
+    assert!(clipboard_pixels(&encoded).is_err());
+}
+
+#[test]
+fn clipboard_bounds_embedded_webp_vp8_frames_before_decode() {
+    fn chunk(tag: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut bytes = tag.to_vec();
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+        if data.len() & 1 != 0 {
+            bytes.push(0);
+        }
+        bytes
+    }
+    fn webp(chunks: &[u8]) -> Vec<u8> {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&(chunks.len() as u32 + 4).to_le_bytes());
+        bytes.extend_from_slice(b"WEBP");
+        bytes.extend_from_slice(chunks);
+        bytes
+    }
+    let vp8 = |width: u16, height: u16| {
+        let mut header = [0, 0, 0, 0x9d, 0x01, 0x2a, 0, 0, 0, 0];
+        header[6..8].copy_from_slice(&width.to_le_bytes());
+        header[8..10].copy_from_slice(&height.to_le_bytes());
+        chunk(b"VP8 ", &header)
+    };
+    let mut static_chunks = chunk(b"VP8X", &[0, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
+    static_chunks.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&static_chunks), 64 * 64 * 4).is_ok());
+    assert!(check_webp_vp8_frames(&webp(&static_chunks), 4 * 4 * 384 - 1).is_err());
+    let mut mismatch = chunk(b"VP8X", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    mismatch.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&mismatch), 64 * 64 * 4).is_err());
+
+    // Padded VP8 planes have their own bound; odd dimensions must not lower
+    // the existing (unpadded) RGBA output cap.
+    let mut odd = chunk(b"VP8X", &[0, 0, 0, 0, 32, 0, 0, 32, 0, 0]);
+    odd.extend(vp8(33, 33));
+    assert!(check_webp_vp8_frames(&webp(&odd), 33 * 33 * 4).is_ok());
+    assert!(check_webp_vp8_frames(&webp(&odd), 9 * 384 - 1).is_err());
+
+    // The first animated frame nests VP8 after a 16-byte ANMF header.
+    let mut frame = vec![0; 16];
+    frame[6] = 63;
+    frame[9] = 63;
+    frame.extend(vp8(64, 64));
+    let mut animated_chunks = chunk(b"VP8X", &[2, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
+    animated_chunks.extend(chunk(b"ANMF", &frame));
+    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 4 * 4 * 384 - 1).is_err());
+    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 64 * 64 * 4).is_ok());
+    frame[6] = 0;
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
+    frame[6] = 63;
+    frame.pop();
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
+
+    let mut alpha_frame = vec![0; 16];
+    alpha_frame[6] = 63;
+    alpha_frame[9] = 63;
+    alpha_frame.extend(chunk(b"ALPH", &[0]));
+    alpha_frame.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_ok());
+    let vp8_tag = alpha_frame
+        .windows(4)
+        .position(|bytes| bytes == b"VP8 ")
+        .unwrap();
+    alpha_frame[vp8_tag..vp8_tag + 4].copy_from_slice(b"JUNK");
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_err());
+    alpha_frame.truncate(vp8_tag);
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_err());
+
+    let mut trailing = webp(&static_chunks);
+    trailing.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&trailing, 64 * 64 * 4).is_err());
+}
+
+#[test]
 fn download_names_are_safe_and_collisions_do_not_overwrite() {
     let url = Url::parse(&format!("https://relay.test/media/{}.pdf", "a".repeat(64))).unwrap();
     for invalid in [

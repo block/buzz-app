@@ -1356,6 +1356,196 @@ fn save_download(
     Err("Too many files with this name".into())
 }
 
+/// `image` bounds the WebP canvas but its VP8 decoder allocates Y/U/V planes
+/// from the embedded frame header before comparing that frame to the canvas.
+/// Inspect every embedded lossy frame (including ANMF subchunks) before decode.
+fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
+    fn chunks(
+        mut bytes: &[u8],
+        max_bytes: usize,
+        animated_frame: bool,
+        mut expected: Option<(usize, usize)>,
+    ) -> Result<()> {
+        let mut alpha_successor = false;
+        let mut frame_chunk_seen = false;
+        while !bytes.is_empty() {
+            let header = bytes.get(..8).ok_or("Could not decode image")?;
+            let size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+            let end = 8usize.checked_add(size).ok_or("Could not decode image")?;
+            let next = end.checked_add(size & 1).ok_or("Could not decode image")?;
+            let payload = bytes.get(8..end).ok_or("Could not decode image")?;
+            if bytes.get(..next).is_none() {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && alpha_successor && &header[..4] != b"VP8 " {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && frame_chunk_seen {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame
+                && !alpha_successor
+                && &header[..4] != b"ALPH"
+                && &header[..4] != b"VP8 "
+                && &header[..4] != b"VP8L"
+            {
+                return Err("Could not decode image".into());
+            }
+            match &header[..4] {
+                b"VP8 " => {
+                    let frame = payload.get(..10).ok_or("Could not decode image")?;
+                    if frame[0] & 1 != 0 || &frame[3..6] != b"\x9d\x01\x2a" {
+                        return Err("Could not decode image".into());
+                    }
+                    let width = usize::from(u16::from_le_bytes([frame[6], frame[7]]) & 0x3fff);
+                    let height = usize::from(u16::from_le_bytes([frame[8], frame[9]]) & 0x3fff);
+                    // The locked VP8 decoder allocates three padded Y/U/V planes
+                    // before comparing the embedded frame with its canvas.
+                    let plane_bytes = width
+                        .div_ceil(16)
+                        .checked_mul(height.div_ceil(16))
+                        .and_then(|blocks| blocks.checked_mul(16 * 16 + 2 * 8 * 8))
+                        .ok_or("Image too large to copy")?;
+                    if width == 0 || height == 0 || plane_bytes > max_bytes {
+                        return Err("Image too large to copy".into());
+                    }
+                    if expected.is_some_and(|dimensions| dimensions != (width, height)) {
+                        return Err("Could not decode image".into());
+                    }
+                    frame_chunk_seen = true;
+                }
+                b"VP8L" if animated_frame => {
+                    frame_chunk_seen = true;
+                }
+                b"ALPH" if animated_frame => {
+                    // `image-webp` decodes the successor payload as VP8 even when
+                    // its chunk tag is not VP8; require the tag we validated.
+                    alpha_successor = true;
+                    if bytes.len().saturating_sub(next) < 8 {
+                        return Err("Could not decode image".into());
+                    }
+                }
+                b"VP8X" if !animated_frame => {
+                    let canvas = payload.get(..10).ok_or("Could not decode image")?;
+                    let width = usize::from(canvas[4])
+                        | (usize::from(canvas[5]) << 8)
+                        | (usize::from(canvas[6]) << 16);
+                    let height = usize::from(canvas[7])
+                        | (usize::from(canvas[8]) << 8)
+                        | (usize::from(canvas[9]) << 16);
+                    expected = Some((width + 1, height + 1));
+                }
+                b"ANMF" if !animated_frame => {
+                    let frame = payload.get(..16).ok_or("Could not decode image")?;
+                    let width = usize::from(frame[6])
+                        | (usize::from(frame[7]) << 8)
+                        | (usize::from(frame[8]) << 16);
+                    let height = usize::from(frame[9])
+                        | (usize::from(frame[10]) << 8)
+                        | (usize::from(frame[11]) << 16);
+                    chunks(
+                        &payload[16..],
+                        max_bytes,
+                        true,
+                        Some((width + 1, height + 1)),
+                    )?;
+                }
+                _ => {}
+            }
+            bytes = &bytes[next..];
+        }
+        if animated_frame && !frame_chunk_seen {
+            return Err("Could not decode image".into());
+        }
+        Ok(())
+    }
+
+    let header = bytes.get(..12).ok_or("Could not decode image")?;
+    if &header[..4] != b"RIFF" || &header[8..12] != b"WEBP" {
+        return Err("Could not decode image".into());
+    }
+    let riff_size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+    let end = riff_size.checked_add(8).ok_or("Could not decode image")?;
+    if end != bytes.len() {
+        return Err("Could not decode image".into());
+    }
+    let body = bytes.get(12..end).ok_or("Could not decode image")?;
+    chunks(body, max_bytes, false, None)
+}
+
+/// Decode only formats the gallery can paste, with a bound on both encoded and
+/// expanded bytes. The URL extension and remote Content-Type are not evidence.
+fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
+    const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Image too large to copy".into());
+    }
+    let format = image::guess_format(bytes).map_err(|_| "Could not decode image")?;
+    if format == image::ImageFormat::WebP {
+        check_webp_vp8_frames(bytes, MAX_IMAGE_BYTES)?;
+    }
+    if !matches!(
+        format,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Gif
+    ) {
+        return Err("Could not decode image".into());
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|_| "Could not decode image")?;
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|size| *size <= MAX_IMAGE_BYTES)
+        .ok_or("Image too large to copy")?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let rgba = reader
+        .decode()
+        .map_err(|_| "Could not decode image")?
+        .to_rgba8()
+        .into_raw();
+    if rgba.len() != pixels {
+        return Err("Could not decode image".into());
+    }
+    Ok((width as usize, height as usize, rgba))
+}
+
+/// The host owns authenticated media access and the OS clipboard. Never hand
+/// bearer tokens or privileged fetch capability to the webview.
+#[tauri::command]
+pub(crate) async fn media_copy_image<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+) -> Result<()> {
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let response = fetch_media(host.inner(), url, None)
+        .await
+        .map_err(|_| "Could not fetch image")?;
+    if !response
+        .headers()
+        .get("Content-Type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind.starts_with("image/") && kind != "image/svg+xml")
+    {
+        return Err("Could not decode image".into());
+    }
+    let pixels = tauri::async_runtime::spawn_blocking(move || clipboard_pixels(response.body()))
+        .await
+        .map_err(|_| "Could not decode image".to_owned())??;
+    crate::image_clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
 /// The host, not the webview, owns the save path and collision policy.
 #[tauri::command]

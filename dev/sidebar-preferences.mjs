@@ -141,14 +141,29 @@ function parseSectionsEvent(events, secret) {
     key.fill(0);
   }
 }
+export function assertSidebarSectionRemovalIntent(intent) {
+  if (
+    !intent ||
+    typeof intent !== "object" ||
+    Array.isArray(intent) ||
+    Object.keys(intent).length !== 1 ||
+    typeof intent.sectionId !== "string" ||
+    !intent.sectionId.trim() ||
+    intent.sectionId.length > 256
+  )
+    throw new Error("Invalid section removal intent");
+}
+
 /** Narrow host command: mutate one assignment against the latest encrypted head. */
-export function prepareSidebarAssignment(
+function prepareSidebarGroups(
   events,
   intent,
   secret,
   now = Date.now(),
+  removing = false,
 ) {
-  assertSidebarAssignmentIntent(intent);
+  if (removing) assertSidebarSectionRemovalIntent(intent);
+  else assertSidebarAssignmentIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
   const sectionId = intent.createSection?.id ?? intent.sectionId;
@@ -168,11 +183,16 @@ export function prepareSidebarAssignment(
     }
   }
   if (
+    !removing &&
     sectionId !== undefined &&
     !sections.some((section) => section.id === sectionId)
   )
     throw new Error("Sidebar group no longer exists");
-  const writes = [[["a", intent.channelId], sectionId ?? null]];
+  const writes = removing
+    ? sections.some((section) => section.id === sectionId)
+      ? [[["s", sectionId, "live"], false]]
+      : []
+    : [[["a", intent.channelId], sectionId ?? null]];
   if (created) {
     const added = sections.find((section) => section.id === sectionId);
     writes.push(
@@ -215,6 +235,42 @@ export function prepareSidebarAssignment(
       secret,
     ),
   };
+}
+
+export function prepareSidebarAssignment(
+  events,
+  intent,
+  secret,
+  now = Date.now(),
+) {
+  return prepareSidebarGroups(events, intent, secret, now);
+}
+export async function mutateSidebarSectionRemoval(
+  intent,
+  secret,
+  readHead,
+  publish,
+) {
+  assertSidebarSectionRemovalIntent(intent);
+  const draft = prepareSidebarGroups(
+    await readHead(),
+    intent,
+    secret,
+    Date.now(),
+    true,
+  );
+  if (!draft.event) return draft.groups;
+  await publish(draft.event);
+  const confirmed = prepareSidebarGroups(
+    await readHead(),
+    intent,
+    secret,
+    Date.now(),
+    true,
+  );
+  if (confirmed.event)
+    throw new Error("Section changed on another device; refresh and try again");
+  return confirmed.groups;
 }
 
 /** Publish one assignment, then re-read the coordinate before reporting saved state. */

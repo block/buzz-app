@@ -564,3 +564,26 @@ it.each([
     }
   },
 );
+
+it("removes only the section register and preserves unrelated sections and channel records", async () => {
+  const transport = await connectNativeTransport(community);
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const other = "22345678-1234-1234-1234-123456789abc";
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c1", createSection: { id, name: "Work" } },
+    signal,
+  );
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c2", createSection: { id: other, name: "Other" } },
+    signal,
+  );
+  const removed = await transport.removeSidebarSection?.(id, signal);
+  expect(removed).toEqual({
+    sections: [{ id: other, name: "Other", order: 0 }],
+    assignments: { c2: other },
+  });
+  expect(await transport.removeSidebarSection?.(id, signal)).toEqual(removed);
+  expect([...records.keys()].every((key) => key === "channel-sections")).toBe(
+    true,
+  );
+});

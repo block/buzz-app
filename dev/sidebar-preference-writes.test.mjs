@@ -313,3 +313,59 @@ it.each(["sidebar-assignment", "sidebar-star"])(
     expect(h.calls).toEqual([]);
   },
 );
+
+it("real broker removes a section, unfiles its contents, and preserves other sections", async () => {
+  const h = await harness();
+  const signal = new AbortController().signal;
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const other = "22345678-1234-1234-1234-123456789abc";
+  await h.transport.writeSidebarAssignment(
+    { channelId: "alpha", createSection: { id, name: "Work" } },
+    signal,
+  );
+  await h.transport.writeSidebarAssignment(
+    { channelId: "beta", createSection: { id: other, name: "Other" } },
+    signal,
+  );
+  const result = await h.transport.removeSidebarSection(id, signal);
+  expect(result).toEqual({
+    sections: [{ id: other, name: "Other", order: 0 }],
+    assignments: { beta: other },
+  });
+  expect(await h.transport.removeSidebarSection(id, signal)).toEqual(result);
+});
+it.each(["query", "publication", "receipt", "conflict"])(
+  "does not report section deletion after %s failure",
+  async (failure) => {
+    const h = await harness();
+    const signal = new AbortController().signal;
+    const id = "12345678-1234-1234-1234-123456789abc";
+    await h.transport.writeSidebarAssignment(
+      { channelId: "alpha", createSection: { id, name: "Work" } },
+      signal,
+    );
+    if (failure === "query")
+      h.failQuery(new Response("failed", { status: 503 }));
+    if (failure === "publication")
+      h.failPublication(new Response("failed", { status: 503 }));
+    if (failure === "receipt")
+      h.failPublication(Response.json({ accepted: false, event_id: "wrong" }));
+    if (failure === "conflict") h.conflict();
+    await expect(
+      h.transport.removeSidebarSection(id, signal),
+    ).rejects.toThrow();
+  },
+);
+it("rejects malformed removal intents before accessing the relay", async () => {
+  const h = await harness();
+  for (const intent of [
+    {},
+    { sectionId: "" },
+    { sectionId: "work", channelId: "alpha" },
+  ]) {
+    expect(
+      (await h.post(intent, undefined, "sidebar-section-removal")).status,
+    ).toBe(400);
+  }
+  expect(h.calls).toEqual([]);
+});

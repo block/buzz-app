@@ -141,6 +141,43 @@ export function nativeSidebar(transport: ReadTransport) {
   }
   return {
     decodeSidebarPreferences: decode,
+    async removeSidebarSection(
+      sectionId: string,
+      signal: AbortSignal,
+    ): Promise<SidebarGroups> {
+      if (!sectionId.trim() || sectionId.length > 256)
+        throw new Error("Invalid section id");
+      return mutate(
+        "channel-sections",
+        signal,
+        (current, createdAt) => {
+          if (
+            !(current.sections as SidebarGroups["sections"]).some(
+              ({ id }) => id === sectionId,
+            )
+          ) {
+            const { sections, assignments } = project(
+              "channel-sections",
+              current,
+            );
+            return { next: current, result: { sections, assignments } };
+          }
+          const next = editSidebarRecord(
+            "channel-sections",
+            current,
+            createdAt,
+            [[["s", sectionId, "live"], false]],
+          );
+          const { sections, assignments } = project("channel-sections", next);
+          return { next, result: { sections, assignments } };
+        },
+        (current) =>
+          !(current.sections as SidebarGroups["sections"]).some(
+            ({ id }) => id === sectionId,
+          ),
+        "Section changed on another device; refresh and try again",
+      );
+    },
     async writeSidebarAssignment(
       intent: SidebarAssignmentIntent,
       signal: AbortSignal,

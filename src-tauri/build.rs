@@ -62,6 +62,7 @@ fn main() {
             "relay_upload_cancel",
             "media_download",
             "get_os_idle_seconds",
+            "workspace_pick_folder",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",

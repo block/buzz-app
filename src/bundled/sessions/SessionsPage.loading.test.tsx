@@ -7,7 +7,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { ChannelList } from "../../features/relay/contracts";
 import { SessionsPage } from "./SessionsPage";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 it.each([false, true])(
   "shows initial session loading only without retained sessions (retained=%s)",
   (retained) => {
@@ -48,7 +51,7 @@ it.each([false, true])(
         />,
       );
       if (retained) {
-        expect(screen.getByRole("button", { name: /Planning/ })).toBeVisible();
+        expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
         expect(screen.queryByText("Loading sessions…")).toBeNull();
       } else expect(screen.getByText("Loading sessions…")).toBeVisible();
     } finally {
@@ -57,3 +60,55 @@ it.each([false, true])(
     }
   },
 );
+
+it("hides parent-linked sessions even when restored as the selected session", () => {
+  const owner = createRelaySession(null);
+  const list: ChannelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "linked",
+        name: "Hidden child",
+        channelType: "session",
+        parentChannelId: "parent",
+      },
+      { id: "standalone", name: "Standalone", channelType: "session" },
+    ],
+  };
+  localStorage.setItem(
+    'buzz-view.v1:["filter-test","sessions:selected"]',
+    '"linked"',
+  );
+  const session = {
+    ...owner.session,
+    channels: { ...owner.session.channels, list: () => list, ensureList() {} },
+  };
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    scope: "filter-test",
+    session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    async clearCache() {},
+  };
+  const empty = { snapshot: () => [], subscribe: () => () => {} };
+  try {
+    render(
+      <SessionsPage
+        relay={relay}
+        extensions={{ tools: empty, inline: empty }}
+      />,
+    );
+    expect(screen.queryByText("Hidden child")).toBeNull();
+    expect(screen.getByRole("button", { name: "Standalone" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "New session" })).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

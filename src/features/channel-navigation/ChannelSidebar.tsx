@@ -41,7 +41,6 @@ import {
   BellIcon,
   BellSlashIcon,
   FolderSimpleIcon,
-  GitBranchIcon,
   MinusIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
@@ -80,7 +79,6 @@ import {
   type ChannelMenuSurface,
   useChannelNavigation,
 } from "./ChannelNavigationState";
-import { newSessionParent } from "./routes";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -92,6 +90,8 @@ type Props = {
   sessionsEnabled: boolean;
   children: ReactNode;
 };
+const noNestedSession = () => {};
+
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const navigation = <SidebarNavigation>{props.children}</SidebarNavigation>;
@@ -190,7 +190,6 @@ function ReadySidebar({
   navigator,
   providers,
   target,
-  sessionsEnabled,
   children,
   queries,
   cached,
@@ -284,13 +283,6 @@ function ReadySidebar({
   );
   const handoff = useChannelNavigation();
   const lifecycleDialog = handoff?.lifecycleDialog;
-  const draftParents = handoff?.draftParents ?? [];
-  const draftParent =
-    target.kind === "page" &&
-    target.pluginId === "buzz.channels" &&
-    sessionsEnabled
-      ? newSessionParent(target.route?.params)
-      : undefined;
   const composingMessage =
     target.kind === "page" &&
     target.pluginId === "buzz.channels" &&
@@ -307,36 +299,10 @@ function ReadySidebar({
   const current = channels.find(
     (channel) =>
       channel.id ===
-      (target.kind === "conversation" ? target.channelId : draftParent),
+      (target.kind === "conversation" ? target.channelId : undefined),
   );
-  const childSessions = useRef(new Map<string, typeof channels>());
-  const childrenByParent = useMemo(() => {
-    const children = new Map<string, typeof channels>();
-    for (const item of channels) {
-      if (item.channelType !== "session" || !item.parentChannelId) continue;
-      const siblings = children.get(item.parentChannelId) ?? [];
-      siblings.push(item);
-      children.set(item.parentChannelId, siblings);
-    }
-    for (const [parent, siblings] of children) {
-      siblings.sort(
-        (a, b) =>
-          (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
-      );
-      const previous = childSessions.current.get(parent);
-      if (
-        previous?.length === siblings.length &&
-        siblings.every((child, index) => child === previous[index])
-      )
-        children.set(parent, previous);
-    }
-    childSessions.current = children;
-    return children;
-  }, [channels]);
-
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
-  const startingSession = useRef(false);
   const removedDmFocus = useRef<
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
@@ -433,68 +399,6 @@ function ReadySidebar({
       });
     },
     [navigator, relay, queries, scope, viewer],
-  );
-  const startSession = useCallback(
-    (parentId: string, focusComposer = false) => {
-      const parent = queries.channels
-        .list()
-        .channels.find((channel) => channel.id === parentId);
-      if (
-        !viewer ||
-        relay.snapshot().session !== queries ||
-        !sessionsEnabled ||
-        !parent ||
-        parent.readOnly ||
-        parent.archived ||
-        parent.channelType === "dm" ||
-        parent.channelType === "session"
-      )
-        return;
-      handoff?.updateDraftParents((previous) =>
-        previous.includes(parentId) ? previous : [...previous, parentId],
-      );
-      sidebar.toggle(`session-children:${parentId}`, true);
-      void navigator
-        .open({
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.channels",
-          pageId: "channels",
-          route: { version: 1, params: { kind: "new-session", parentId } },
-          scope: {
-            viewer,
-            communityOrigin: scope.slice(0, -(viewer.length + 1)),
-          },
-        })
-        .then((result) => {
-          if (!focusComposer || result.status !== "opened") return;
-          requestAnimationFrame(() => {
-            const destination = navigator.snapshot().attempt.entry.target;
-            if (
-              !mounted.current ||
-              relay.snapshot().session !== queries ||
-              destination.kind !== "page" ||
-              newSessionParent(destination.route?.params) !== parentId ||
-              document.activeElement !== document.body
-            )
-              return;
-            document
-              .getElementById("new-session-prompt")
-              ?.querySelector<HTMLElement>('[role="textbox"]')
-              ?.focus();
-          });
-        });
-    },
-    [
-      viewer,
-      relay,
-      queries,
-      sessionsEnabled,
-      handoff,
-      sidebar.toggle,
-      navigator,
-      scope,
-    ],
   );
   const openActivityMessage = useCallback(
     (
@@ -697,29 +601,6 @@ function ReadySidebar({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (
-      sessionsEnabled &&
-      channel.channelType !== "dm" &&
-      channel.channelType !== "session" &&
-      !channel.archived &&
-      !channel.readOnly
-    ) {
-      actions.push(
-        <MenuItem
-          key="new-session"
-          onClick={() => {
-            if (surface) surface.close(() => false);
-            else startingSession.current = true;
-            startSession(channel.id, !!surface);
-          }}
-        >
-          <MenuIcon>
-            <GitBranchIcon size={14} />
-          </MenuIcon>
-          New session
-        </MenuItem>,
-      );
-    }
     if (
       placementWritable &&
       channel.channelType !== "dm" &&
@@ -929,7 +810,6 @@ function ReadySidebar({
   } = useChannelRowMenu(sections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
-      startingSession.current = false;
       readAction.reset();
       removedDmFocus.current = undefined;
       openMenu(channel, sectionKey, anchor);
@@ -952,13 +832,9 @@ function ReadySidebar({
         ? false
         : removedDmFocus.current?.channelId === channelId
           ? removedDmFocus.current.target
-          : startingSession.current
-            ? (document
-                .getElementById("new-session-prompt")
-                ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
-            : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-                `[data-channel-id="${CSS.escape(channelId)}"]`,
-              ) ?? false),
+          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
+              `[data-channel-id="${CSS.escape(channelId)}"]`,
+            ) ?? false),
     [sidebar.list],
   );
   useLayoutEffect(() => {
@@ -1045,7 +921,7 @@ function ReadySidebar({
             if (
               (target.kind === "conversation"
                 ? target.channelId
-                : draftParent) === id
+                : undefined) === id
             ) {
               const next = sections
                 .flatMap((section) => section.rows)
@@ -1239,12 +1115,8 @@ function ReadySidebar({
                     }
                   >
                     {section.rows.map((channel) => {
-                      const sessions = childrenByParent.get(channel.id);
                       const selected =
-                        current?.id === channel.id ||
-                        sessions?.some((child) => child.id === current?.id)
-                          ? current?.id
-                          : undefined;
+                        current?.id === channel.id ? current.id : undefined;
                       const actions = rowActions(channel, section.key);
                       const menuEnabled = actions.length > 0;
                       const menuOpen =
@@ -1268,11 +1140,11 @@ function ReadySidebar({
                             `session-children:${channel.id}`,
                           )}
                           onToggle={sidebar.toggle}
-                          draft={draftParents.includes(channel.id)}
-                          draftSelected={draftParent === channel.id}
-                          sessions={sessions}
+                          draft={false}
+                          draftSelected={false}
+                          sessions={undefined}
                           onSelect={select}
-                          onNewSession={startSession}
+                          onNewSession={noNestedSession}
                           onOpenThread={openActivityThread}
                           onOpenWorkingAgent={openWorkingAgent}
                           onOpenAgentActivity={openAgentActivity}

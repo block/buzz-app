@@ -32,6 +32,7 @@
     "allow-relay-upload-cancel",
     "allow-media-download",
     "allow-get-os-idle-seconds",
+    "allow-workspace-pick-folder",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
     "allow-plugin-import-install",

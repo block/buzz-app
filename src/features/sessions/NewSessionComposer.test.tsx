@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { webcrypto } from "node:crypto";
+import { sectionTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -104,12 +106,12 @@ it.each(
     );
     await user.click(screen.getByRole("button", { name: "Choose an agent" }));
     expect(
-      await screen.findByRole("menuitemradio", {
+      await screen.findByRole("button", {
         name: /^Outside agent/,
       }),
     ).toBeVisible();
     await user.click(
-      await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
+      await screen.findByRole("button", { name: /^Outside agent/ }),
     );
     expect(
       screen.getByRole("textbox", { name: "Message this session" }),
@@ -278,7 +280,7 @@ it("restores the chosen agent and invites it before the first standalone message
     screen.getByRole("button", { name: /Choose an agent|Change agent:/ }),
   );
   await user.click(
-    await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
+    await screen.findByRole("button", { name: /^Outside agent/ }),
   );
   await user.type(screen.getByRole("textbox"), "Help with the release");
   view.unmount();
@@ -446,7 +448,7 @@ it("deduplicates the effective recipient before parent admission", async () => {
     screen.getByRole("button", { name: /Choose an agent|Change agent:/ }),
   );
   await user.click(
-    await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
+    await screen.findByRole("button", { name: /^Outside agent/ }),
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() =>
@@ -488,7 +490,7 @@ it("keeps an editable draft when parent admission fails and retries admission fi
     screen.getByRole("button", { name: /Choose an agent|Change agent:/ }),
   );
   await user.click(
-    await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
+    await screen.findByRole("button", { name: /^Outside agent/ }),
   );
   await user.type(screen.getByRole("textbox"), "Help");
   await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -605,3 +607,144 @@ it.each([false, true])(
     expect(t.messages.send.mock.calls[1]?.[1]).toBe("Corrected draft");
   },
 );
+
+it.each([false, true])(
+  "applies section defaults before first send and blocks failed setup (failure=%s)",
+  async (failure) => {
+    vi.stubGlobal("crypto", webcrypto);
+    try {
+      const test = setup();
+      const sequence: string[] = [];
+      const onStarted = vi.fn();
+      const id = await sectionTemplateId("work");
+      const canvasSave = vi.fn(async (_channel: string, _content: string) => {
+        sequence.push("canvas");
+        if (failure) throw new Error("Canvas save failed");
+        return { id: "f".repeat(64) };
+      });
+      Object.assign(test.session, {
+        channelKit: {
+          refresh: async () => {},
+          snapshot: () => ({
+            status: "ready",
+            entries: [
+              {
+                eventId: "head",
+                record: {
+                  value: {
+                    type: "template",
+                    id,
+                    canvas: "Use /repo",
+                    agents: [],
+                    teamIds: [],
+                  },
+                },
+              },
+            ],
+          }),
+        },
+        sidebarPreferences: {
+          writable: true,
+          refresh: async () => {},
+          snapshot: () => ({
+            data: { sections: [{ id: "work", name: "Work" }], assignments: {} },
+          }),
+          assign: async () => {
+            sequence.push("placement");
+          },
+        },
+        canvas: { read: async () => undefined, save: canvasSave },
+      });
+      test.messages.send.mockImplementation(() => {
+        sequence.push("send");
+        return "d".repeat(64);
+      });
+      writeView("test", "sessions:section:work:new-draft", "Build this");
+      render(
+        <NewSessionComposer
+          session={test.session}
+          scope="test"
+          sectionId="work"
+          onStarted={onStarted}
+        />,
+      );
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByRole("textbox", { name: "Message this session" }),
+      );
+      await user.keyboard("{Enter}");
+      if (failure) {
+        expect(await screen.findByText("Canvas save failed")).toBeVisible();
+        expect(test.messages.send).not.toHaveBeenCalled();
+        expect(onStarted).not.toHaveBeenCalled();
+        expect(sequence).toEqual(["canvas"]);
+        canvasSave.mockResolvedValue({ id: "f".repeat(64) });
+        await user.click(
+          screen.getByRole("textbox", { name: "Message this session" }),
+        );
+        await user.keyboard("{Enter}");
+        await waitFor(() => expect(onStarted).toHaveBeenCalled());
+        expect(test.workSessions.create).toHaveBeenCalledTimes(1);
+        expect(canvasSave.mock.calls[1]?.[1]).toBe("Use /repo");
+      } else {
+        await waitFor(() => expect(onStarted).toHaveBeenCalled());
+        expect(sequence).toEqual(["canvas", "placement", "send"]);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it("edits draft settings before creation, restores them, and applies Canvas before the first send", async () => {
+  const test = setup();
+  const order: string[] = [];
+  const saveCanvas = vi.fn(async () => {
+    order.push("canvas");
+  });
+  Object.assign(test.session, {
+    canvas: { read: async () => undefined, save: saveCanvas },
+  });
+  test.messages.send.mockImplementation(() => {
+    order.push("send");
+    return "d".repeat(64);
+  });
+  const onStarted = vi.fn();
+  const user = userEvent.setup();
+  const view = (focusRequest = 0) => (
+    <NewSessionComposer
+      standalone
+      focusRequest={focusRequest}
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />
+  );
+  let mounted = render(view());
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  );
+  await user.type(
+    await screen.findByRole("textbox", { name: "Canvas" }),
+    "Keep the change small",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(test.workSessions.create).not.toHaveBeenCalled();
+  expect(saveCanvas).not.toHaveBeenCalled();
+  mounted.unmount();
+  mounted = render(view(1));
+  const composer = screen.getByRole("textbox", {
+    name: "Message this session",
+  });
+  expect(composer).toHaveFocus();
+  await user.type(composer, "Build this");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(onStarted).toHaveBeenCalled());
+  expect(saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "Keep the change small",
+    undefined,
+  );
+  expect(order).toEqual(["canvas", "send"]);
+});

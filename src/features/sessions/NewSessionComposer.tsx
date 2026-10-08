@@ -1,3 +1,20 @@
+import { DraftSessionSettings } from "./DraftSessionSettings";
+import { NewSessionView } from "./SessionPresentation";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import {
+  applySessionSetup,
+  loadSessionSetup,
+  parseSessionSetup,
+  type SessionSetup,
+} from "./workspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
@@ -19,6 +36,8 @@ type PendingStart = {
   invitationId?: string;
   creationId?: string;
   messageId?: string;
+  setup?: SessionSetup;
+  setupDone?: boolean;
 };
 const sessionId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -54,16 +73,38 @@ export function NewSessionComposer({
   scope,
   onStarted,
   parent,
+  sectionId,
   extensions,
+  standalone = false,
+  focusRequest = 0,
 }: {
+  standalone?: boolean;
+  focusRequest?: number;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
   parent?: ChannelSummary | undefined;
+  sectionId?: string | undefined;
 }) {
   const available = session.workSessions.available;
-  const draftKey = parent ? `sessions:channel:${parent.id}` : "sessions";
+  const draftKey = parent
+    ? `sessions:channel:${parent.id}`
+    : sectionId
+      ? `sessions:section:${sectionId}`
+      : "sessions";
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
+    const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
+    return typeof saved === "string" ? saved : undefined;
+  });
+  const prompt = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusRequest)
+      prompt.current
+        ?.querySelector<HTMLElement>('textarea, [contenteditable="true"]')
+        ?.focus();
+  }, [focusRequest]);
   const [pending, setPending] = useState(() => readPending(scope, draftKey));
   const [agent, setAgent] = useState(() => {
     const saved = readView<unknown>(scope, `${draftKey}:new-agent`, "");
@@ -85,8 +126,11 @@ export function NewSessionComposer({
     };
   }, []);
   const save = (next: PendingStart) => {
+    if (!writeView(scope, `${draftKey}:pending`, next))
+      throw new Error(
+        "Your session start couldn’t be saved on this device. No further changes were sent.",
+      );
     setPending(next);
-    writeView(scope, `${draftKey}:pending`, next);
   };
   async function start(draft: MentionDraft) {
     if (
@@ -99,7 +143,7 @@ export function NewSessionComposer({
     setBusy(true);
     setEditing(false);
     setError(undefined);
-    const current = pending
+    const current: PendingStart = pending
       ? {
           ...pending,
           ...(!pending.messageId
@@ -121,8 +165,36 @@ export function NewSessionComposer({
         mentions.length ? mentions : current.agent ? [current.agent] : [],
       ),
     ];
-    save(current);
     try {
+      if (current.setup !== undefined) {
+        current.setup = parseSessionSetup(current.setup);
+        if (current.setup.sectionId !== sectionId)
+          throw new Error(
+            "The saved session belongs to a different section. Reopen its original section to retry.",
+          );
+      }
+      if (sectionId && !current.setup && !current.creationId) {
+        current.setup = await loadSessionSetup(session, sectionId);
+        if (!mounted.current) return;
+      }
+      if (!current.setup && !current.creationId && draftCanvas !== undefined) {
+        current.setup = parseSessionSetup({
+          ...(sectionId ? { sectionId } : {}),
+          canvas: draftCanvas,
+          agents: [],
+        });
+      } else if (
+        current.setup &&
+        !current.creationId &&
+        !pending?.setup &&
+        draftCanvas !== undefined
+      ) {
+        current.setup = parseSessionSetup({
+          ...current.setup,
+          canvas: draftCanvas,
+        });
+      }
+      save(current);
       if (parent && !current.messageId && recipients.length) {
         await session.agentChoices.refresh();
         if (!mounted.current) return;
@@ -148,6 +220,17 @@ export function NewSessionComposer({
         parent ? { parent: parent.id } : undefined,
       );
       if (!mounted.current) return;
+      if (current.setup && !current.setupDone && !current.messageId) {
+        await applySessionSetup(
+          session,
+          current.id,
+          current.setup,
+          () => mounted.current,
+        );
+        if (!mounted.current) return;
+        current.setupDone = true;
+        save({ ...current });
+      }
       if (parent && !current.messageId) {
         await session.workSessions.addAgents(
           current.id,
@@ -215,6 +298,7 @@ export function NewSessionComposer({
       await session.workSessions.delivered(current.messageId);
       if (!mounted.current) return;
       writeView(scope, `${draftKey}:pending`, null);
+      writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-agent`, "");
       setAgent("");
@@ -259,8 +343,17 @@ export function NewSessionComposer({
       setBusy(false);
     }
   }
-  return (
-    <div id="new-session-prompt">
+  const composer = (
+    <div id="new-session-prompt" ref={prompt}>
+      {sectionId && (
+        <p className={styles.availability}>
+          New session in{" "}
+          {session.sidebarPreferences
+            .snapshot()
+            .data?.sections.find((section) => section.id === sectionId)?.name ??
+            "this section"}
+        </p>
+      )}
       <MessageComposer
         trailingTool={
           <AgentChoice
@@ -315,5 +408,53 @@ export function NewSessionComposer({
         </Button>
       )}
     </div>
+  );
+  if (!standalone) return composer;
+  return (
+    <NewSessionView
+      actions={
+        <MenuRoot>
+          <MenuTrigger
+            render={(props) => (
+              <IconButton
+                {...props}
+                size="toolbar"
+                aria-label="Session actions"
+                title="Session actions"
+                icon={<DotsThreeIcon size="1rem" />}
+              />
+            )}
+          />
+          <MenuPopup aria-label="Session actions" align="end">
+            <MenuItem
+              disabled={busy || !!pending}
+              onClick={() => setSettingsOpen(true)}
+            >
+              <MenuIcon>
+                <GearIcon size={16} />
+              </MenuIcon>
+              Session settings…
+            </MenuItem>
+          </MenuPopup>
+        </MenuRoot>
+      }
+    >
+      {composer}
+      {settingsOpen && (
+        <DraftSessionSettings
+          session={session}
+          sectionId={sectionId}
+          canvas={draftCanvas}
+          close={() => setSettingsOpen(false)}
+          save={(canvas) => {
+            if (!writeView(scope, `${draftKey}:settings`, canvas))
+              throw new Error(
+                "Settings couldn’t be saved on this device. Try again.",
+              );
+            setDraftCanvas(canvas);
+          }}
+        />
+      )}
+    </NewSessionView>
   );
 }

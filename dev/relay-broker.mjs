@@ -73,6 +73,8 @@ import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
+  assertSidebarSectionRemovalIntent,
+  mutateSidebarSectionRemoval,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_HEAD_BYTES,
@@ -1299,11 +1301,13 @@ export function relayBrokerPlugin({
           if (
             [
               "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-star",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const starring = route === "/api/relay/sidebar-star";
+            const removing = route === "/api/relay/sidebar-section-removal";
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
@@ -1317,7 +1321,8 @@ export function relayBrokerPlugin({
             let intent;
             try {
               intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-              if (starring) assertSidebarStarIntent(intent);
+              if (removing) assertSidebarSectionRemovalIntent(intent);
+              else if (starring) assertSidebarStarIntent(intent);
               else assertSidebarAssignmentIntent(intent);
             } catch {
               return json(res, 400, {
@@ -1412,12 +1417,13 @@ export function relayBrokerPlugin({
                       "Sidebar preference publication was not accepted",
                     );
                 };
-                return (starring ? mutateSidebarStar : mutateSidebarAssignment)(
-                  intent,
-                  key,
-                  readHead,
-                  publishEvent,
-                );
+                return (
+                  removing
+                    ? mutateSidebarSectionRemoval
+                    : starring
+                      ? mutateSidebarStar
+                      : mutateSidebarAssignment
+                )(intent, key, readHead, publishEvent);
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1496,6 +1502,7 @@ export function relayBrokerPlugin({
               channelKit: true,
               readState: true,
               sidebarPreferenceWrites: true,
+              sidebarSectionRemoval: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,

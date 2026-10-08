@@ -63,6 +63,12 @@ type Entry = {
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly listeners = new Set<() => void>();
+  /** Each agent's last session list, kept until something changes so a view
+   * reading it gets the same array back. */
+  private readonly views = new Map<
+    string,
+    ReturnType<AgentSessions["snapshot"]>
+  >();
 
   constructor(
     private readonly host: Host,
@@ -102,7 +108,12 @@ export class ClaudeRuntime {
 
   /** Conversations each agent has running, for its status view. */
   sessions(pubkey: string) {
-    return this.agents.get(pubkey)?.sessions.snapshot() ?? [];
+    let view = this.views.get(pubkey);
+    if (!view) {
+      view = this.agents.get(pubkey)?.sessions.snapshot() ?? [];
+      this.views.set(pubkey, view);
+    }
+    return view;
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -111,6 +122,7 @@ export class ClaudeRuntime {
     };
   }
   private notify() {
+    this.views.clear();
     for (const listener of this.listeners) listener();
   }
 
@@ -319,6 +331,7 @@ export class ClaudeRuntime {
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       store: localSessions(this.storage, pubkey),
+      onChange: () => this.notify(),
       fingerprint: () =>
         JSON.stringify([
           entry.config.model,

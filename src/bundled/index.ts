@@ -28,8 +28,6 @@ import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
 import agents2Manifest from "./agents2/manifest.json";
 import * as agents2 from "./agents2";
-import claudeCodeManifest from "./claude-code/manifest.json";
-import * as claudeCode from "./claude-code";
 import channelsManifest from "./channels/manifest.json";
 import usageManifest from "./channel-usage/manifest.json";
 import * as usage from "./channel-usage";
@@ -177,11 +175,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agents2Manifest, apiVersion: 1 },
     module: agents2,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...claudeCodeManifest, apiVersion: 1 },
-    module: claudeCode,
     enabledByDefault: true,
   },
   {

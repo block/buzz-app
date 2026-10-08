@@ -1,4 +1,4 @@
-import { nip19 } from "nostr-tools";
+import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
 import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
@@ -77,7 +77,7 @@ it("frames a new top-level mention as the root of its thread", () => {
   expect(prompt).not.toContain("<thread-context");
   expect(prompt).toContain('<buzz-event type="@mention">');
   expect(prompt).toContain(
-    `From: Alice Smith (npub: ${nip19.npubEncode(alice)}, hex: ${alice})`,
+    `From: Alice Smith (npub: ${npubEncode(alice)}, hex: ${alice})`,
   );
   expect(prompt).toContain("Content: @Claude what's up?");
   expect(prompt).toContain(`Parsed: mentions=[Claude (${agent})]`);

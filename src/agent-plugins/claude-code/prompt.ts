@@ -1,6 +1,6 @@
 // Prompts in the harness's format (buzz-acp), so a Claude agent here reads the
 // same sections and follows the same base prompt as a harness agent.
-import { nip19 } from "nostr-tools";
+import { npubEncode } from "nostr-tools/nip19";
 import type { EventData } from "../../features/relay/events";
 import basePrompt from "./base_prompt.md?raw";
 import channelModel from "./session_model_channel.md?raw";
@@ -132,7 +132,7 @@ export function turnPrompt(input: TurnInput) {
 }
 
 function eventBlock({ event, channel, thread, name }: TurnInput) {
-  const npub = nip19.npubEncode(event.pubkey);
+  const npub = npubEncode(event.pubkey);
   const label = name(event.pubkey);
   const mentions = event.tags
     .filter((tag) => tag[0] === "p" && tag[1])

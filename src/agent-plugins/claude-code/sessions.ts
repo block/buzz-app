@@ -39,6 +39,8 @@ export type SessionsOptions = Readonly<{
   fingerprint(): string;
   now?(): number;
   newId?(): string;
+  /** Called when a conversation's process starts or stops. */
+  onChange?(): void;
 }>;
 
 type Live = {
@@ -194,6 +196,7 @@ export class AgentSessions {
     this.evict();
     this.live.set(key, live);
     this.touch(key, live, seen);
+    this.options.onChange?.();
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
     });
@@ -238,7 +241,10 @@ export class AgentSessions {
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
-    if (this.live.get(key) === live) this.live.delete(key);
+    if (this.live.get(key) === live) {
+      this.live.delete(key);
+      this.options.onChange?.();
+    }
     void live.process.kill();
   }
 }

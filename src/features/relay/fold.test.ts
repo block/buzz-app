@@ -48,7 +48,7 @@ describe("message fold", () => {
         truncated: true,
       },
     });
-    expect(row?.attachmentContentRemoved).toBeUndefined();
+    expect(row?.attachmentSeams).toBeUndefined();
     expect(Object.isFrozen(row?.diff)).toBe(true);
     const untagged = signed(alice, {
       kind: 40008,
@@ -418,7 +418,7 @@ describe("message fold", () => {
         name: "Aidys Cap - EU.bebe5b6f.pdf",
       },
     ]);
-    expect(row?.attachmentContentRemoved).toBe(true);
+    expect(row?.attachmentSeams).toEqual([4]);
   });
 
   it("projects attachment link references as file names", () => {

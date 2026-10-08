@@ -31,23 +31,18 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
     [context, communityHost],
   );
   const [lifting, setLifting] = useState<Lift | null>(null);
-  const write = useWrite<LiftRequest>(`lift ${communityHost}`);
-  const working = write.busy ? (write.frozen?.pubkey ?? null) : null;
   const [error, setError] = useState("");
-
-  const lift = async ({ pubkey, kind }: Lift) => {
-    setLifting(null);
-    setError("");
-    const outcome = await write.run({
-      route: "liftRestriction",
-      communityHost,
-      kind,
-      pubkey,
-    });
-    if (!outcome) return;
+  const write = useWrite<LiftRequest>(`lift ${communityHost}`, (outcome) => {
     // A conflict means someone else already changed it: show the current list.
     if (outcome.ok || outcome.failure.status === 409) pages.restart();
     else setError(describe(outcome.failure));
+  });
+  const working = write.busy ? (write.frozen?.pubkey ?? null) : null;
+
+  const lift = ({ pubkey, kind }: Lift) => {
+    setLifting(null);
+    setError("");
+    write.run({ route: "liftRestriction", communityHost, kind, pubkey });
   };
 
   return (
@@ -130,7 +125,7 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
           actions={
             <>
               <Button onClick={() => setLifting(null)}>Cancel</Button>
-              <Button variant="prominent" onClick={() => void lift(lifting)}>
+              <Button variant="prominent" onClick={() => lift(lifting)}>
                 {lifting.kind === "ban" ? "Lift ban" : "Clear timeout"}
               </Button>
             </>

@@ -66,7 +66,9 @@ The store, not the screen, owns the request, whether it is sending and its last
 outcome. Screens subscribe to it, so a reply that arrives after a screen was
 left, the card was closed and reopened, or access was lost and regained still
 shows up, and a write that is sending can't be sent again, discarded or
-replaced. A held write is never offered or sent under another identity or admin
+replaced. Each finished attempt is handled once (its error shown, the view
+reloaded) by whichever screen is open when it lands, or by the next one to open.
+A held write is never offered or sent under another identity or admin
 host. Nothing is saved to disk.
 
 Resolve, reopen and direct actions freeze the whole request, including a
@@ -77,7 +79,8 @@ an ambiguous response, or a `pending` direct action). Before any such attempt,
 anything else settles it, including a request native code never sent. After one,
 only the relay's own answer to a request that was sent settles it: a retry that
 was never sent, or was refused for authorization, leaves the write held with
-the same `requestId`. `request_id_conflict` is shown as an error and is never
+the same `requestId`. A request native code refuses before sending, such as a reason too long for
+the relay's 4,096-byte body limit, is `notSent`, so the form stays editable. `request_id_conflict` is shown as an error and is never
 resent under a new ID without the user starting a new action.
 
 A late answer to a read is dropped once the identity, admin host, community or

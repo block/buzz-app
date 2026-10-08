@@ -105,7 +105,7 @@ type Controller = {
     frozen: Omit<Frozen, "intent">,
     intent: Omit<Intent, "route" | "requestId">,
   ): void;
-  confirm(): Promise<void>;
+  confirm(): void;
   discard(): void;
   /** Host whose Actions section is on screen, for the off-screen failure toast. */
   shownHost: { current: string | null };
@@ -128,29 +128,29 @@ function useController() {
 export function DirectActionsProvider({ children }: { children: ReactNode }) {
   const notify = useToastNotification();
   const [draft, setDraft] = useState<Draft | null>(null);
-  const write = useWrite<Intent, Omit<Frozen, "intent">>(DIRECT);
+  const shownHost = useRef<string | null>(null);
+  const write = useWrite<Intent, Omit<Frozen, "intent">>(
+    DIRECT,
+    (outcome, intent) => {
+      if (outcome.ok && outcome.value.state === "succeeded") {
+        notify(`${LABELS[intent.action]}: done`, "success");
+        setDraft(emptyDraft(intent.communityHost));
+        return;
+      }
+      if (!outcome.ok && shownHost.current !== intent.communityHost)
+        notify(
+          `${LABELS[intent.action]} in ${intent.communityHost} failed: ${directFailure(outcome.failure)}`,
+          "error",
+        );
+    },
+  );
   const { held } = write;
   const frozen = held?.request ? { ...held.meta, intent: held.request } : null;
   const outcome = held?.outcome ?? null;
   const pending = outcome?.ok === true && unresolved(outcome);
   const error = outcome?.ok === false ? directFailure(outcome.failure) : null;
-  const shownHost = useRef<string | null>(null);
 
-  const confirm = async () => {
-    const intent = frozen?.intent;
-    const outcome = intent && (await write.run());
-    if (!intent || !outcome) return;
-    if (outcome.ok && outcome.value.state === "succeeded") {
-      notify(`${LABELS[intent.action]}: done`, "success");
-      setDraft(emptyDraft(intent.communityHost));
-      return;
-    }
-    if (!outcome.ok && shownHost.current !== intent.communityHost)
-      notify(
-        `${LABELS[intent.action]} in ${intent.communityHost} failed: ${directFailure(outcome.failure)}`,
-        "error",
-      );
-  };
+  const confirm = () => write.run();
 
   const value: Controller = {
     draftFor: (host) => (draft?.host === host ? draft : emptyDraft(host)),
@@ -439,7 +439,7 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
             variant="destructive"
             loading={c.submitting}
             disabled={!canMutate}
-            onClick={() => void c.confirm()}
+            onClick={c.confirm}
           >
             {c.error || c.pending ? "Retry" : "Confirm"}
           </Button>

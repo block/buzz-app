@@ -14,6 +14,10 @@ export type Held<R extends StaffRequest = StaffRequest, M = unknown> = {
   /** An attempt may have reached the relay without a definite answer. */
   uncertain: boolean;
   outcome: StaffOutcome<unknown> | null;
+  /** The request the last finished attempt sent. */
+  sent: R | null;
+  /** The last attempt finished and no open view has handled it yet. */
+  unseen: boolean;
 };
 
 /**
@@ -58,8 +62,20 @@ export function createWrites() {
         sending: false,
         uncertain: false,
         outcome: null,
+        sent: null,
+        unseen: false,
       });
       return true;
+    },
+    /**
+     * Claims the last finished attempt under `key` for the view that will
+     * handle it: returns the entry once, then null until another finishes.
+     */
+    see(key: string) {
+      const entry = entries.get(key);
+      if (!entry?.unseen) return null;
+      set(key, { ...entry, unseen: false });
+      return entry;
     },
     /** Drops a held write the user gives up on; never while it is sending. */
     discard(key: string) {
@@ -85,22 +101,24 @@ export function createWrites() {
         sending: true,
         uncertain: keep ? held.uncertain : false,
         outcome: null,
+        sent: null,
+        unseen: false,
       };
       set(key, start);
       const outcome = await send(request);
       if (entries.get(key)?.request !== request) return outcome;
-      const uncertain = start.uncertain || unresolved(outcome);
+      const done = {
+        ...start,
+        sending: false,
+        outcome,
+        sent: request,
+        unseen: true,
+      };
       set(
         key,
         settles(outcome, start.uncertain)
-          ? {
-              ...start,
-              request: null,
-              sending: false,
-              uncertain: false,
-              outcome,
-            }
-          : { ...start, sending: false, uncertain, outcome },
+          ? { ...done, request: null, uncertain: false }
+          : { ...done, uncertain: start.uncertain || unresolved(outcome) },
       );
       return outcome;
     },

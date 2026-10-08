@@ -11,7 +11,6 @@ import {
 import {
   createContext,
   useContext,
-  useState,
   type ComponentProps,
   type ReactNode,
 } from "react";
@@ -21,22 +20,25 @@ import { SidebarSection } from "../../bundled/channels/SidebarSection";
 const Writable = createContext(false);
 
 /**
- * Pointer moves between saved groups and Channels. A drop only reports its
+ * Pointer moves between saved groups, Starred and Channels. A drop only reports its
  * destination, so the caller saves it exactly like the row menu's move; that
  * menu remains the keyboard path.
  */
 export function ChannelSidebarDnd({
   writable,
+  dragging,
+  onDraggingChange,
   onMove,
   overlay,
   children,
 }: {
   writable: boolean;
+  dragging: string | undefined;
+  onDraggingChange: (channelId: string | undefined) => void;
   onMove: (channelId: string, sectionKey: string) => void;
   overlay: (channelId: string) => ReactNode;
   children: ReactNode;
 }) {
-  const [dragging, setDragging] = useState<string>();
   const sensors = useSensors(
     // A click must still select the row; only a deliberate pull starts a move.
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -47,10 +49,10 @@ export function ChannelSidebarDnd({
       collisionDetection={pointerWithin}
       // The sidebar's own status is its loading notice; drag announcements live outside it.
       accessibility={{ container: document.body }}
-      onDragStart={({ active }) => setDragging(String(active.id))}
-      onDragCancel={() => setDragging(undefined)}
+      onDragStart={({ active }) => onDraggingChange(String(active.id))}
+      onDragCancel={() => onDraggingChange(undefined)}
       onDragEnd={({ active, over }) => {
-        setDragging(undefined);
+        onDraggingChange(undefined);
         if (over && over.id !== active.data.current?.sectionKey)
           onMove(String(active.id), String(over.id));
       }}

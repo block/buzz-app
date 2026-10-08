@@ -5,11 +5,16 @@ export function isChannelSectionKey(key: string) {
   return key === "channels" || key.startsWith("group:");
 }
 
+export function isChannelDropSectionKey(key: string) {
+  return key === "starred" || isChannelSectionKey(key);
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections<T extends ChannelSummary>(
   channels: readonly T[],
   preferences?: SidebarPreferences,
   hiddenDms: ReadonlySet<string> = new Set(),
+  dragging = false,
 ) {
   const active = channels.filter(
     (channel) =>
@@ -109,6 +114,7 @@ export function sidebarSections<T extends ChannelSummary>(
   ].filter(
     (section) =>
       isChannelSectionKey(section.key) ||
+      (dragging && section.key === "starred") ||
       section.key === "dms" ||
       section.rows.length,
   );

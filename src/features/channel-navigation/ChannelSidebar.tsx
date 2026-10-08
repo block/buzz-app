@@ -70,6 +70,7 @@ import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
   isChannelSectionKey,
+  isChannelDropSectionKey,
 } from "../../bundled/channels/sidebar-sections";
 import {
   CreateChannelDialog,
@@ -216,6 +217,7 @@ function ReadySidebar({
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
+  const [draggingChannel, setDraggingChannel] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -622,6 +624,7 @@ function ReadySidebar({
         sidebarChannels,
         displayedPreferences,
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+        !!draggingChannel,
       )
     : [];
   const focusChannelPlacement = (channelId: string) => {
@@ -1163,13 +1166,17 @@ function ReadySidebar({
               <SidebarNavigation>{children}</SidebarNavigation>
               <ChannelSidebarDnd
                 writable={placementWritable}
+                dragging={draggingChannel}
+                onDraggingChange={setDraggingChannel}
                 onMove={(channelId, sectionKey) =>
-                  assignGroup(
-                    channelId,
-                    sectionKey.startsWith("group:")
-                      ? sectionKey.slice("group:".length)
-                      : undefined,
-                  )
+                  sectionKey === "starred"
+                    ? setChannelStar(channelId, true)
+                    : assignGroup(
+                        channelId,
+                        sectionKey.startsWith("group:")
+                          ? sectionKey.slice("group:".length)
+                          : undefined,
+                      )
                 }
                 overlay={(channelId) => {
                   const channel = sidebarChannels.find(
@@ -1189,7 +1196,8 @@ function ReadySidebar({
                   <DroppableSidebarSection
                     key={section.key}
                     disabled={
-                      !placementWritable || !isChannelSectionKey(section.key)
+                      !placementWritable ||
+                      !isChannelDropSectionKey(section.key)
                     }
                     sectionKey={section.key}
                     title={section.title}
@@ -1294,7 +1302,7 @@ function ReadySidebar({
                           sectionKey={section.key}
                           selectFrame={
                             channel.channelType !== "dm" &&
-                            isChannelSectionKey(section.key)
+                            isChannelDropSectionKey(section.key)
                               ? DraggableChannel
                               : undefined
                           }

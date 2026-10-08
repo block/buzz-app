@@ -139,14 +139,18 @@ sidebar coordinates must match what the sidebar signer produces, and every
 other coordinate must satisfy the recipe contract.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
-belong to this persistent sidebar. Rows in saved groups and **Channels** can also be
-dragged with a pointer onto another saved group or **Channels**; the drop is the same
-Move intent, with the same gate, optimistic placement, rollback notice and Retry.
+belong to this persistent sidebar. Rows in saved groups, **Starred** and **Channels**
+can also be dragged with a pointer onto another saved group, **Starred** or
+**Channels**; the drop is the same Move intent, with the same gate, optimistic
+placement, rollback notice and Retry.
 Only a channel's select surface starts a drag, the surface its row menu wraps; its
 sessions and session draft do not.
-Starred, Forums and Direct messages take no part in dragging, and the row menu
-remains the keyboard path. The session serializes placement, sort and mute
-writes through one queue, retaining one confirmed preferences snapshot beneath
+An empty **Starred** header appears only while dragging, so the first channel can
+be dropped into it. Dropping into Starred stars the channel; dropping out assigns
+the destination and clears its star, just like the row menu. Forums and Direct
+messages take no part in dragging, and the row menu remains the keyboard path. The
+session serializes placement, sort and mute writes through one queue, retaining
+one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
 before reapplying pending intent; failure cannot roll back unrelated confirmed
 state. Field-only confirmations cannot recover a failed full preference read or

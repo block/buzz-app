@@ -322,6 +322,144 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(beta).toHaveCount(0);
 });
 
+// Pointer hit testing, dynamic empty targets and focus relocation need a layout engine.
+test("dragging into empty Starred and out to groups or Channels saves and reloads", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const stars = page.locator('[data-sidebar-section="starred"]');
+  const beta = rowIn(page, "group:work");
+  const starred = rowIn(page, "starred");
+  const alpha = stars.locator('[data-channel-id="alpha"]');
+  const menu = await openMove(page, alpha);
+  await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
+  await saved(page, app, 1);
+  await expect(stars).toHaveCount(0);
+
+  // Pull onto a stable existing target first to activate the empty Starred header.
+  await pull(page, beta, "channels");
+  await expect(stars).toBeVisible();
+  await expect(stars.locator("[data-channel-id]")).toHaveCount(0);
+  // Cancelling never leaves the empty section visible or publishes a move.
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+  await expect(stars).toHaveCount(0);
+  expect(app.report.sidebarPublications).toHaveLength(1);
+
+  async function drag(row, section) {
+    if (section === "starred" && (await stars.count()) === 0) {
+      await pull(page, row, "channels");
+      await expect(stars).toBeVisible();
+      const header = stars.locator("summary");
+      const to = await header.boundingBox();
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+        steps: 8,
+      });
+    } else await pull(page, row, section);
+    await expect(
+      page.locator(`[data-sidebar-section="${section}"][data-drop-target]`),
+    ).toBeVisible();
+    await page.mouse.up();
+  }
+
+  await drag(beta, "starred");
+  await expect(starred).toBeFocused();
+  await expect(beta).toHaveCount(0);
+  await saved(page, app, 2);
+  expect(app.report.sidebarPublications.at(-1)).toMatchObject({
+    coordinate: "channel-stars",
+    blob: { channels: { beta: { starred: true } } },
+  });
+  await page.reload();
+  await expect(starred).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  ).not.toHaveAttribute("aria-busy");
+  await pull(page, starred, "starred");
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+  expect(app.report.sidebarPublications).toHaveLength(2);
+
+  await drag(starred, "group:work");
+  await expect(beta).toBeFocused();
+  await saved(page, app, 3); // Assignment already Work; only unstar publishes.
+  await expect(stars).toHaveCount(0);
+  await drag(beta, "starred");
+  await expect(starred).toBeFocused();
+  await saved(page, app, 4);
+  await drag(starred, "channels");
+  await expect(rowIn(page, "channels")).toBeFocused();
+  await saved(page, app, 6);
+  expect(app.report.sidebarPublications.at(-2)).toMatchObject({
+    coordinate: "channel-sections",
+    blob: { assignments: {} },
+  });
+  expect(app.report.sidebarPublications.at(-1)).toMatchObject({
+    coordinate: "channel-stars",
+    blob: { channels: { beta: { starred: false } } },
+  });
+  await page.reload();
+  await expect(rowIn(page, "channels")).toBeVisible();
+  await expect(beta).toHaveCount(0);
+  await expect(stars).toHaveCount(0);
+  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
+    1,
+  );
+});
+
+test("a rejected drag into collapsed Starred rolls back and retries the same move", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  const starred = rowIn(page, "starred");
+  await page.locator('[data-sidebar-section="starred"] summary').click();
+  const held = gate(),
+    started = gate();
+  await page.route("**/sidebar-star", async (route) => {
+    started.resolve();
+    await held.promise;
+    app.report.sidebarStarFailures ??= [];
+    app.report.sidebarStarFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Star save failed; retry" }),
+    });
+  });
+  try {
+    await pull(page, beta, "starred");
+    await expect(
+      page.locator('[data-sidebar-section="starred"][data-drop-target]'),
+    ).toBeVisible();
+    await page.mouse.up();
+    await started.promise;
+    await expect(starred).toBeFocused();
+    await expect(beta).toHaveCount(0);
+  } finally {
+    held.resolve();
+  }
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the move for Beta" });
+  await expect(error).toContainText("Relay request failed (502)");
+  await expect(beta).toBeVisible();
+  await expect(starred).toHaveCount(0);
+  expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  await page.unroute("**/sidebar-star");
+  await error.getByRole("button", { name: "Retry move" }).click();
+  await expect(starred).toBeFocused();
+  await saved(page, app, 1);
+  await page.reload();
+  await expect(starred).toBeVisible();
+  await expect(beta).toHaveCount(0);
+});
+
 // Sessions sit outside their channel's drag surface, as they sit outside its menu.
 const sessionParent = "11111111-1111-4111-8111-111111111111";
 const sessionSidebar = test.extend({

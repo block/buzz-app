@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
+import {
+  isChannelDropSectionKey,
+  isChannelSectionKey,
+  sidebarSections,
+} from "./sidebar-sections";
 
 const row = (
   id: string,
@@ -12,6 +16,22 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("starred")).toBe(false);
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
+});
+it("allows channel drops into Starred without treating it as a create-channel section", () => {
+  for (const key of ["starred", "channels", "group:work"])
+    expect(isChannelDropSectionKey(key)).toBe(true);
+  for (const key of ["forums", "dms"])
+    expect(isChannelDropSectionKey(key)).toBe(false);
+  expect(isChannelSectionKey("starred")).toBe(false);
+});
+it("keeps an empty Starred target only during a channel drag", () => {
+  expect(sidebarSections([], undefined, new Set(), true)[0]).toEqual({
+    key: "starred",
+    title: "Starred",
+    icon: "★",
+    rows: [],
+  });
+  expect(sidebarSections([]).some(({ key }) => key === "starred")).toBe(false);
 });
 it("intersects groups/stars with active authorized streams and movable DMs", () => {
   const roster = [

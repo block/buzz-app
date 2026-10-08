@@ -71,8 +71,8 @@ use agents::{
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
     agent_control_snapshot, agent_control_snapshot_memory_write, agent_control_start_on_app_launch,
-    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions, agent_control_team_sync,
-    agent_control_team_preview, agent_control_use_here, AgentHost,
+    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
+    agent_control_team_preview, agent_control_team_sync, agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},

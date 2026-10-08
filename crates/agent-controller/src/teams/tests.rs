@@ -1176,3 +1176,46 @@ fn team_sync_keeps_unbound_legacy_text_until_a_team_with_text_claims_it() {
     assert_eq!(replaced.imported["teamInstructions"], "NEW");
     assert_eq!(replaced.revision, agent.revision + 1);
 }
+
+#[test]
+fn refused_team_sync_leaves_the_saved_document_byte_for_byte() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);
+    let me = vec![agent.pubkey.clone()];
+    sync(
+        &mut control,
+        &[("crew", 1, me.clone()), ("old", 1, me.clone())],
+        &[("crew", "SHARED"), ("old", "SHARED")],
+    )
+    .unwrap();
+    let saved = root.path().join("store/agents.json");
+    let before = std::fs::read(&saved).unwrap();
+    // A newer roster that would drop "old" and new heads would be staged, but
+    // the conflict refuses the whole sync.
+    assert!(sync(
+        &mut control,
+        &[
+            ("crew", 2, me.clone()),
+            ("old", 2, vec![]),
+            ("other", 1, me)
+        ],
+        &[
+            ("crew", "SHARED"),
+            ("old", "SHARED"),
+            ("other", "DIFFERENT")
+        ],
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&saved).unwrap(), before);
+}
+
+#[test]
+fn unreadable_team_keeps_link_and_text_when_its_roster_drops_the_agent() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);
+    let me = vec![agent.pubkey.clone()];
+    sync(&mut control, &[("crew", 1, me)], &[("crew", "SHARED")]).unwrap();
+    let kept = sync(&mut control, &[("crew", 2, vec![])], &[]).unwrap();
+    assert_eq!(kept.imported["teamBindings"], serde_json::json!(["crew"]));
+    assert_eq!(kept.imported["teamInstructions"], "SHARED");
+}

@@ -233,7 +233,15 @@ impl Controller {
         owner: &str,
         teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
     ) -> Result<()> {
+        self.validate_team_catalog(owner, teams)?;
         let relay = crate::config::canonical_relay(community)?;
+        self.store.reconcile_team_bindings(&relay, owner, teams)
+    }
+    fn validate_team_catalog(
+        &self,
+        owner: &str,
+        teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
+    ) -> Result<()> {
         if !crate::config::canonical_key(owner)
             || teams.len() > 500
             || teams.values().any(|head| {
@@ -246,7 +254,7 @@ impl Controller {
         {
             return Err("Invalid team catalog".into());
         }
-        self.store.reconcile_team_bindings(&relay, owner, teams)
+        Ok(())
     }
     /// Save and app-start sync: release obsolete bindings, then copy each
     /// readable team's current text to its members. Never restarts an agent.
@@ -260,7 +268,7 @@ impl Controller {
         if texts.len() > 500 || texts.keys().any(|team| team.is_empty() || team.len() > 120) {
             return Err("Invalid team instructions".into());
         }
-        self.reconcile_team_bindings(community, owner, heads)?;
+        self.validate_team_catalog(owner, heads)?;
         let relay = crate::config::canonical_relay(community)?;
         self.store
             .sync_team_instructions(&relay, owner, heads, texts)

@@ -479,78 +479,10 @@ impl Store {
         teams: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
     ) -> Result<()> {
         let mut doc = self.read()?;
-        let scope = format!("{owner}@{relay}");
-        let mut catalogs: std::collections::BTreeMap<
-            String,
-            std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
-        > = doc
-            .extra
-            .get("teamCatalogHeads")
-            .map(|value| serde_json::from_value(value.clone()))
-            .transpose()
-            .map_err(|_| "Invalid saved team catalog heads")?
-            .unwrap_or_default();
-        let heads = catalogs.entry(scope).or_default();
-        // Validate all incoming heads before releasing any binding. Reads happen
-        // outside controller admission and can complete in the opposite order.
-        for (team, incoming) in teams {
-            if let Some(saved) = heads.get(team) {
-                if incoming.created_at < saved.created_at
-                    || (incoming.created_at == saved.created_at
-                        && incoming.event_id > saved.event_id)
-                    || (incoming.created_at == saved.created_at
-                        && incoming.event_id == saved.event_id
-                        && incoming.members != saved.members)
-                {
-                    return Err("Team catalog changed; refresh before deploying".into());
-                }
-            }
+        if reconcile_bindings(&mut doc, relay, owner, teams, |_| true)? {
+            self.write(&doc)?;
         }
-        let mut changed = false;
-        for (team, incoming) in teams {
-            if heads.get(team) != Some(incoming) {
-                heads.insert(team.clone(), incoming.clone());
-                changed = true;
-            }
-        }
-        for agent in &mut doc.agents {
-            if agent.relay_url != relay {
-                continue;
-            }
-            let authorized = agent
-                .auth_tag
-                .as_deref()
-                .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
-                .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
-            if !authorized {
-                continue;
-            }
-            let Some(raw) = agent.imported.get("teamBindings") else {
-                continue;
-            };
-            let bindings: Vec<String> =
-                serde_json::from_value(raw.clone()).map_err(|_| "Invalid saved team bindings")?;
-            let retained: Vec<_> = bindings
-                .iter()
-                .filter(|team| match teams.get(*team) {
-                    Some(head) => head.members.contains(&agent.pubkey),
-                    None => true,
-                })
-                .cloned()
-                .collect();
-            if bindings != retained {
-                agent.imported["teamBindings"] = json!(retained);
-                changed = true;
-            }
-        }
-        if !changed {
-            return Ok(());
-        }
-        doc.extra.insert(
-            "teamCatalogHeads".into(),
-            serde_json::to_value(catalogs).map_err(|_| "Invalid team catalog heads")?,
-        );
-        self.write(&doc)
+        Ok(())
     }
     /// Copy each team's current text to the owner's agents in `relay`. A team
     /// with text binds the agents its roster lists; a team without text never
@@ -568,7 +500,10 @@ impl Store {
             crate::import::team_text(&json!(raw))?;
         }
         let mut doc = self.read()?;
-        let mut changed = false;
+        // Teams the app could not read keep their bindings and copied text.
+        let mut changed = reconcile_bindings(&mut doc, relay, owner, heads, |team| {
+            texts.contains_key(team)
+        })?;
         for agent in &mut doc.agents {
             let authorized = agent
                 .auth_tag
@@ -864,5 +799,85 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Stage catalog heads and release obsolete bindings in `doc`. `releasable`
+/// limits which teams may release a binding. Returns whether `doc` changed.
+fn reconcile_bindings(
+    doc: &mut Document,
+    relay: &str,
+    owner: &str,
+    teams: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+    releasable: impl Fn(&str) -> bool,
+) -> Result<bool> {
+    let scope = format!("{owner}@{relay}");
+    let mut catalogs: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+    > = doc
+        .extra
+        .get("teamCatalogHeads")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|_| "Invalid saved team catalog heads")?
+        .unwrap_or_default();
+    let heads = catalogs.entry(scope).or_default();
+    // Validate all incoming heads before releasing any binding. Reads happen
+    // outside controller admission and can complete in the opposite order.
+    for (team, incoming) in teams {
+        if let Some(saved) = heads.get(team) {
+            if incoming.created_at < saved.created_at
+                || (incoming.created_at == saved.created_at && incoming.event_id > saved.event_id)
+                || (incoming.created_at == saved.created_at
+                    && incoming.event_id == saved.event_id
+                    && incoming.members != saved.members)
+            {
+                return Err("Team catalog changed; refresh before deploying".into());
+            }
+        }
+    }
+    let mut changed = false;
+    for (team, incoming) in teams {
+        if heads.get(team) != Some(incoming) {
+            heads.insert(team.clone(), incoming.clone());
+            changed = true;
+        }
+    }
+    for agent in &mut doc.agents {
+        if agent.relay_url != relay {
+            continue;
+        }
+        let authorized = agent
+            .auth_tag
+            .as_deref()
+            .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
+            .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
+        if !authorized {
+            continue;
+        }
+        let Some(raw) = agent.imported.get("teamBindings") else {
+            continue;
+        };
+        let bindings: Vec<String> =
+            serde_json::from_value(raw.clone()).map_err(|_| "Invalid saved team bindings")?;
+        let retained: Vec<_> = bindings
+            .iter()
+            .filter(|team| match teams.get(*team) {
+                Some(head) if releasable(team) => head.members.contains(&agent.pubkey),
+                _ => true,
+            })
+            .cloned()
+            .collect();
+        if bindings != retained {
+            agent.imported["teamBindings"] = json!(retained);
+            changed = true;
+        }
+    }
+    if changed {
+        doc.extra.insert(
+            "teamCatalogHeads".into(),
+            serde_json::to_value(catalogs).map_err(|_| "Invalid team catalog heads")?,
+        );
+    }
+    Ok(changed)
+}
 #[cfg(test)]
 pub(crate) mod tests;

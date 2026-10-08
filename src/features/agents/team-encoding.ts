@@ -26,7 +26,7 @@ export function encodeTeam(
   snapshot: TeamSnapshot,
   format: "json" | "png",
 ): Blob {
-  const json = new TextEncoder().encode(JSON.stringify(snapshot, null, 2));
+  const json = new TextEncoder().encode(JSON.stringify(snapshot));
   if (json.length > MAX_TEAM_SNAPSHOT_JSON_BYTES)
     throw new Error("Team snapshot exceeds the size limit");
   if (format === "json") return new Blob([json], { type: "application/json" });

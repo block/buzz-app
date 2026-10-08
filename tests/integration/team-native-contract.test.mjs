@@ -104,6 +104,9 @@ test("native-validated team boundaries survive the shared parser and real import
   const { controlFixture } = await server.ssrLoadModule(
     path.join(root, "src/features/agents/control-testing.ts"),
   );
+  const { encodeTeam, decodeTeamFile } = await server.ssrLoadModule(
+    path.join(root, "src/features/agents/team-encoding.ts"),
+  );
   const native = controlFixture();
   const previousStorage = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -209,6 +212,34 @@ test("native-validated team boundaries survive the shared parser and real import
         result.memories[0].total,
         canonical.members[0].memory.entries.length,
       );
+    }
+  }
+
+  for (const token of ["a", 'é"\\\n']) {
+    for (const extra of [0, 1]) {
+      for (const format of ["json", "png"]) {
+        await t.test(
+          `export ${format} complete envelope ${envelopeLimit + extra}, escaping=${token !== "a"}`,
+          async () => {
+            const snapshot = fillEnvelope(validated(source()), token, extra);
+            if (extra) {
+              assert.notEqual(preview(snapshot).status, 0);
+              assert.throws(() => encodeTeam(snapshot, format), /size limit/);
+              return;
+            }
+            const canonical = validated(snapshot);
+            const file = encodeTeam(canonical, format);
+            if (format === "json") assert.equal(file.size, envelopeLimit);
+            const content = decodeTeamFile(
+              new Uint8Array(await file.arrayBuffer()),
+            );
+            assert.equal(Buffer.byteLength(content), envelopeLimit);
+            const result = command(executable, [], content);
+            assert.equal(result.status, 0, result.stderr);
+            assert.deepEqual(JSON.parse(result.stdout), canonical);
+          },
+        );
+      }
     }
   }
 

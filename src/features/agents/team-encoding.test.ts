@@ -64,18 +64,30 @@ it("accepts JSON at the complete-file limit and rejects PNG above its own limit"
 });
 for (const format of ["json", "png"] as const) {
   it(`an export at the JSON limit remains importable as ${format}`, async () => {
-    const empty = { ...snapshot, team: { ...snapshot.team, instructions: "" } };
-    const overhead = new TextEncoder().encode(
-      JSON.stringify(empty, null, 2),
-    ).length;
+    const empty = {
+      ...snapshot,
+      members: snapshot.members.map((member) => ({
+        ...member,
+        profile: { ...member.profile, about: "" },
+      })),
+    };
+    const overhead = new TextEncoder().encode(JSON.stringify(empty)).length;
     const atLimit = {
       ...empty,
-      team: {
-        ...empty.team,
-        instructions: "x".repeat(MAX_TEAM_SNAPSHOT_JSON_BYTES - overhead),
-      },
+      members: empty.members.map((member) => ({
+        ...member,
+        profile: {
+          ...member.profile,
+          about: "x".repeat(MAX_TEAM_SNAPSHOT_JSON_BYTES - overhead),
+        },
+      })),
     };
+    expect(new TextEncoder().encode(JSON.stringify(atLimit)).length).toBe(
+      MAX_TEAM_SNAPSHOT_JSON_BYTES,
+    );
     const exportFile = encodeTeam(atLimit, format);
+    if (format === "json")
+      expect(exportFile.size).toBe(MAX_TEAM_SNAPSHOT_JSON_BYTES);
     expect(exportFile.size).toBeLessThanOrEqual(
       format === "json"
         ? MAX_TEAM_SNAPSHOT_JSON_BYTES
@@ -88,7 +100,10 @@ for (const format of ["json", "png"] as const) {
     ).toEqual(atLimit);
     const over = {
       ...atLimit,
-      team: { ...atLimit.team, instructions: `${atLimit.team.instructions}x` },
+      members: atLimit.members.map((member) => ({
+        ...member,
+        profile: { ...member.profile, about: `${member.profile.about}x` },
+      })),
     };
     expect(() => encodeTeam(over, format)).toThrow("size limit");
   });

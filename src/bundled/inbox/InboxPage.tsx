@@ -39,7 +39,7 @@ import {
   ArchiveOffIcon,
   BellIcon,
 } from "../../shared/design-system/icons";
-import { Select } from "../../shared/design-system/ui/Select";
+import { InboxFilter } from "./InboxFilter";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -239,14 +239,6 @@ export function InboxView({
     setLimit(50);
     writeView(archiveScope, filtersKey, next);
   }
-  const [archiveOnSend, setArchiveOnSend] = useState(() => {
-    const saved = readView<unknown>(
-      archiveScope,
-      "inbox:archive-on-send",
-      true,
-    );
-    return typeof saved === "boolean" ? saved : true;
-  });
   const [drafts, setDrafts] = useState(false);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
@@ -258,23 +250,11 @@ export function InboxView({
   const filtersRevision = useSyncExternalStore(subscribeArchives, () =>
     viewRevision(archiveScope, filtersKey),
   );
-  const sendPreferenceRevision = useSyncExternalStore(subscribeArchives, () =>
-    viewRevision(archiveScope, "inbox:archive-on-send"),
-  );
   useEffect(() => {
     void filtersRevision;
     setFilters(readFilters(archiveScope));
     setLimit(50);
   }, [archiveScope, filtersRevision]);
-  useEffect(() => {
-    void sendPreferenceRevision;
-    const saved = readView<unknown>(
-      archiveScope,
-      "inbox:archive-on-send",
-      true,
-    );
-    setArchiveOnSend(typeof saved === "boolean" ? saved : true);
-  }, [archiveScope, sendPreferenceRevision]);
   const archives = useMemo(
     () => archiveIndex(readArchives(archiveRevision)),
     [archiveRevision],
@@ -352,7 +332,7 @@ export function InboxView({
       setError(
         cause instanceof Error
           ? cause.message
-          : "Could not save the reopened conversation.",
+          : "Could not save the archived conversation.",
       );
     }
   }, [archiveScope, archiveRevision, inbox.items]);
@@ -559,25 +539,6 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
-  const queuedArchive = useRef<
-    { item: InboxItem; stillCurrent: () => boolean } | undefined
-  >(undefined);
-  useEffect(() => {
-    if (pending || !queuedArchive.current) return;
-    const { item, stillCurrent } = queuedArchive.current;
-    queuedArchive.current = undefined;
-    if (!stillCurrent()) return;
-    const current = session.unread
-      .inbox()
-      .items.find(
-        (row) =>
-          row.channelId === item.channelId &&
-          row.messageIds.includes(item.messageId),
-      );
-    if (current) archiveCurrent.current(current, true);
-  }, [pending, session]);
-  const archiveCurrent = useRef(archive);
-  archiveCurrent.current = archive;
   function archive(item: InboxItem, value: boolean) {
     cancelRetry();
     const valid = () => {
@@ -781,9 +742,8 @@ export function InboxView({
           <div className={styles.listPane}>
             <div ref={fallbackControl} className={styles.toolbar}>
               <div className={styles.filterPair}>
-                <Select
+                <InboxFilter
                   label="Show"
-                  variant="compact"
                   value={show}
                   groups={showGroups}
                   onValueChange={(value) => {
@@ -793,18 +753,16 @@ export function InboxView({
                     setFilter({ show: value as ShowFilter });
                   }}
                 />
-                <Select
+                <InboxFilter
                   label="Activity type"
-                  variant="compact"
                   value={activity}
                   groups={activityGroups}
                   onValueChange={(value) =>
                     setFilter({ activity: value as ActivityFilter })
                   }
                 />
-                <Select
+                <InboxFilter
                   label="Sender"
-                  variant="compact"
                   value={senderFilter}
                   groups={senderGroups}
                   onValueChange={(value) =>
@@ -1125,44 +1083,6 @@ export function InboxView({
                   ? feed.status === "error"
                     ? "error"
                     : "loading"
-                  : undefined
-              }
-              sendAction={
-                <Checkbox
-                  label="Archive on send"
-                  checked={archiveOnSend}
-                  onCheckedChange={(checked) => {
-                    if (
-                      writeView(archiveScope, "inbox:archive-on-send", checked)
-                    )
-                      setArchiveOnSend(checked);
-                    else setError("Could not save Archive on send preference.");
-                  }}
-                />
-              }
-              onSendComplete={
-                archiveOnSend
-                  ? (stillCurrent) => {
-                      // Publication can replace Inbox row objects; resolve the captured
-                      // destination against current evidence, never the next selection.
-                      const current = session.unread
-                        .inbox()
-                        .items.find(
-                          (row) =>
-                            row.channelId === selectedTarget.channelId &&
-                            row.messageIds.includes(selectedTarget.messageId),
-                        );
-                      if (current) {
-                        // Accepted uploads can finish while an unrelated Inbox
-                        // read/save is settling. Preserve the intent until it releases.
-                        if (busy.current)
-                          queuedArchive.current = {
-                            item: current,
-                            stillCurrent,
-                          };
-                        else archiveCurrent.current(current, true);
-                      }
-                    }
                   : undefined
               }
               archiveAction={{

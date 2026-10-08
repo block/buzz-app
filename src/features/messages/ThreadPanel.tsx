@@ -30,7 +30,7 @@ import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
-import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
@@ -59,8 +59,6 @@ export type ThreadPanelProps = {
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
-  sendAction?: MessageComposerProps["sendAction"];
-  onSendComplete?: MessageComposerProps["onSendComplete"];
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
@@ -169,8 +167,6 @@ function OwnedThreadPanel({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
-  sendAction,
-  onSendComplete,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -238,8 +234,6 @@ function OwnedThreadPanel({
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
-      sendAction={sendAction}
-      onSendComplete={onSendComplete}
       onDraftSaved={onDraftSaved}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
@@ -272,8 +266,6 @@ function ThreadMessages({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
-  sendAction,
-  onSendComplete,
 }: {
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
@@ -291,8 +283,6 @@ function ThreadMessages({
   revealSelected?: boolean | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
-  sendAction?: ThreadPanelProps["sendAction"];
-  onSendComplete?: ThreadPanelProps["onSendComplete"];
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -1137,8 +1127,6 @@ function ThreadMessages({
             focusRequest={replyFocus}
             onOpenLink={onOpenLink}
             canOpenLink={canOpenLink}
-            sendAction={sendAction}
-            onSendComplete={onSendComplete}
             onDraftSaved={onDraftSaved}
             onSend={(id) => {
               targetAnchor.current = undefined;

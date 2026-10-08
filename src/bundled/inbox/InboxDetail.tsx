@@ -12,7 +12,6 @@ import type { NavigationScope } from "../../features/navigation/targets";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
-import type { MessageComposerProps } from "../../features/messages/MessageComposer";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -36,8 +35,6 @@ export function InboxDetail({
   channelName,
   previewIncomplete,
   archiveAction,
-  sendAction,
-  onSendComplete,
   onBack,
 }: {
   item: InboxItem;
@@ -51,8 +48,6 @@ export function InboxDetail({
   archiveAction?:
     | { archived: boolean; disabled: boolean; run(): void }
     | undefined;
-  sendAction?: MessageComposerProps["sendAction"];
-  onSendComplete?: MessageComposerProps["onSendComplete"];
   onBack(): void;
 }) {
   const [error, setError] = useState<string>();
@@ -274,8 +269,6 @@ export function InboxDetail({
             >
               {item.target.kind === "channel" ? (
                 <ChannelPreview
-                  sendAction={sendAction}
-                  onSendComplete={onSendComplete}
                   session={session}
                   extensions={extensions}
                   channelId={item.channelId}
@@ -301,8 +294,6 @@ export function InboxDetail({
                 />
               ) : (
                 <ThreadPanel
-                  sendAction={sendAction}
-                  onSendComplete={onSendComplete}
                   session={session}
                   scope={session.scope}
                   extensions={extensions}

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
@@ -46,10 +45,7 @@ export function Select({
   groups: readonly SelectGroup[];
   onValueChange: (value: string) => void;
 }) {
-  const items = useMemo(
-    () => groups.flatMap((group) => group.options),
-    [groups],
-  );
+  const items = groups.flatMap((group) => group.options);
   const selectedValue =
     value === "" && !items.some((option) => option.value === "") ? null : value;
   const control = (

@@ -4,10 +4,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import { useChannelWindow } from "../../features/relay/react";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import {
-  MessageComposer,
-  type MessageComposerProps,
-} from "../../features/messages/MessageComposer";
+import { MessageComposer } from "../../features/messages/MessageComposer";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -25,8 +22,6 @@ export function ChannelPreview({
   anchor,
   draft = false,
   onDraftSaved,
-  sendAction,
-  onSendComplete,
   onClose,
 }: {
   session: RelaySession;
@@ -38,8 +33,6 @@ export function ChannelPreview({
   anchor?: string | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
-  sendAction?: MessageComposerProps["sendAction"];
-  onSendComplete?: MessageComposerProps["onSendComplete"];
   onClose?: () => void;
 }) {
   const window = useChannelWindow(session.channels, channelId);
@@ -94,8 +87,6 @@ export function ChannelPreview({
         revealSelected
         close={onClose}
         headerActions={exactActions}
-        sendAction={sendAction}
-        onSendComplete={onSendComplete}
         onOpenLink={() => false}
       />
     );
@@ -168,8 +159,6 @@ export function ChannelPreview({
               : `Message #${channelName}`
           }
           sessionConversation={channel?.channelType === "session"}
-          sendAction={sendAction}
-          onSendComplete={onSendComplete}
           onSend={setSentId}
           onDraftSaved={onDraftSaved}
         />

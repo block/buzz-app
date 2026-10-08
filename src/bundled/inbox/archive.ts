@@ -68,10 +68,10 @@ function matches(index: ArchiveIndex, item: InboxItem) {
 }
 
 function renewed(archive: Archive, item: InboxItem) {
-  if (!item.mentions.length) return false;
   const observed = new Set(archive.messageIds);
-  return item.mentions.some(
-    ({ id, createdAt }) => !observed.has(id) && createdAt >= archive.through,
+  return item.messages.some(
+    ({ id, createdAt, mentioned }) =>
+      mentioned && !observed.has(id) && createdAt >= archive.through,
   );
 }
 

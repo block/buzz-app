@@ -32,7 +32,9 @@ function fixture() {
     preview: mention.content,
     createdAt: 20,
     mentioned: true,
-    mentions: [{ id: mention.id, createdAt: mention.created_at }],
+    messages: [
+      { id: mention.id, createdAt: mention.created_at, mentioned: true },
+    ],
     thread: false,
     unreadCount: 1,
     manual: false,
@@ -66,9 +68,9 @@ it("keeps observed mentions and ordinary replies archived, but reopens for a sam
       latestMessageId: event.id,
       messageIds: [...h.item.messageIds, event.id],
       createdAt: at,
-      mentions: [
-        ...h.item.mentions,
-        ...(tag ? [{ id: event.id, createdAt: at }] : []),
+      messages: [
+        ...h.item.messages,
+        { id: event.id, createdAt: at, mentioned: tag },
       ],
     };
   };
@@ -106,7 +108,7 @@ it("persists a regrouped archive coordinate after its original evidence is repla
     messageIds: [reply.id],
     createdAt: reply.created_at,
     mentioned: false,
-    mentions: [],
+    messages: [{ id: reply.id, createdAt: reply.created_at, mentioned: false }],
     thread: true,
   };
   updateArchive(h.scope, unresolvedReply, true);
@@ -125,7 +127,7 @@ it("persists a regrouped archive coordinate after its original evidence is repla
     latestMessageId: "c".repeat(64),
     messageIds: ["c".repeat(64)],
     createdAt: 40,
-    mentions: [],
+    messages: [{ id: "c".repeat(64), createdAt: 40, mentioned: false }],
   };
   expect(h.archived(laterReplies)).toBe(true);
 
@@ -154,7 +156,7 @@ it.each([2, 40, 54])(
         messageIds: [id],
         target: { kind: "message", channelId: "room", messageId: id },
         mentioned: false,
-        mentions: [],
+        messages: [{ id, createdAt: 20, mentioned: false }],
         thread: true,
       };
     });
@@ -166,7 +168,7 @@ it.each([2, 40, 54])(
       target: { kind: "thread", channelId: "room", rootId },
       messageIds: items.flatMap((item) => item.messageIds),
       mentioned: false,
-      mentions: [],
+      messages: items.flatMap((item) => item.messages),
       thread: true,
     };
     updateArchive(h.scope, grouped, true);
@@ -204,7 +206,7 @@ it.each([false, true])(
       messageId: secondId,
       latestMessageId: secondId,
       messageIds: [secondId],
-      mentions: [],
+      messages: [{ id: secondId, createdAt: 20, mentioned: false }],
       thread: true,
     };
     const saved = {
@@ -282,7 +284,7 @@ it("does not rewrite a lone unresolved reply or choose between verified root mat
     rootId: secondId,
     target: { kind: "thread", channelId: "room", rootId: secondId },
     messageIds: [secondId],
-    mentions: [],
+    messages: [{ id: secondId, createdAt: 20, mentioned: false }],
   };
   for (const evidence of [
     [first, second],
@@ -308,7 +310,7 @@ it("retires an ambiguous archive for a fresh mention without changing unrelated 
     ...h.item,
     id: `room:${secondId}`,
     messageIds: [secondId, "c".repeat(64)],
-    mentions: [{ id: "c".repeat(64), createdAt: 30 }],
+    messages: [{ id: "c".repeat(64), createdAt: 30, mentioned: true }],
     thread: true,
   };
   const writes = vi.spyOn(Storage.prototype, "setItem");
@@ -360,7 +362,10 @@ it("reconciles duplicate reopening effects without reporting a failed save", () 
   const reopened = {
     ...h.item,
     messageIds: [...h.item.messageIds, tag.id],
-    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+    messages: [
+      ...h.item.messages,
+      { id: tag.id, createdAt: 30, mentioned: true },
+    ],
   };
   reopenArchives(h.scope, [reopened], revision);
   expect(() => reopenArchives(h.scope, [reopened], revision)).not.toThrow();
@@ -377,7 +382,10 @@ it("does not overwrite a newer archive intent when reopening an older revision",
   const reopened = {
     ...h.item,
     messageIds: [...h.item.messageIds, tag.id],
-    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+    messages: [
+      ...h.item.messages,
+      { id: tag.id, createdAt: 30, mentioned: true },
+    ],
   };
   updateArchive(h.scope, reopened, true);
   const latest = viewRevision(h.scope, archiveKey);
@@ -396,7 +404,10 @@ it("reports a genuine reopening write failure without retiring the archive", () 
   const reopened = {
     ...h.item,
     messageIds: [...h.item.messageIds, tag.id],
-    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+    messages: [
+      ...h.item.messages,
+      { id: tag.id, createdAt: 30, mentioned: true },
+    ],
   };
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("disk full");

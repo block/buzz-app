@@ -350,6 +350,11 @@ test("dragging into empty Starred and out to groups or Channels saves and reload
 
   async function drag(row, section) {
     if (section === "starred" && (await stars.count()) === 0) {
+      // Keep the transient header away from the auto-scroll edge while measuring
+      // it; a highlighted target can move out from under a stationary pointer.
+      await sidebar(page).evaluate((element) => {
+        element.scrollTop = 0;
+      });
       await pull(page, row, "channels");
       await expect(stars).toBeVisible();
       const header = stars.locator("summary");

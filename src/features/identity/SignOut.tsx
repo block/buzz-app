@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -53,9 +53,20 @@ export function SignOutDialog({
   const [error, setError] = useState("");
   // Agents may already be stopped; only reopening Buzz can finish or recover.
   const [reopen, setReopen] = useState(false);
-  // Development builds share agent keys and plugin storage with the installed
-  // app, so the native side refuses wipe there; say so up front.
-  const devBuild = import.meta.env.MODE === "development";
+  // Asked of the native side, which enforces it; wipe stays off until it answers.
+  const [wipeRefusal, setWipeRefusal] = useState<string | null>();
+  useEffect(() => {
+    let current = true;
+    identity
+      .wipeRefusal()
+      .catch(() => "Couldn’t check whether wipe is available")
+      .then((reason) => {
+        if (current) setWipeRefusal(reason ?? null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [identity]);
   const ready = signOutReady({ touched, haveKey, wipe, phrase });
   async function confirm() {
     setPending(true);
@@ -101,7 +112,7 @@ export function SignOutDialog({
         <Checkbox
           label="Also wipe this device’s Buzz data"
           checked={wipe}
-          disabled={pending || devBuild}
+          disabled={pending || wipeRefusal !== null}
           onCheckedChange={(checked) => {
             setWipe(checked);
             if (!checked) {
@@ -110,11 +121,8 @@ export function SignOutDialog({
             }
           }}
         />
-        {devBuild && (
-          <p className="text-body-sm text-muted">
-            Wipe is unavailable in development builds because they share agent
-            keys and plugin storage with the installed Buzz.
-          </p>
+        {wipeRefusal && (
+          <p className="text-body-sm text-muted">{wipeRefusal}.</p>
         )}
         {wipe && (
           <>

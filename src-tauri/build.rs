@@ -44,6 +44,7 @@ fn main() {
             "identity_create",
             "identity_export",
             "sign_out",
+            "sign_out_wipe_refusal",
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
             "enterprise_login_gate",

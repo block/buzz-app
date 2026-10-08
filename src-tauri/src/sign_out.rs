@@ -403,6 +403,17 @@ fn remove_real_dir(path: &Path) -> std::io::Result<()> {
     missing(fs::remove_dir_all(path))
 }
 
+/// Delete `path`'s trash, refusing a link at the trash or its kept child.
+fn remove_trash(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
+    let moved = trash(path);
+    if let Some(child) = kept {
+        if real_dir(&moved)? {
+            real_dir(&moved.join(child))?;
+        }
+    }
+    remove_real_dir(&moved)
+}
+
 fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
     if !real_dir(path)? {
         return Ok(());
@@ -490,7 +501,7 @@ fn finish(
     // The key is gone, so nothing is rolled back from here: clear what was moved
     // aside and anything in place now, then the marker.
     for (path, kept) in targets {
-        remove_real_dir(&trash(path))
+        remove_trash(path, kept)
             .and_then(|()| clear(path, kept))
             .map_err(|error| format!("delete wiped {}: {error}", path.display()))?;
     }
@@ -569,6 +580,25 @@ fn refusal(
     }
 }
 
+/// Why this build can't sign out with these choices, from its build and environment.
+fn current_refusal(wipe: bool, remove_agents: bool) -> Option<&'static str> {
+    let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    refusal(
+        cfg!(debug_assertions),
+        set("BUZZ_DEV_VIEWER"),
+        set("BUZZODZ_HOME"),
+        wipe,
+        remove_agents,
+    )
+}
+
+/// Why wipe is unavailable here, if it is, so the dialog can say so up front;
+/// `sign_out` still enforces it.
+#[tauri::command]
+pub(crate) fn sign_out_wipe_refusal() -> Option<&'static str> {
+    current_refusal(true, false)
+}
+
 /// Records the choices, stops agents and restarts; the next launch deletes.
 #[tauri::command]
 pub(crate) async fn sign_out<R: tauri::Runtime>(
@@ -576,14 +606,7 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
     wipe: bool,
     remove_agents: bool,
 ) -> Result<(), Failure> {
-    let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
-    if let Some(message) = refusal(
-        cfg!(debug_assertions),
-        set("BUZZ_DEV_VIEWER"),
-        set("BUZZODZ_HOME"),
-        wipe,
-        remove_agents,
-    ) {
+    if let Some(message) = current_refusal(wipe, remove_agents) {
         return Err(refuse(message));
     }
     let paths = Paths::resolve(&app.config().identifier);

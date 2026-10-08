@@ -731,7 +731,7 @@ fn kept_agents_keep_their_keys() {
 }
 
 #[test]
-fn only_release_builds_sign_out_and_wipe_needs_default_plugin_storage() {
+fn debug_builds_sign_out_without_wipe_and_wipe_needs_default_plugin_storage() {
     assert_eq!(refusal(true, false, false, false, false), None);
     assert_eq!(refusal(true, false, false, true, false), Some(DEV_WIPE));
     assert_eq!(refusal(true, false, false, true, true), Some(DEV_WIPE));
@@ -852,6 +852,38 @@ fn rollback_never_moves_through_an_app_data_swapped_for_a_link() {
         ["agent-controller/", "agent-controller/sentinel"]
     );
     unchanged(&outside, &files);
+    // With the real app data back, the retry finishes and leaves outside alone.
+    fs::remove_file(&paths.app_data).unwrap();
+    fs::rename(dir.path().join("displaced"), &paths.app_data).unwrap();
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert!(!paths.marker.exists());
+    unchanged(&outside, &files);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kept_registry_recreated_as_a_link_in_trash_fails_and_the_retry_finishes() {
+    let (dir, paths) = fixture();
+    let files = ["sentinel"];
+    let outside = outside(dir.path(), &files);
+    let link = trash(&paths.app_data).join(KEPT);
+    mark(&paths, true, false);
+    let result = finish_pending(&paths, no_agents, || {
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        Ok(())
+    });
+    assert_eq!(result, Err(FAILED.to_owned()));
+    assert!(paths.marker.exists());
+    assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+    unchanged(&outside, &files);
+    fs::remove_file(&link).unwrap();
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert!(!paths.marker.exists());
+    assert_eq!(
+        fs::read(paths.app_data.join(KEPT).join("agents.json")).unwrap(),
+        b"agents"
+    );
+    unchanged(&outside, &files);
 }
 
 #[cfg(unix)]
@@ -895,6 +927,17 @@ fn a_linked_wipe_folder_refuses_before_any_marker() {
     .unwrap_err();
     assert_eq!(failure, refuse(LINKED));
     assert!(!paths.marker.exists());
+}
+
+#[test]
+fn production_acl_lets_the_dialog_ask_why_wipe_is_unavailable() {
+    use crate::agents::tests::{fixture, invoke};
+    let (_dir, _host, _app, view) = fixture();
+    // Tests are debug builds, where wipe is refused.
+    assert_eq!(
+        invoke(&view, "sign_out_wipe_refusal", serde_json::json!({})).unwrap(),
+        serde_json::json!(DEV_WIPE)
+    );
 }
 
 #[test]

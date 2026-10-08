@@ -307,6 +307,7 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   const confirm = () => screen.getByRole("button", { name: /^Sign out/ });
   const haveKey = screen.getByRole("checkbox", { name: "I have my key" });
@@ -336,19 +337,37 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   identity.dispose();
 });
 
-it("offers only plain sign out in development builds", async () => {
-  vi.stubEnv("MODE", "development");
+it("disables wipe with the native reason when the build can't wipe", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();
   await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(
+    "Wipe is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz",
+  );
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(
+    await screen.findByText(/Wipe is unavailable in development builds/),
+  ).toBeVisible();
+  expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
   expect(
     screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
   ).toHaveAttribute("aria-disabled", "true");
-  expect(
-    screen.getByText(/Wipe is unavailable in development builds/),
-  ).toBeVisible();
-  vi.unstubAllEnvs();
+  identity.dispose();
+});
+
+it("offers wipe once the native side says it's available", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  const wipe = screen.getByRole("checkbox", {
+    name: "Also wipe this device’s Buzz data",
+  });
+  await waitFor(() =>
+    expect(wipe).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(screen.queryByText(/Wipe is unavailable/)).toBeNull();
   identity.dispose();
 });
 
@@ -357,6 +376,7 @@ it("keeps the dialog open and shows the error when native sign out refuses", asy
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   vi.mocked(invoke).mockResolvedValueOnce(key);
   await user.click(screen.getByRole("button", { name: "Reveal private key" }));
@@ -378,6 +398,7 @@ it("asks to reopen Buzz instead of offering a retry once agents may be stopped",
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   vi.mocked(invoke).mockResolvedValueOnce(key);
   await user.click(screen.getByRole("button", { name: "Reveal private key" }));

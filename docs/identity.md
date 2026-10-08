@@ -76,8 +76,10 @@ this app's data, local data, WebView storage, caches and plugin storage. It cann
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
 is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development
 builds can sign out but not wipe: they have their own human key, but share agent
-keys and plugin storage with the installed app, so the dialog disables wipe and
-the native command refuses it. A development-build sign-out signs out every
+keys and plugin storage with the installed app, so the native command refuses
+wipe. The dialog asks the native side (`sign_out_wipe_refusal`) whether wipe is
+available and, when it isn't, disables wipe up front with the reason; this holds
+for any Rust debug build, including a debug bundle with a production frontend. A development-build sign-out signs out every
 development build, which share the debug key, and leaves the installed app
 signed in. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data.

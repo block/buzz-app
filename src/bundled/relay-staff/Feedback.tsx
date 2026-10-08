@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { MediaViewer } from "../../features/messages/MediaAttachment";
+import viewer from "../../features/messages/Messages.module.css";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { ArrowLeftIcon } from "../../shared/design-system/icons";
@@ -232,6 +235,7 @@ function AttachmentView({ attachment }: { attachment: AttachmentRef }) {
     { url: string } | { failure: StaffFailure } | null
   >(null);
   const [saving, setSaving] = useState(false);
+  const [viewing, setViewing] = useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the attachment's identity, not its object
   useEffect(() => {
@@ -267,11 +271,34 @@ function AttachmentView({ attachment }: { attachment: AttachmentRef }) {
         (!preview ? (
           <Loading />
         ) : "url" in preview ? (
-          <img
-            src={preview.url}
-            alt="Feedback attachment"
-            className="max-h-80 max-w-full rounded-md border object-contain"
-          />
+          <>
+            <button
+              type="button"
+              aria-label="Open image"
+              className="w-fit cursor-zoom-in"
+              onClick={() => setViewing(true)}
+            >
+              <img
+                src={preview.url}
+                alt="Feedback attachment"
+                className="max-h-80 max-w-full rounded-md border object-contain"
+              />
+            </button>
+            {viewing &&
+              createPortal(
+                <MediaViewer
+                  title="Image attachment"
+                  close={() => setViewing(false)}
+                >
+                  <img
+                    className={viewer.mediaViewerImage}
+                    src={preview.url}
+                    alt="Feedback attachment, full size"
+                  />
+                </MediaViewer>,
+                document.body,
+              )}
+          </>
         ) : (
           <Failure failure={preview.failure} />
         ))}

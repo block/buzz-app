@@ -667,6 +667,32 @@ it("switching identity on the same relay probes as the new identity", async () =
   expect(contexts.at(-1)?.signer).toBe(member);
 });
 
+it("clicking a feedback image opens the media viewer and closing returns", async () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: () => "blob:x",
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  await openFeedback("m image/png");
+  fireEvent.click(await screen.findByRole("button", { name: "Open image" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Image attachment",
+  });
+  expect(
+    within(dialog).getByAltText("Feedback attachment, full size"),
+  ).toHaveAttribute("src", "blob:x");
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Close fullscreen viewer" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(screen.getByAltText("Feedback attachment")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+});
+
 it("an attachment preview 401 re-checks the role", async () => {
   const original = backend.attachment;
   backend.attachment = (async () =>

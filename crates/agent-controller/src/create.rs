@@ -168,6 +168,9 @@ impl Controller {
         agent
             .extra
             .insert("profilePending".into(), Value::Bool(true));
+        agent
+            .extra
+            .insert("importAboutPending".into(), Value::Bool(true));
         self.store.insert(vec![agent])
     }
     pub fn creation_profile(&self, id: &str) -> Result<CreationProfile> {
@@ -195,9 +198,13 @@ impl Controller {
             auth,
             name: agent.name,
             picture: agent.picture,
-            about: agent.imported["record"]["profile"]["about"]
-                .as_str()
-                .map(str::to_owned),
+            about: if agent.extra.get("importAboutPending") == Some(&Value::Bool(true)) {
+                agent.imported["record"]["profile"]["about"]
+                    .as_str()
+                    .map(str::to_owned)
+            } else {
+                None
+            },
             revision: agent.revision,
         })
     }

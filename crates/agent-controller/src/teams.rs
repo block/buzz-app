@@ -323,8 +323,10 @@ fn snapshot_member(
     agent: &Agent,
     defaults: &crate::agent_defaults::AgentDefaults,
 ) -> Result<MemberSnapshot> {
+    let workers = agent.view(defaults).launch_parallelism;
     let effective = crate::agent_defaults::effective(agent, defaults);
-    let record = &effective.imported["record"];
+    let agent = &effective;
+    let record = &agent.imported["record"];
     Ok(MemberSnapshot {
         format: "buzz-agent-snapshot".into(),
         version: 1,
@@ -340,7 +342,7 @@ fn snapshot_member(
             respond_to: Some(agent.respond_to(false)?.into()),
             respond_to_allowlist: serde_json::from_value(record["respond_to_allowlist"].clone())
                 .unwrap_or_default(),
-            parallelism: agent.view(defaults).launch_parallelism,
+            parallelism: workers,
             idle_timeout_seconds: record["idle_timeout_seconds"].as_u64(),
             max_turn_duration_seconds: record["max_turn_duration_seconds"].as_u64(),
         },

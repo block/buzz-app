@@ -197,7 +197,10 @@ it("shows preview rejection beside import and clears it on retry", async () => {
     members: [],
   });
   fireEvent.change(input, { target: { files: [file] } });
-  await waitFor(() => expect(previewTeam).toHaveBeenCalledTimes(2));
+  expect(
+    await screen.findByRole("dialog", { name: /Import team snapshot/i }),
+  ).toBeInTheDocument();
+  expect(previewTeam).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 

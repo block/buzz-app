@@ -124,6 +124,27 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         retried_content["picture"],
         "https://example.test/avatar.png"
     );
+    control
+        .profile_published(&first.id, target.revision)
+        .unwrap();
+    // Subsequent avatar writes do not restore the original import description.
+    let avatar = control.memory_target(&first.id).unwrap();
+    assert!(avatar.about.is_none());
+    assert!(control.creation_profile(&first.id).is_err());
+    let external = first
+        .key
+        .profile(
+            "Fixture",
+            None,
+            Some("Updated elsewhere"),
+            &target.auth,
+            &[retried],
+        )
+        .unwrap();
+    let avatar_event = avatar.event(&first.key, &[external]).unwrap();
+    let avatar_content: serde_json::Value =
+        serde_json::from_str(avatar_event["content"].as_str().unwrap()).unwrap();
+    assert_eq!(avatar_content["about"], "Updated elsewhere");
     assert_eq!(
         exported.members[0].profile.about.as_deref(),
         Some("Fixture profile")
@@ -166,6 +187,13 @@ fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
     let root = tempfile::tempdir().unwrap();
     let mut control = controller(root.path());
     let mut native = crate::store::tests::fixture();
+    native.harness.model.clear();
+    native.harness.provider.clear();
+    let mut defaults = crate::agent_defaults::AgentDefaults::default();
+    defaults.model = "inherited-model".into();
+    defaults.provider = "inherited-provider".into();
+    defaults.session_policy = SessionPolicy::Channel;
+    control.store.save_defaults(&defaults).unwrap();
     let mut imported = native.clone();
     imported.pubkey = "cd".repeat(32);
     imported.id = crate::config::agent_id(&imported.pubkey, &imported.relay_url);
@@ -193,6 +221,29 @@ fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
     };
     assert_eq!(export(&control, &native.pubkey), Some(1));
     assert_eq!(export(&control, &imported.pubkey), Some(3));
+    let inherited = control
+        .export_team(
+            TeamMeta {
+                name: "Inherited".into(),
+                description: None,
+                instructions: None,
+            },
+            &[native.pubkey.clone()],
+            &native.relay_url,
+        )
+        .unwrap();
+    assert_eq!(
+        inherited.members[0].definition.model.as_deref(),
+        Some("inherited-model")
+    );
+    assert_eq!(
+        inherited.members[0].definition.provider.as_deref(),
+        Some("inherited-provider")
+    );
+    assert_eq!(
+        inherited.members[0].definition.session_policy,
+        SessionPolicy::Channel
+    );
     native
         .environment
         .insert("BUZZ_ACP_AGENTS".into(), "7".into());

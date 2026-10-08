@@ -1,3 +1,4 @@
+import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -938,6 +939,12 @@ function Composer({
     setSelectedAgent(key);
     setError(undefined);
   }
+  function requireCompletedSessionStart() {
+    if (pendingSessionDraft(scope, channelId))
+      throw new Error(
+        "Finish setting up this session in Sessions before sending messages.",
+      );
+  }
   async function send() {
     if (!permitted.current) return;
     if (editing.target) {
@@ -999,6 +1006,7 @@ function Composer({
         submission.submit(captured);
         return;
       }
+      requireCompletedSessionStart();
       let references: readonly string[] = [];
       let recipients = captured.recipients.length
         ? captured.recipients.map((item) => item.pubkey)
@@ -1071,8 +1079,9 @@ function Composer({
           : [],
       );
       // Destination and content are fixed here; a background send never retargets.
-      const publish = (uploaded: readonly UploadedAttachment[]) =>
-        threadRootId
+      const publish = (uploaded: readonly UploadedAttachment[]) => {
+        requireCompletedSessionStart();
+        return threadRootId
           ? session.messages.reply(
               channelId,
               threadRootId,
@@ -1092,6 +1101,7 @@ function Composer({
                 references,
               )
             : session.messages.send(channelId, content, recipients, uploaded);
+      };
       let id: string | undefined;
       if (capturedAttachments.length) {
         const followup = JSON.stringify(next);

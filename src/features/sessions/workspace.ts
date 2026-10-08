@@ -239,10 +239,30 @@ export async function loadSessionSetup(
       throw new Error(
         "Available agents couldn’t load. Retry before starting the session.",
       );
+    const roster = session.channels.list();
+    const candidates = resolveLineup(
+      template,
+      kit.entries,
+      choices.templates.identities,
+    );
+    if (
+      candidates.some(
+        (agent) =>
+          !choices.templates.identities.find(
+            (choice) => choice.pubkey === agent.pubkey,
+          )?.managed,
+      ) &&
+      (roster.status !== "ready" || roster.coverage === "partial")
+    ) {
+      session.channels.refreshList?.();
+      throw new Error(
+        "Community membership couldn’t load completely. Refresh and retry before starting the session.",
+      );
+    }
     const agents = resolveLineup(
       template,
       kit.entries,
-      templateAgentChoices(choices, session.channels.list()),
+      templateAgentChoices(choices, roster),
     ).map((agent) => agent.pubkey);
     return { sectionId, canvas: template.canvas, agents };
   }

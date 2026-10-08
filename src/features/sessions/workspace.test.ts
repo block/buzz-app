@@ -209,11 +209,16 @@ it.each([
   "incomplete",
   "archived",
   "removed-legacy",
+  "roster-loading",
+  "roster-partial",
+  "managed-partial",
   "eligible",
 ])("checks inherited agent eligibility: %s", async (state) => {
   const f = fixture();
   const pubkey = "a".repeat(64);
   let complete = state !== "incomplete";
+  let rosterIncomplete = state.startsWith("roster-");
+  const refreshRoster = vi.fn();
   f.kit.entries = [
     {
       record: {
@@ -234,7 +239,9 @@ it.each([
         templates: {
           status: "ready",
           complete,
-          identities: [{ pubkey, name: "Agent", managed: false }],
+          identities: [
+            { pubkey, name: "Agent", managed: state === "managed-partial" },
+          ],
         },
         archives: {
           status: state === "archive-error" ? "error" : "ready",
@@ -243,25 +250,39 @@ it.each([
       }),
     },
     channels: {
+      refreshList: refreshRoster,
       list: () => ({
-        status: "ready",
-        channels: state === "removed-legacy" ? [] : [{ members: [pubkey] }],
+        status:
+          rosterIncomplete && state === "roster-loading" ? "loading" : "ready",
+        coverage:
+          (rosterIncomplete && state === "roster-partial") ||
+          state === "managed-partial"
+            ? "partial"
+            : undefined,
+        channels:
+          state === "removed-legacy" ||
+          rosterIncomplete ||
+          state === "managed-partial"
+            ? []
+            : [{ members: [pubkey] }],
       }),
     },
   });
-  if (state === "eligible")
+  if (state === "eligible" || state === "managed-partial")
     expect(await loadSessionSetup(f.session, "work")).toMatchObject({
       agents: [pubkey],
     });
   else
     await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
-      state === "archive-error" || state === "incomplete"
+      state === "archive-error" || state === "incomplete" || rosterIncomplete
         ? "couldn’t load"
         : "unavailable",
     );
-  if (state === "incomplete") {
+  if (state === "incomplete" || rosterIncomplete) {
     expect(f.calls).toEqual([]);
+    if (rosterIncomplete) expect(refreshRoster).toHaveBeenCalledOnce();
     complete = true;
+    rosterIncomplete = false;
     expect(await loadSessionSetup(f.session, "work")).toMatchObject({
       agents: [pubkey],
     });

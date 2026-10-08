@@ -18,6 +18,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { Login } from "../builderlab/login/Login";
 import { createRemoteBestie } from "./setup";
+import { rhythmsComplete } from "./rhythms";
 
 export const inject = ["pages", "relay", "navigation", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -163,7 +164,8 @@ function ConnectedBestie({
       !controller.signal.aborted &&
       bestie.snapshot().connection === connection &&
       bestie.snapshot().record === record &&
-      bestie.snapshot().status === "ready";
+      !!record.complete &&
+      ["ready", "idle", "error"].includes(bestie.snapshot().status);
     try {
       const details = await connection.session.channelDetails.load(
         record.channelId,
@@ -224,12 +226,19 @@ function ConnectedBestie({
       >
         {state.message}
       </p>
-      {state.status === "ready" && record?.agent ? (
+      {record?.complete &&
+      record.agent &&
+      ["ready", "idle", "error"].includes(state.status) ? (
         <>
           {navigationError && <p role="alert">{navigationError}</p>}
           <Button variant="prominent" onClick={() => void openChat()}>
             Open Bestie conversation
           </Button>
+          {!rhythmsComplete(record.rhythms) && (
+            <Button variant="outline" onClick={() => void bestie.setup()}>
+              Set up Bestie workflows
+            </Button>
+          )}
         </>
       ) : state.prerequisite === "signin" ? (
         <Login
@@ -249,6 +258,12 @@ function ConnectedBestie({
             instructions, creates a private channel, and invites it. If you
             already customized Bestie's instructions, preserve them before
             continuing.
+          </p>
+          <p className="text-body-sm text-muted">
+            Setup also saves three paused workflows: hourly memory review,
+            nightly reflection at 09:00 UTC, and a daily check-in at 17:00 UTC.
+            Review them in Workflows. Hosted automatic execution still needs
+            verification before enabling them.
           </p>
           <div className="flex flex-wrap gap-3">
             {state.status === "choose-agent"

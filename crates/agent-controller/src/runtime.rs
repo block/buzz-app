@@ -283,6 +283,13 @@ impl RuntimeBundle {
             // The editable worker count wins over imported parallelism for every harness.
             command.env("BUZZ_ACP_AGENTS", workers);
         }
+        if agent.session_policy == Some(crate::config::SessionPolicy::Community) {
+            // Shared live history cannot fork onto multiple workers or idle out.
+            // Apply last, after imported parallelism and editable worker overrides.
+            command
+                .env("BUZZ_ACP_AGENTS", "1")
+                .env("BUZZ_ACP_IDLE_POOL_SLEEP", "0");
+        }
         Ok(command)
     }
 }

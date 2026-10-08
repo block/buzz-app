@@ -1118,3 +1118,57 @@ it.each([
     }
   },
 );
+
+it("shows inherited public-community context and preserves explicit selection in the edit", async () => {
+  const f = controlFixture();
+  const control = createAgentControl(f.host);
+  let current = agentDraft(f.agent);
+  current.sessionPolicy = null;
+  function Example() {
+    const [draft, setDraft] = useState(current);
+    current = draft;
+    return (
+      <AgentSettingsFields
+        draft={draft}
+        control={control}
+        state={{
+          status: "ready",
+          busy: false,
+          error: null,
+          data: {
+            ...f.data,
+            defaultSettings: {
+              harness: "buzz-agent",
+              provider: "",
+              model: "",
+              effort: "",
+              sessionPolicy: "community",
+              environmentKeys: [],
+            },
+          },
+        }}
+        disabled={false}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  const view = render(<Example />);
+  try {
+    expect(
+      screen.getByRole("combobox", { name: "Conversation context" }),
+    ).toHaveTextContent("Use agent defaults (Public community (experimental))");
+    await user.click(
+      screen.getByRole("combobox", { name: "Conversation context" }),
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Public community (experimental)",
+      }),
+    );
+    expect(agentEdit(current).sessionPolicy).toBe("community");
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});

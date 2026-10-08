@@ -745,6 +745,10 @@ export function AgentDefaultsCard({
               options: [
                 { value: "channel", label: "Entire channel" },
                 { value: "thread", label: "Each thread" },
+                {
+                  value: "community",
+                  label: "Public community (experimental)",
+                },
               ],
             },
           ]}
@@ -754,7 +758,7 @@ export function AgentDefaultsCard({
                 sessionPolicy as AgentDefaultsEdit["sessionPolicy"],
             })
           }
-          description="Share one conversation across the channel, or keep threads separate. Direct messages stay shared."
+          description="Community shares live history across public channels, with one worker kept awake. Private/unknown channels and DMs stay separate. Restart or rotation resets live history."
         />
         <fieldset disabled={disabled} className="min-w-0 space-y-3">
           <legend className="mb-2 text-label-sm">Environment variables</legend>

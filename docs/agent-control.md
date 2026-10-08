@@ -56,6 +56,34 @@ worker count. With **Each thread** conversation context, separate threads can
 use different workers while retaining separate histories. Existing saved agents
 keep their settings; add the variable and restart them to enable more workers.
 
+### Experimental public-community context
+
+**Conversation context → Public community (experimental)** opts one agent/community
+listener into a shared live provider conversation across eligible public-channel
+turns. Thread queues, cancellation, typing and replies keep the triggering route;
+community context does not grant membership or extra access. Private and unknown
+channels keep thread histories; each DM keeps its own conversation. Visibility is
+refreshed before sharing and failed refreshes are not treated as public.
+
+This policy forces **one worker**, even with an imported or environment worker
+count, and disables idle-pool sleep. Overlapping turns wait for that worker;
+private/DM turns also wait. Other policies retain existing parallelism and idle
+sleep. Channel canvas/huddle instructions are supplied only as current-turn
+context, never as the first channel's standing instructions.
+
+Restart, provider failure or rotation can discard the shared history. Rotation
+or invalidation of any shared route detaches every alias to that provider session;
+private/DM sessions stay separate. Removing a channel does **not** selectively
+forget its earlier public history. Per-route turn counts can undercount a shared
+history's rotation threshold, and MCP git-origin provenance can still reflect the
+first channel; pass explicit current-channel links for PRs. Files, memory and
+ambient tools are shared, so this is **not a confidentiality boundary**.
+
+The App owns `runtime/community-session.patch`, applied only to disposable
+fetched runtime source. Patch SHA-256 participates in both the bundle-cache key
+and manifest version 3; native launch and packaging reject mismatched provenance.
+No upstream Classic checkout or ref is modified.
+
 Pi and Goose apply permitted Environment overrides after saved fields and
 imported settings. For example, `BUZZ_ACP_MODEL`, `BUZZ_ACP_SYSTEM_PROMPT`, and
 `BUZZ_ACP_AGENTS` take precedence at launch; worker counts must be from 1 to 32.

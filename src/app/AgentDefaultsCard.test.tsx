@@ -1075,3 +1075,26 @@ it("keeps the uncertain-write explanation when Stop overtakes a committed save",
   expect(alert).not.toHaveTextContent("weren’t saved");
   expect(fixture.data.defaultSettings?.model).toBe("committed");
 });
+
+it("saves experimental public-community defaults without changing the default implicitly", async () => {
+  const user = userEvent.setup();
+  const { fixture, control } = setup();
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  await user.click(
+    within(card).getByRole("combobox", { name: "Conversation context" }),
+  );
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Public community (experimental)",
+    }),
+  );
+  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
+  await waitFor(() =>
+    expect(
+      fixture.calls.find((c) => c.action === "saveDefaults"),
+    ).toMatchObject({
+      payload: { edit: { sessionPolicy: "community" } },
+    }),
+  );
+});

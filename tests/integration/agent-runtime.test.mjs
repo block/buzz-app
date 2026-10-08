@@ -76,6 +76,13 @@ test("runtime preparation builds missing resources, reuses verified files, and r
       .split("\n").length;
   assert.match(run(), /Verified inputs staged/);
   assert.equal(count(), 2);
+  assert.equal(
+    readFileSync(path.join(directory, "applied.patch"), "utf8"),
+    readFileSync(
+      path.join(directory, "runtime/community-session.patch"),
+      "utf8",
+    ),
+  );
   assert.match(run(), /Agent runtime ready/);
   assert.equal(count(), 2, "warm preparation must not invoke Cargo");
   const filename =
@@ -95,11 +102,13 @@ test("runtime preparation builds missing resources, reuses verified files, and r
       manifest.unexpected = true;
       writeFileSync(manifestPath, JSON.stringify(manifest));
     },
-    ...["revision", "target", "version", "goose"].map((key) => () => {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      manifest[key] = "outdated";
-      writeFileSync(manifestPath, JSON.stringify(manifest));
-    }),
+    ...["revision", "target", "version", "goose", "patchSha256"].map(
+      (key) => () => {
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest[key] = "outdated";
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+      },
+    ),
     ...(process.platform === "win32" ? [] : [() => chmodSync(binary, 0o644)]),
   ]) {
     const before = count();
@@ -197,6 +206,19 @@ test("worktrees of one clone reuse a verified runtime built from identical input
   assert.match(run(one), /Verified inputs staged/);
   assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 3);
   assert.match(run(one), /Agent runtime ready/);
+  const patchPath = path.join(one, "runtime/community-session.patch");
+  writeFileSync(patchPath, `${readFileSync(patchPath, "utf8")}\n`);
+  assert.match(run(one), /Verified inputs staged/);
+  assert.equal(
+    readdirSync(path.join(common, "buzz-agent-runtime")).length,
+    4,
+    "changing patch bytes must not restore the unpatched cache",
+  );
+  const manifest = JSON.parse(
+    readFileSync(path.join(bundle(one), "manifest.json"), "utf8"),
+  );
+  assert.equal(manifest.version, 3);
+  assert.match(manifest.patchSha256, /^[0-9a-f]{64}$/);
 });
 
 test("a build that finishes after a concurrent publish keeps the published entry", (t) => {

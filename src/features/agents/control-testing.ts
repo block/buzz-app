@@ -104,6 +104,7 @@ export function controlFixture() {
           ? {}
           : { picture: edit.picture, profilePending: true }),
         systemPrompt: edit.systemPrompt,
+        sessionPolicy: edit.sessionPolicy,
         workspace: edit.workspace,
         harness: { ...edit.harness, environmentKeys: [...keys] },
         revision: agent.revision + 1,

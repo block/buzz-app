@@ -206,7 +206,7 @@ while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 
         .collect();
     let source: serde_json::Value =
         serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
-    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":2,"goose":source["goose"],"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
+    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":3,"patchSha256":crate::bundle::community_patch_sha256(),"goose":source["goose"],"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
@@ -1444,7 +1444,7 @@ fn bundle_rejects_source_revisions_different_from_the_runtime_spec() {
     bundle(tools.path());
     let path = tools.path().join("manifest.json");
     let original: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    for pointer in ["/revision", "/goose/revision"] {
+    for pointer in ["/revision", "/goose/revision", "/patchSha256"] {
         let mut manifest = original.clone();
         *manifest.pointer_mut(pointer).unwrap() = json!("0".repeat(40));
         fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
@@ -1653,6 +1653,40 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     });
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn community_policy_forces_serial_idle_retention_after_worker_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = bundle(dir.path());
+    let mut agent = agent(dir.path());
+    agent.session_policy = Some(serde_json::from_value(json!("community")).unwrap());
+    agent.imported["record"]["parallelism"] = json!(8);
+    agent
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "10".into());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = bundle
+        .command_with_defaults(&agent, &key, &crate::BuildDefaults::default())
+        .unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.and_then(|v| v.to_str())))
+        .collect();
+    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("community"));
+    assert_eq!(env["BUZZ_ACP_AGENTS"], Some("1"));
+    assert_eq!(env["BUZZ_ACP_IDLE_POOL_SLEEP"], Some("0"));
+    agent.session_policy = Some(crate::config::SessionPolicy::Thread);
+    let command = bundle
+        .command_with_defaults(&agent, &key, &crate::BuildDefaults::default())
+        .unwrap();
+    let env: BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| (k.to_str().unwrap(), v.and_then(|v| v.to_str())))
+        .collect();
+    assert_eq!(env["BUZZ_ACP_AGENTS"], Some("10"));
+    assert_eq!(env["BUZZ_ACP_IDLE_POOL_SLEEP"], Some("900"));
 }
 
 fn deployment_defaults() -> crate::BuildDefaults {

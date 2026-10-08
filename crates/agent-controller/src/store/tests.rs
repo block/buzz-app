@@ -268,6 +268,54 @@ fn an_omitted_ipc_policy_preserves_the_imported_choice_but_null_inherits() {
 }
 
 #[test]
+fn community_policy_survives_defaults_import_and_explicit_save_reopen() {
+    use crate::config::SessionPolicy;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut defaults = store.defaults().unwrap();
+    defaults.session_policy = SessionPolicy::Community;
+    store.save_defaults(&defaults).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "community"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(SessionPolicy::Community)
+    );
+    let payload = json!({
+        "name": agent.name,
+        "systemPrompt": agent.system_prompt,
+        "workspace": agent.workspace,
+        "harness": agent.harness,
+        "environment": {},
+        "sessionPolicy": "community"
+    });
+    store
+        .save(
+            &agent.id,
+            agent.revision,
+            serde_json::from_value(payload).unwrap(),
+        )
+        .unwrap();
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        store.defaults().unwrap().session_policy,
+        SessionPolicy::Community
+    );
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.session_policy, Some(SessionPolicy::Community));
+    assert_eq!(
+        saved.selected_session_policy(),
+        Some(SessionPolicy::Community)
+    );
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(SessionPolicy::Community)
+    );
+}
+
+#[test]
 fn remove_requires_current_revision_and_persists_absence() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();

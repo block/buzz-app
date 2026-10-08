@@ -112,6 +112,25 @@ it("save leaves running revision alone; omitted environment values stay host-onl
   expect(fixture.calls.filter((call) => call.action === "restart")).toEqual([]);
   await expect(control.save(agent.id, 1, edit)).rejects.toThrow();
 });
+it.each(["community", "thread", "channel", null] as const)(
+  "fixture preserves conversation policy %s across save and refresh",
+  async (sessionPolicy) => {
+    const fixture = controlFixture();
+    const control = createAgentControl(fixture.host);
+    try {
+      await control.refresh();
+      const agent = fixture.agent;
+      const edit = agentEdit({ ...agentDraft(agent), sessionPolicy });
+      await control.save(agent.id, agent.revision, edit);
+      await control.refresh();
+      expect(control.snapshot().data?.agents[0]?.sessionPolicy).toBe(
+        sessionPolicy,
+      );
+    } finally {
+      control.dispose();
+    }
+  },
+);
 it("delete applies only the native result and reports an unconfirmed delete", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);

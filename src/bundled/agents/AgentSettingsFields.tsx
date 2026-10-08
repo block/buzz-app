@@ -332,10 +332,14 @@ export function AgentSettingsFields({
                 options: [
                   {
                     value: "",
-                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "channel" ? "Entire channel" : "Each thread"})`,
+                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "community" ? "Public community (experimental)" : state.data?.defaultSettings?.sessionPolicy === "channel" ? "Entire channel" : "Each thread"})`,
                   },
                   { value: "channel", label: "Entire channel" },
                   { value: "thread", label: "Each thread" },
+                  {
+                    value: "community",
+                    label: "Public community (experimental)",
+                  },
                 ],
               },
             ]}
@@ -344,10 +348,10 @@ export function AgentSettingsFields({
                 sessionPolicy:
                   sessionPolicy === ""
                     ? null
-                    : (sessionPolicy as "channel" | "thread"),
+                    : (sessionPolicy as "channel" | "thread" | "community"),
               })
             }
-            description="Entire channel shares one conversation across threads. Each thread keeps a separate conversation; direct messages remain shared."
+            description="Community shares live history across public channels, with one worker kept awake. Private/unknown channels and DMs stay separate. Restart or rotation resets live history."
           />
           {pi && (
             <p className="text-body-sm text-secondary">

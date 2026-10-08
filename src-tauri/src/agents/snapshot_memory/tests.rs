@@ -350,3 +350,15 @@ fn per_event_envelope_boundary_matches_native_reader() {
     }])
     .is_err());
 }
+
+#[test]
+fn restore_validation_rejects_hidden_context_and_accepts_word_final_joiners() {
+    let entry = |body: &str| SnapshotMemoryEntry {
+        slug: "core".into(),
+        body: body.into(),
+    };
+    for body in ["before\u{202e}after", "before\u{200b}after"] {
+        assert!(validate(&[entry(body)]).is_err());
+    }
+    assert!(validate(&[entry("അവന്‍ വന്നു\r\nفارسی‌زبان")]).is_ok());
+}

@@ -821,10 +821,13 @@ fn existing_agent_save_accepts_international_text_and_crlf_but_rejects_hidden_co
     store.insert(vec![agent.clone()]).unwrap();
     let mut update = edit();
     update.name = "زبان فارسی".into();
-    update.system_prompt = "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻".into();
+    update.system_prompt = "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻 അവന്‍ വന്നു".into();
     store.save(&agent.id, agent.revision, update).unwrap();
     let saved = store.agents().unwrap().into_iter().next().unwrap();
-    assert_eq!(saved.system_prompt, "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻");
+    assert_eq!(
+        saved.system_prompt,
+        "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻 അവന്‍ വന്നു"
+    );
     let mut invalid = edit();
     invalid.system_prompt = "hidden\u{202e} instructions".into();
     assert!(store.save(&agent.id, saved.revision, invalid).is_err());

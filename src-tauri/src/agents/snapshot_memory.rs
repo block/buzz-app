@@ -34,7 +34,7 @@ fn validate(entries: &[SnapshotMemoryEntry]) -> Result<()> {
     }
     for entry in entries {
         buzz_agent_controller::validate_snapshot_memory_envelope(&entry.slug, &entry.body)
-            .map_err(|_| "Snapshot memory envelope exceeds the readable limit")?;
+            .map_err(|_| "Snapshot memory contains hidden text or exceeds the readable limit")?;
     }
     // Same serialized DTO budget as the native reader. Reserve a full u64 timestamp;
     // publication confirms each entry by reading this exact representation back.

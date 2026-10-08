@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 /// is exactly 87,472 bytes, the native reader cap. At 65,536 the prefix grows
 /// to six bytes and the result exceeds that cap. Count JSON escaping and UTF-8.
 pub fn validate_snapshot_memory_envelope(slug: &str, body: &str) -> Result<()> {
+    crate::config::visible_agent_text(body, true)?;
     let plaintext = if slug == "core" {
         serde_json::json!({"slug":slug,"profile":body})
     } else {
@@ -386,5 +387,25 @@ mod memory_tests {
         assert!(agent
             .memory_event(owner.pubkey(), "core", &"x".repeat(65537), 100)
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_memory_visibility_tests {
+    use super::validate_snapshot_memory_envelope;
+
+    #[test]
+    fn rejects_hidden_context_and_accepts_multilingual_word_final_joiners() {
+        for hidden in [
+            "before\u{202e}after",
+            "before\u{200b}after",
+            "before\u{e0061}after",
+        ] {
+            assert!(validate_snapshot_memory_envelope("core", hidden).is_err());
+        }
+        for body in ["അവന്‍", "അവന്‍ വന്നു\r\nفارسی‌زبان 👩‍💻"]
+        {
+            assert!(validate_snapshot_memory_envelope("core", body).is_ok());
+        }
     }
 }

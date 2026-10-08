@@ -1012,11 +1012,13 @@ it("rejects hidden standing memory in both formats while allowing multilingual c
     ...source,
     definition: {
       ...source.definition,
-      systemPrompt: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻",
+      systemPrompt: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻 അവന്‍ വന്നു",
     },
     memory: {
       level: "core" as const,
-      entries: [{ slug: "core", body: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻" }],
+      entries: [
+        { slug: "core", body: "فارسی‌زبان\r\nनमस्ते\u200dदुनिया 👩‍💻 അവന്‍ വന്നു" },
+      ],
     },
   };
   for (const format of ["json", "png"] as const)

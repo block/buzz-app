@@ -428,7 +428,7 @@ pub(crate) fn agent_id(pubkey: &str, relay: &str) -> String {
 }
 // Executable instructions must remain visible in both the preview and persisted config.
 // Emoji joiners/selectors are allowed only when they compose visible emoji.
-fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
+pub(crate) fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
     use std::sync::LazyLock;
     static PICTOGRAPHIC: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"^\p{Extended_Pictographic}$").expect("Unicode property is supported")
@@ -452,6 +452,16 @@ fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
                         .is_some_and(|c| !c.is_ascii() && SCRIPT.is_match(&c.to_string()))
                     && !chars[i - 1].is_ascii()
                     && SCRIPT.is_match(&chars[i - 1].to_string()) =>
+            {
+                true
+            }
+            '\u{200d}'
+                if i >= 2
+                    && chars[i - 1] == '\u{0d4d}'
+                    && matches!(chars[i - 2] as u32, 0x0d15..=0x0d39)
+                    && chars
+                        .get(i + 1)
+                        .is_none_or(|c| c.is_whitespace() || c.is_ascii_punctuation()) =>
             {
                 true
             }

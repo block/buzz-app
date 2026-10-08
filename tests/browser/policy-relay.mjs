@@ -21,7 +21,7 @@ const newest = (a, b) =>
 /** A narrow `/buzz/v1` read model over the fixture's signed history. It follows
  * docs/buzz-v1-read-state.md closely enough to drive the client; the relay's
  * own test suites and a real-relay pass prove the contract, not this model. */
-function buzzV1({ viewer, report, rows, events }) {
+function buzzV1({ viewer, report, rows, events, received, admit }) {
   // community -> channel -> { channel, cut, threads: Map<root, through> }
   const frontiers = new Map();
   // `channel/parent` keys whose conversation membership the relay cannot decide.
@@ -119,7 +119,7 @@ function buzzV1({ viewer, report, rows, events }) {
       root === undefined
         ? frontier.channel
         : max(frontier.threads.get(root) ?? null, frontier.cut);
-    if (through !== null && event.created_at <= through)
+    if (through !== null && received(event) <= through)
       return { counted: true, root, unread: false };
     const unread = { counted: true, root, unread: true };
     const tag = (name, value) =>
@@ -147,7 +147,14 @@ function buzzV1({ viewer, report, rows, events }) {
     const channel = meta.channel_id;
     const all = history(community, channel);
     const sorted = [...all.values()].toSorted(newest);
-    const latest = sorted.find((event) => ELIGIBLE.includes(event.kind));
+    const eligible = sorted.filter(
+      (event) => ELIGIBLE.includes(event.kind) && !deleted(all, event),
+    );
+    const activity = eligible[0];
+    const latest = eligible.reduce(
+      (a, b) => (!a || received(b) > received(a) ? b : a),
+      undefined,
+    );
     let unread = 0,
       attention = 0,
       uncertain = false,
@@ -178,9 +185,14 @@ function buzzV1({ viewer, report, rows, events }) {
       if (result.reason !== null) attention++;
       if (!item) continue;
       item.unread++;
-      // Newest relevant reply: the preview is chosen after the filter.
-      item.latest_reply_id ??= event.id;
-      item.latest_reply_at ??= event.created_at;
+      // Arrival-latest relevant reply; its author time stays paired for display.
+      if (
+        item.latest_reply_id === null ||
+        received(event) > received(all.get(item.latest_reply_id))
+      ) {
+        item.latest_reply_id = event.id;
+        item.latest_reply_at = event.created_at;
+      }
     }
     const items = [...threads.values()].toSorted(
       (a, b) =>
@@ -196,7 +208,7 @@ function buzzV1({ viewer, report, rows, events }) {
       unread: count(unread, uncertain),
       attention: count(attention, uncertain),
       latest_message_id: latest?.id ?? null,
-      latest_message_at: latest?.created_at ?? null,
+      latest_message_at: activity?.created_at ?? null,
       latest_message_complete: true,
       threads: {
         items: items.slice(0, 5).map((item) => ({
@@ -252,13 +264,8 @@ function buzzV1({ viewer, report, rows, events }) {
         const channel = target.channel_id;
         if (!member(community, channel)) return { status: "unavailable" };
         const all = history(community, channel);
-        const frontier = state(community, channel);
         return {
           status: "available",
-          through_timestamp:
-            target.root_id === undefined
-              ? frontier.channel
-              : max(frontier.threads.get(target.root_id) ?? null, frontier.cut),
           messages: message_ids.map((message_id) => {
             const event = all.get(message_id);
             if (!event || rootOf(all, event) !== target.root_id)
@@ -285,19 +292,19 @@ function buzzV1({ viewer, report, rows, events }) {
     if (!ELIGIBLE.includes(anchor.kind)) return { status: "invalid" };
     const frontier = state(community, channel);
     if (intent.type === "mark_channel_read") {
-      frontier.channel = max(frontier.channel, anchor.created_at);
-      frontier.cut = max(frontier.cut, anchor.created_at);
+      frontier.channel = max(frontier.channel, received(anchor));
+      frontier.cut = max(frontier.cut, received(anchor));
       return { status: "applied" };
     }
     const root = rootOf(all, anchor);
     if (root === null || root !== intent.target.root_id)
       return { status: "invalid" };
     if (root === undefined)
-      frontier.channel = max(frontier.channel, anchor.created_at);
+      frontier.channel = max(frontier.channel, received(anchor));
     else
       frontier.threads.set(
         root,
-        max(frontier.threads.get(root) ?? null, anchor.created_at),
+        max(frontier.threads.get(root) ?? null, received(anchor)),
       );
     return { status: "applied" };
   }
@@ -328,6 +335,8 @@ function buzzV1({ viewer, report, rows, events }) {
       failures.push(status);
     },
     frontier: (community, channel) => state(community, channel),
+    received,
+    admit,
     async fetch(community, url, init) {
       const method = init?.method ?? "GET";
       const auth = JSON.parse(
@@ -614,6 +623,7 @@ export function policyRelay({
         const filters = JSON.parse(init.body);
         if (new URL(url).pathname === "/events") {
           acceptPublication(communityOf(url), filters);
+          sidebarApi?.admit(filters);
           return Response.json({ accepted: true, event_id: filters.id });
         }
         if (filters.some((filter) => filter.thread_window)) {
@@ -958,6 +968,7 @@ export function policyRelay({
               setTimeout(() => {
                 try {
                   const accepted = acceptPublication(this.community, id);
+                  sidebarApi?.admit(id);
                   // A fixture may hold the OK while relay side effects proceed.
                   if (typeof accepted?.then === "function")
                     accepted.then(
@@ -1096,6 +1107,7 @@ export function policyRelay({
       ).toBeGreaterThan(0);
     },
     publish(community, event) {
+      sidebarApi?.admit(event);
       let deliveries = 0;
       // Relay-authored group state names its channel with d, not h.
       const destinationTag =

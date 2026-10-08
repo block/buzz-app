@@ -59,8 +59,11 @@ test("thread buttons show observed unread independently, clear only after readin
   await page.clock.install();
   const fullHistory = app.histories.get(`primary/${ids.alpha}`);
   const fullReplies = new Map(app.threadReplies);
+  const fullDisplaced = new Map(app.displacedReplies);
   app.histories.set(`primary/${ids.alpha}`, fullHistory.slice(0, 1));
   app.threadReplies.clear();
+  // The initial whole-channel cut must not see the later-admitted viewer reply.
+  app.displacedReplies.clear();
   await holdReadingFocus(page);
   await open(page, app);
   const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
@@ -90,6 +93,8 @@ test("thread buttons show observed unread independently, clear only after readin
   app.histories.set(`primary/${ids.alpha}`, fullHistory);
   for (const [root, replies] of fullReplies)
     app.threadReplies.set(root, replies);
+  for (const [root, replies] of fullDisplaced)
+    app.displacedReplies.set(root, replies);
   for (const event of fullHistory.slice(1)) app.relay.publish("primary", event);
   // Reload fetches the server's thread summaries as well as message rows;
   // live messages alone do not carry the fixture's 39005 summary events.

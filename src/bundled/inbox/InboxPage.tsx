@@ -426,7 +426,11 @@ export function InboxView({
           .items.some(
             (row) =>
               row.channelId === item.channelId &&
-              row.messageIds.includes(item.messageId),
+              (item.target.kind === "channel"
+                ? row.messageIds.includes(item.messageId)
+                : remaining.some((step) =>
+                    row.messageIds.includes(step.messageId),
+                  )),
           ) &&
         session.unread.revision() === revision
       );

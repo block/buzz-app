@@ -29,7 +29,7 @@ Targets are `{kind:"channel",channelId}`, `{kind:"thread",channelId,rootId}`,
 or `{kind:"message",channelId,messageId}`. The consumer must establish actual
 reading intent before calling `observe`: this is a trusted in-process API, not
 proof that a human read text. The engine resolves signed message identity,
-timestamps, ancestry, deletion and current access; arbitrary timestamps are not
+ancestry, deletion and current access; arbitrary timestamps are not
 accepted. Cancelled leases cannot survive disposal, revocation/regrant, or a newer
 manual-unread action. Restored channel heads pass signature/access verification
 and supply evidence before their rows become observable.
@@ -41,11 +41,17 @@ The list, its own composer, its owning panel and its selected owning tab can ear
 dwell; a parent or sibling composer cannot. Hidden, inert and inactive retained
 content cannot read. Owner positioning completion wakes dwell even when rows and
 geometry did not change. Mounted virtualizer overscan, preload and sidebar
-selection are not reading. After dwell, each context (channel timeline or thread) sends one
-`mark_through` anchored on its **newest dwelled message**: the relay stores
-a frontier for dwell rather than individual receipts, so earlier messages in that context read
-too. Oversized rows that never fit fully are not auto-read.
+selection are not reading. After dwell, every distinct eligible resolved ID is
+admitted in one durable save as a `mark_through` operand (up to 128 input IDs),
+then flushed in batches of at most 100. The client cannot choose the arrival-newest
+anchor from author timestamps. The relay advances each context's frontier using
+its own arrival time, so earlier arrivals in that context read too. Oversized rows that never fit fully are not auto-read.
 
+- Channel `latestMessageId` is an opaque arrival anchor. `latestActivityAt` is
+  author-max display activity, not that ID's timestamp; `latestMessageComplete`
+  distinguishes a verified empty summary from an unknown anchor. Recent ordering
+  remains display-only. Hidden DMs use independent activity, incoming/outgoing
+  delivery and bounded history-ID evidence, never lexical anchor ordering.
 - `unread` and `attention` are relay `ReadCount`s: `exact`, `at_least` (a lower
   bound, e.g. when participation could not be proven within the relay's budget)
   or `unknown`. Unknown is never rendered as zero. Counts come only from relay
@@ -65,7 +71,7 @@ too. Oversized rows that never fit fully are not auto-read.
   and lease rules apply. A channel prefix requires a top-level message, not a reply.
 - `markChannelRead(channelId)` anchors on the relay row's `latest_message_id`
   when invoked and sends `mark_channel_read`: a fixed whole-channel cut covering
-  the timeline and every thread through that timestamp. Later arrivals remain
+  the timeline and every thread through that anchor’s relay arrival time. Later arrivals remain
   unread. It clears the channel's local manual-unread keys captured at invocation. With no latest
   message and a complete row it clears only local marks; an incomplete row is an
   error rather than an invented cut. It does not fetch history or select the row.
@@ -91,9 +97,10 @@ too. Oversized rows that never fit fully are not auto-read.
 - `refresh()` re-reads the sidebar; `retrySync()` flushes pending writes, then
   refreshes. `ReadMutationResult.durability === "saved"` means the local journal
   transaction committed, not that the relay accepted it. Saving, pending and
-  applied read intents can optimistically clear covered unread/attention styling
-  before local save or relay acknowledgement, including while offline; they do
-  not change the relay-derived counts. A failed local save or a `blocked`/`invalid`
+  applied read intents optimistically clear only their exact anchored message IDs
+  before local save or relay acknowledgement, including while offline. They do
+  not change relay-derived counts or clear channel/thread badges and popovers;
+  those summaries wait for relay reconciliation. A failed local save or a `blocked`/`invalid`
   relay outcome removes that intent's coverage, so unread styling can return.
   Pending intent survives transport failures or `unknown` outcomes for retry;
   applied coverage bridges acknowledgement until each surface receives applicable
@@ -107,7 +114,7 @@ avatars are reserved for eligible one-to-one offscreen cues. Thread activity reu
 its hover/focus/click popover lists the relay's bounded set of newest unread
 threads, dropping only those with exact-zero unread (unknown stays), and opens the
 existing thread panel, so overlapping priority and thread activity never produce duplicate dots. Each preview is the thread's
-newest relevant unread reply, with agent envelopes unwrapped
+arrival-newest relevant unread reply (with that reply's author timestamp), with agent envelopes unwrapped
 and the author's edits applied as the relay returns them when the popover opens.
 That read is neither live nor unbounded, so a preview can differ from the timeline:
 an edit made or deleted while the popover is open shows on the next open, and the
@@ -150,8 +157,8 @@ names distinguish counts (with "At least" for lower bounds), stale data and
 local-only intent; unknown and zero omit the dot.
 Each mounted button subscribes to its own thread, without fetching thread history.
 Opening/hovering a button does not acknowledge replies; the existing focused
-viewport dwell in `ThreadPanel` supplies `mark_through` intent for the newest
-dwelled message in its context.
+viewport dwell in `ThreadPanel` supplies `mark_through` intent for every distinct
+eligible dwelled message in its context.
 The relay resolves thread ancestry for counts; the client resolves a dwelled
 message's context with the same canonical marked-reference parser as thread
 opening. References alone do not grant access or trigger a read.
@@ -187,7 +194,7 @@ responses as well as exact responses.
 
 | Intent | Relay write | Local manual-unread clears |
 | --- | --- | --- |
-| Automatic visible dwell | `mark_through` newest dwelled message, per context | None |
+| Automatic visible dwell | `mark_through` for each distinct eligible dwelled ID | None |
 | `markThrough(target, messageId)` | `mark_through` that target through the message | That target |
 | `markChannelRead(channelId)` | `mark_channel_read` through the row's latest message | Captured channel keys |
 | Channel read with no messages | None | Captured channel keys |
@@ -195,7 +202,7 @@ responses as well as exact responses.
 | Selected row unread | None | None (adds selected message mark) |
 | Mute/Unmute | None | None |
 
-Every write anchors on a message ID; the relay derives the timestamp and rejects
+Every write anchors on a message ID; the relay derives its arrival-time frontier and rejects
 anchors outside the viewer's membership (`blocked`) or of an ineligible kind or
 wrong context (`invalid`). The action has already resolved once its intent was
 saved, so either outcome is recorded as the channel's `error` on the unread and
@@ -246,12 +253,12 @@ partially admitting selectors. Disposing a lease releases its demand. Context
 reads batch at most 20 targets and 100 message IDs per request; these wire bounds
 are separate from the retained-demand limits.
 
-The journal coalesces dominated pending prefixes before sending. If a newer anchor
-covers an older pending prefix but the relay subsequently blocks the newer anchor
-(for example, unresolved ancestry), the older intent is no longer available as a
-fallback. The blocked outcome is recorded but not shown, as above; progress
-needs a refresh and a new action with a valid anchor, and the client does not
-manufacture progress from it.
+The journal deduplicates exact operands only (intent type, channel, context and
+message ID). Distinct anchors are retained regardless of author time or invocation
+order; a whole-channel read cannot discard context operands. Legacy partitions
+retain operation IDs, intents and manual marks while obsolete `createdAt` metadata
+is normalized away in the existing strict transaction. A blocked anchor does not
+discard independent pending operands.
 
 Deployment requires the compatible `/buzz/v1` extension, including five-thread
 summaries and fixed-anchor whole-channel reads. An older or absent descriptor
@@ -303,10 +310,10 @@ folding; known outstanding invalidations prevent that proof, but a refresh or
 owner status change alone does not. Owner status controls snapshot freshness. The
 shared fold and feed's pre-admission incomplete metadata preserve preview closure.
 
-Inbox `readThrough` is thread-prefix-only, anchored on its newest admitted
-reply, never its root. An empty non-DM `readThrough` means no Inbox read action:
+Inbox `readThrough` is thread-prefix-only, containing every distinct admitted
+reply anchor, never its top-level root. An empty non-DM `readThrough` means no Inbox read action:
 a top-level mention does not silently become a channel-prefix write.
-`prepareChannelRead` freezes the relay latest ID/time, epoch, and current manual
+`prepareChannelRead` freezes the relay latest ID, epoch, and current manual
 keys. Retries keep those operands: new keys survive, re-marks on frozen keys
 are cleared. `markChannelRead(id)` calls `prepareChannelRead(id)()`.
 `revision()` counts successful local intent saves, not sync publications;

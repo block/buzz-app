@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { IncomingListener } from "../../features/relay/incoming";
 import type { ChannelList } from "../../features/relay/contracts";
-import { readView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { useHiddenDms } from "./useHiddenDms";
 
 afterEach(() => {
@@ -24,6 +24,7 @@ function fixture() {
     id: "before",
     createdAt: 90,
   };
+  let complete = true;
   const listeners = new Set<() => void>();
   const incoming = new Set<IncomingListener>();
   type ObserveSend = Parameters<
@@ -66,7 +67,11 @@ function fixture() {
       },
     },
     unread: {
-      snapshot: () => ({ latestMessage: latest }),
+      snapshot: () => ({
+        latestMessageId: latest?.id,
+        latestActivityAt: latest?.createdAt,
+        latestMessageComplete: complete,
+      }),
       subscribe: (_target: unknown, listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -101,8 +106,9 @@ function fixture() {
       latest = { id, createdAt };
       for (const listener of listeners) listener();
     },
-    clearHead() {
+    clearHead(verifiedEmpty = false) {
       latest = undefined;
+      complete = verifiedEmpty;
       for (const listener of listeners) listener();
     },
     receive(channelId: string) {
@@ -418,7 +424,7 @@ it("restores an outgoing send after history enrichment without head advancement"
   expect(readView("community:alice", "hidden-dms", [])).toEqual([
     {
       id: "dm",
-      baseline: { id: "before", createdAt: 90 },
+      baselineActivityAt: 90,
       knownIds: ["before"],
     },
   ]);
@@ -427,8 +433,8 @@ it("restores an outgoing send after history enrichment without head advancement"
   act(() => finish?.([]));
   expect(
     h.session.unread.snapshot({ kind: "channel", channelId: "dm" })
-      .latestMessage,
-  ).toEqual({ id: "before", createdAt: 90 });
+      .latestMessageId,
+  ).toEqual("before");
   expect(view.result.current.hiddenIds.has("dm")).toBe(false);
 });
 
@@ -462,4 +468,76 @@ it("restores a hidden DM when it is opened again", () => {
   act(() => h.open("dm"));
   expect(view.result.current.hiddenIds.has("dm")).toBe(false);
   expect(readView("community:alice", "hidden-dms", [])).toEqual([]);
+});
+
+it.each(["before", "a-before", "z-before"])(
+  "anchor swap to %s at equal or older activity does not restore; independent activity does",
+  async (id) => {
+    const h = fixture();
+    const view = renderHook(() =>
+      useHiddenDms("community:alice", h.session, h.list),
+    );
+    act(() => view.result.current.hide("dm"));
+    await act(async () => {});
+    act(() => h.evidence(id, 90));
+    expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+    act(() => h.evidence(id, 89));
+    expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+    // The same relay anchor may accompany newer author-max display activity.
+    act(() => h.evidence(id, 91));
+    expect(view.result.current.hiddenIds.has("dm")).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "preserves unknown versus verified-empty baseline through persistence (empty=%s)",
+  async (empty) => {
+    const h = fixture();
+    h.clearHead(empty);
+    h.history([]);
+    const first = renderHook(() =>
+      useHiddenDms("community:alice", h.session, h.list),
+    );
+    act(() => first.result.current.hide("dm"));
+    await act(async () => {});
+    expect(readView("community:alice", "hidden-dms", [])).toEqual([
+      {
+        id: "dm",
+        knownIds: [],
+        ...(empty ? { baselineActivityAt: null } : {}),
+      },
+    ]);
+    first.unmount();
+    const restored = renderHook(() =>
+      useHiddenDms("community:alice", h.session, h.list),
+    );
+    await act(async () => {});
+    act(() => h.evidence("old-history", 80));
+    expect(restored.result.current.hiddenIds.has("dm")).toBe(!empty);
+  },
+);
+
+it("migrates a legacy baseline without losing known IDs or using its lexical anchor", async () => {
+  const h = fixture();
+  writeView("community:alice", "hidden-dms", [
+    {
+      id: "dm",
+      baseline: { id: "z-before", createdAt: 90 },
+      knownIds: ["before"],
+    },
+  ]);
+  const view = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  await act(async () => {});
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  act(() => h.evidence("a-before", 90));
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  view.unmount();
+  h.history(["before", "same-stamp-arrival"]);
+  const restored = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  await act(async () => {});
+  expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
 });

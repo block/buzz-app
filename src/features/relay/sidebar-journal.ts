@@ -11,7 +11,7 @@ export type UnreadTarget =
 export type SidebarManualTarget = UnreadTarget;
 export const unreadTargetKey = (target: SidebarManualTarget) =>
   `${target.channelId}:${target.kind}:${target.kind === "thread" ? target.rootId : target.kind === "message" ? target.messageId : ""}`;
-export type AnchoredRead = { intent: ReadIntent; createdAt: number };
+export type AnchoredRead = { intent: ReadIntent };
 export type PendingRead = AnchoredRead & { id: string };
 export type SidebarJournal = {
   pending: PendingRead[];
@@ -47,9 +47,7 @@ function validate(value: SidebarJournal): SidebarJournal {
       typeof p.id !== "string" ||
       p.id.length > 64 ||
       !p.id ||
-      operations.has(p.id) ||
-      !Number.isSafeInteger(p.createdAt) ||
-      p.createdAt < 0
+      operations.has(p.id)
     )
       throw new Error("Invalid pending read");
     operations.add(p.id);
@@ -76,20 +74,26 @@ function validate(value: SidebarJournal): SidebarJournal {
   }
   if (new TextEncoder().encode(JSON.stringify(value)).length > 512 * 1024)
     throw new Error("Read journal exceeds capacity");
-  return value;
+  // Legacy partitions may carry author timestamps. Keep their operation IDs and
+  // operands, but never carry that obsolete ordering metadata into a new save.
+  return {
+    pending: value.pending.map(({ id, intent }) => ({ id, intent })),
+    manual: value.manual,
+  };
 }
-function dominates(a: AnchoredRead, b: AnchoredRead) {
+function sameOperand(a: AnchoredRead, b: AnchoredRead) {
   const x = a.intent,
     y = b.intent;
-  const channel = (i: ReadIntent) =>
-    i.type === "mark_through" ? i.target.channel_id : i.channel_id;
   return (
-    a.createdAt >= b.createdAt &&
-    channel(x) === channel(y) &&
-    (x.type === "mark_channel_read" ||
-      (y.type === "mark_through" && x.target.root_id === y.target.root_id))
+    x.message_id === y.message_id &&
+    (x.type === "mark_channel_read"
+      ? y.type === "mark_channel_read" && x.channel_id === y.channel_id
+      : y.type === "mark_through" &&
+        x.target.channel_id === y.target.channel_id &&
+        x.target.root_id === y.target.root_id)
   );
 }
+
 export function browserSidebarStorage(scope: string): SidebarStorage {
   let database: Promise<IDBDatabase> | undefined;
   let closed = false;
@@ -289,10 +293,13 @@ export function createSidebarJournal(
           update((j) => {
             if (!valid()) throw new Error("Reading context changed");
             return {
-              pending: pending.reduce((all, next) => {
-                if (all.some((p) => dominates(p, next))) return all;
-                return [...all.filter((p) => !dominates(next, p)), next];
-              }, j.pending),
+              pending: pending.reduce(
+                (all, next) => {
+                  if (!all.some((p) => sameOperand(p, next))) all.push(next);
+                  return all;
+                },
+                [...j.pending],
+              ),
               manual: j.manual.filter((t) => !clear(t)),
             };
           }, true),

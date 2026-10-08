@@ -46,7 +46,6 @@ function setup() {
     account: { retention_seconds: 2592000, cutoff_ms: 0 },
     contexts: queries.map((q) => ({
       status: "available" as const,
-      through_timestamp: null,
       messages: q.message_ids.map((id) => {
         const event = seen.get(id);
         if (!event) return { message_id: id, status: "unknown" as const };

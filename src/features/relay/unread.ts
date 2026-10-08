@@ -24,7 +24,10 @@ export type ReadSyncSnapshot = Readonly<{
 }>;
 export type UnreadSnapshot = Readonly<{
   target: UnreadTarget;
-  latestMessage?: Readonly<{ id: string; createdAt: number }>;
+  /** Opaque relay read anchor, not paired with the display activity time. */
+  latestMessageId?: string;
+  latestActivityAt?: number;
+  latestMessageComplete?: boolean;
   unread: ReadCount;
   attention: ReadCount;
   unreadVisible?: boolean;
@@ -339,8 +342,7 @@ export function createUnread({
         !["direct", "mention", "conversation"].includes(verdict.reason ?? "")
       )
         continue;
-      if (state.covered(target, message.created_at, false, message.id))
-        continue;
+      if (state.covered(target, message.id)) continue;
       const key = `${target.channel_id}:${entry.dm ? target.channel_id : (target.root_id ?? message.id)}`;
       const group = groups.get(key) ?? [];
       group.push(entry);
@@ -357,7 +359,8 @@ export function createUnread({
         latest = group.at(-1);
       if (!first || !latest?.target) continue;
       const channelId = latest.target.channel_id;
-      const rootId = latest.target.root_id;
+      const rootId = group.find(({ target }) => target?.root_id)?.target
+        ?.root_id;
       const target: UnreadTarget = latest.dm
         ? { kind: "channel", channelId }
         : rootId
@@ -394,12 +397,12 @@ export function createUnread({
             ),
           readThrough: Object.freeze(
             !latest.dm && rootId
-              ? [
-                  {
+              ? group
+                  .filter(({ target }) => target?.root_id === rootId)
+                  .map(({ message }) => ({
                     target: { kind: "thread" as const, channelId, rootId },
-                    messageId: latest.message.id,
-                  },
-                ]
+                    messageId: message.id,
+                  }))
               : [],
           ),
         }),
@@ -496,24 +499,22 @@ export function createUnread({
     const row = state.row(target.channelId);
     let unread = unknown,
       attention = unknown;
-    let latestMessage: UnreadSnapshot["latestMessage"];
+    let latestMessageId: string | undefined,
+      latestActivityAt: number | undefined,
+      latestMessageComplete: boolean | undefined;
     if (row && target.kind === "channel") {
       unread = row.unread;
       attention = row.attention;
-      if (row.latest_message_id && row.latest_message_at !== null)
-        latestMessage = {
-          id: row.latest_message_id,
-          createdAt: row.latest_message_at,
-        };
+      latestMessageId = row.latest_message_id ?? undefined;
+      latestActivityAt = row.latest_message_at ?? undefined;
+      latestMessageComplete = row.latest_message_complete;
     } else if (row && target.kind === "thread") {
       const thread = row.threads.items.find((t) => t.root_id === target.rootId);
       unread = thread?.unread ?? (row.threads.complete ? zero : unknown);
       attention = unread;
-      if (thread)
-        latestMessage = {
-          id: thread.latest_reply_id,
-          createdAt: thread.latest_reply_at,
-        };
+      latestMessageId = thread?.latest_reply_id;
+      latestActivityAt = thread?.latest_reply_at;
+      latestMessageComplete = row.threads.complete;
     } else if (target.kind === "message") {
       const message = event(target.messageId),
         resolved = message && context(message);
@@ -528,26 +529,13 @@ export function createUnread({
       } else if (status?.status === "read" || status?.status === "not_counted")
         unread = attention = zero;
     }
+    // Only exact message identity proves optimistic coverage. A summary waits
+    // for the relay rather than treating an opaque anchor as a local prefix.
+    const message =
+      target.kind === "message" ? event(target.messageId) : undefined;
+    const resolved = message && context(message);
     const covered =
-      target.kind === "message"
-        ? (() => {
-            const message = event(target.messageId),
-              resolved = message && context(message);
-            return (
-              !!message &&
-              !!resolved &&
-              state.covered(resolved, message.created_at, false, message.id)
-            );
-          })()
-        : !!latestMessage &&
-          (target.kind === "channel"
-            ? row?.latest_message_complete === true
-            : row?.threads.complete === true && unread.status === "exact") &&
-          state.covered(
-            wireTarget(target),
-            latestMessage.createdAt,
-            target.kind === "channel",
-          );
+      !!message && !!resolved && state.covered(resolved, message.id);
     const hint = state.liveHint(target.channelId)?.unread;
     const hinted =
       !!hint &&
@@ -555,10 +543,7 @@ export function createUnread({
         (target.kind === "message"
           ? target.messageId === hint.id
           : hint.target?.root_id === target.rootId)) &&
-      !(
-        hint.target &&
-        state.covered(hint.target, hint.createdAt, false, hint.id)
-      );
+      !(hint.target && state.covered(hint.target, hint.id));
     const result: UnreadSnapshot = Object.freeze({
       target,
       unreadVisible: (hasUnread(unread) && !covered) || hinted,
@@ -566,7 +551,9 @@ export function createUnread({
         (hasUnread(attention) && !covered) || (hinted && hint.attention),
       unread,
       attention,
-      ...(latestMessage ? { latestMessage } : {}),
+      ...(latestMessageId ? { latestMessageId } : {}),
+      ...(latestActivityAt !== undefined ? { latestActivityAt } : {}),
+      ...(latestMessageComplete !== undefined ? { latestMessageComplete } : {}),
       freshness: freshness(),
       manual:
         allowed(target.channelId) && state.journal.manual(target)
@@ -583,8 +570,9 @@ export function createUnread({
       cached.error === result.error &&
       sameCount(cached.unread, result.unread) &&
       sameCount(cached.attention, result.attention) &&
-      cached.latestMessage?.id === result.latestMessage?.id &&
-      cached.latestMessage?.createdAt === result.latestMessage?.createdAt
+      cached.latestMessageId === result.latestMessageId &&
+      cached.latestActivityAt === result.latestActivityAt &&
+      cached.latestMessageComplete === result.latestMessageComplete
     )
       return cached;
     if (snapshots.size >= 4096)
@@ -639,8 +627,7 @@ export function createUnread({
       unread:
         message.pubkey !== viewer &&
         (forced ||
-          (status?.status === "unread" &&
-            !state.covered(target, message.created_at, false, messageId))),
+          (status?.status === "unread" && !state.covered(target, messageId))),
       viewing,
     };
   }
@@ -655,19 +642,7 @@ export function createUnread({
       error: state.operationError(channelId) ?? state.sync().error,
       items: row
         ? row.threads.items
-            .filter(
-              (t) =>
-                t.unread.status === "unknown" ||
-                (hasUnread(t.unread) &&
-                  !(
-                    row.threads.complete &&
-                    t.unread.status === "exact" &&
-                    state.covered(
-                      { channel_id: channelId, root_id: t.root_id },
-                      t.latest_reply_at,
-                    )
-                  )),
-            )
+            .filter((t) => t.unread.status === "unknown" || hasUnread(t.unread))
             .map((t) => {
               const preview = event(t.latest_reply_id);
               return {
@@ -694,8 +669,6 @@ export function createUnread({
       row = state.row(channelId);
     if (!allowed(channelId) || !row) throw new Error("Read target unavailable");
     const valid = () => !closed && epoch === generation && allowed(channelId);
-    if (row.latest_message_id && row.latest_message_at === null)
-      throw new Error("Latest message timestamp unavailable");
     if (!row.latest_message_id && !row.latest_message_complete)
       throw new Error("Latest message unknown; refresh before marking read");
     const keys = state.journal.manualKeys(channelId);
@@ -707,7 +680,6 @@ export function createUnread({
               channel_id: channelId,
               message_id: row.latest_message_id,
             },
-            createdAt: row.latest_message_at ?? 0,
           },
         ]
       : [];
@@ -825,11 +797,8 @@ export function createUnread({
         },
         async observe(ids) {
           if (!valid() || ids.length > 128) return;
-          const newest = new Map<
-            string,
-            { target: ReadTarget; event: RelayEvent }
-          >();
-          for (const id of ids) {
+          const intents: AnchoredRead[] = [];
+          for (const id of new Set(ids)) {
             if (observed.has(id)) continue;
             const message = event(id),
               target = message && context(message);
@@ -840,19 +809,12 @@ export function createUnread({
               !api?.eligibleKinds?.includes(message.kind)
             )
               continue;
-            const key = contextKey(target),
-              previous = newest.get(key);
-            if (!previous || message.created_at > previous.event.created_at)
-              newest.set(key, { target, event: message });
+            intents.push({
+              intent: { type: "mark_through", target, message_id: id },
+            });
           }
-          const intents: AnchoredRead[] = [...newest.values()].map(
-            ({ target, event }) => ({
-              intent: { type: "mark_through", target, message_id: event.id },
-              createdAt: event.created_at,
-            }),
-          );
           if (intents.length) await state.enqueue(intents, () => false, valid);
-          for (const id of ids) observed.add(id);
+          for (const { intent } of intents) observed.add(intent.message_id);
         },
       };
     },
@@ -877,7 +839,6 @@ export function createUnread({
               target: expected,
               message_id: messageId,
             },
-            createdAt: message.created_at,
           },
         ],
         (t) => unreadTargetKey(t) === unreadTargetKey(target),

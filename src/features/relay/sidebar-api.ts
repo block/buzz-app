@@ -51,7 +51,6 @@ export type ContextState =
   | { status: "unknown" | "unavailable" }
   | {
       status: "available";
-      through_timestamp: number | null;
       messages: MessageReadState[];
     };
 export type IntentOutcome =
@@ -320,7 +319,6 @@ export function createSidebarApi(
         if (c.status === "unknown" || c.status === "unavailable") return;
         if (
           c.status !== "available" ||
-          !nullable(c.through_timestamp, integer) ||
           !array(c.messages, 100, message) ||
           c.messages.length !== targets[i]?.message_ids.length ||
           c.messages.some(

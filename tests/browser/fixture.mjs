@@ -219,13 +219,26 @@ export const test = base.extend({
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
+    // Fixture seed construction defines modeled relay admission order. It is
+    // independent of author time, query order, and repeated history delivery.
+    const arrivals = new Map();
+    const admit = (event) => {
+      if (!arrivals.has(event.id)) arrivals.set(event.id, arrivals.size + 1);
+      return event;
+    };
+    const received = (event) => {
+      const order = arrivals.get(event.id);
+      if (order === undefined)
+        throw new Error(`Unadmitted fixture event ${event.id}`);
+      return order;
+    };
     const sign = (
       kind,
       tags,
       content = "",
       key = relayKey,
       time = 1700000000,
-    ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    ) => admit(finalizeEvent({ kind, tags, content, created_at: time }, key));
     const profiles = new Map(
       ["primary", "secondary"].map((community) => [
         community,
@@ -1566,6 +1579,8 @@ export const test = base.extend({
           // Membership, not the local roster, authorizes /buzz/v1 rows; the
           // model reads the same signed histories and thread replies.
           readModel: {
+            received,
+            admit,
             rows: () =>
               rosterIds.map((id) => ({
                 channel_id: id,
@@ -1992,6 +2007,7 @@ export const test = base.extend({
         pending,
         histories,
         threadReplies, // Signed upstream data, like histories; never client read state.
+        displacedReplies, // Relay-only participation witnesses, also signed history.
         // Signed device-cache input for the startup scale journey; same modeled
         // wire responses as a real roster/head read, without visiting every row.
         startupCache() {
@@ -2215,6 +2231,7 @@ export const test = base.extend({
           root,
           parent,
           attachmentTags = [],
+          createdAt,
         ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
@@ -2233,7 +2250,7 @@ export const test = base.extend({
             ],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
-            (history.at(-1)?.created_at ?? 1700000900) + 1,
+            createdAt ?? (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
           if (relay && deliver) relay.publish(community, event);

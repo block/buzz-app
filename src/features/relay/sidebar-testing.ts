@@ -4,7 +4,6 @@ import type {
   SidebarPage,
   ChannelReadSummary,
   MessageReadState,
-  ReadTarget,
 } from "./sidebar-api";
 import type { SidebarJournal, SidebarStorage } from "./sidebar-journal";
 
@@ -34,9 +33,6 @@ export function sidebarFixture() {
   let journal: SidebarJournal = { pending: [], manual: [] };
   const rows = new Map<string, ChannelReadSummary>();
   const messages = new Map<string, MessageReadState>();
-  const frontiers = new Map<string, number>();
-  const key = (target: ReadTarget) =>
-    `${target.channel_id}:${target.root_id ?? ""}`;
   const api = {
     eligibleKinds: [9, 40002, 45001, 45003],
     sidebar: vi.fn<SidebarApi["sidebar"]>(
@@ -54,7 +50,6 @@ export function sidebarFixture() {
       account: sidebarAccount,
       contexts: queries.map((q) => ({
         status: "available" as const,
-        through_timestamp: frontiers.get(key(q.target)) ?? null,
         messages: q.message_ids.map(
           (id) =>
             messages.get(id) ?? { message_id: id, status: "unknown" as const },
@@ -72,7 +67,7 @@ export function sidebarFixture() {
     },
     close() {},
   };
-  return { api, storage, rows, messages, frontiers, journal: () => journal };
+  return { api, storage, rows, messages, journal: () => journal };
 }
 
 export function deferredSidebar<T>() {

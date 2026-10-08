@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 it.each(["applied", "blocked"] as const)(
-  "paints before persistence, retains failed-refresh coverage, and fences a newer %s cut",
+  "keeps relay badge evidence during saving, failed refresh and a newer %s cut",
   async (outcome) => {
     const bff = sidebarFixture(),
       viewer = keypair(),
@@ -94,15 +94,15 @@ it.each(["applied", "blocked"] as const)(
     await act(async () => {
       action = owner.session.unread.markChannelRead(channel);
     });
-    // Paint changes while the strict transaction is still held, not just before HTTP.
-    expect(screen.queryByRole("img")).toBeNull();
+    // Opaque anchors cannot clear summaries while the transaction is held.
+    expect(screen.getByRole("img")).toBeVisible();
     expect(bff.api.write).not.toHaveBeenCalled();
     await act(async () => {
       persistence?.resolve();
       await action;
     });
     persistence = undefined;
-    // The authoritative number is untouched even while its presentation is covered.
+    // Both count and presentation remain relay-authoritative.
     expect(
       owner.session.unread.snapshot({ kind: "channel", channelId: channel })
         .unread,
@@ -115,7 +115,7 @@ it.each(["applied", "blocked"] as const)(
     await waitFor(() =>
       expect(owner.session.unread.sync().error).toBe("offline"),
     );
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByRole("img")).toBeVisible();
 
     const oldRefresh = deferredSidebar<SidebarPage>();
     bff.api.sidebar.mockImplementationOnce(() => oldRefresh.promise);
@@ -152,7 +152,7 @@ it.each(["applied", "blocked"] as const)(
       });
       await refresh;
     });
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByRole("img")).toBeVisible();
     if (outcome === "blocked") {
       await act(async () => {
         newerWrite.resolve([{ status: "blocked" }]);
@@ -317,7 +317,7 @@ it.each([
   },
 );
 
-it("reconciles saturated applied surfaces before retry without losing the thread or DM mask", async () => {
+it("reconciles saturated applied operands while thread and DM badges await relay evidence", async () => {
   const bff = sidebarFixture(),
     viewer = keypair(),
     peer = keypair(),
@@ -358,7 +358,6 @@ it("reconciles saturated applied surfaces before retry without losing the thread
     pending: [
       ...Array.from({ length: 999 }, (_, n) => ({
         id: `prefix-${n}`,
-        createdAt: 10,
         intent: {
           type: "mark_through" as const,
           target: {
@@ -370,7 +369,6 @@ it("reconciles saturated applied surfaces before retry without losing the thread
       })),
       {
         id: "dm-cut",
-        createdAt: 10,
         intent: {
           type: "mark_channel_read" as const,
           channel_id: dm,
@@ -446,9 +444,11 @@ it("reconciles saturated applied surfaces before retry without losing the thread
       />
     </>,
   );
-  expect(screen.queryByRole("img")).toBeNull();
+  expect(screen.getByRole("img", { name: /^1 unread messages/ })).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "View thread: 2 replies" }),
+    screen.getByRole("button", {
+      name: /View thread: 2 replies.*1 unread replies/,
+    }),
   ).toBeVisible();
   await act(async () => {
     await owner.session.unread.markThrough(
@@ -462,9 +462,11 @@ it("reconciles saturated applied surfaces before retry without losing the thread
     ),
   );
   expect(bff.journal().pending).toHaveLength(1);
-  expect(screen.queryByRole("img")).toBeNull();
+  expect(screen.getByRole("img", { name: /^1 unread messages/ })).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "View thread: 2 replies" }),
+    screen.getByRole("button", {
+      name: /View thread: 2 replies.*1 unread replies/,
+    }),
   ).toBeVisible();
   // Saturation itself must schedule applicable reads, without a user refresh.
   await waitFor(() =>

@@ -3,12 +3,11 @@ import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 
-type MessageHead = Readonly<{ id: string; createdAt: number }>;
 type HiddenDm = {
   id: string;
   // Keeps one hide identifiable through enrichment; JSON persistence omits it.
   hideGeneration: symbol;
-  baseline?: MessageHead | null;
+  baselineActivityAt?: number | null;
   knownIds?: readonly string[];
 };
 const key = "hidden-dms";
@@ -32,19 +31,23 @@ function restore(scope: string): HiddenDm[] {
   return saved.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || typeof entry.id !== "string")
       return [];
-    const baseline = entry.baseline;
+    // Older saves paired an anchor ID with author activity. Preserve the time
+    // and known IDs, but do not infer ordering from the old anchor.
+    const baselineActivityAt =
+      entry.baselineActivityAt !== undefined
+        ? entry.baselineActivityAt
+        : entry.baseline === null
+          ? null
+          : entry.baseline?.createdAt;
     const knownIds = entry.knownIds;
     return [
       {
         id: entry.id,
         hideGeneration: Symbol(),
-        ...(baseline === null ||
-        (baseline &&
-          typeof baseline === "object" &&
-          typeof baseline.id === "string" &&
-          typeof baseline.createdAt === "number" &&
-          Number.isFinite(baseline.createdAt))
-          ? { baseline }
+        ...(baselineActivityAt === null ||
+        (typeof baselineActivityAt === "number" &&
+          Number.isFinite(baselineActivityAt))
+          ? { baselineActivityAt }
           : {}),
         ...(Array.isArray(knownIds) &&
         knownIds.every((id): id is string => typeof id === "string")
@@ -97,13 +100,17 @@ export function useHiddenDms(
       const latest = session.unread.snapshot({
         kind: "channel",
         channelId: id,
-      }).latestMessage;
+      });
       update([
         ...current.current.filter((entry) => entry.id !== id),
         {
           id,
           hideGeneration: Symbol(),
-          ...(latest ? { baseline: latest } : {}),
+          ...(latest.latestActivityAt !== undefined
+            ? { baselineActivityAt: latest.latestActivityAt }
+            : latest.latestMessageComplete && !latest.latestMessageId
+              ? { baselineActivityAt: null }
+              : {}),
         },
       ]);
     },
@@ -117,18 +124,19 @@ export function useHiddenDms(
         const latest = session.unread.snapshot({
           kind: "channel",
           channelId: entry.id,
-        }).latestMessage;
-        if (!latest || entry.baseline === undefined) return [entry];
-        if (entry.baseline === null) return [];
-        if (latest.id === entry.baseline.id) return [entry];
+        });
         if (
-          latest.createdAt > entry.baseline.createdAt ||
-          (latest.createdAt === entry.baseline.createdAt &&
-            latest.id < entry.baseline.id)
+          latest.latestActivityAt === undefined ||
+          entry.baselineActivityAt === undefined
+        )
+          return [entry];
+        if (
+          entry.baselineActivityAt === null ||
+          latest.latestActivityAt > entry.baselineActivityAt
         )
           return [];
-        // The direct history read can distinguish an older arrival from a
-        // deletion that exposed old history. A head rollback alone cannot.
+        // Equal/backward activity and arbitrary anchor changes are not proof
+        // of an arrival. Incoming delivery and bounded history own that proof.
         return [entry];
       });
       if (
@@ -201,7 +209,7 @@ export function useHiddenDms(
               const latest = session.unread.snapshot({
                 kind: "channel",
                 channelId: id,
-              }).latestMessage;
+              });
               const ids = events.map((event) => event.id);
               const changed =
                 entry.knownIds &&
@@ -210,13 +218,18 @@ export function useHiddenDms(
                 show([id]);
                 break;
               }
-              if (entry.baseline === undefined || !entry.knownIds)
+              if (entry.baselineActivityAt === undefined || !entry.knownIds)
                 update(
                   current.current.map((item) =>
                     item === entry
                       ? {
                           ...item,
-                          baseline: latest ?? null,
+                          ...(latest.latestActivityAt !== undefined
+                            ? { baselineActivityAt: latest.latestActivityAt }
+                            : latest.latestMessageComplete &&
+                                !latest.latestMessageId
+                              ? { baselineActivityAt: null }
+                              : {}),
                           knownIds: ids,
                         }
                       : item,

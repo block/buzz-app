@@ -168,7 +168,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     .poll(
       () =>
         app.relay.sidebarApi.frontier("primary", ids.beta).channel ===
-        app.histories.get(`primary/${ids.beta}`).at(-1).created_at,
+        app.relay.sidebarApi.received(
+          app.histories.get(`primary/${ids.beta}`).at(-1),
+        ),
       { timeout: 12000 },
     )
     .toBe(true);

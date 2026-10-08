@@ -279,7 +279,6 @@ it.each(["unsubscribe", "revoke"])(
         contexts: [
           {
             status: "available",
-            through_timestamp: null,
             messages: [
               {
                 message_id: child.id,
@@ -913,8 +912,7 @@ it("community sweep captures every channel cut before the first journal save", a
     );
     await h.unread.refresh();
     expect(
-      h.unread.snapshot({ kind: "channel", channelId: second }).latestMessage
-        ?.id,
+      h.unread.snapshot({ kind: "channel", channelId: second }).latestMessageId,
     ).toBe("c".repeat(64));
   } finally {
     held.resolve();
@@ -1717,44 +1715,50 @@ it.each(["unavailable", "context-unavailable"] as const)(
   },
 );
 
-it("inbox thread prefix writes one thread intent and never acknowledges the root or an unrelated mention", async () => {
-  const h = setup();
-  const root = message(h.peer, channel, "mentioned root", 10, [
-    ["p", h.viewer.pubkey],
-  ]);
-  const reply = message(h.peer, channel, "mentioned reply", 11, [
-    ["e", root.id, "", "root"],
-    ["e", root.id, "", "reply"],
-    ["p", h.viewer.pubkey],
-  ]);
-  const unrelated = message(h.peer, channel, "other mention", 12, [
-    ["p", h.viewer.pubkey],
-  ]);
-  h.emit([root, reply, unrelated]);
-  verdicts(h, [
-    [root, "unread:mention"],
-    [reply, "unread:mention"],
-    [unrelated, "unread:mention"],
-  ]);
-  const snapshot = await inbox(h);
-  const item = snapshot.items.find((row) => row.messageIds.includes(reply.id));
-  if (!item) throw new Error("Missing thread row");
-  expect(item.readThrough).toEqual([
-    { target: threadOf(root.id), messageId: reply.id },
-  ]);
-  for (const step of item.readThrough)
-    await h.unread.markThrough(step.target, step.messageId);
-  await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
-  expect(writes(h)).toEqual([
-    {
-      type: "mark_through",
-      target: { channel_id: channel, root_id: root.id },
-      message_id: reply.id,
-    },
-  ]);
-  expect(h.unread.attention(channel, root.id).unread).toBe(true);
-  expect(h.unread.attention(channel, unrelated.id).unread).toBe(true);
-});
+it.each([10, 1000])(
+  "inbox retains every reply operand even when the mentioned root is author-newest (%s)",
+  async (rootTime) => {
+    const h = setup();
+    const root = message(h.peer, channel, "mentioned root", rootTime, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const replies = [11, 5].map((at) =>
+      message(h.peer, channel, `mentioned reply ${at}`, at, [
+        ["e", root.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ]),
+    );
+    const unrelated = message(h.peer, channel, "other mention", 12, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([root, ...replies, unrelated]);
+    verdicts(
+      h,
+      [root, ...replies, unrelated].map(
+        (row) => [row, "unread:mention"] as const,
+      ),
+    );
+    const snapshot = await inbox(h);
+    const item = snapshot.items.find((row) => row.messageIds.includes(root.id));
+    if (!item) throw new Error("Missing thread row");
+    expect(item.target).toEqual(threadOf(root.id));
+    expect(item.readThrough).toEqual(
+      [...replies]
+        .reverse()
+        .map((reply) => ({ target: threadOf(root.id), messageId: reply.id })),
+    );
+    for (const step of item.readThrough)
+      await h.unread.markThrough(step.target, step.messageId);
+    await vi.waitFor(() => expect(writes(h)).toHaveLength(2));
+    expect(
+      writes(h)
+        .map((intent) => intent.message_id)
+        .sort(),
+    ).toEqual(replies.map((reply) => reply.id).sort());
+    expect(h.unread.attention(channel, root.id).unread).toBe(true);
+    expect(h.unread.attention(channel, unrelated.id).unread).toBe(true);
+  },
+);
 
 it("inbox: a prepared channel read retries its captured anchor and leaves a newer manual mark alone", async () => {
   const h = setup();
@@ -2604,7 +2608,7 @@ it("inbox: an incomplete zero row does not clear a live unread hint, so the ment
 });
 
 // The row's messageId and rootId describe ONE message, the oldest
-// in the group (the pair #499 opens). target and readThrough stay on the newest.
+// in the group (the pair #499 opens). Read steps retain every admitted reply.
 it.each([
   [
     "a DM whose oldest unread is top-level and newest is a reply",
@@ -2659,4 +2663,26 @@ it.each([
     shape === "dm-reply-then-top" ? root.id : undefined,
   );
   expect(item && "rootId" in item).toBe(shape === "dm-reply-then-top");
+});
+
+it("a prepared channel read needs an opaque relay anchor, not a display timestamp", async () => {
+  const h = setup();
+  const anchor = "a".repeat(64);
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, { latest_message_id: anchor, latest_message_at: null }),
+  );
+  await h.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    latestMessageId: anchor,
+    latestMessageComplete: true,
+  });
+  expect(h.snapshot().latestActivityAt).toBeUndefined();
+  const prepared = h.unread.prepareChannelRead(channel);
+  await prepared();
+  await vi.waitFor(() =>
+    expect(writes(h)).toEqual([
+      { type: "mark_channel_read", channel_id: channel, message_id: anchor },
+    ]),
+  );
 });

@@ -86,16 +86,9 @@ export function createSidebarState({
     read.intent.type === "mark_through"
       ? read.intent.target.channel_id
       : read.intent.channel_id;
-  function covered(
-    target: ContextQuery["target"],
-    timestamp: number,
-    channel = false,
-    messageId?: string,
-  ) {
+  function covered(target: ContextQuery["target"], messageId: string) {
     if (!allowed(target.channel_id)) return false;
-    const surface = channel
-      ? `${target.channel_id}:sidebar`
-      : `${contextKey(target)}:${messageId ?? "summary"}`;
+    const surface = `${contextKey(target)}:${messageId}`;
     return [...saving.values()]
       .flat()
       .concat(
@@ -107,9 +100,9 @@ export function createSidebarState({
       .some(
         (read) =>
           readChannel(read) === target.channel_id &&
-          read.createdAt >= timestamp &&
+          read.intent.message_id === messageId &&
           (read.intent.type === "mark_channel_read" ||
-            (!channel && read.intent.target.root_id === target.root_id)),
+            read.intent.target.root_id === target.root_id),
       );
   }
   function settle(channelId: string, surface: string, watermark: number) {
@@ -589,6 +582,7 @@ export function createSidebarState({
       const previous = liveHints.get(channelId),
         next = { ...hint, revision: ++revision };
       liveHints.set(channelId, {
+        // Author-max activity for Recent display only, never a read anchor.
         latest:
           previous && previous.latest.createdAt > hint.createdAt
             ? { ...previous.latest, revision }

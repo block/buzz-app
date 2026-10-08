@@ -35,13 +35,13 @@ it("atomically persists fixed operands and explicit manual clears", async () => 
     journal = createSidebarJournal(s.storage, () => {});
   await journal.markUnread(target, () => true);
   const result = await journal.enqueue(
-    [{ intent, createdAt: 1 }],
+    [{ intent }],
     () => true,
     () => true,
   );
   expect(result).toMatchObject({ durability: "saved", sync: "pending" });
   expect(s.read()).toEqual({
-    pending: [{ id: result.operationId, intent, createdAt: 1 }],
+    pending: [{ id: result.operationId, intent }],
     manual: [],
   });
   const reloaded = createSidebarJournal(s.storage, () => {});
@@ -54,7 +54,7 @@ it("failed persistence and cancelled queued intent change neither half", async (
   await journal.markUnread(target, () => true);
   await expect(
     journal.enqueue(
-      [{ intent, createdAt: 1 }],
+      [{ intent }],
       () => true,
       () => false,
     ),
@@ -63,7 +63,7 @@ it("failed persistence and cancelled queued intent change neither half", async (
   s.fail();
   await expect(
     journal.enqueue(
-      [{ intent, createdAt: 1 }],
+      [{ intent }],
       () => true,
       () => true,
     ),
@@ -75,7 +75,7 @@ it("retains unknown outcomes and never erases another window's pending intent", 
     a = createSidebarJournal(s.storage, () => {}),
     b = createSidebarJournal(s.storage, () => {});
   await a.enqueue(
-    [{ intent, createdAt: 1 }],
+    [{ intent }],
     () => false,
     () => true,
   );
@@ -88,7 +88,6 @@ it("retains unknown outcomes and never erases another window's pending intent", 
           channel_id: "11234567-89ab-cdef-0123-456789abcdef",
           message_id: "b".repeat(64),
         },
-        createdAt: 2,
       },
     ],
     () => false,
@@ -109,7 +108,7 @@ it.each(["blocked", "invalid"] as const)(
     const s = storage(),
       journal = createSidebarJournal(s.storage, () => {});
     await journal.enqueue(
-      [{ intent, createdAt: 1 }],
+      [{ intent }],
       () => false,
       () => true,
     );
@@ -118,15 +117,14 @@ it.each(["blocked", "invalid"] as const)(
   },
 );
 
-it("coalesces monotone same-context and whole-channel cuts, preserving independent contexts and newer anchors", async () => {
+it("deduplicates exact operands only and fences acknowledgements by operation ID", async () => {
   const s = storage(),
     journal = createSidebarJournal(s.storage, () => {});
-  const mark = (root: string | undefined, at: number) => ({
-    createdAt: at,
+  const mark = (root: string | undefined, id: number) => ({
     intent: {
       type: "mark_through" as const,
       target: { channel_id: channel, ...(root ? { root_id: root } : {}) },
-      message_id: at.toString(16).padStart(64, "0"),
+      message_id: id.toString(16).padStart(64, "0"),
     },
   });
   const add = (anchors: Parameters<typeof journal.enqueue>[0]) =>
@@ -135,26 +133,72 @@ it("coalesces monotone same-context and whole-channel cuts, preserving independe
       () => false,
       () => true,
     );
-  await add([
+  const originals = [
     mark(undefined, 1),
     mark("b".repeat(64), 2),
     mark("c".repeat(64), 8),
-  ]);
-  await add([mark(undefined, 3), mark(undefined, 2)]);
-  expect(s.read().pending.map((p) => p.createdAt)).toEqual([2, 8, 3]);
+  ];
+  await add(originals);
   const captured = [...s.read().pending];
-  await add([{ intent, createdAt: 5 }]);
-  expect(s.read().pending.map((p) => p.createdAt)).toEqual([8, 5]);
+  const distinct = [
+    mark(undefined, 3),
+    mark(undefined, 2),
+    { intent },
+    mark("d".repeat(64), 4),
+  ];
+  await add([...originals, ...distinct]);
+  expect(s.read().pending.map((p) => p.intent)).toEqual(
+    [...originals, ...distinct].map((p) => p.intent),
+  );
+  expect(s.read().pending.slice(0, 3)).toEqual(captured);
   await journal.acknowledge(
     captured,
     captured.map(() => ({ status: "applied" })),
   );
-  expect(s.read().pending.map((p) => p.createdAt)).toEqual([5]);
-  await add([mark("d".repeat(64), 4)]);
-  expect(s.read().pending.map((p) => p.createdAt)).toEqual([5]);
-  for (let i = 6; i < 1010; i++) await add([mark(undefined, i)]);
-  expect(s.read().pending).toHaveLength(2); // a channel prefix cannot replace a whole-channel cut
-  expect(s.read().pending.at(-1)?.createdAt).toBe(1009);
+  expect(s.read().pending.map((p) => p.intent)).toEqual(
+    distinct.map((p) => p.intent),
+  );
+  // Re-admission after acknowledgement gets a new ID; a stale ack cannot remove it.
+  await add(originals);
+  const readmitted = [...s.read().pending];
+  await journal.acknowledge(
+    captured,
+    captured.map(() => ({ status: "applied" })),
+  );
+  expect(s.read().pending).toEqual(readmitted);
+});
+
+it("rejects overflow atomically rather than dropping distinct anchors or clearing manual intent", async () => {
+  const s = storage(),
+    journal = createSidebarJournal(s.storage, () => {});
+  await journal.markUnread(target, () => true);
+  const reads = Array.from({ length: 1000 }, (_, i) => ({
+    intent: { ...intent, message_id: i.toString(16).padStart(64, "0") },
+  }));
+  await journal.enqueue(
+    reads,
+    () => false,
+    () => true,
+  );
+  const full = structuredClone(s.read());
+  // An exact duplicate still fits and keeps its existing operation ID.
+  const duplicate = reads[0];
+  if (!duplicate) throw new Error("Missing capacity operand");
+  await journal.enqueue(
+    [duplicate],
+    () => false,
+    () => true,
+  );
+  expect(s.read()).toEqual(full);
+  await expect(
+    journal.enqueue(
+      [{ intent }],
+      () => true,
+      () => true,
+    ),
+  ).rejects.toThrow("capacity");
+  expect(s.read()).toEqual(full);
+  expect(journal.manual(target)).toBe(true);
 });
 
 it("paints manual edits in invocation order before storage and rolls back a failed newer clear", async () => {

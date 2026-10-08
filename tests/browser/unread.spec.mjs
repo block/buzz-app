@@ -132,26 +132,34 @@ test("built sidebar → visible dwell → durable journal → relay write; reloa
   expect(app.report.readWrites).toEqual([]);
   expect(await journal(page)).toEqual({ pending: [], manual: [] });
   await page.clock.runFor(1);
-  // One mark_through per context, anchored on the newest dwelled message.
-  const newest = all
-    .filter((event) => visibleIds.includes(event.id))
-    .reduce((a, b) => (b.created_at > a.created_at ? b : a));
+  // Every distinct dwelled ID is an operand; the client cannot choose an
+  // arrival-latest anchor using author time or delivery order.
   await expect
-    .poll(() => alphaWrites(app))
-    .toEqual([
-      {
-        intent: {
-          type: "mark_through",
-          target: { channel_id: ids.alpha },
-          message_id: newest.id,
-        },
-        outcome: { status: "applied" },
+    .poll(() =>
+      alphaWrites(app)
+        .map(({ intent }) => intent.message_id)
+        .sort(),
+    )
+    .toEqual([...visibleIds].sort());
+  expect(alphaWrites(app)).toEqual(
+    visibleIds.map((message_id) => ({
+      intent: {
+        type: "mark_through",
+        target: { channel_id: ids.alpha },
+        message_id,
       },
-    ]);
+      outcome: { status: "applied" },
+    })),
+  );
+  const through = Math.max(
+    ...all
+      .filter((event) => visibleIds.includes(event.id))
+      .map(app.relay.sidebarApi.received),
+  );
   await page.clock.resume();
   await expect.poll(async () => (await journal(page)).pending).toEqual([]);
   const remaining = all.filter(
-    (event) => event.created_at > newest.created_at,
+    (event) => app.relay.sidebarApi.received(event) > through,
   ).length;
   const settledBadge = async () =>
     remaining
@@ -274,7 +282,11 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await expect.poll(async () => alphaManual(await journal(page))).toBe(false);
   await expect
     .poll(() => app.relay.sidebarApi.frontier("primary", ids.alpha).channel)
-    .toBe(app.histories.get(`primary/${ids.alpha}`).at(-1).created_at);
+    .toBe(
+      app.relay.sidebarApi.received(
+        app.histories.get(`primary/${ids.alpha}`).at(-1),
+      ),
+    );
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
 });
 
@@ -419,7 +431,7 @@ test.describe("explicit channel read with membership activity", () => {
             .poll(
               () => app.relay.sidebarApi.frontier("primary", ids.alpha).channel,
             )
-            .toBe(chats.at(-1).created_at);
+            .toBe(app.relay.sidebarApi.received(chats.at(-1)));
           expect(app.report.readWrites.at(-1).intents).toEqual([
             {
               type: "mark_channel_read",
@@ -434,4 +446,219 @@ test.describe("explicit channel read with membership activity", () => {
       },
     );
   }
+});
+
+// This is a browser storage migration case: a previous version's raw IndexedDB
+// partition must survive the real strict transaction, broker retry and reload.
+test("legacy journal normalization preserves operands, operation IDs and manual marks across windows", async ({
+  page,
+  context,
+  app,
+}) => {
+  await holdReadingFocus(page);
+  await open(page, app);
+  await park(page);
+  await page.evaluate(() =>
+    window.fixtureRelay.snapshot().session.unread.ensure(),
+  );
+  const messages = app.histories.get(`primary/${ids.alpha}`).slice(-2);
+  const intents = messages.map((event) => ({
+    type: "mark_through",
+    target: { channel_id: ids.alpha },
+    message_id: event.id,
+  }));
+  const pending = intents.map((intent, i) => ({
+    id: `legacy-operation-${i}`,
+    intent,
+    createdAt: i ? 1 : 2_000_000_000,
+  }));
+  const manual = [{ kind: "channel", channelId: ids.alpha }];
+  // The relay reports unknown outcomes: local normalization still commits,
+  // but no operation may be acknowledged away before another window retries.
+  await context.route("**/sidebar-api", (route) => {
+    const request = route.request().postDataJSON();
+    return request?.type === "write"
+      ? route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            outcomes: request.intents.map(() => ({
+              status: "unknown",
+              retryable: true,
+            })),
+            projection_status: "not_requested",
+          }),
+        })
+      : route.continue();
+  });
+  await page.evaluate(
+    async ({ pending, manual }) => {
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.open("buzz-sidebar-v1", 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction("partitions", "readwrite", {
+            durability: "strict",
+          });
+          const store = tx.objectStore("partitions");
+          const cursor = store.openCursor();
+          cursor.onsuccess = () => {
+            const row = cursor.result;
+            if (row) row.update({ pending, manual });
+            else {
+              tx.abort();
+              reject(new Error("Missing app-owned partition"));
+            }
+          };
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => {
+            db.close();
+            reject(tx.error);
+          };
+        };
+      });
+    },
+    { pending, manual },
+  );
+  // Reopen the real storage owner, as an upgrade from the previous app would.
+  // ensure() on an already-requested session does not reload its journal.
+  await page.reload();
+  await openPage(page, "Messages");
+  await composer(page).waitFor();
+  await page.evaluate(() =>
+    window.fixtureRelay.snapshot().session.unread.ensure(),
+  );
+  const normalized = pending.map(({ createdAt, ...operand }) => operand);
+  await expect
+    .poll(() => journal(page))
+    .toEqual({ pending: normalized, manual });
+  const survivor = await context.newPage();
+  try {
+    app.watchPageErrors(survivor);
+    await holdReadingFocus(survivor);
+    await open(survivor, app);
+    await survivor.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.ensure(),
+    );
+    await expect
+      .poll(() => journal(survivor))
+      .toEqual({ pending: normalized, manual });
+    await page.reload();
+    await openPage(page, "Messages");
+    await composer(page).waitFor();
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.ensure(),
+    );
+    await expect
+      .poll(() => journal(page))
+      .toEqual({ pending: normalized, manual });
+    await context.unroute("**/sidebar-api");
+    await survivor.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.retrySync(),
+    );
+    await expect
+      .poll(async () => (await journal(survivor)).pending)
+      .toEqual([]);
+    expect(alphaWrites(app).map(({ intent }) => intent)).toEqual(
+      expect.arrayContaining(intents),
+    );
+    expect((await journal(survivor)).manual).toEqual(manual);
+  } finally {
+    await context.unroute("**/sidebar-api");
+    await survivor.close();
+  }
+});
+
+// Browser wiring: the real menu captures the opaque summary anchor, and reload
+// preserves its read cut without masking a subsequently admitted old-time row.
+test("channel menu follows arrival anchors despite future and backward author clocks", async ({
+  page,
+  app,
+}) => {
+  const future = app.append(
+    "primary",
+    ids.alpha,
+    "Future-authored first",
+    false,
+    false,
+    undefined,
+    undefined,
+    [],
+    2_000_000_000,
+  );
+  const older = app.append(
+    "primary",
+    ids.alpha,
+    "Older-authored second",
+    false,
+    false,
+    undefined,
+    undefined,
+    [],
+    1_700_000_001,
+  );
+  await holdReadingFocus(page);
+  await open(page, app);
+  const snapshot = () =>
+    page.evaluate(
+      (channelId) =>
+        window.fixtureRelay
+          .snapshot()
+          .session.unread.snapshot({ kind: "channel", channelId }),
+      ids.alpha,
+    );
+  await expect.poll(snapshot).toMatchObject({
+    latestMessageId: older.id,
+    latestActivityAt: future.created_at,
+  });
+  await channelReadAction(page, "Mark as Read");
+  await expect
+    .poll(() => alphaWrites(app).map(({ intent }) => intent))
+    .toEqual([
+      {
+        type: "mark_channel_read",
+        channel_id: ids.alpha,
+        message_id: older.id,
+      },
+    ]);
+  await expect.poll(async () => (await journal(page)).pending).toEqual([]);
+  await expect
+    .poll(snapshot)
+    .toMatchObject({ unread: { status: "exact", value: 0 } });
+  const late = app.append(
+    "primary",
+    ids.alpha,
+    "Late old author",
+    true,
+    false,
+    undefined,
+    undefined,
+    [],
+    1_700_000_000,
+  );
+  await page.evaluate(() =>
+    window.fixtureRelay.snapshot().session.unread.refresh(),
+  );
+  await expect.poll(snapshot).toMatchObject({
+    latestMessageId: late.id,
+    latestActivityAt: future.created_at,
+    unread: { status: "exact", value: 1 },
+    unreadVisible: true,
+  });
+  await page.reload();
+  await openPage(page, "Messages");
+  await composer(page).waitFor();
+  await expect.poll(snapshot).toMatchObject({
+    unread: { status: "exact", value: 1 },
+    unreadVisible: true,
+  });
+  await channelReadAction(page, "Mark as Read");
+  await expect
+    .poll(snapshot)
+    .toMatchObject({ unread: { status: "exact", value: 0 } });
+  expect(alphaWrites(app).at(-1).intent.message_id).toBe(late.id);
 });

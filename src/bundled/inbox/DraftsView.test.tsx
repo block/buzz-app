@@ -233,7 +233,6 @@ function fixture(
     account: sidebarAccount,
     contexts: queries.map((query) => ({
       status: "available" as const,
-      through_timestamp: null,
       messages: query.message_ids.map(verdict),
     })),
   }));

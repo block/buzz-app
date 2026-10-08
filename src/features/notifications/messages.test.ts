@@ -74,7 +74,6 @@ async function setup(
       account: sidebarAccount,
       contexts: queries.map((q) => ({
         status: "available",
-        through_timestamp: frontier ?? null,
         messages: q.message_ids.map((message_id) => {
           const event = observed.get(message_id);
           if (!event) return { message_id, status: "unavailable" };
@@ -1100,7 +1099,6 @@ it.each(["conversation", "not_counted"] as const)(
       account: sidebarAccount,
       contexts: queries.map((q) => ({
         status: "available",
-        through_timestamp: null,
         messages: q.message_ids.map((message_id) =>
           !resolved
             ? { message_id, status: "unknown" }
@@ -1133,7 +1131,6 @@ it.each(["conversation", "not_counted"] as const)(
         account: sidebarAccount,
         contexts: queries.map((q) => ({
           status: "available",
-          through_timestamp: null,
           messages: q.message_ids.map((message_id) =>
             message_id === mention.id
               ? { message_id, status: "unread", reason: "mention" }
@@ -1181,7 +1178,6 @@ it("keeps broadcast quiet but allows a fresh authoritative conversation upgrade"
     account: sidebarAccount,
     contexts: queries.map((q) => ({
       status: "available",
-      through_timestamp: null,
       messages: q.message_ids.map((message_id) => ({
         message_id,
         status: "unread",
@@ -1214,7 +1210,6 @@ it("expires classification and admitted permission waits at the original event d
     account: sidebarAccount,
     contexts: queries.map((q) => ({
       status: "available",
-      through_timestamp: null,
       messages: q.message_ids.map((message_id) =>
         resolved
           ? { message_id, status: "unread", reason: "mention" }
@@ -1256,7 +1251,6 @@ it.each(["expiry", "session", "access", "disabled"] as const)(
       account: sidebarAccount,
       contexts: queries.map((q) => ({
         status: "available",
-        through_timestamp: null,
         messages: q.message_ids.map((message_id) => ({
           message_id,
           status: "unknown",

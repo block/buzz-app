@@ -44,7 +44,6 @@ function harness() {
       account,
       contexts: targets.map((t) => ({
         status: "available",
-        through_timestamp: null,
         messages: t.message_ids.map((message_id) => ({
           message_id,
           status: "unread",
@@ -153,7 +152,6 @@ it.each([
                 channel_id: channel,
                 message_id: "a".repeat(64),
               },
-              createdAt: 1,
             },
           ],
           () => false,
@@ -278,13 +276,12 @@ it("fences a late fetch after clear and hides revoked state before notifying", a
   h.owner.purge();
   expect(seen).toEqual([undefined]);
 });
-const mark = (channel_id: string, createdAt: number) => ({
+const mark = (channel_id: string, anchor: number) => ({
   intent: {
     type: "mark_channel_read" as const,
     channel_id,
-    message_id: "a".repeat(64),
+    message_id: anchor.toString(16).padStart(64, "0"),
   },
-  createdAt,
 });
 const unknownWrite = "Read acknowledgement unknown; retry available";
 it("unknown writes survive retry with the same operands; new arrivals are not substituted", async () => {
@@ -297,7 +294,7 @@ it("unknown writes survive retry with the same operands; new arrivals are not su
     message_id: "a".repeat(64),
   } as const;
   await h.owner.enqueue(
-    [{ intent, createdAt: 1 }],
+    [{ intent }],
     () => false,
     () => true,
   );
@@ -420,7 +417,6 @@ it("writes a durable fixed cut while a sidebar read is held", async () => {
             channel_id: channel,
             message_id: "b".repeat(64),
           },
-          createdAt: 1,
         },
       ],
       () => false,
@@ -481,7 +477,6 @@ it("does not reinstall a released context from a late response", async () => {
     contexts: [
       {
         status: "available",
-        through_timestamp: null,
         messages: [
           {
             message_id: "a".repeat(64),
@@ -524,7 +519,6 @@ it.each(["blocked", "invalid"] as const)(
             channel_id: channel,
             message_id: "a".repeat(64),
           },
-          createdAt: 1,
         },
       ],
       () => false,
@@ -605,7 +599,6 @@ it("bounds selector demand, surfaces admission errors and recycles released capa
 it("batches independent context anchors at the 100-intent limit", async () => {
   const h = harness();
   const intents = Array.from({ length: 201 }, (_, n) => ({
-    createdAt: n,
     intent: {
       type: "mark_through" as const,
       target: {
@@ -632,7 +625,6 @@ it("saturated applied presentation retains the whole next batch and schedules re
   const h = harness();
   await h.owner.ensure();
   const reads = Array.from({ length: 1000 }, (_, i) => ({
-    createdAt: 1,
     intent: {
       type: "mark_through" as const,
       target: {
@@ -657,7 +649,6 @@ it("saturated applied presentation retains the whole next batch and schedules re
   await vi.advanceTimersByTimeAsync(0);
   expect(h.journal().pending).toHaveLength(0);
   const next = {
-    createdAt: 2,
     intent: {
       type: "mark_through" as const,
       target: { channel_id: channel, root_id: "f".repeat(64) },
@@ -681,7 +672,6 @@ it("saturated applied presentation retains the whole next batch and schedules re
 
 const capacityReads = (count: number, start = 0) =>
   Array.from({ length: count }, (_, offset) => ({
-    createdAt: 1,
     intent: {
       type: "mark_through" as const,
       target: {
@@ -705,7 +695,6 @@ it("retries already-applied IDs at capacity after failed journal acknowledgement
     account,
     contexts: queries.map((q) => ({
       status: "available",
-      through_timestamp: null,
       messages: q.message_ids.map((message_id) => ({
         message_id,
         status: "unknown",
@@ -724,7 +713,7 @@ it("retries already-applied IDs at capacity after failed journal acknowledgement
   expect(h.owner.sync().writeError).toBe("acknowledgement storage failed");
   const pending = h.journal().pending;
   expect(pending).toHaveLength(100);
-  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  expect(h.owner.covered(target, "a".repeat(64))).toBe(true);
   // This response starts after original application but before the same-ID retry.
   const held = deferredSidebar<SidebarPage>();
   h.api.sidebar.mockImplementationOnce(() => held.promise);
@@ -736,7 +725,7 @@ it("retries already-applied IDs at capacity after failed journal acknowledgement
     pending.map((p) => p.intent),
   );
   expect(h.journal().pending).toHaveLength(0);
-  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  expect(h.owner.covered(target, "a".repeat(64))).toBe(true);
   const summary = {
     ...row(),
     threads: {
@@ -756,8 +745,8 @@ it("retries already-applied IDs at capacity after failed journal acknowledgement
   await Promise.all([refresh, retry]);
   // Reusing the ID preserves its old revision: this response can settle summary,
   // while the unknown selected message still retains its independent coverage.
-  expect(h.owner.covered(target, 1)).toBe(false);
-  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  expect(h.owner.row(channel)?.threads).toEqual(summary.threads);
+  expect(h.owner.covered(target, "a".repeat(64))).toBe(true);
   lease.dispose();
 });
 
@@ -786,7 +775,9 @@ it.each(["applied", "blocked"] as const)(
       next.map((p) => p.intent),
     );
     for (const read of next)
-      expect(h.owner.covered(read.intent.target, 1)).toBe(true);
+      expect(h.owner.covered(read.intent.target, read.intent.message_id)).toBe(
+        true,
+      );
     if (outcome === "applied") {
       // Applicable refresh frees the old entries; the complete batch can retry.
       await vi.advanceTimersByTimeAsync(250);
@@ -807,7 +798,9 @@ it.each(["applied", "blocked"] as const)(
       if (outcome === "blocked") {
         // Check BEFORE a successful read could hide a leaked applied operand.
         for (const read of next)
-          expect(h.owner.covered(read.intent.target, 1)).toBe(false);
+          expect(
+            h.owner.covered(read.intent.target, read.intent.message_id),
+          ).toBe(false);
         expect(h.owner.operationError(channel)).toContain("blocked");
       } else {
         expect(h.api.write.mock.calls.at(-1)?.[0]).toEqual(
@@ -851,7 +844,6 @@ it("periodically re-queries retained unknown contexts without a dedicated retry 
     account,
     contexts: targets.map((t) => ({
       status: "available",
-      through_timestamp: null,
       messages: t.message_ids.map((message_id) =>
         resolved
           ? { message_id, status: "unread", reason: "conversation" }

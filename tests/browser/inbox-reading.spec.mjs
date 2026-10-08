@@ -71,7 +71,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await virtuaIdle(page, history);
   // The click reads the channel through the selected message on the relay,
   // and the relay verdict removes the row.
-  await expect.poll(frontier).toBe(selected.created_at);
+  await expect.poll(frontier).toBe(app.relay.sidebarApi.received(selected));
   await expect(dm).toHaveCount(0);
 
   const filter = inbox.getByRole("combobox", { name: "Activity type" });
@@ -118,10 +118,10 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await filter.focus();
   await composer.focus();
   await page.clock.runFor(299);
-  expect(frontier()).toBe(selected.created_at);
+  expect(frontier()).toBe(app.relay.sidebarApi.received(selected));
   await expect(dmRow.getByRole("img", { name: "Unread" })).toBeVisible();
   await page.clock.runFor(1);
-  await expect.poll(frontier).toBe(incoming.created_at);
+  await expect.poll(frontier).toBe(app.relay.sidebarApi.received(incoming));
   await expect(dmRow).toHaveCount(0);
   // Dwell reading must not close the visit or recreate its composer/draft as
   // the arrival's Inbox row comes and goes.
@@ -225,7 +225,7 @@ test("a top-level mention opened from Inbox is read by dwell and keeps its visit
         .frontier("primary", ids.beta)
         .threads.get(mention.id),
     )
-    .toBe(reply.created_at);
+    .toBe(app.relay.sidebarApi.received(reply));
   expect(writes()).toContainEqual({
     type: "mark_through",
     target: { channel_id: ids.beta, root_id: mention.id },

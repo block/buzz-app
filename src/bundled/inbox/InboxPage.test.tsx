@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { IntentOutcome } from "../../features/relay/sidebar-api";
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
 import {
@@ -274,16 +275,26 @@ function fixture(
           bff.api.eligibleKinds.includes(event.kind) &&
           channelOf(event) === channel,
       )
-      .sort((a, b) => b.created_at - a.created_at || (b.id < a.id ? -1 : 1))[0];
+      .at(-1);
     return newest
-      ? { latest_message_id: newest.id, latest_message_at: newest.created_at }
+      ? {
+          latest_message_id: newest.id,
+          latest_message_at: Math.max(
+            ...events
+              .filter(
+                (event) =>
+                  bff.api.eligibleKinds.includes(event.kind) &&
+                  channelOf(event) === channel,
+              )
+              .map((event) => event.created_at),
+          ),
+        }
       : {};
   };
   bff.api.contexts.mockImplementation(async (queries) => ({
     account: sidebarAccount,
     contexts: queries.map((query) => ({
       status: "available" as const,
-      through_timestamp: null,
       messages: query.message_ids.map(verdict),
     })),
   }));
@@ -329,13 +340,13 @@ function fixture(
           channelOf(event) === channel &&
           (intent.type === "mark_channel_read" ||
             (root ? rootOf(event) === root : !rootOf(event))) &&
-          (event.created_at < through.created_at ||
-            (event.created_at === through.created_at && event.id <= through.id))
+          events.indexOf(event) <= events.indexOf(through)
         )
           read.add(event.id);
       return { status: "applied" as const };
     }),
   );
+  let failAnchor: string | undefined;
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -430,6 +441,17 @@ function fixture(
           }
           const current = bff.journal();
           const next = change(current);
+          if (
+            failAnchor &&
+            next.pending.some(
+              ({ id, intent }) =>
+                intent.message_id === failAnchor &&
+                !current.pending.some((p) => p.id === id),
+            )
+          ) {
+            failAnchor = undefined;
+            throw new Error("second anchor disk full");
+          }
           if (
             failThreadSave &&
             next.pending.some(
@@ -703,6 +725,9 @@ function fixture(
     },
     failSave() {
       saveFailure = true;
+    },
+    failAnchor(id: string) {
+      failAnchor = id;
     },
     failThreadSave() {
       failThreadSave = true;
@@ -1092,9 +1117,8 @@ it.each([
 ] as const)(
   "a thread read %s during its admitted save (storage failure=%s, access loss=%s)",
   async (action, storageFailure, accessLoss) => {
-    // readThrough is one thread step (unread.ts:395-404); this keeps the old
-    // two-step matrix's contract: Close/Escape during an admitted held save
-    // lets it settle, and a genuine rejection still surfaces.
+    // Close/Escape retires the undispatched reply, not the admitted held save.
+    // Access/storage rejection of that admitted save still surfaces.
     const h = fixture();
     const user = userEvent.setup();
     const root = message(h.alice, ROOM, "Cancelled root", 30, [
@@ -1104,8 +1128,12 @@ it.each([
       ["p", h.viewer.pubkey],
       ["e", root.id, "", "reply"],
     ]);
-    h.events.push(root, child);
-    h.emit([root, child]);
+    const undispatched = message(h.alice, ROOM, "Undispatched reply", 32, [
+      ["p", h.viewer.pubkey],
+      ["e", root.id, "", "reply"],
+    ]);
+    h.events.push(root, child, undispatched);
+    h.emit([root, child, undispatched]);
     render(h.view);
     await screen.findByText("Cancelled root");
     await waitFor(() =>
@@ -2287,6 +2315,96 @@ it("a rejected thread read retries its frozen cutoff after a harmless later repl
       .items.find((item) => item.id === `${ROOM}:${root.id}`)?.messageIds,
   ).toContain(arriving.id);
 });
+
+it.each(["retry", "Close", "Escape", "newer intent"] as const)(
+  "after one exact-ID save removes the oldest reply, %s handles only the frozen remainder",
+  async (action) => {
+    const h = fixture();
+    // Arrival order deliberately disagrees with author order. The first click
+    // step is the older-authored reply, but the relay received it last.
+    const root = message(h.viewer, ROOM, "Fixed remainder root", 10);
+    const oldest = message(h.alice, ROOM, "Oldest admitted reply", 30, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const second = message(h.alice, ROOM, "Second admitted reply", 40, [
+      ["e", root.id, "", "reply"],
+    ]);
+    for (const event of [root, second, oldest]) h.addEvent(event);
+    h.emit([root, second, oldest]);
+    // Hold wire completion: this case proves exact local admission and retry,
+    // not the model's prefix effects. A relay response must not hide step two.
+    const wire = deferredSidebar<IntentOutcome[]>();
+    h.bff.api.write.mockImplementation(() => wire.promise);
+    try {
+      render(h.view);
+      await screen.findByText("Oldest admitted reply");
+      await waitFor(() =>
+        expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+      );
+      h.failAnchor(second.id);
+      const row = rows().find((row) =>
+        row.textContent?.includes("Oldest admitted reply"),
+      );
+      if (!row) throw Error("Missing fixed remainder row");
+      fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+      await findAlert("second anchor disk full");
+      expect(h.readSteps.map((step) => step.id)).toEqual([
+        oldest.id,
+        second.id,
+      ]);
+      const current = h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.messageIds.includes(second.id));
+      expect(current?.messageIds).not.toContain(oldest.id);
+      const late = message(h.alice, ROOM, "Later old-authored reply", 35, [
+        ["e", root.id, "", "reply"],
+      ]);
+      h.addEvent(late);
+      act(() => h.emit([late]));
+      await waitFor(() =>
+        expect(
+          h.owner.session.unread
+            .inbox()
+            .items.some((item) => item.messageIds.includes(late.id)),
+        ).toBe(true),
+      );
+      if (action === "Close")
+        fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+      if (action === "Escape")
+        fireEvent.keyDown(
+          screen.getByRole("button", { name: "Close thread" }),
+          { key: "Escape" },
+        );
+      if (action === "newer intent")
+        await act(async () => {
+          await h.owner.session.unread.markUnreadLocal({
+            kind: "thread",
+            channelId: ROOM,
+            rootId: root.id,
+          });
+        });
+      const retry = screen.queryByRole("button", { name: "Retry inbox" });
+      if (retry) fireEvent.click(retry);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("list", { name: "Inbox conversations" }),
+        ).toHaveAttribute("aria-busy", "false"),
+      );
+      expect(h.readSteps.map((step) => step.id)).toEqual(
+        action === "retry"
+          ? [oldest.id, second.id, second.id]
+          : [oldest.id, second.id],
+      );
+      expect(
+        h.owner.session.unread
+          .inbox()
+          .items.some((item) => item.messageIds.includes(late.id)),
+      ).toBe(true);
+    } finally {
+      wire.resolve([{ status: "unknown", retryable: true }]);
+    }
+  },
+);
 
 it("preserves a failed captured read across verified root regrouping", async () => {
   const h = fixture();

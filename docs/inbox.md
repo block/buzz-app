@@ -62,8 +62,8 @@ cannot materialize a row and is not erased when its row is omitted. Read intents
 use the existing saving/pending/applied coverage overlay and durable journal;
 saving is not proof that the relay applied the operation.
 
-`readThrough` contains only a thread-prefix step anchored on the newest admitted
-reply. A thread prefix never acknowledges its top-level root. A standalone
+`readThrough` contains one thread-prefix step for every distinct admitted
+reply anchor. Author-time display ordering cannot discard an arrival operand. A thread prefix never acknowledges its top-level root. A standalone
 top-level mention has an empty `readThrough`: **empty on a non-DM means no Inbox
 read action**. Never substitute a channel prefix or an exact-message receipt
 in that click action. This does not disable ordinary reader dwell: once a
@@ -74,7 +74,7 @@ DM rows also have no steps; their separate explicit channel action can use
 opening Inbox alone does not mark rows read. Hosts without `frontier-sync`
 disable read mutations.
 
-`prepareChannelRead(channelId)` captures the sidebar's latest-message ID/time,
+`prepareChannelRead(channelId)` captures the sidebar's latest-message ID,
 current epoch and the manual-mark keys then present, once. Every invocation
 reuses those operands. A mark on a key absent at preparation survives retries;
 a re-mark on a frozen key is cleared by a subsequent invocation. There are no
@@ -134,7 +134,10 @@ or unavailable targets from the evidence they obtain, not from removal of an
 Inbox row. Read retries are fenced by visit, access, membership,
 generation and successful local intent
 revision. A DM retry reuses its prepared sidebar anchor and manual-clear keys,
-not the retry-time clock or later arrivals. Manual unread remains device-local
+not the retry-time clock or later arrivals. A thread retry freezes remaining
+steps and validates against still-admitted remaining IDs after earlier exact-ID
+saves remove the original oldest member. Close/Escape retires undispatched steps,
+not an already-admitted save. Manual unread remains device-local
 and cannot independently restore a dismissed row.
 
 `inboxFeed.incomplete` identifies exact group members awaiting edit/deletion

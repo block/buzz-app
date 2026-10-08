@@ -116,7 +116,6 @@ it("rejects uncorrelated rows, cursors, selectors and write outcomes", async () 
     contexts: [
       {
         status: "available",
-        through_timestamp: null,
         messages: [{ message_id: "b".repeat(64), status: "read" }],
       },
     ],
@@ -205,7 +204,6 @@ it.each(["direct", "mention", "conversation", "broadcast", null])(
     const contexts = [
       {
         status: "available",
-        through_timestamp: null,
         messages: [{ message_id: id, status: "unread", reason }],
       },
     ];
@@ -247,7 +245,6 @@ it.each([{ attention: true }, { reason: "thread" }, { reason: false }])(
         contexts: [
           {
             status: "available",
-            through_timestamp: null,
             messages: [{ message_id: id, status: "unread", ...classification }],
           },
         ],

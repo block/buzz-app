@@ -175,7 +175,7 @@ export function TypingIndicator({
         {[workingText, typingText].filter(Boolean).join(". ")}
       </span>
       {(agents.length > 0 || humans.length > 0) && (
-        <div className={styles.typing}>
+        <div className={styles.typing} data-conversation-activity="">
           {agents.length > 0 && (
             <AgentChooser
               key={`${channelId}:${threadRootId ?? ""}`}

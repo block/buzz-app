@@ -1,6 +1,8 @@
 # Sessions
 
 Sessions are focused work conversations built on ordinary private channels.
+For the current live-session Share implementation, limits and validation handoff,
+see [Sharing a live session](sharing.md).
 
 ## Current contract
 
@@ -61,6 +63,6 @@ child revocation, flat conversation reads, Enter submission, recipient precedenc
 and agent mention rendering. Real-agent creation and replies have been exercised
 in the native app.
 
-Moving and renaming sessions, archive/completion, sharing snapshots, and richer
-prompt-linked activity remain future product work. This implementation keeps
-memberships independent and detailed activity private to each agent's owner.
+Moving and renaming sessions, archive/completion, and richer prompt-linked
+activity remain separate product work. [Live sharing](sharing.md) retains
+independent memberships and each agent owner's private detailed activity.

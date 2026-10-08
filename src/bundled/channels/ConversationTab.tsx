@@ -14,6 +14,10 @@ import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
+import {
+  SessionColumn,
+  SessionHeading,
+} from "../../features/sessions/SessionPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import styles from "./ChannelTabs.module.css";
 
@@ -45,6 +49,7 @@ export function ConversationTab({
 }) {
   // A saved reply intent belongs to the previous visit, not this restoration.
   const restoredTab = useRef(focusOnMount ? undefined : tab);
+  const sessionConversation = channel.channelType === "session";
   const [sent, setSent] = useState<string>();
   const [media, setMedia] = useState<{
     messageId: string;
@@ -75,6 +80,7 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
+        {sessionConversation && <SessionHeading channel={channel} />}
         {tab.kind === "thread" ? (
           <ThreadPanel
             active={active}
@@ -93,7 +99,7 @@ export function ConversationTab({
             onOpenMediaReview={openMedia}
           />
         ) : (
-          <>
+          <SessionColumn enabled={sessionConversation}>
             <ChannelBody
               queries={session}
               scope={scope}
@@ -108,6 +114,8 @@ export function ConversationTab({
               revealMessageId={sent}
             />
             <MessageComposer
+              sessionConversation={sessionConversation}
+              label={sessionConversation ? "Message this session" : undefined}
               session={session}
               scope={scope}
               channelId={channel.id}
@@ -117,7 +125,7 @@ export function ConversationTab({
               canOpenLink={canOpenLink}
               onSend={setSent}
             />
-          </>
+          </SessionColumn>
         )}
         {media && (
           <MediaReviewViewer

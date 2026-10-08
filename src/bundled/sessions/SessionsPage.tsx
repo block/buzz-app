@@ -3,6 +3,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { useCallback, useState } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { SessionShare } from "./SessionShare";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
@@ -216,7 +217,9 @@ function SessionWork({
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
     >
-      <SessionHeading channel={channel} parentName={parentName} />
+      <SessionHeading channel={channel} parentName={parentName}>
+        <SessionShare session={session} channel={channel} />
+      </SessionHeading>
       <SessionColumn>
         <MessageManagementStatus />
         <div className={styles.timeline}>

@@ -32,7 +32,13 @@ export function SessionColumn({
   children: ReactNode;
   enabled?: boolean;
 }) {
-  return enabled ? <div className={styles.column}>{children}</div> : children;
+  return enabled ? (
+    <div data-session-column="" className={styles.column}>
+      {children}
+    </div>
+  ) : (
+    children
+  );
 }
 
 export function SessionHeading({

@@ -53,6 +53,74 @@ fn agent(workspace: &Path) -> Agent {
     }
 }
 #[test]
+fn rename_publication_applies_saved_picture_only_when_avatar_intent_is_pending() {
+    for saved_picture in ["https://images.example/saved.png", ""] {
+        for avatar_pending in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut saved = agent(dir.path());
+            saved.picture = Some(saved_picture.into());
+            if avatar_pending {
+                saved.extra.insert("profilePending".into(), json!(true));
+            }
+            let mut store = Store::open(dir.path().join("config")).unwrap();
+            store.insert(vec![saved.clone()]).unwrap();
+            let mut controller = Controller::new(
+                store,
+                Arc::new(Memory),
+                Err("No fixture runtime".into()),
+                dir.path().join("ownership"),
+            );
+            let edit = crate::AgentEdit {
+                name: "Renamed".into(),
+                picture: None,
+                system_prompt: saved.system_prompt.clone(),
+                session_policy: None,
+                workspace: saved.workspace.clone(),
+                harness: saved.harness.clone(),
+                environment: BTreeMap::new(),
+            };
+            controller.save(&saved.id, saved.revision, edit).unwrap();
+            let publication = controller.creation_profile(&saved.id).unwrap();
+            let key = Secret::parse(KEY, PUB).unwrap();
+            let current = key
+                .profile(
+                    "External name",
+                    Some("https://images.example/relay.png"),
+                    false,
+                    saved.auth_tag.as_ref().unwrap(),
+                    &[],
+                )
+                .unwrap();
+            let event = publication.event(&key, &[current]).unwrap();
+            let content: serde_json::Value =
+                serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+            assert_eq!(content["name"], "Renamed");
+            assert_eq!(content["display_name"], "Renamed");
+            if avatar_pending && saved_picture.is_empty() {
+                assert!(content.get("picture").is_none());
+            } else {
+                assert_eq!(
+                    content["picture"],
+                    if avatar_pending {
+                        saved_picture
+                    } else {
+                        "https://images.example/relay.png"
+                    }
+                );
+            }
+            let initial = publication.event(&key, &[]).unwrap();
+            let content: serde_json::Value =
+                serde_json::from_str(initial["content"].as_str().unwrap()).unwrap();
+            if avatar_pending && !saved_picture.is_empty() {
+                assert_eq!(content["picture"], saved_picture);
+            } else {
+                assert!(content.get("picture").is_none());
+            }
+            assert!(!controller.snapshot().unwrap().agents[0].enabled);
+        }
+    }
+}
+#[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("config");

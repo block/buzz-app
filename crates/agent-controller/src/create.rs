@@ -112,7 +112,7 @@ impl Controller {
             ),
             auth,
             name: agent.name,
-            picture: agent.picture,
+            picture: agent.picture.filter(|_| profile_pending),
             name_pending,
             revision: agent.revision,
         })

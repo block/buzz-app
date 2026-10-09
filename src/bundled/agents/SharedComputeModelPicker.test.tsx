@@ -90,6 +90,7 @@ it("retains saved selection on failure and retries to an empty catalog with Auto
   const user = userEvent.setup();
   const view = render(
     <SharedComputeModelPicker
+      id={f.agent.id}
       draft={{
         ...agentDraft(f.agent),
         command: "buzz-agent",
@@ -103,6 +104,14 @@ it("retains saved selection on failure and retries to an empty catalog with Auto
   );
   try {
     await screen.findByText("Community unavailable");
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        id: f.agent.id,
+        expectedRevision: f.agent.revision,
+        edit: expect.objectContaining({ name: "Model discovery" }),
+      }),
+    );
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
       "saved-model",
     );

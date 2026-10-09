@@ -53,7 +53,9 @@ export function SharedComputeModelPicker({
       edit = agentEdit(
         {
           ...context.draft,
-          name: "",
+          // Discovery applies this edit only to a native clone, never Save.
+          // Saved-agent validation still requires a nonempty name.
+          name: "Model discovery",
           systemPrompt: "",
           sessionPolicy: null,
           model: "",

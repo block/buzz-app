@@ -3718,3 +3718,54 @@ fn mesh_replacement_stops_captured_consumer_without_changing_saved_restore() {
     assert!(snapshot.agents[0].enabled);
     assert!(snapshot.agents[0].start_on_app_launch);
 }
+
+#[test]
+fn saved_shared_compute_discovery_validates_edit_without_mutating_saved_agent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut saved = agent(root.path());
+    saved.harness.provider = "relay-mesh".into();
+    let mut store = Store::open(root.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let before = fs::read(root.path().join("config/agents.json")).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("Runtime bundle is missing".into()),
+        root.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: "Model discovery".into(),
+        picture: None,
+        system_prompt: String::new(),
+        session_policy: Some(None),
+        workspace: saved.workspace.clone(),
+        harness: HarnessEdit {
+            model: String::new(),
+            ..saved.harness.clone()
+        },
+        environment: BTreeMap::new(),
+    };
+    // The old picker payload fails at the real saved-agent validation boundary.
+    let mut invalid = edit.clone();
+    invalid.name.clear();
+    assert!(controller
+        .model_context(&saved.id, saved.revision, invalid)
+        .err()
+        .unwrap()
+        .contains("Agent name is required"));
+    // Repeated Browse/Retry succeeds without changing name, prompt or revision.
+    for _ in 0..2 {
+        let context = controller
+            .model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap();
+        assert!(context.mesh);
+        assert_eq!(context.relay.as_deref(), Some("wss://relay.example"));
+    }
+    assert!(controller
+        .model_context(&saved.id, saved.revision + 1, edit)
+        .is_err());
+    assert_eq!(
+        fs::read(root.path().join("config/agents.json")).unwrap(),
+        before
+    );
+}

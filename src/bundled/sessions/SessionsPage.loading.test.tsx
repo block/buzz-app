@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -86,6 +93,18 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
       window: () => window,
       ensure() {},
     },
+    channelDetails: {
+      ...owner.session.channelDetails,
+      available: true,
+      load: vi.fn(async () => ({
+        channelId: id,
+        version: "test",
+        name: "Planning",
+        description: "",
+        visibility: "private" as const,
+        canEdit: true,
+      })),
+    },
     mePlacement: {
       ...owner.session.mePlacement,
       available: true,
@@ -122,6 +141,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     render(
       <SessionsPage
         relay={relay}
+        panels={{ ...contribution, register() {}, resolve: () => undefined }}
         extensions={extensions}
         navigation={navigation}
         navigator={{ open } as unknown as Navigation}
@@ -172,7 +192,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   expect(screen.getByRole("textbox")).toHaveTextContent("Saved thought");
 });
 it.each([false, true])(
-  "does not reopen a stale visit after Move settles (failure=%s)",
+  "does not reopen a stale visit after unified Share settles (failure=%s)",
   async (failure) => {
     const f = fixture();
     let resolve!: () => void;
@@ -185,10 +205,13 @@ it.each([false, true])(
     f.set.mockImplementation(() => held.promise);
     f.mount();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Session actions" }));
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Open in Messages" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = screen.getByRole("dialog", { name: "Share conversation" });
+    const share = within(dialog).getByRole("button", {
+      name: "Share",
+    });
+    await waitFor(() => expect(share).toBeEnabled());
+    await user.click(share);
     await waitFor(() => expect(f.set).toHaveBeenCalledOnce());
     f.abort.abort();
     await act(async () => {

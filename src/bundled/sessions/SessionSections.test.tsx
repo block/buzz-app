@@ -81,6 +81,7 @@ function fixture() {
       session={
         {
           sidebarPreferences: preferences,
+          canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
       }

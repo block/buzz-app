@@ -36,7 +36,7 @@ afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function fixture() {
+function fixture(direct = false) {
   const viewer = keypair(),
     relay = keypair(),
     aria = keypair(),
@@ -72,6 +72,9 @@ function fixture() {
   let holdLink: Promise<void> | undefined;
   let failCreation = false;
   let failGrant = false;
+  let failDetails = false;
+  let loseDetailsResponse = false;
+  const placement = vi.fn(async () => {});
   let records: readonly import("../../features/relay/outbox").OutgoingEvent[] =
     [];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -81,7 +84,23 @@ function fixture() {
       throw new PublishRejected("Session invite refused");
     if (event.kind === 9007 && failCreation)
       throw new PublishRejected("Create refused");
+    if (event.kind === 9002 && failDetails)
+      throw new PublishRejected("Settings refused");
     published.push(event);
+    if (event.kind === 9002) {
+      const value = (tag: string) =>
+        event.tags.find(([name]) => name === tag)?.[1];
+      metadataEvents.set(
+        source,
+        metadata(relay, source, value("name") ?? "Work", ++clock, [
+          ["t", "stream"],
+          [value("visibility") === "open" ? "public" : "private"],
+          ["about", value("about") ?? ""],
+          ...(value("ttl") ? [["ttl", value("ttl") ?? ""]] : []),
+        ]),
+      );
+      if (loseDetailsResponse) throw new Error("Lost settings response");
+    }
     if (event.kind === 9007) {
       const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
       members.set(id, [viewer.pubkey]);
@@ -126,6 +145,17 @@ function fixture() {
           );
         const events = [
           ...metadataEvents.values(),
+          ...[...members.keys()].map((id) =>
+            signed(relay, {
+              kind: 39001,
+              created_at: clock,
+              content: "",
+              tags: [
+                ["d", id],
+                ["p", viewer.pubkey, "owner"],
+              ],
+            }),
+          ),
           ...[...members].map(([id, keys]) => roster(relay, id, keys, clock)),
           ...published,
           ...profiles,
@@ -134,8 +164,12 @@ function fixture() {
           filters.some((filter) => matchesEvent(event, filter)),
         );
       },
+      channelDetails: {
+        sign: async (event) => signed(viewer, event),
+        publish,
+      },
       writer: {
-        kinds: [9, 9000, 9007],
+        kinds: [9, 9000, 9002, 9007],
         sign: async (event) => signed(viewer, event),
         publish: async (event) => {
           await publish(event);
@@ -152,10 +186,34 @@ function fixture() {
     },
   );
   owners.push(owner);
+  const placementState = {
+    ...owner.session.mePlacement.snapshot(),
+    status: "ready" as const,
+  };
+  const session = direct
+    ? {
+        ...owner.session,
+        mePlacement: {
+          ...owner.session.mePlacement,
+          available: true,
+          snapshot: () => placementState,
+          ensure() {},
+          set: placement,
+          has: () => true,
+        },
+      }
+    : owner.session;
   const channel = () =>
     owner.session.channels.list().channels.find((item) => item.id === source);
   return {
-    session: owner.session,
+    session,
+    placement,
+    failDetails(value: boolean) {
+      failDetails = value;
+    },
+    loseDetailsResponse(value: boolean) {
+      loseDetailsResponse = value;
+    },
     viewer,
     aria,
     dev,
@@ -185,10 +243,17 @@ function fixture() {
       owner.session.channels.ensureList();
       await waitFor(() => expect(channel()?.channelType).toBe("session"));
     },
-    mount() {
+    mount(props: { signal?: AbortSignal; onShared?: () => void } = {}) {
       const initial = channel();
       if (!initial) throw new Error("Session not loaded");
-      return render(<SessionShare session={owner.session} channel={initial} />);
+      return render(
+        <SessionShare
+          session={session}
+          channel={initial}
+          direct={direct}
+          {...props}
+        />,
+      );
     },
   };
 }
@@ -734,3 +799,100 @@ it("retries a rejected, expired grant only after its failed Outbox item is dismi
     now.mockRestore();
   }
 });
+
+async function openDirect(
+  t: ReturnType<typeof fixture>,
+  props: Parameters<typeof t.mount>[0] = {},
+) {
+  const user = userEvent.setup();
+  await t.ready();
+  const view = t.mount(props);
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share conversation" });
+  await waitFor(() =>
+    expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled(),
+  );
+  return { user, dialog, view };
+}
+it("shares Me with zero added people using default private/ongoing settings and the existing channel", async () => {
+  const t = fixture(true);
+  const onShared = vi.fn();
+  const { user, dialog } = await openDirect(t, { onShared });
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Work",
+  );
+  expect(
+    within(dialog).getByRole("switch", { name: "Private" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(
+    within(dialog).getByRole("radio", { name: /Ongoing/ }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.click(within(dialog).getByRole("button", { name: "Copy link" }));
+  expect(t.publish).not.toHaveBeenCalled();
+  expect(t.placement).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(onShared).toHaveBeenCalledOnce());
+  expect(t.published.map((event) => event.kind)).toEqual([9002]);
+  expect(t.published[0]?.tags).toEqual([
+    ["h", source],
+    ["name", "Work"],
+    ["about", ""],
+  ]);
+  expect(t.placement).toHaveBeenCalledWith(source, false, expect.anything());
+  expect(t.channel()?.channelType).toBe("stream");
+});
+it("confirms public history exposure before any writes", async () => {
+  const t = fixture(true);
+  const { user, dialog } = await openDirect(t);
+  await user.click(within(dialog).getByRole("switch", { name: "Private" }));
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(t.publish).not.toHaveBeenCalled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Make public and share" }),
+  );
+  await waitFor(() => expect(t.placement).toHaveBeenCalledOnce());
+  expect(t.published[0]?.tags).toContainEqual(["visibility", "open"]);
+});
+it.each(["grant", "details", "placement", "uncertain"] as const)(
+  "recovers Me Share after %s failure without duplicating confirmed grants or TTL writes",
+  async (failure) => {
+    const t = fixture(true);
+    const onShared = vi.fn();
+    const { user, dialog } = await openDirect(t, { onShared });
+    await user.type(
+      within(dialog).getByRole("combobox", { name: "Find people" }),
+      "Aria",
+    );
+    await user.click(
+      await within(dialog).findByRole("option", { name: /Aria/ }),
+    );
+    await user.click(within(dialog).getByRole("radio", { name: /Temporary/ }));
+    t.failGrant(failure === "grant");
+    t.failDetails(failure === "details");
+    t.loseDetailsResponse(failure === "uncertain");
+    if (failure === "placement")
+      t.placement.mockRejectedValueOnce(new Error("Placement refused"));
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
+    await within(dialog).findByRole("alert");
+    expect(onShared).not.toHaveBeenCalled();
+    expect(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+    ).toBeDisabled();
+    expect(t.published.map((event) => event.kind)).toEqual(
+      failure === "grant" ? [] : failure === "details" ? [9000] : [9000, 9002],
+    );
+    if (failure !== "placement") expect(t.placement).not.toHaveBeenCalled();
+    t.failGrant(false);
+    t.failDetails(false);
+    t.loseDetailsResponse(false);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Retry share" }),
+    );
+    await waitFor(() => expect(onShared).toHaveBeenCalledOnce());
+    expect(t.published.map((event) => event.kind)).toEqual([9000, 9002]);
+    expect(t.published[1]?.tags).toContainEqual(["ttl", "604800"]);
+    expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]);
+    expect(t.session.channelDetails.snapshot(source)).toBeUndefined();
+    expect(sessionShareAttempt(t.session, source)).toBeUndefined();
+  },
+);

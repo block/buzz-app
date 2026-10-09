@@ -16,17 +16,33 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   draft, channel ID, Canvas and group defaults in the existing pending-start
   receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
-- Move to Messages preserves the channel ID, history, Canvas and memberships. It
-  removes Me placement and the obsolete Me group assignment; it does not import
-  the Me group into Messages. This is organization, not a privacy transition.
-- Me sharing explicitly grants selected people access to the existing history and
-  moves the conversation to Messages. Destination-link sharing in Messages remains
-  a separate flow; see [sharing](sharing.md). Neither flow shares owner-private
-  detailed agent activity or starts an agent merely by granting membership.
+- **Share** is the single Me-to-Messages flow, available in the heading and sidebar
+  menus. It defaults to the current name, visibility and duration (new conversations
+  are Private/Ongoing), with optional additional people. It preserves the channel
+  ID, history, Canvas and existing agents/members. No conversation is copied.
+- Share confirms selected-person access, then applies channel settings, then removes
+  Me placement and the obsolete Me group assignment. It does not import Me groups
+  into Messages. Removing the legacy session marker makes this an ordinary Messages
+  channel, even when other settings are unchanged. Public sharing explicitly
+  confirms exposure of the full history; Temporary cleanup applies to that entire
+  history. Settings changes require verified owner/admin authority and a details
+  writer; there is no separate placement-only Move fallback.
+- Destination-link sharing in Messages remains a separate flow; see
+  [sharing](sharing.md). Neither flow shares owner-private detailed agent activity
+  or starts an agent merely by granting membership.
+- Me conversations and drafts use the full conversation pane. Right-click,
+  Shift+F10 and overflow share one sidebar action list: Share, Rename, Move to a Me
+  group, Copy and Session settings. Opening a row menu does not select the row.
 - Me uses the ordinary composer with selectable owner-scoped agent mentions. A
   send without a mention does not infer an agent. Existing Messages sessions keep
   their ordinary recipient rules. Saved placement must load before the Me reader
   enables sending; an unavailable preference read is not evidence of Messages.
+- Me reuses Messages' secondary conversation/tool/panel tabs and pane geometry,
+  with separate per-conversation Me persistence. Its main timeline remains flat.
+  A single working agent's Activity indicator opens its Activity panel locally;
+  multiple agents or an unavailable panel retain the chooser. Hover previews are
+  retained. Secondary conversations placed in Me keep owner-scoped explicit
+  recipients and wait for placement readiness before sending.
 - Canonical channel links still use the ordinary channel reader, and Me routes can
   refer to an accessible ordinary channel UUID. Routes and plugin views do not
   grant access. Disabling the Me view does not delete its channels or memberships.
@@ -67,5 +83,6 @@ browser fixtures exercise actual app wiring in Chromium and WebKit with syntheti
 identities. They do not prove native signing, live persistence/restart,
 cross-device/plugin fallback, real-agent effects or opening performance.
 Those checks and renewed human acceptance remain delivery gates where applicable.
-Me menu parity and Archive/Delete availability after Move are disclosed follow-ups,
-not completed behavior in this baseline.
+The polish browser journey covers menu/focus behavior, full-width saved/draft
+composers, and in-place Share through the real browser broker with synthetic relay
+responses. Native/live relay promotion and human acceptance remain unverified.

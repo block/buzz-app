@@ -53,6 +53,8 @@ export const test = base.extend({
   savedSidebar: [false, { option: true }],
   personalSidebar: [false, { option: true }],
   meChannels: [[], { option: true }],
+  meAgentNames: [[], { option: true }],
+  meOutsideAgentNames: [[], { option: true }],
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
@@ -109,6 +111,8 @@ export const test = base.extend({
       savedSidebar,
       personalSidebar,
       meChannels,
+      meAgentNames,
+      meOutsideAgentNames,
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
@@ -204,6 +208,15 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const meAgents = [...meAgentNames, ...meOutsideAgentNames].map((name) => {
+      const key = generateSecretKey();
+      const pubkey = getPublicKey(key);
+      servedProfiles.set(
+        pubkey,
+        sign(0, [], JSON.stringify({ name, is_agent: true }), key),
+      );
+      return { pubkey, name };
+    });
     const ownerAgentKey =
       lifecycleOwnerAgent || agentMessageDeletion
         ? generateSecretKey()
@@ -417,6 +430,7 @@ export const test = base.extend({
       }
     }
     const hiddenChannels = new Set();
+    const meDetails = new Map();
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -886,7 +900,7 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
-      if (personalSidebar && filter.ids)
+      if ((personalSidebar || meChannels.length > 0) && filter.ids)
         return [...readEvents.get(community).values()].filter((event) =>
           filter.ids.includes(event.id),
         );
@@ -933,9 +947,13 @@ export const test = base.extend({
               39001,
               [
                 ["d", id],
-                ...(lifecycleRows.some((row) => row.id === id) &&
+                ...((lifecycleRows.some((row) => row.id === id) ||
+                  meChannels.includes(id)) &&
                 ["owner", "admin"].includes(lifecycleRole)
                   ? [["p", viewer, lifecycleRole]]
+                  : []),
+                ...(meChannels.includes(id)
+                  ? meAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                   : []),
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                   ? [["p", ownerAgent, "owner"]]
@@ -960,6 +978,9 @@ export const test = base.extend({
                   ? lifecycleRole
                   : "member",
               ],
+              ...(meChannels.includes(id)
+                ? meAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
+                : []),
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
                 : []),
@@ -994,53 +1015,57 @@ export const test = base.extend({
           ...new Set([...rosterIds, ...(openSearch ? [OPEN_CHANNEL] : [])]),
         ]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
-          .map((id) =>
-            sign(
-              39000,
-              [
-                ["d", id],
+          .map(
+            (id) =>
+              meDetails.get(`${community}/${id}`) ??
+              sign(
+                39000,
                 [
-                  "name",
-                  renamedChannels.get(id) ??
-                    channelNames[id] ??
-                    lifecycleRows.find((row) => row.id === id)?.name ??
-                    (id === "alpha"
-                      ? "Alpha"
-                      : id === "beta"
-                        ? "Beta"
-                        : id === OPEN_CHANNEL
-                          ? "open"
-                          : id),
+                  ["d", id],
+                  [
+                    "name",
+                    renamedChannels.get(id) ??
+                      channelNames[id] ??
+                      lifecycleRows.find((row) => row.id === id)?.name ??
+                      (id === "alpha"
+                        ? "Alpha"
+                        : id === "beta"
+                          ? "Beta"
+                          : id === OPEN_CHANNEL
+                            ? "open"
+                            : id),
+                  ],
+                  [
+                    "t",
+                    lifecycleRows.find((row) => row.id === id)?.type ??
+                      (dmIds.includes(id) ? "dm" : "stream"),
+                  ],
+                  ...(archivedIds.has(id) ? [["archived", "true"]] : []),
+                  // Ordinary channels are explicitly public; do not add a public
+                  // flag to private sessions or change the separate DM fixtures.
+                  ...(!sessionChannels.includes(id) &&
+                  !dmIds.includes(id) &&
+                  !lifecycleRows.some(
+                    (row) => row.id === id && row.type === "dm",
+                  )
+                    ? [["public"]]
+                    : []),
+                  ...(dmIds.includes(id) ? [["hidden"]] : []),
+                  ...(sessionChannels.includes(id)
+                    ? [
+                        ["private"],
+                        [
+                          "about",
+                          `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                        ],
+                      ]
+                    : []),
+                  ...(hiddenChannels.has(id) ? [["hidden"]] : []),
                 ],
-                [
-                  "t",
-                  lifecycleRows.find((row) => row.id === id)?.type ??
-                    (dmIds.includes(id) ? "dm" : "stream"),
-                ],
-                ...(archivedIds.has(id) ? [["archived", "true"]] : []),
-                // Ordinary channels are explicitly public; do not add a public
-                // flag to private sessions or change the separate DM fixtures.
-                ...(!sessionChannels.includes(id) &&
-                !dmIds.includes(id) &&
-                !lifecycleRows.some((row) => row.id === id && row.type === "dm")
-                  ? [["public"]]
-                  : []),
-                ...(dmIds.includes(id) ? [["hidden"]] : []),
-                ...(sessionChannels.includes(id)
-                  ? [
-                      ["private"],
-                      [
-                        "about",
-                        `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
-                      ],
-                    ]
-                  : []),
-                ...(hiddenChannels.has(id) ? [["hidden"]] : []),
-              ],
-              "",
-              relayKey,
-              lifecycleTime,
-            ),
+                "",
+                relayKey,
+                lifecycleTime,
+              ),
           );
       if (filter.kinds?.includes(30078)) {
         const events = [...readEvents.get(community).values()];
@@ -1085,7 +1110,11 @@ export const test = base.extend({
           kinds: [30175, 30177],
           limit: 200,
         });
-        return [];
+        return meAgents
+          .filter(({ name }) => meAgentNames.includes(name))
+          .map(({ pubkey, name }) =>
+            sign(30177, [["d", pubkey]], JSON.stringify({ name }), userKey),
+          );
       }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
@@ -1552,6 +1581,34 @@ export const test = base.extend({
         deliverRoster(OPEN_CHANNEL, community);
         return heldJoin.promise;
       }
+      if (
+        event.kind === 9002 &&
+        meChannels.includes(event.tags.find(([key]) => key === "h")?.[1])
+      ) {
+        const id = event.tags.find(([key]) => key === "h")[1];
+        const value = (key) => event.tags.find(([name]) => name === key)?.[1];
+        expect(value("about")).toBe("");
+        meDetails.set(
+          `${community}/${id}`,
+          sign(
+            39000,
+            [
+              ["d", id],
+              ["name", value("name")],
+              ["about", ""],
+              ["t", "stream"],
+              [value("visibility") === "open" ? "public" : "private"],
+              ...(value("ttl") ? [["ttl", value("ttl")]] : []),
+            ],
+            "",
+            relayKey,
+            ++lifecycleTime,
+          ),
+        );
+        report.detailsPublications ??= [];
+        report.detailsPublications.push(event);
+        return;
+      }
       if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
         const id = event.tags.find(([key]) => key === "h")?.[1];
         expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
@@ -1635,13 +1692,17 @@ export const test = base.extend({
           "channel-sort",
         ].includes(sidebarCoordinate) ||
         (personalSidebar &&
-          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:"))
+          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:")) ||
+        (meChannels.length > 0 &&
+          sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
       ) {
         expect(event.tags).toContainEqual([
           "t",
           sidebarCoordinate.startsWith("buzz-channel-kit-v1:")
             ? "buzz-channel-kit-v1"
-            : sidebarCoordinate,
+            : sidebarCoordinate.startsWith("buzz-me-kit-v1:")
+              ? "buzz-me-kit-v1"
+              : sidebarCoordinate,
         ]);
         const blob = JSON.parse(
           nip44.v2.decrypt(
@@ -2187,6 +2248,7 @@ export const test = base.extend({
         },
         participants,
         managementKey,
+        meAgents,
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {

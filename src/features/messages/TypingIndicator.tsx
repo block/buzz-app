@@ -33,8 +33,10 @@ export function TypingIndicator({
   channelId,
   threadRootId,
   canOpenActivity,
+  clickOpensPanel = false,
   openActivity,
 }: {
+  clickOpensPanel?: boolean | undefined;
   session: RelaySession;
   channelId: string;
   threadRootId?: string | undefined;
@@ -123,6 +125,15 @@ export function TypingIndicator({
       ...(roots.length > 2 ? [`+${roots.length - 2} more`] : []),
     ].join(" / ");
   };
+  const targetForAgent = (pubkey: string) => {
+    const roots = details.get(pubkey)?.roots ?? [];
+    const root = threadRootId ?? (roots.length === 1 ? roots[0] : undefined);
+    return activityTarget(pubkey, channelId, root ?? undefined);
+  };
+  const directTarget =
+    clickOpensPanel && agents.length === 1 && firstAgent
+      ? targetForAgent(firstAgent)
+      : undefined;
   const agentStatus = (pubkey: string, navigate: (target: string) => void) => {
     const detail = details.get(pubkey);
     if (!detail) return null;
@@ -187,6 +198,11 @@ export function TypingIndicator({
               avatars={agents.slice(0, 4).map(avatar)}
               overflow={Math.max(0, agents.length - 4)}
               openTarget={openActivity}
+              directTarget={
+                directTarget && canOpenActivity?.(directTarget)
+                  ? directTarget
+                  : undefined
+              }
             >
               {(navigate) =>
                 agents.map((pubkey) => (
@@ -216,12 +232,14 @@ function AgentChooser({
   avatars,
   overflow,
   openTarget,
+  directTarget,
   children,
 }: {
   label: string;
   avatars: ReactNode;
   overflow: number;
   openTarget?: ((target: string) => boolean) | undefined;
+  directTarget?: string | undefined;
   children(navigate: (target: string) => void): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -258,6 +276,10 @@ function AgentChooser({
       modal={false}
       open={open}
       onOpenChange={(nextOpen, details) => {
+        if (directTarget && details.reason === "trigger-press") {
+          details.cancel();
+          return;
+        }
         // Base UI tracks compositionstart/end; also honor the native key flags
         // when composition began before this hover popup mounted.
         if (
@@ -283,6 +305,12 @@ function AgentChooser({
             size="xs"
             aria-label={label}
             data-agent-activity-trigger=""
+            onClick={(event) => {
+              if (!directTarget) return;
+              // Keep hover preview separate from explicit click/keyboard activation.
+              event.preventDefault();
+              navigate(directTarget);
+            }}
           >
             <span className={styles.avatars} aria-hidden="true">
               {avatars}

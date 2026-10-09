@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ChannelSummary } from "../../features/relay/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import type { ChannelSummary } from "../relay/contracts";
+import type { RelaySession } from "../relay/session";
+
+const none: readonly ChannelSummary[] = [];
 
 type Result = {
   owner: object;
@@ -9,8 +11,9 @@ type Result = {
   error?: string;
 };
 
-/** Public channels the viewer has not joined, found by name for this palette.
- * The store resolves each match, so opening one reaches the read-only preview. */
+/** Public channels the viewer has not joined, found by name for Command-K and
+ * the composer's `#` completion. The store resolves each match, so opening one
+ * reaches the read-only preview. */
 export function usePublicChannelSearch(
   session: RelaySession,
   query: string,
@@ -61,6 +64,9 @@ export function usePublicChannelSearch(
     channels: (current?.channels ?? []).filter(
       (channel) => session.channels.get?.(channel.id)?.readOnly,
     ),
+    /** The lookup's channels as returned, the same array until the next
+     * result. Callers that keep it must recheck each channel themselves. */
+    found: current?.channels ?? none,
     partial: !!current?.partial,
     error: current?.error,
     retry: () => setAttempt((value) => value + 1),

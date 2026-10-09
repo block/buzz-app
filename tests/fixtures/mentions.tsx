@@ -73,6 +73,13 @@ const extraChannels = Array.from({ length: channelCount }, (_, index) => [
     ["t", "stream"],
   ]),
 ]).flat();
+// An open channel the viewer has not joined, for `#` public channel search.
+const openChannels = new URLSearchParams(location.search).has("open-channels")
+  ? [
+      roster(relay, "open", [first.pubkey], time),
+      metadata(relay, "open", "Gemstones", time, [["t", "stream"], ["public"]]),
+    ]
+  : [];
 const searches: string[] = [];
 const heldSearches: string[] = [];
 let searchGate: Promise<void> | undefined;
@@ -184,6 +191,7 @@ const owner = createRelaySession(
           }),
           ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
           ...extraChannels,
+          ...openChannels,
           ...publications,
         ];
         return events.filter((event) =>

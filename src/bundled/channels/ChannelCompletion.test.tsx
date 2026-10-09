@@ -103,7 +103,7 @@ function fixture(
     },
   };
 }
-it("offers only freshly confirmed joined streams/forums, including private channels", () => {
+it("offers joined streams/forums, including private and still-confirming channels", () => {
   const t = fixture([
     channel("stream"),
     channel("forum", { channelType: "forum" }),
@@ -121,11 +121,13 @@ it("offers only freshly confirmed joined streams/forums, including private chann
   ]);
   render(t.element());
   expect(t.result().items.map((item) => item.id)).toEqual([
+    "cached",
     "forum",
     "private",
     "stream",
+    "unknown",
   ]);
-  expect(t.result().items[1]?.detail).toBe("Private channel");
+  expect(t.result().items[2]?.detail).toBe("Private channel");
   expect(t.ensureList).not.toHaveBeenCalled();
   expect(t.refreshList).not.toHaveBeenCalled();
 });
@@ -144,8 +146,9 @@ it("does not offer channels without a viewer", () => {
   );
   expect(t.result().items).toEqual([]);
 });
-it("ranks exact/prefix/substring case-insensitively, qualifies namesakes, and caps at 20", () => {
+it("ranks exact/prefix/word/substring case-insensitively, qualifies namesakes, and caps at 20", () => {
   const t = fixture([
+    channel("d", { name: "screwdriver" }),
     channel("z", { name: "crew" }),
     channel("a", { name: "crew" }),
     channel("b", { name: "Crew-tools" }),
@@ -153,7 +156,13 @@ it("ranks exact/prefix/substring case-insensitively, qualifies namesakes, and ca
     ...Array.from({ length: 25 }, (_, i) => channel(`unrelated-${i}`)),
   ]);
   const view = render(t.element("CREW"));
-  expect(t.result().items.map((item) => item.id)).toEqual(["a", "z", "b", "c"]);
+  expect(t.result().items.map((item) => item.id)).toEqual([
+    "a",
+    "z",
+    "b",
+    "c",
+    "d",
+  ]);
   expect(
     t
       .result()
@@ -206,7 +215,6 @@ it.each<Partial<ChannelSummary>>([
   {},
   { members: [] },
   { archived: true },
-  { cached: true },
   { readOnly: true },
   { name: "renamed" },
 ])("rechecks selection before React can repaint: %j", (change) => {
@@ -248,6 +256,161 @@ it("distinguishes loading, empty and failed lists; only explicit retry refreshes
   expect(t.refreshList).not.toHaveBeenCalled();
   act(() => t.result().retry?.());
   expect(t.refreshList).toHaveBeenCalledTimes(1);
+});
+
+it("shows a loading status, not an empty popup, while cached channels reconfirm", () => {
+  const t = fixture([channel("a", { cached: true })]);
+  render(t.element("zzz"));
+  expect(t.result().items).toEqual([]);
+  expect(t.result().status).toBe("Loading channels…");
+  t.set({ status: "ready", channels: [channel("a")] });
+  expect(t.result().status).toBeUndefined();
+});
+it("completes multi-word names only while a channel name continues the query", () => {
+  const t = fixture([
+    channel("design", { name: "Design Review" }),
+    channel("other", { name: "design" }),
+  ]);
+  const view = render(t.element("design r"));
+  expect(t.result().items.map((item) => item.id)).toEqual(["design"]);
+  view.rerender(t.element("design is"));
+  expect(t.result().items).toEqual([]);
+  expect(t.result().status).toBeUndefined();
+});
+it("lists open channels the viewer hasn't joined below joined ones, after a pause", async () => {
+  vi.useFakeTimers();
+  try {
+    const open = channel("open", {
+      name: "crew-open",
+      members: ["other"],
+      readOnly: true,
+    });
+    let answer!: (value: {
+      channels: ChannelSummary[];
+      partial: boolean;
+    }) => void;
+    const t = fixture([channel("mine", { name: "crew" })]);
+    const previews = new Map<string, ChannelSummary>();
+    const searchPublic = vi.fn(
+      () =>
+        new Promise<{ channels: ChannelSummary[]; partial: boolean }>(
+          (resolve) => (answer = resolve),
+        ),
+    );
+    Object.assign(t.session.channels, {
+      searchPublic,
+      get: (id: string) => previews.get(id),
+    });
+    render(t.element("crew"));
+    expect(t.result().items.map((item) => item.id)).toEqual(["mine"]);
+    expect(t.result().status).toBe("Searching open channels…");
+    expect(searchPublic).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(180));
+    expect(searchPublic).toHaveBeenCalledWith(
+      "crew",
+      expect.objectContaining({ priority: "foreground" }),
+    );
+    previews.set("open", open);
+    await act(async () => answer({ channels: [open], partial: false }));
+    const items = t.result().items;
+    expect(items.map((item) => item.id)).toEqual(["mine", "open"]);
+    expect(items[1]?.detail).toBe("Not joined");
+    expect(items[1]?.edit.text).toBe("[\\#crew-open](buzz://channel/open)");
+    expect(t.result().status).toBeUndefined();
+    expect(items[1]?.canSelect?.("click")).toBe(true);
+    previews.delete("open");
+    expect(items[1]?.canSelect?.("click")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("keeps joined matches when open-channel search fails", async () => {
+  vi.useFakeTimers();
+  try {
+    const t = fixture([channel("mine", { name: "crew" })]);
+    Object.assign(t.session.channels, {
+      searchPublic: vi.fn(() => Promise.reject(new Error("offline"))),
+      get: () => undefined,
+    });
+    render(t.element("crew"));
+    await act(async () => vi.advanceTimersByTime(180));
+    expect(t.result().items.map((item) => item.id)).toEqual(["mine"]);
+    expect(t.result().status).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("uses the channel pickers' name rule, without scattered-letter matches", () => {
+  const t = fixture([
+    channel("prs", { name: "buzz-github-prs" }),
+    channel("hub", { name: "agithub" }),
+  ]);
+  const view = render(t.element("github"));
+  // A word start (after "-") ranks before a match inside a word.
+  expect(t.result().items.map((item) => item.id)).toEqual(["prs", "hub"]);
+  // Command-K finds "bgp" by word initials; inline completion does not,
+  // because Enter would turn prose into a channel link.
+  view.rerender(t.element("bgp"));
+  expect(t.result().items).toEqual([]);
+});
+it("ranks joined and open channels in one order; a joined channel wins a tie", async () => {
+  vi.useFakeTimers();
+  try {
+    const exact = channel("open-exact", {
+      name: "ops",
+      members: [],
+      readOnly: true,
+    });
+    const tie = channel("open-tie", {
+      name: "ops-alerts",
+      members: [],
+      readOnly: true,
+    });
+    const t = fixture([
+      channel("mine-word", { name: "team-ops" }),
+      channel("mine-tie", { name: "ops-alerts" }),
+    ]);
+    const previews = new Map([exact, tie].map((entry) => [entry.id, entry]));
+    Object.assign(t.session.channels, {
+      searchPublic: vi.fn(async () => ({
+        channels: [exact, tie],
+        partial: false,
+      })),
+      get: (id: string) => previews.get(id),
+    });
+    render(t.element("ops"));
+    await act(async () => vi.advanceTimersByTime(180));
+    expect(t.result().items.map((item) => item.id)).toEqual([
+      "open-exact",
+      "mine-tie",
+      "open-tie",
+      "mine-word",
+    ]);
+    expect(t.result().items.map((item) => item.detail)).toEqual([
+      "Not joined",
+      "mine-tie",
+      "Not joined · open-tie",
+      undefined,
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("does not search open channels for a query with a space", async () => {
+  vi.useFakeTimers();
+  try {
+    const t = fixture([channel("design", { name: "Design Review" })]);
+    const searchPublic = vi.fn(async () => ({ channels: [], partial: false }));
+    Object.assign(t.session.channels, { searchPublic, get: () => undefined });
+    render(t.element("design r"));
+    await act(async () => vi.advanceTimersByTime(500));
+    expect(searchPublic).not.toHaveBeenCalled();
+    expect(t.result().items.map((item) => item.id)).toEqual(["design"]);
+    expect(t.result().status).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it.each([true, false])(

@@ -24,7 +24,7 @@ import {
   recordChoice,
   searchOrder,
 } from "../../features/search/usage";
-import { usePublicChannelSearch } from "./usePublicChannelSearch";
+import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
 import {

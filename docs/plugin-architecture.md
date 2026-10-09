@@ -994,13 +994,24 @@ bounded background enrichment through the shared profile directory, not per-key
 network reads or a separate identity cache. Multi-word filtering stays in the
 provider so a delayed name can appear without another editor event.
 
-Channels filters the session's confirmed joined stream/forum roster locally, including
-private channels but excluding archived, cached, read-only and unnamed entries.
-`#` opens at most 20 choices, ranked exact, prefix, then substring with alphabetical
-ties; namesakes include their channel IDs. No typing-driven reads or public-channel
-discovery are added. Empty ready results hide the popup; loading and explicit
-error/retry states remain visible. Selection rechecks current membership and name,
-then inserts an escaped, ID-backed Markdown link without notification recipients.
+Channels filters the session's joined channel roster locally, including private
+channels and channels restored from cache while the relay reconfirms them, but
+excluding DMs, sessions, archived, read-only, hidden and unnamed entries. After a
+180 ms typing pause, a single-word query also asks `searchPublic`, through the
+same `usePublicChannelSearch` hook as Command-K, for open channels the viewer has
+not joined; they are labeled "Not joined". The relay has no name search, so that
+lookup covers only its newest page of channel metadata. A failed lookup leaves the
+joined matches in place. Names match by the channel pickers' rule (`matchName`):
+exact, prefix, word start, then substring, with alphabetical ties. Its fuzzy ranks
+are left out, because Enter and Tab pick the first row while the viewer writes
+prose. Joined and open channels share one order, and a joined channel wins a tie,
+as in Command-K. `#` opens at most 20 choices; namesakes include their channel
+IDs. A query containing a space completes only names it prefixes, as person names
+do, so ordinary prose after `#name` closes the popup. Empty ready results hide the
+popup; loading (including cached channels still reconfirming), open-channel search
+and explicit error/retry states remain visible. Selection rechecks current
+membership (or the public preview) and name, then inserts an escaped, ID-backed
+Markdown link without notification recipients.
 The shared editor host checks raw Markdown and rich code/link/literal ranges only
 after a Channels syntax match, keeping suggestions in prose (including headings).
 Ordinary typing skips that extra context scan. Popup positioning and keyboard/IME

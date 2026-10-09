@@ -109,6 +109,11 @@ export async function runBetaTeamStep(
   const next = await check();
   if (!next.deleted) {
     let head = next.head;
+    // The save guards only this team's record: the relay cannot make it
+    // depend on another record, so a text-only edit to an overlapping team
+    // after the check goes undetected. Native finish and the delivery check
+    // both refuse then, so the agent stays pending and never runs with mixed
+    // instructions; the clashing roster stays until either team is edited.
     if (next.rosterChanged) head = await kit.save(next.roster, next.head);
     if (next.publish) {
       const manifest = await kit.prepareText(

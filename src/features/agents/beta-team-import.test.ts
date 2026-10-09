@@ -217,10 +217,11 @@ it("refuses before any write when a member would get two team texts", async () =
   expect(f.finishBetaTeam).not.toHaveBeenCalled();
 });
 
-it("writes only the roster it checked when the target's text changes mid-step", async () => {
+it("documented limit: a text edit to an overlapping team during a held read is not fenced", async () => {
   // Both teams agree on OTHER, so adding b to the target passes the check.
-  // Another window then changes only the target's text: any later reread
-  // would see EDITED and a roster saved from it would carry a clash.
+  // While the target read is held, another device changes only Writers'
+  // text. The roster save guards only the target's own record, so it lands;
+  // the clash surfaces afterwards, never as a refusal before the save.
   const f = fixture({
     teams: [
       { type: "team", id, name: "Reviewers", agents: [a] },
@@ -228,22 +229,27 @@ it("writes only the roster it checked when the target's text changes mid-step", 
     ],
     heads: { [id]: "OTHER", other: "OTHER" },
   });
-  const seen: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let targetReads = 0;
   f.raw.readText.mockImplementation(async (team: string) => {
     const text = f.text.get(team) ?? "";
-    if (team === id) {
-      seen.push(text);
-      if (seen.length === 2) f.text.set(id, "EDITED");
-    }
+    if (team === id && ++targetReads === 2) await held;
     return { text, head: "text-head" };
   });
-  let readBeforeSave: string[] = [];
-  f.raw.save.mockImplementationOnce(async (value: Team) => {
-    readBeforeSave = [...seen];
-    expect(value.agents).toEqual([a, b]);
-    return "head-9";
-  });
-  await run(f, pending([b])).catch(() => {});
+  const step = run(f, pending([b])).catch(() => {});
+  await vi.waitFor(() => expect(targetReads).toBe(2));
+  f.text.set("other", "EDITED");
+  release();
+  await step;
   expect(f.raw.save).toHaveBeenCalledOnce();
-  expect(readBeforeSave).toEqual(["OTHER", "OTHER"]);
+  expect(roster(f)).toEqual([a, b]);
+  f.raw.readText.mockReset();
+  f.raw.readText.mockImplementation(async (team: string) => ({
+    text: f.text.get(team) ?? "",
+    head: "text-head",
+  }));
+  await expect(
+    betaTeamConflict(f.kit, f.control, pending([b]), "OTHER"),
+  ).resolves.toContain('"Writers"');
 });

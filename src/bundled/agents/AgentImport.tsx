@@ -158,8 +158,8 @@ export function AgentImport({
         : undefined;
     const access = teamsFor(teams, destination);
     try {
-      // The old Buzz text stays native until import; this catches a clash
-      // with the team's current text. The team step rechecks with both.
+      // Reads the candidate's old Buzz text from the preview and checks it
+      // against the team's current text. The team step rechecks with both.
       const conflict =
         team &&
         access &&

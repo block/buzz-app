@@ -50,6 +50,9 @@ function provideAgents2(root: Context, relay: RelayData) {
     forget: vi.fn(),
     publish: vi.fn(),
     publishProfile: vi.fn(),
+    query: vi.fn(),
+    upload: vi.fn(),
+    remember: vi.fn(),
   });
 }
 

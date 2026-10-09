@@ -18,9 +18,10 @@ import {
 } from "./attachments";
 import { eventDto, type RelayEvent } from "./events";
 import {
-  coordinate,
-  KIT_TAG,
-  parseKitRecord,
+  privateTag,
+  privateCoordinate,
+  parsePrivateRecord,
+  type PayloadRecord,
   type KitRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
@@ -82,7 +83,9 @@ export const nativeWriteKinds = [
   9000,
   9001,
   30030,
+  30175,
   30177,
+  30178,
   30315,
   40003,
   40100,
@@ -474,15 +477,15 @@ export async function connectNativeTransport(
       return id;
     },
     channelKit: {
-      async prepare(record: KitRecord, signal) {
+      async prepare(record: KitRecord | PayloadRecord, signal) {
         signal.throwIfAborted();
-        const valid = parseKitRecord(record, origin);
+        const valid = parsePrivateRecord(record, origin);
         const content = await invoke<string>("relay_kit_prepare", {
           community: origin,
           record: valid,
         });
         signal.throwIfAborted();
-        if (typeof content !== "string" || content.length > 24 * 1024)
+        if (typeof content !== "string" || content.length > 64 * 1024)
           throw new Error("Invalid encrypted recipe");
         return content;
       },
@@ -491,13 +494,12 @@ export async function connectNativeTransport(
         if (events.length > 16)
           throw new Error("Recipe decode capacity exceeded");
         const owned = events.map(eventDto);
-        const decoded = await invoke<{ eventId: string; record: KitRecord }[]>(
-          "relay_kit_decode",
-          {
-            community: origin,
-            events: owned,
-          },
-        );
+        const decoded = await invoke<
+          { eventId: string; record: KitRecord | PayloadRecord }[]
+        >("relay_kit_decode", {
+          community: origin,
+          events: owned,
+        });
         signal.throwIfAborted();
         if (!Array.isArray(decoded) || decoded.length !== owned.length)
           throw new Error("Incomplete private recipe decode");
@@ -515,12 +517,15 @@ export async function connectNativeTransport(
             )
           )
             throw new Error("Recipe decode mismatch");
-          const record = parseKitRecord(row.record, origin);
+          const record = parsePrivateRecord(row.record, origin);
           if (
             !event.tags.some(
-              ([key, value]) => key === "d" && value === coordinate(record),
+              ([key, value]) =>
+                key === "d" && value === privateCoordinate(record),
             ) ||
-            !event.tags.some(([key, value]) => key === "t" && value === KIT_TAG)
+            !event.tags.some(
+              ([key, value]) => key === "t" && value === privateTag(record),
+            )
           )
             throw new Error("Recipe decode mismatch");
           return { eventId: row.eventId, record };
@@ -703,6 +708,27 @@ export async function connectNativeTransport(
       return { repository, token };
     },
     ...nativeSidebar(transport),
+    reminders: {
+      async decode(events, signal) {
+        signal.throwIfAborted();
+        const decoded = await invoke<{ eventId: string; content: unknown }[]>(
+          "relay_decode_reminders",
+          { events },
+        );
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async sign(intent, signal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await invoke<unknown>("relay_sign_reminder", { intent }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || event.kind !== 30300)
+          throw new Error("Invalid reminder event");
+        return event;
+      },
+    },
     readState: {
       ...(readCommunity ? { communityId: readCommunity } : {}),
       async decode(events: readonly RelayEvent[], signal: AbortSignal) {

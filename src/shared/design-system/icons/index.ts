@@ -74,6 +74,8 @@ import TablerArrowsInIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMin
 export const ArrowsInIcon = defineIcon("tabler", TablerArrowsInIcon);
 import TablerArrowsOutIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMaximize.mjs";
 export const ArrowsOutIcon = defineIcon("tabler", TablerArrowsOutIcon);
+import TablerAlarmIcon from "@tabler/icons-react/dist/esm/icons/IconAlarm.mjs";
+export const AlarmIcon = defineIcon("tabler", TablerAlarmIcon);
 import TablerAtIcon from "@tabler/icons-react/dist/esm/icons/IconAt.mjs";
 export const AtIcon = defineIcon("tabler", TablerAtIcon);
 import TablerBellIcon from "@tabler/icons-react/dist/esm/icons/IconBell.mjs";
@@ -409,3 +411,6 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
     { width: 48, height: 48 },
   ],
 });
+
+import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
+export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);

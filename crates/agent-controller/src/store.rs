@@ -680,6 +680,7 @@ impl Store {
             return Err("Saved settings changed; retry the profile".into());
         }
         agent.extra.remove("profilePending");
+        agent.extra.remove("profileNamePending");
         agent.extra.remove("importAboutPending");
         self.write(&doc)
     }

@@ -172,6 +172,7 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     store.insert(vec![agent.clone()]).unwrap();
     let mut update = edit();
     update.session_policy = Some(Some(crate::config::SessionPolicy::Thread));
+    update.name = "Edited Brain".into();
     store.save(&agent.id, 1, update).unwrap();
     let stale = store.save(&agent.id, 1, edit()).unwrap_err();
     assert!(stale.contains("Reload"));
@@ -197,7 +198,9 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let saved = &store.agents().unwrap()[0];
     assert_eq!(saved.environment, agent.environment);
     assert_eq!(saved.imported, agent.imported);
-    assert_eq!(saved.extra, agent.extra);
+    let mut expected_extra = agent.extra.clone();
+    expected_extra.insert("profileNamePending".into(), json!(true));
+    assert_eq!(saved.extra, expected_extra);
     assert_eq!(saved.auth_tag, agent.auth_tag);
     assert_eq!(saved.credential_id, agent.credential_id);
     assert_eq!(
@@ -569,6 +572,38 @@ fn avatar_save_preserve_clear_pending_cas_and_reopen() {
     let store = Store::open(dir.path().to_owned()).unwrap();
     assert_eq!(store.agents().unwrap()[0].picture.as_deref(), Some(""));
     assert_eq!(store.agents().unwrap()[0].imported, a.imported);
+}
+
+#[test]
+fn rename_save_persists_profile_name_pending_until_confirmed_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+
+    let mut update = edit();
+    update.name = "Luna".into();
+    store.save(&agent.id, agent.revision, update).unwrap();
+
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.name, "Luna");
+    assert_eq!(saved.extra.get("profileNamePending"), Some(&json!(true)));
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(store.agents().unwrap()[0].name, "Luna");
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    assert!(store.profile_published(&agent.id, agent.revision).is_err());
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+
+    store
+        .profile_published(&agent.id, agent.revision + 1)
+        .unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending);
+    assert!(!store.agents().unwrap()[0]
+        .extra
+        .contains_key("profileNamePending"));
 }
 
 #[test]

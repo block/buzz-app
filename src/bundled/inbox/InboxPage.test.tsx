@@ -351,16 +351,19 @@ it("archives from the row without opening it, remembers filters, and clears an e
   ).not.toBeChecked();
 });
 
-it("archives and restores conversations in an archived member channel across remounts", async () => {
-  const h = fixture({ archivedRoom: true });
+it("archives and restores conversations in an active member channel across remounts", async () => {
+  const h = fixture();
   let view = render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
   expect(
     h.session.channels.list().channels.find((channel) => channel.id === "room"),
   ).toMatchObject({
-    archived: true,
     members: expect.arrayContaining([h.viewer.pubkey]),
   });
+  expect(
+    h.session.channels.list().channels.find((channel) => channel.id === "room")
+      ?.archived,
+  ).toBeFalsy();
   const threadRow = () =>
     rows().find((row) => row.textContent?.includes("A thread update"));
   const thread = threadRow();
@@ -776,7 +779,6 @@ function fixture(
     withSenders?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
-    archivedRoom?: boolean;
     sessionChannel?: boolean;
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
@@ -893,7 +895,7 @@ function fixture(
             ["about", "Buzz session (buzz.sessions/v1)"],
           ]
         : [["t", "stream"]]),
-      ...(options.archivedRoom || options.archivedChannel ? [["archived", "true"]] : []),
+      ...(options.archivedChannel ? [["archived", "true"]] : []),
     ]),
     profile(alice, { name: "Alice" }),
     ...roots,

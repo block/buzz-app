@@ -162,15 +162,12 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   const activityAction = popup.getByRole("button", {
     name: /View .+ activity/,
   });
-  for (
-    let step = 0;
-    step < 4 &&
-    !(await activityAction.evaluate(
-      (element) => element === document.activeElement,
-    ));
-    step++
-  )
-    await page.keyboard.press("Tab");
+  // Visibility precedes Base UI's initial-focus handoff. Wait for that boundary
+  // before tabbing, otherwise a fast keypress can leave the popup while it opens.
+  await expect(
+    popup.getByRole("button", { name: /Open conversation for/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(activityAction).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(panel).toBeVisible();
@@ -428,5 +425,16 @@ test("Me sidebar opens a captured trigger in the canonical message reader", asyn
   await expect(popup).toBeVisible();
   await popup.getByRole("button", { name: /Open thread for/ }).click();
   await expect(sidebar).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(decodeURIComponent(location.hash.slice("#buzz=".length))),
+      ),
+    )
+    .toMatchObject({
+      kind: "conversation",
+      channelId: id,
+      messageId: target.id,
+    });
   await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
 });

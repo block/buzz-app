@@ -351,8 +351,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
-toggle, check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, In progress and Done, with add, a per-item status
+selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 

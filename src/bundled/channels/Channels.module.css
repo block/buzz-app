@@ -50,7 +50,11 @@
   --sidenav-emoji-size: 0.8125rem;
   padding-inline: var(--sidebar-padding) var(--sidebar-padding-end);
 }
-.conversation [data-tab-pane-toggle][aria-expanded="true"] {
+.conversation
+  :is(
+    [data-tab-pane-toggle],
+    [data-channel-panel-toggle]
+  )[aria-expanded="true"] {
   /* An open pane shares the selected tab fill, rather than a held press. */
   --interaction-pressed: var(--affordance-subtle);
 }

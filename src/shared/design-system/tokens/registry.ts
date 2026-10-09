@@ -359,6 +359,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "icon-status-progress",
+        variable: "--icon-status-progress",
+        pointsAt: "amber-10 light / amber-10 dark",
+        use: "In-progress task icons, paired with a distinct shape and accessible status label. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-status-complete",
+        variable: "--icon-status-complete",
+        pointsAt: "green-10 light / green-10 dark",
+        use: "Completed task icons, paired with a checkmark and accessible status label. Not text.",
+        status: "core",
+      },
+      {
         token: "text-link",
         variable: "--text-link",
         pointsAt: "blue-11 light / blue-11 dark",

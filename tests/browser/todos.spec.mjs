@@ -109,9 +109,9 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(todo).toBeFocused();
   const assignee = drawer
     .getByRole("group", { name: "Assignee for Ship it", exact: true })
-    .getByRole("combobox");
+    .getByRole("button");
   await assignee.click();
-  await page.getByRole("option", { name: /Fixture Reader/ }).click();
+  await page.getByRole("menuitemradio", { name: /Fixture Reader/ }).click();
   await expect(
     drawer.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
@@ -137,11 +137,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   // clicking the launcher, which moves when the conversation expands.
   await expect(dock).toHaveCount(0);
   await launcher.click();
-  await expect(assignee).toContainText("Fixture Reader");
+  await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   await assignee.click();
-  await page.getByRole("option", { name: "Unassigned", exact: true }).waitFor();
+  await page
+    .getByRole("menuitemradio", { name: "Unassigned", exact: true })
+    .waitFor();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(drawer).toBeVisible();
   await expect(assignee).toBeFocused();
   await assignee.press("Escape");
@@ -149,7 +151,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(launcher).toBeFocused();
   await expect(dock).toHaveCount(0);
   await launcher.click();
-  await expect(assignee).toContainText("Fixture Reader");
+  await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   const expectCompactRow = async () => {
     const row = assignee.locator("xpath=ancestor::li");
     const label = row.getByRole("checkbox").locator("..");
@@ -165,6 +167,12 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     expect(triggerBounds.y + triggerBounds.height / 2).toBeLessThanOrEqual(
       labelBounds.y + labelBounds.height,
     );
+    const statusBounds = await row
+      .getByRole("button", { name: "Status for Ship it" })
+      .boundingBox();
+    expect(triggerBounds.x).toBeGreaterThanOrEqual(
+      statusBounds.x + statusBounds.width,
+    );
     expect(triggerBounds.x + triggerBounds.width).toBeLessThanOrEqual(
       rowBounds.x + rowBounds.width + 1,
     );
@@ -172,7 +180,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
       true,
     );
     await expect(assignee).toHaveAttribute("data-size", "sm");
-    await expect(assignee).toHaveAttribute("data-variant", "outline");
+    await expect(assignee).toHaveAttribute("data-icon-variant", "avatar");
   };
   // Channel-specific drawers stay off other pages, but returning to the same
   // channel can reopen its Canvas-backed content with a live launcher.
@@ -187,11 +195,14 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(launcher).toHaveCount(0);
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveAttribute("aria-pressed", "false");
+    await expect(launcher).toHaveAttribute("aria-expanded", "false");
     await launcher.click();
     await expect(drawer).toBeVisible();
     await expect(todo).toBeChecked();
-    await expect(assignee).toContainText("Fixture Reader");
+    await expect(assignee).toHaveAttribute(
+      "aria-description",
+      /Fixture Reader/,
+    );
   }
   await expectCompactRow();
   await page.screenshot({
@@ -213,7 +224,9 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(
     drawer.getByRole("button", { name: "Refresh" }),
   ).toBeInViewport();
-  await expect(drawer.getByRole("status")).toBeInViewport();
+  await expect(
+    drawer.getByRole("button", { name: "About todos" }),
+  ).toBeInViewport();
   expect(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
     true,
   );

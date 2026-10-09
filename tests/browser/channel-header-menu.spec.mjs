@@ -479,7 +479,6 @@ test.describe("sidebar actions in the header", () => {
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
-    // The open menu owns focus before its absence check and Escape dismissal.
     await expect(menu).toBeFocused();
     await expect(
       menu.getByRole("menuitem", { name: "New session", exact: true }),

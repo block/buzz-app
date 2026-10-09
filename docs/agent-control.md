@@ -11,9 +11,9 @@ Run from the feature worktree with `bin/just desktop`, not a management-only
 launcher. The command prepares the pinned agent runtime before starting Tauri;
 the first build may take several minutes. Later launches verify and reuse matching
 resources, rebuilding missing, stale or corrupt ones. Preparation failure stops
-launch rather than opening a desktop that cannot run agents. This opens **Buzz Foundation** using the ordinary live-development
+launch rather than opening a desktop that cannot run agents. This opens **Buzz** using the ordinary live-development
 configuration and persistent native settings. Coordinate the native rebuild/relaunch;
-quit other Foundation copies first. Saved enabled agents can restore on startup.
+quit other Buzz copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents** for discovered and imported identities grouped by known community
@@ -868,7 +868,7 @@ To prepare/build without launching any app or accessing old credentials:
 bin/pnpm install --frozen-lockfile
 bin/node scripts/build-agent-runtime.mjs
 bin/pnpm build
-bin/cargo build -p buzz-foundation
+bin/cargo build -p Buzz
 ```
 
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins five Buzz tools
@@ -939,7 +939,7 @@ sidecar; it never searches PATH for a CLI.
 Re-run the resource preparation and native build commands above, then validate:
 
 ```sh
-bin/cargo test --locked -p buzz-foundation -p buzz-agent-controller -- --include-ignored
+bin/cargo test --locked -p Buzz -p buzz-agent-controller -- --include-ignored
 bin/node --test tests/integration/agent-runtime.test.mjs
 ```
 
@@ -959,8 +959,9 @@ live handover remains a separate step below.
 2. Review prompt, workspace, harness/provider/model and write-only overrides.
    Browse models, save explicitly, and verify settings after reopening.
 3. Before Start or an outgoing mention, stop old Buzz **and its listeners** with
-   the human's agreement. Native refuses detected legacy paths; it never kills
-   them. Cooperating new-app profiles also hold an exact-key/community OS lock.
+   the human's agreement. Native refuses while it detects old Buzz running (by
+   macOS bundle identifier, or a `buzz-desktop` process); it never kills them.
+   Cooperating new-app profiles also hold an exact-key/community OS lock.
    Neither protects against relaunching unmodified old Buzz: no coexistence claim.
 4. Observe a real channel/thread reply, idle wake, Stop cancellation and Quit
    cleanup in the attended workflow. A process-running badge is not relay evidence.

@@ -1,4 +1,4 @@
-# Buzz Foundation
+# Buzz
 
 Shared React frontend for web and Tauri desktop, with bundled page plugins and
 local desktop plugins managed by `buzzodz`. Channels reads the relay through a

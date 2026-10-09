@@ -25,11 +25,14 @@ impl LegacySource {
             Self::Development => "buzz-desktop-dev",
         }
     }
-    pub fn app_directory(self) -> &'static str {
+    pub fn bundle_identifier(self) -> &'static str {
         match self {
             Self::Installed => "xyz.block.buzz.app",
             Self::Development => "xyz.block.buzz.app.dev",
         }
+    }
+    pub fn app_directory(self) -> &'static str {
+        self.bundle_identifier()
     }
 }
 #[derive(Clone, Serialize)]

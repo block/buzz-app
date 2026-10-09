@@ -109,7 +109,7 @@ jobs:
           app_dir=$(mktemp -d "$RUNNER_TEMP/verify-release.XXXXXX")
           hdiutil attach "$SIGNED_DMG" -readonly -nobrowse -mountpoint "$app_dir" >/dev/null
           trap 'hdiutil detach "$app_dir" >/dev/null' EXIT
-          app="$app_dir/Buzz Foundation.app"
+          app="$app_dir/Buzz.app"
           codesign --verify --deep --strict --verbose=2 \
             -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = EYF346PHUG' "$app"
           spctl --assess --type execute --verbose=4 "$app"
@@ -149,14 +149,14 @@ jobs:
           app_dir=$(mktemp -d "$RUNNER_TEMP/updater-app.XXXXXX")
           hdiutil attach "$SIGNED_DMG" -readonly -nobrowse -mountpoint "$app_dir" >/dev/null
           trap 'hdiutil detach "$app_dir" >/dev/null' EXIT
-          app="$app_dir/Buzz Foundation.app"
+          app="$app_dir/Buzz.app"
           test -d "$app" || { echo '::error::Signed DMG contains no app'; exit 1; }
           archive="$PWD/release-assets/Buzz_${VERSION}_aarch64.app.tar.gz"
           # ditto copies the complete signed bundle (including symlinks and metadata).
           staged_app=$(mktemp -d "$RUNNER_TEMP/updater-staging.XXXXXX")
-          ditto "$app" "$staged_app/Buzz Foundation.app"
-          codesign --verify --deep --strict "$staged_app/Buzz Foundation.app"
-          (cd "$staged_app" && COPYFILE_DISABLE=1 tar -czf "$archive" 'Buzz Foundation.app')
+          ditto "$app" "$staged_app/Buzz.app"
+          codesign --verify --deep --strict "$staged_app/Buzz.app"
+          (cd "$staged_app" && COPYFILE_DISABLE=1 tar -czf "$archive" 'Buzz.app')
           pnpm tauri signer sign "$archive"
           test -s "$archive" && test -s "$archive.sig" || { echo '::error::Updater signing failed'; exit 1; }
           (cd release-assets && shasum -a 256 ./*.dmg ./*.tar.gz > SHA256SUMS)
@@ -252,15 +252,15 @@ jobs:
           gh release download "v$VERSION" --pattern "$archive" --dir "$RUNNER_TEMP/candidate"
           gh release download "v$VERSION" --pattern "$archive.sig" --dir "$RUNNER_TEMP/candidate"
           test -s "$RUNNER_TEMP/candidate/$archive" && test -s "$RUNNER_TEMP/candidate/$archive.sig"
-          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz Foundation.app/Contents/MacOS/buzz-foundation' > "$RUNNER_TEMP/candidate/buzz-foundation"
-          test -s "$RUNNER_TEMP/candidate/buzz-foundation"
+          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz.app/Contents/MacOS/Buzz' > "$RUNNER_TEMP/candidate/Buzz"
+          test -s "$RUNNER_TEMP/candidate/Buzz"
           current=''
           if gh release view preview-feed >/dev/null 2>&1; then
             gh release download preview-feed --pattern latest.json --dir "$RUNNER_TEMP/current"
             current="$RUNNER_TEMP/current/latest.json"
           fi
-          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
-          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
+          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
+          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
           if [[ -z "$current" ]]; then
             gh release create preview-feed "$RUNNER_TEMP/candidate/latest.json" \
               --target "$GITHUB_SHA" --prerelease --latest=false \
@@ -343,7 +343,7 @@ jobs:
           # NSIS /D must be last and unquoted, including paths containing spaces.
           $process = Start-Process $installers[0].FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-          if (!(Test-Path "$destination\buzz-foundation.exe")) { throw 'App executable missing' }
+          if (!(Test-Path "$destination\Buzz.exe")) { throw 'App executable missing' }
           node scripts/verify-runtime-bundle.mjs "$destination\agent-runtime" x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Stage candidate and checksum
@@ -411,11 +411,11 @@ jobs:
           test "${#debs[@]}" -eq 1 && test "${#images[@]}" -eq 1
           bash scripts/fix-appimage.sh "${images[0]}"
           dpkg-deb -x "${debs[0]}" "$RUNNER_TEMP/deb"
-          node scripts/verify-runtime-bundle.mjs "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/agent-runtime" x86_64-unknown-linux-gnu
+          node scripts/verify-runtime-bundle.mjs "$RUNNER_TEMP/deb/usr/lib/Buzz/agent-runtime" x86_64-unknown-linux-gnu
           image=$(realpath "${images[0]}")
           mkdir "$RUNNER_TEMP/appimage"
           (cd "$RUNNER_TEMP/appimage" && "$image" --appimage-extract >/dev/null)
-          node scripts/verify-runtime-bundle.mjs "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/agent-runtime" x86_64-unknown-linux-gnu
+          node scripts/verify-runtime-bundle.mjs "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz/agent-runtime" x86_64-unknown-linux-gnu
           mkdir release-assets
           cp "${debs[0]}" "release-assets/Buzz_${VERSION}_amd64.deb"
           cp "${images[0]}" "release-assets/Buzz_${VERSION}_x86_64.AppImage"

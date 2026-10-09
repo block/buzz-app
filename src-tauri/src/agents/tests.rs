@@ -1965,7 +1965,7 @@ fn native_quit_preserves_enabled_intent() {
 }
 
 #[test]
-fn legacy_guard_is_process_path_evidence_not_name_substring_or_coexistence_claim() {
+fn legacy_listing_guard_matches_buzz_desktop_binary_name_not_substring_or_bundle_path() {
     for listing in [
         " 100 /Applications/Buzz.app/Contents/MacOS/buzz-desktop",
         " 200 /checkout/target/debug/buzz-desktop",
@@ -1973,7 +1973,7 @@ fn legacy_guard_is_process_path_evidence_not_name_substring_or_coexistence_claim
         assert!(refuse_legacy_listing(listing).is_err());
     }
     assert!(refuse_legacy_listing(
-        "123 /tmp/buzz-agent\n456 /tmp/buzz-foundation\n789 /tmp/buzz-desktop-notes"
+        "123 /tmp/buzz-agent\n456 /Applications/Buzz.app/Contents/MacOS/Buzz\n789 /tmp/buzz-desktop-notes"
     )
     .is_ok());
 }

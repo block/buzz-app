@@ -392,8 +392,7 @@ test("automatic CI uses Linux plus macOS recording and manual dispatch runs only
   const windows = jobs["windows-native"];
   assert.equal(windows.if, "github.event_name == 'workflow_dispatch'");
   assert.equal(windows["runs-on"], "windows-2025");
-  const packages =
-    "-p buzz-foundation -p buzz-agent-controller -p buzz-credential-store";
+  const packages = "-p Buzz -p buzz-agent-controller -p buzz-credential-store";
   assert.ok(
     windows.steps.some(
       (step) => step.run === `cargo test ${packages} --locked --no-fail-fast`,

@@ -219,7 +219,6 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     args: ["--print"],
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
-    agent: "cd".repeat(32),
     onStdout: (data) => stdout.push(data),
     onStderr: (data) => stderr.push(data),
   });
@@ -234,7 +233,6 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     args: ["--print"],
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
-    agent: "cd".repeat(32),
     onEvent: spawn.onEvent,
   });
   spawn.onEvent.onmessage({ type: "stdout", data: "out" });

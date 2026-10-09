@@ -149,6 +149,11 @@ function fakeNative(identities: AgentIdentity[] = []) {
       event(`p${++published}`, { pubkey, kind: template.kind }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
+    query: vi.fn(async () => []),
+    upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
+    remember: vi.fn(async (pubkey: string) =>
+      event(`m${++published}`, { pubkey }),
+    ),
   } satisfies AgentsNative;
   return native;
 }

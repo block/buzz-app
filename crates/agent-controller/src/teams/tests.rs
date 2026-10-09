@@ -1023,6 +1023,29 @@ fn native_export_refuses_and_hides_pi_goose_effort_overrides() {
 }
 
 #[test]
+fn native_export_refuses_effort_the_app_import_parser_rejects() {
+    let mut agent = crate::store::tests::fixture();
+    let defaults = crate::agent_defaults::AgentDefaults::default();
+    let snapshot = |agent: &Agent| TeamSnapshot {
+        format: "buzz-team-snapshot".into(),
+        version: 1,
+        team: TeamMeta {
+            name: "Fixture".into(),
+            description: None,
+            instructions: None,
+        },
+        members: vec![snapshot_member(agent, &defaults).unwrap()],
+    };
+    agent.extra.insert("effort".into(), "high".into());
+    snapshot(&agent).validate().unwrap();
+    // Saved before validation matched `visibleSnapshotText`, which rejects it.
+    agent
+        .extra
+        .insert("effort".into(), "high\u{200b}low".into());
+    assert!(snapshot(&agent).validate().is_err());
+}
+
+#[test]
 fn merged_existing_profile_overflow_keeps_import_about_pending() {
     let root = tempfile::tempdir().unwrap();
     let mut control = controller(root.path());

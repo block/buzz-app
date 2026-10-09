@@ -973,7 +973,7 @@ it("imports a snapshot without effort unchanged and refuses an invalid one", () 
   });
   expect(old.definition).not.toHaveProperty("effort");
   expect(snapshotImportEdit(old, destination)).not.toHaveProperty("effort");
-  for (const effort of ["", "x".repeat(65), "high\u0007"])
+  for (const effort of ["", "x".repeat(65), "high\u0007", "high\u200blow"])
     expect(() =>
       parse({ ...old, definition: { name: "Portable", effort } }),
     ).toThrow();

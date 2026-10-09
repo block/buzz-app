@@ -113,7 +113,7 @@ async function frame() {
     for (const callback of pending) callback(performance.now());
   });
 }
-async function fixture(archived = false) {
+async function fixture() {
   const viewer = keypair(),
     alice = keypair(),
     relay = keypair();
@@ -130,7 +130,7 @@ async function fixture(archived = false) {
   );
   const events = [
     roster(relay, "room", [viewer.pubkey, alice.pubkey], 10),
-    metadata(relay, "room", "Room", 10, archived ? [["archived", "true"]] : []),
+    metadata(relay, "room", "Room", 10),
     root,
   ];
   let journal: ReadJournal | undefined;
@@ -721,16 +721,4 @@ it("does not restore a control retired by withholding, even when a replacement m
   } finally {
     gate.gate.resolve();
   }
-});
-
-it("keeps archived-channel history readable but retires the reader on membership removal", async () => {
-  const h = await fixture(true);
-  const { reader, editor } = await opened(h);
-  expect(reader).toBeVisible();
-  expect(editor).toHaveAttribute("aria-disabled", "true");
-  act(() => h.revoke());
-  await screen.findByText(/This conversation is unavailable/);
-  expect(
-    screen.queryByRole("complementary", { name: "Thread" }),
-  ).not.toBeInTheDocument();
 });

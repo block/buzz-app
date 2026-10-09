@@ -567,6 +567,14 @@ function fixture(
       events.push(restored);
       emit([restored, mention, reply, ...roots]);
     },
+    archiveRoom(archived: boolean, time: number) {
+      const state = metadata(relayKey, "room", "Design", time, [
+        ["t", "stream"],
+        ["archived", String(archived)],
+      ]);
+      events.push(state);
+      emit([state]);
+    },
     renameRoom() {
       const renamed = metadata(relayKey, "room", "Renamed", 99, [
         ["t", "stream"],
@@ -631,22 +639,35 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it("excludes archived-channel mentions and threads without hiding active DMs", async () => {
+  const h = fixture({ archivedChannel: true, withDm: true });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("A direct reply");
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(0);
+  await chooseFilter("Threads");
+  expect(rows()).toHaveLength(0);
+});
+
 it.each(["Please review", "A thread update"])(
-  "reads and marks unread a conversation in an archived channel (%s)",
+  "closes selected Inbox detail on channel archive and restores unread intent on unarchive (%s)",
   async (preview) => {
-    const h = fixture({ archivedChannel: true, withWriter: true });
+    const h = fixture({ withWriter: true });
     render(h.view);
     await waitFor(() => expect(rows()).toHaveLength(2));
     const row = rows().find((item) => item.textContent?.includes(preview));
-    if (!row) throw new Error("Missing archived-channel conversation");
+    if (!row) throw new Error("Missing fixture conversation");
     fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
     const detail = screen.getByRole("region", { name: "Inbox detail" });
     await within(detail).findByText(
       preview === "Please review" ? /Please review/ : "A thread update",
-    );
-    expect(within(detail).getByRole("textbox")).toHaveAttribute(
-      "aria-disabled",
-      "true",
     );
     await waitFor(() =>
       expect(
@@ -662,7 +683,27 @@ it.each(["Please review", "A thread update"])(
         within(row).getByRole("img", { name: "Unread" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    const journal = h.journal();
+    act(() => h.archiveRoom(true, 100));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    expect(
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Activity type" }),
+    ).toHaveFocus();
+    expect(h.journal()).toEqual(journal);
+    act(() => h.archiveRoom(false, 101));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const restored = rows().find((item) => item.textContent?.includes(preview));
+    if (!restored) throw new Error("Missing restored conversation");
+    expect(
+      within(restored).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(h.journal()).toEqual(journal);
   },
 );
 

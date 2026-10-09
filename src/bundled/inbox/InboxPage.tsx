@@ -421,6 +421,7 @@ export function InboxView({
         !!current &&
         !current.cached &&
         !current.readOnly &&
+        !current.archived &&
         current.channelType === channel.channelType &&
         !!current.members?.includes(scope.viewer) &&
         [...current.members].sort().join(":") === membership &&

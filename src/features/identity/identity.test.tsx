@@ -864,6 +864,59 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   identity.dispose();
 });
 
+it("a found community shows Join Community after exactly the two unauthenticated GETs", async () => {
+  const origin = "https://relay.example.com:8443";
+  const relayCalls: unknown[] = [];
+  const answer = (status: number, body = "") =>
+    Promise.resolve({ status, headers: {}, body });
+  vi.mocked(invoke).mockImplementation((command, args) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    if (command === "relay_http") {
+      relayCalls.push(args);
+      const { path } = args as { path: string };
+      if (path === "/")
+        return answer(
+          200,
+          JSON.stringify({ name: "Buzz Relay", read_state_snapshot: {} }),
+        );
+      if (path === "/api/join-policy") return answer(404);
+    }
+    throw new Error("Unexpected command");
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await screen.findByRole("heading", { name: "Join a community" });
+  await user.type(
+    screen.getByRole("textbox", { name: "Community URL" }),
+    "relay.example.com:8443{Enter}",
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(screen.getByText("relay.example.com:8443")).toHaveClass("font-mono");
+  expect(screen.queryByText("Signed in")).toBeNull();
+  // Nothing is signed with the key setup just created: the two unauthenticated
+  // GETs are the only pre-join traffic, with no POST before the user opts in.
+  expect(relayCalls).toEqual([
+    { community: origin, path: "/", method: "GET", body: null },
+    { community: origin, path: "/api/join-policy", method: "GET", body: null },
+  ]);
+  identity.dispose();
+});
+
 it("a key creation failure stops setup and Back returns to the first-launch screen", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce(null)

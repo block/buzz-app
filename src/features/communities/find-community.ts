@@ -8,7 +8,6 @@ export type FoundCommunity = {
   url: string;
   host: string;
   icon?: string | undefined;
-  version?: string | undefined;
   policy: JoinPolicy | null;
 };
 
@@ -56,7 +55,6 @@ export async function findCommunity(
     url,
     host: new URL(url).host,
     icon: communityIcon(info.icon),
-    version: typeof info.version === "string" ? info.version : undefined,
     policy: await policyAnswer(await policy),
   };
 }

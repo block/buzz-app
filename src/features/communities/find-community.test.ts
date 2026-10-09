@@ -22,8 +22,8 @@ const policy = {
 type Answer = Response | Error;
 const html = (status = 200) =>
   new Response("<html><body>Hi</body></html>", { status });
-function fetcher(answers: Record<string, Answer>): RelayFetch {
-  return vi.fn((_origin: string, path: string) => {
+function fetcher(answers: Record<string, Answer>) {
+  return vi.fn<RelayFetch>((_origin, path) => {
     const answer = answers[path];
     if (!answer) throw new Error(`Unexpected path ${path}`);
     return answer instanceof Error
@@ -40,17 +40,17 @@ const failure = (answers: Record<string, Answer>) =>
       error instanceof FindCommunityError ? error.failure : error,
   );
 
-it("reports only what the relay publishes, with the icon sanitized", async () => {
+it("reports only what the relay publishes, with the icon sanitized, from two unauthenticated reads", async () => {
+  const request = fetcher({
+    "/": Response.json(buzz),
+    "/api/join-policy": Response.json({ policy }),
+  });
   await expect(
-    find({
-      "/": Response.json(buzz),
-      "/api/join-policy": Response.json({ policy }),
-    }),
+    findCommunity(url, request, new AbortController().signal),
   ).resolves.toEqual({
     url,
     host: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",
-    version: "1.4.2",
     policy: {
       version: "v1",
       terms_markdown: "# Terms",
@@ -58,6 +58,11 @@ it("reports only what the relay publishes, with the icon sanitized", async () =>
       age_attestation_required: true,
     },
   });
+  // Nothing is signed before the user chooses to join: GETs only, no body.
+  expect(request.mock.calls).toEqual([
+    [url, "/", expect.any(AbortSignal)],
+    [url, "/api/join-policy", expect.any(AbortSignal)],
+  ]);
   await expect(
     find({
       "/": Response.json({
@@ -72,7 +77,6 @@ it("reports only what the relay publishes, with the icon sanitized", async () =>
     url,
     host: "relay.example.com:8443",
     icon: undefined,
-    version: undefined,
     policy: null,
   });
 });

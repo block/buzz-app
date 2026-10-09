@@ -41,6 +41,13 @@ function relay(answers: () => Record<string, Response | Error>) {
   });
 }
 const join = () => screen.getByRole("button", { name: /join/i });
+const joinCommunity = () =>
+  screen.queryByRole("heading", { name: "Join Community" });
+/** Secondary first, primary last, as the design system's footers order them. */
+const precedes = (first: HTMLElement, second: HTMLElement) =>
+  Boolean(
+    first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+  );
 
 it("shows the host while finding, then only published facts, gating Join on every consent", async () => {
   const info = deferred<Response>();
@@ -67,17 +74,14 @@ it("shows the host while finding, then only published facts, gating Join on ever
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
   await act(async () => info.resolve(Response.json(buzz)));
-  expect(
-    screen.getByRole("heading", { name: "Community found" }),
-  ).toBeVisible();
+  expect(joinCommunity()).toBeVisible();
   expect(screen.getByText(host)).toHaveClass("font-mono");
-  expect(screen.getByText("Buzz relay v1.4.2")).toBeVisible();
   expect(document.querySelector("img")).toHaveAttribute(
     "src",
     "https://cdn.example.com/icon.png",
   );
-  // Nothing the relay does not publish: no name, description or counts.
-  expect(document.body).not.toHaveTextContent(/member|owner|invite/i);
+  // Nothing the relay does not publish: no name, description, counts or version.
+  expect(document.body).not.toHaveTextContent(/member|owner|invite|v1\.4/i);
   const terms = screen.getByRole("link", { name: "Terms of Service" });
   expect(terms).toHaveAttribute("href", `${url}/api/join-policy/terms`);
   expect(terms).toHaveAttribute("target", "_blank");
@@ -93,6 +97,9 @@ it("shows the host while finding, then only published facts, gating Join on ever
   });
   expect(join()).toHaveTextContent("Accept and join");
   expect(join()).toBeDisabled();
+  expect(precedes(screen.getByRole("button", { name: "Cancel" }), join())).toBe(
+    true,
+  );
   await user.click(age);
   expect(join()).toBeDisabled();
   await user.click(agreement);
@@ -105,9 +112,9 @@ it("shows the host while finding, then only published facts, gating Join on ever
     url,
     host,
     icon: "https://cdn.example.com/icon.png",
-    version: "1.4.2",
     policy,
   });
+  // The two unauthenticated reads are the only pre-join traffic: nothing is signed.
   expect(request.mock.calls.map(([origin, path]) => [origin, path])).toEqual([
     [url, "/"],
     [url, "/api/join-policy"],
@@ -123,10 +130,9 @@ it("without a policy Join needs no consent, and without onJoin it stays a placeh
     <FindCommunity url={url} onCancel={vi.fn()} request={request} />,
   );
   expect(
-    await screen.findByRole("heading", { name: "Community found" }),
+    await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
   expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(screen.queryByText(/Buzz relay v/)).toBeNull();
   expect(document.querySelector("img")).toBeNull();
   expect(join()).toHaveTextContent("Join — Coming soon");
   expect(join()).toBeDisabled();
@@ -177,13 +183,19 @@ it("an unreachable relay offers Retry, which looks again", async () => {
     screen.getByRole("heading", { name: "Couldn’t find community" }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  expect(
+    precedes(
+      screen.getByRole("button", { name: "Cancel" }),
+      screen.getByRole("button", { name: "Retry" }),
+    ),
+  ).toBe(true);
   answers = {
     "/": Response.json(buzz),
     "/api/join-policy": Response.json({}),
   };
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(
-    await screen.findByRole("heading", { name: "Community found" }),
+    await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
   expect(request).toHaveBeenCalledTimes(4);
 });

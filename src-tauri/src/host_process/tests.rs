@@ -136,7 +136,7 @@ async fn kill_ends_the_process_and_its_descendants() {
     processes.kill("a.plugin", handle).unwrap();
     let (_, _, exit) = until_exit(&mut events).await;
     assert_eq!(exit["code"], serde_json::Value::Null);
-    assert_ne!(unsafe { libc::kill(child, 0) }, 0, "descendant survived");
+    assert_dead(child).await;
 }
 
 #[cfg(unix)]
@@ -231,9 +231,7 @@ async fn shutdown_kills_every_group_without_waiting() {
         }
     };
     processes.shutdown();
-    // Signals are delivered at once; give the kernel a moment to reap.
-    std::thread::sleep(Duration::from_millis(200));
-    assert_ne!(unsafe { libc::kill(child, 0) }, 0, "descendant survived");
+    assert_dead(child).await;
 }
 
 #[test]
@@ -255,4 +253,22 @@ fn directories_are_absolute_or_under_home() {
     assert_eq!(expand_home("~/.buzz").unwrap(), home.join(".buzz"));
     assert!(expand_home("relative/dir").is_err());
     assert!(expand_home("~other/dir").is_err());
+}
+
+/// Waits until `pid` has died. A process its new parent has not reaped yet
+/// still answers kill(0), as a zombie, so a zombie counts as dead.
+#[cfg(unix)]
+async fn assert_dead(pid: i32) {
+    let dead = || {
+        (unsafe { libc::kill(pid, 0) }) != 0
+            || std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .is_ok_and(|out| out.stdout.trim_ascii_start().starts_with(b"Z"))
+    };
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while !dead() && std::time::Instant::now() < until {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(dead(), "descendant survived");
 }

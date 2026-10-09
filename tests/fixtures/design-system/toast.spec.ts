@@ -194,3 +194,157 @@ test("swiping actual toast content dismisses confirmations and preserves recover
   await page.getByRole("button", { name: "Retry saving", exact: true }).click();
   await expect(recovery).toHaveCount(0);
 });
+
+// Native focus/blur and clock-controlled expiry must agree without pointer hover.
+test("keyboard focus pauses expiry and leaving resumes it, with and without F6", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page.clock.install();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page
+    .getByRole("switch", { name: "Keep visible while inspecting" })
+    .click();
+  const show = page.getByRole("button", { name: "Show toast", exact: true });
+  const toast = page.getByRole("dialog", {
+    name: "Message deleted",
+    exact: true,
+  });
+  for (const hotkey of [false, true]) {
+    await show.focus();
+    await page.keyboard.press("Enter");
+    await expect(toast).toBeVisible();
+    await page.mouse.move(0, 0);
+    if (hotkey) {
+      await page.keyboard.press("F6");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+    } else {
+      await toast.getByRole("button", { name: "Dismiss notification" }).focus();
+    }
+    await page.keyboard.press("Tab");
+    await expect(
+      toast.getByRole("button", { name: "Undo", exact: true }),
+    ).toBeFocused();
+    await page.clock.runFor(6000);
+    await expect(toast).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(
+      toast.getByRole("button", { name: "Undo", exact: true }),
+    ).not.toBeFocused();
+    await page.clock.runFor(6000);
+    await expect(toast).toHaveCount(0);
+  }
+});
+
+test("Escape dismisses the focused confirmation but leaves persistent recovery", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page
+    .getByRole("button", { name: "Show confirmation", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  const confirmation = page.getByRole("dialog", {
+    name: "Changes saved",
+    exact: true,
+  });
+  await expect(confirmation).toBeVisible();
+  await page.keyboard.press("F6");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Show recovery", exact: true })
+    .click();
+  const recovery = page.getByRole("dialog", {
+    name: "Changes weren’t saved",
+    exact: true,
+  });
+  await expect(recovery).toBeVisible();
+  await page.keyboard.press("F6");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Escape");
+  await expect(recovery).toBeVisible();
+});
+
+test("touch panning reaches overflowing persistent recovery actions", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "Real touch drag injection uses Chromium's CDP input API.",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  const touch = await page.context().newCDPSession(page);
+  await touch.send("Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 1,
+  });
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page
+    .getByRole("button", { name: "Show recovery stack", exact: true })
+    .click();
+  const stack = page.locator("[data-sonner-toaster]");
+  await expect(stack.getByRole("dialog")).toHaveCount(6);
+  await expect(stack.locator("[data-sonner-toast]").first()).toHaveCSS(
+    "transform",
+    "matrix(1, 0, 0, 1, 0, 0)",
+  );
+  const box = await stack.boundingBox();
+  if (!box) throw new Error("Toast stack has no geometry");
+  const x = box.x + box.width / 2,
+    y = box.y + box.height - 40;
+  await touch.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x, y }],
+  });
+  try {
+    for (let step = 1; step <= 10; step++) {
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: y - step * 16 }],
+      });
+    }
+  } finally {
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+  }
+  await expect
+    .poll(() => stack.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(100);
+  await expect(stack.getByRole("dialog")).toHaveCount(6);
+});
+
+test("removing a focused recovery resumes remaining confirmation timers", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/toast`);
+  await page.clock.install();
+  await page
+    .getByRole("button", { name: "Show confirmation", exact: true })
+    .click();
+  const confirmation = page.getByRole("dialog", {
+    name: "Changes saved",
+    exact: true,
+  });
+  await expect(confirmation).toBeVisible();
+  await page
+    .getByRole("button", { name: "Show recovery", exact: true })
+    .click();
+  const retry = page.getByRole("button", { name: "Retry saving", exact: true });
+  await retry.focus();
+  await page.mouse.move(0, 0);
+  await page.clock.runFor(6000);
+  await expect(confirmation).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(retry).toHaveCount(0);
+  // Source content leaves before Sonner's 200ms exit lifecycle completes.
+  await page.clock.runFor(250);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
+  await page.clock.runFor(6000);
+  await expect(confirmation).toHaveCount(0);
+});

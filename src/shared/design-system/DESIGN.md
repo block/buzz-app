@@ -621,7 +621,11 @@ title and description. It extends 8px toward the trailing edge and 4px verticall
 into the padding; title-only confirmations stay centered beside it. Descriptions
 use secondary text, and actions align with the message's leading edge.
 The pinned Sonner patch preserves intentional focus destinations when leaving a
-toast; fallback restoration still applies when focus is otherwise lost.
+toast; fallback restoration still applies when focus is otherwise lost. Expiry
+pauses while the stack is hovered, focused or being dragged, independently of
+visual expansion, and resumes on exit. Escape dismisses the focused dismissible
+notice; persistent recovery remains. Cards allow vertical touch scrolling through
+the bounded stack and reserve swipe dismissal for horizontal gestures.
 
 Sonner is the toast behavior owner; other matching controls use Base UI. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,

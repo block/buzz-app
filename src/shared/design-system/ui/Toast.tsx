@@ -54,6 +54,7 @@ export function ToastProvider({
         <Toaster
           id={id}
           position="bottom-right"
+          swipeDirections={["left", "right"]}
           expand
           visibleToasts={Infinity}
           hotkey={["F6"]}

@@ -351,6 +351,7 @@
   flex-shrink: 0;
   width: 100%;
   pointer-events: auto;
+  touch-action: pan-y;
   transition:
     transform var(--duration-state) var(--easing-state),
     opacity var(--duration-state) var(--easing-state);

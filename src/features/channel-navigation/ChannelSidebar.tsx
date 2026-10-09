@@ -47,7 +47,7 @@ import {
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
-import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
+import { ChannelCopyLinkMenuItem } from "./ChannelCopyLinkMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import {

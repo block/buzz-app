@@ -69,6 +69,7 @@ const nonIconDependencies = new Set([
   "remark-breaks",
   "remark-gfm",
   "rolldown",
+  "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
   "tailwindcss",
   "typescript",
   "undici",

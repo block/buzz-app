@@ -45,9 +45,11 @@ impl NewAgent {
             session_policy_inherit: false,
             workspace: String::new(),
             harness: HarnessEdit {
+                integration: None,
                 command: String::new(),
                 args: vec![],
                 model: String::new(),
+                configuration: None,
                 provider: String::new(),
                 databricks: None,
             },

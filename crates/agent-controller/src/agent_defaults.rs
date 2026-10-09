@@ -148,6 +148,11 @@ pub(crate) fn effective_settings(
     environment: &mut BTreeMap<String, String>,
     defaults: &AgentDefaults,
 ) -> bool {
+    // Native Codex Default delegates to Codex itself. Neither device-wide
+    // selectors nor another harness's environment may enter that context.
+    if harness.integration == Some(crate::HarnessIntegration::Codex) {
+        return false;
+    }
     let same_harness = harness_kind(&harness.command) == Some(defaults.harness.as_str());
     if same_harness {
         if harness.provider.is_empty() {
@@ -203,6 +208,9 @@ pub(crate) fn effective(agent: &Agent, defaults: &AgentDefaults) -> Agent {
 /// wins over an inherited default. A saved null (cleared by a harness change)
 /// hides the old Buzz value too.
 pub(crate) fn effort(agent: &Agent) -> Option<&str> {
+    if agent.harness.integration == Some(crate::HarnessIntegration::Codex) {
+        return agent.harness.codex_effort();
+    }
     match agent.extra.get(crate::config::OWN_EFFORT) {
         Some(own) => own.as_str(),
         None => agent.imported["record"]["effort_level"].as_str(),

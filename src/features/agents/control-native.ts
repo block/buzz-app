@@ -24,6 +24,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       invoke("agent_control_team_sync", { community, teams }),
     previewTeam: (content) => invoke("agent_control_team_preview", { content }),
     betaTeams: (community) => invoke("agent_control_beta_teams", { community }),
+    importBetaText: (token, id) =>
+      invoke("agent_control_import_beta_text", { token, id }),
     restoreBetaTeams: (source, ids) =>
       invoke("agent_control_beta_team_restore_preview", { source, ids }),
     finishBetaTeam: (community, teams, id, revision, outcome) =>

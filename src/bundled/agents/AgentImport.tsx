@@ -21,6 +21,12 @@ import { relayOrigin } from "../../features/communities/destination";
 import { relayPartition } from "../../features/relay/partition";
 
 type Candidate = AgentImportPreview["candidates"][number];
+/** The candidate's old Buzz team text; the clash check needs the real text. */
+const betaText = (control: AgentControl, token: string, id: string) => {
+  if (!control.importBetaText)
+    throw new Error("Teams from old Buzz are unavailable.");
+  return control.importBetaText(token, id);
+};
 /** A team catalog and the relay session scope it belongs to. */
 export type BetaTeamAccess = { kit: ChannelKit; scope: string; viewer: string };
 /** The catalog only when it is ready and the import destination's, for this
@@ -166,7 +172,7 @@ export function AgentImport({
             texts: [],
             members: [{ id, pubkey: candidate.pubkey, revision: 0 }],
           },
-          "",
+          await betaText(control, preview.token, id),
         ));
       if (conflict) {
         if (generation.current === current) setError(conflict);

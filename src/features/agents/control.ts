@@ -282,6 +282,9 @@ export interface AgentControlHost {
   ): Promise<ControlSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   betaTeams?(community: string): Promise<PendingBetaTeam[]>;
+  /** One previewed candidate's team text from old Buzz, read-only, for the
+   * clash check before import. */
+  importBetaText?(token: string, id: string): Promise<string>;
   restoreBetaTeams?(
     source: ImportSource,
     ids: string[],
@@ -387,6 +390,9 @@ export interface AgentControl {
   ): Promise<ControlSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   betaTeams?(community: string): Promise<PendingBetaTeam[]>;
+  /** One previewed candidate's team text from old Buzz, read-only, for the
+   * clash check before import. */
+  importBetaText?(token: string, id: string): Promise<string>;
   restoreBetaTeams?(
     source: ImportSource,
     ids: string[],
@@ -783,6 +789,15 @@ export function createAgentControl(
             if (!host.betaTeams)
               throw new Error("Teams from old Buzz are unavailable.");
             return host.betaTeams(community);
+          },
+        }
+      : {}),
+    ...(host?.importBetaText
+      ? {
+          importBetaText: (token: string, id: string) => {
+            if (!host.importBetaText)
+              throw new Error("Teams from old Buzz are unavailable.");
+            return host.importBetaText(token, id);
           },
         }
       : {}),

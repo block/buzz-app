@@ -175,6 +175,7 @@ const withTeam = (f: ReturnType<typeof controlFixture>) => {
   previewWith(f, [
     { id: "joiner", name: "Joiner", stripsTeamInstructions: false },
   ]);
+  f.host.importBetaText = vi.fn(async () => "BETA");
   const preview = f.host.previewImport;
   if (!preview) throw new Error("fixture has no import preview");
   f.host.previewImport = async (...args) => {
@@ -210,6 +211,60 @@ it("shows the old Buzz team, checks it before import and sets it up after", asyn
       "beta-1",
     );
     expect(imported.mock.calls[0]?.[1]).toBe("not yet");
+  } finally {
+    mounted.unmount();
+    control.dispose();
+  }
+});
+it("refuses an import whose real beta text clashes with the agent's other team", async () => {
+  const { betaTeamConflict } = await vi.importActual<
+    typeof import("../../features/agents/beta-team-import")
+  >("../../features/agents/beta-team-import");
+  // The real check runs; the target team "beta-1" isn't in the catalog yet.
+  betaSteps.betaTeamConflict.mockReset().mockImplementation(betaTeamConflict);
+  betaSteps.setUpImportedTeam.mockReset();
+  const f = controlFixture();
+  withTeam(f);
+  const control = createAgentControl(f.host);
+  const editors = {
+    type: "team" as const,
+    id: "editors",
+    name: "Editors",
+    agents: ["1".repeat(64)],
+  };
+  const kit = {
+    snapshot: () => ({
+      status: "ready",
+      entries: [
+        {
+          eventId: "editors-head",
+          createdAt: 1,
+          record: {
+            version: 1,
+            community: "https://relay.example.test",
+            deleted: false,
+            value: editors,
+          },
+        },
+      ],
+    }),
+    refresh: vi.fn(async () => {}),
+    readText: vi.fn(async () => ({ text: "EDITORS", head: "h" })),
+  };
+  const mounted = mount(control, {
+    teams: { ...teamAccess(), kit: kit as never },
+  });
+  try {
+    const submit = await screen.findByRole("button", { name: "Import Joiner" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Editors");
+    expect(f.host.importBetaText).toHaveBeenCalledWith(
+      "fixture-preview",
+      "joiner",
+    );
+    expect(f.calls.some((call) => call.action === "import")).toBe(false);
+    expect(betaSteps.setUpImportedTeam).not.toHaveBeenCalled();
   } finally {
     mounted.unmount();
     control.dispose();

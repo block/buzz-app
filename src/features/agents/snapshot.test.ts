@@ -973,10 +973,22 @@ it("imports a snapshot without effort unchanged and refuses an invalid one", () 
   });
   expect(old.definition).not.toHaveProperty("effort");
   expect(snapshotImportEdit(old, destination)).not.toHaveProperty("effort");
-  for (const effort of ["", "x".repeat(65), "high\u0007", "high\u200blow"])
+  for (const effort of [
+    "",
+    "x".repeat(65),
+    "high\u0007",
+    "high\u200blow",
+    "\u0D15\u0D4D\u200D$",
+    "high low",
+  ])
     expect(() =>
       parse({ ...old, definition: { name: "Portable", effort } }),
     ).toThrow();
+  for (const effort of ["low", "high", "xhigh", "max", "off", "x".repeat(64)])
+    expect(
+      parse({ ...old, definition: { name: "Portable", effort } }).definition
+        .effort,
+    ).toBe(effort);
 });
 
 it("names native export limits without exposing unexpected native verdict values", () => {

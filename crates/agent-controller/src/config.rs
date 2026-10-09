@@ -135,9 +135,10 @@ pub struct AgentEdit {
 pub(crate) const OWN_EFFORT: &str = "effort";
 /// Effort levels are short harness names, as for agent defaults.
 pub(crate) fn validate_effort(effort: &str) -> Result<()> {
-    // Same visible-text rule as the app's snapshot parser, so an export never
+    // Same rule as the app's snapshot parser (`EFFORT`), so an export never
     // writes an effort that import would reject.
-    if effort.is_empty() || effort.len() > 64 || visible_agent_text(effort, false).is_err() {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if effort.is_empty() || effort.len() > 64 || !effort.chars().all(allowed) {
         return Err("Effort level is empty, too long or invalid".into());
     }
     Ok(())

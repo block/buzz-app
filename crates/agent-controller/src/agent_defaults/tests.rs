@@ -102,7 +102,7 @@ fn imported_portable_effort_is_saved_and_wins_over_older_sources() {
         harness: agent.harness.clone(),
         environment: BTreeMap::new(),
     };
-    for invalid in ["", "high\n", "high\u{200b}low"] {
+    for invalid in ["", "high\n", "high\u{200b}low", "\u{d15}\u{d4d}\u{200d}$"] {
         assert!(agent.clone().apply(edit(invalid)).is_err());
     }
     let next = edit("high");

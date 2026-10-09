@@ -1036,12 +1036,20 @@ fn native_export_refuses_effort_the_app_import_parser_rejects() {
         },
         members: vec![snapshot_member(agent, &defaults).unwrap()],
     };
-    agent.extra.insert("effort".into(), "high".into());
-    snapshot(&agent).validate().unwrap();
-    // Saved before validation matched `visibleSnapshotText`, which rejects it.
+    for effort in ["low", "high", "xhigh", "max", "off"] {
+        agent.extra.insert("effort".into(), effort.into());
+        snapshot(&agent).validate().unwrap();
+    }
+    // Saved before the effort rule matched the app's parser, which rejects these.
+    for effort in ["high\u{200b}low", "\u{d15}\u{d4d}\u{200d}$"] {
+        agent.extra.insert("effort".into(), effort.into());
+        assert!(snapshot(&agent).validate().is_err());
+    }
+    // A device default that breaks the rule is refused the same way.
+    agent.extra.remove("effort");
     agent
         .extra
-        .insert("effort".into(), "high\u{200b}low".into());
+        .insert("inheritedEffort".into(), "\u{d15}\u{d4d}\u{200d}$".into());
     assert!(snapshot(&agent).validate().is_err());
 }
 

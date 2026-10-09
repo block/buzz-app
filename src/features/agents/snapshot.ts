@@ -147,6 +147,8 @@ const credentialLike = (value: string) =>
   /-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s,;]{8,})/i.test(
     value,
   );
+/** Effort levels are short harness names; native `validate_effort` matches. */
+const EFFORT = /^[A-Za-z0-9._-]{1,64}$/;
 const optionalText = (value: unknown, max: number) =>
   value === undefined || text(value, max);
 /** Native URL parsing accepts paths, queries, fragments and UTF-8 hosts but no credentials. */
@@ -269,9 +271,8 @@ export function parseAgentSnapshot(
     (typeof d.model === "string" && !visibleSnapshotText(d.model)) ||
     !optionalText(d.provider, 128) ||
     (typeof d.provider === "string" && !visibleSnapshotText(d.provider)) ||
-    !optionalText(d.effort, 64) ||
-    (typeof d.effort === "string" &&
-      (!d.effort || !visibleSnapshotText(d.effort))) ||
+    (d.effort !== undefined &&
+      (typeof d.effort !== "string" || !EFFORT.test(d.effort))) ||
     !["channel", "thread", undefined].includes(
       d.sessionPolicy as string | undefined,
     ) ||

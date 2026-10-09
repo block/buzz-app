@@ -25,7 +25,6 @@ impl LegacySource {
             Self::Development => "buzz-desktop-dev",
         }
     }
-    /// Old Buzz's macOS bundle identifier; its app-data directory is named after it.
     pub fn bundle_identifier(self) -> &'static str {
         match self {
             Self::Installed => "xyz.block.buzz.app",

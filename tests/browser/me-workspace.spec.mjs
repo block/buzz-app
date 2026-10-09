@@ -66,6 +66,34 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
   await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
   await expect(panel).toBeVisible();
   await expect(composer).toHaveText("Keep my Me draft");
+  await page
+    .getByRole("button", { name: "Close Agent Activity tab", exact: true })
+    .click();
+  // Restored panels no longer retain the original trigger element.
+  await trigger.focus();
+  await page.mouse.move(0, 0);
+  await page.keyboard.press("ArrowDown");
+  await expect(preview).toBeVisible();
+  await expect(preview).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(preview).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(preview).toBeFocused();
+  await page.keyboard.press("Tab");
+  const conversationAction = preview.getByRole("button", {
+    name: /^Open conversation for/,
+  });
+  await expect(conversationAction).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(sidebar).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await openPage(page, "Me");
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await trigger.press("Enter");
+  await expect(panel).toBeVisible();
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();

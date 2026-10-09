@@ -288,6 +288,7 @@ export function SessionShare({
     // remain with their owners; starting over is not cancellation or revocation.
     finishSessionShare(session, channel.id);
     reset();
+    if (directShare) setDetailsReload((value) => value + 1);
     setOpen(true);
   };
   const copy = async () => {
@@ -881,8 +882,8 @@ export function SessionShare({
                 />
                 {sharedDetails.ttlSeconds !== undefined && (
                   <p className="text-body-sm text-subtle">
-                    Cleanup deletes this conversation’s full history, not just
-                    future messages.
+                    This conversation is automatically archived when its
+                    duration ends. Its history is not deleted.
                   </p>
                 )}
                 <Switch

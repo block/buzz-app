@@ -379,20 +379,22 @@ export function SessionSections({
                         </MenuSubmenuPopup>
                       </MenuSubmenu>
 
-                      <MenuItem
-                        disabled={
-                          !session.canvas.available ||
-                          !!channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          )?.readOnly
-                        }
-                        onClick={() => setSessionSettings(item)}
-                      >
-                        <MenuIcon>
-                          <GearIcon size={16} />
-                        </MenuIcon>
-                        Session settings…
-                      </MenuItem>
+                      {personal && (
+                        <MenuItem
+                          disabled={
+                            !session.canvas.available ||
+                            !!channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            )?.readOnly
+                          }
+                          onClick={() => setSessionSettings(item)}
+                        >
+                          <MenuIcon>
+                            <GearIcon size={16} />
+                          </MenuIcon>
+                          Session settings…
+                        </MenuItem>
+                      )}
                     </>
                   }
                 >

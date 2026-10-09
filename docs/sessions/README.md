@@ -24,9 +24,10 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   Me placement and the obsolete Me group assignment. It does not import Me groups
   into Messages. Removing the legacy session marker makes this an ordinary Messages
   channel, even when other settings are unchanged. Public sharing explicitly
-  confirms exposure of the full history; Temporary cleanup applies to that entire
-  history. Settings changes require verified owner/admin authority and a details
-  writer; there is no separate placement-only Move fallback.
+  confirms exposure of the full history; Temporary duration automatically archives
+  the conversation without deleting its history. Settings changes require verified
+  owner/admin authority and a details writer; there is no separate placement-only
+  Move fallback.
 - Destination-link sharing in Messages remains a separate flow; see
   [sharing](sharing.md). Neither flow shares owner-private detailed agent activity
   or starts an agent merely by granting membership.
@@ -41,8 +42,9 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   with separate per-conversation Me persistence. Its main timeline remains flat.
   A single working agent's Activity indicator opens its Activity panel locally;
   multiple agents or an unavailable panel retain the chooser. Hover previews are
-  retained. Secondary conversations placed in Me keep owner-scoped explicit
-  recipients and wait for placement readiness before sending.
+  retained; Down Arrow on a single-agent indicator opens the chooser for keyboard
+  access to its conversation actions. Secondary conversations placed in Me keep
+  owner-scoped explicit recipients and wait for placement readiness before sending.
 - Canonical channel links still use the ordinary channel reader, and Me routes can
   refer to an accessible ordinary channel UUID. Routes and plugin views do not
   grant access. Disabling the Me view does not delete its channels or memberships.

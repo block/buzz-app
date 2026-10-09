@@ -90,13 +90,29 @@ function fixture(direct = false) {
     if (event.kind === 9002) {
       const value = (tag: string) =>
         event.tags.find(([name]) => name === tag)?.[1];
+      const previous = metadataEvents.get(source)?.tags ?? [];
+      const ttl = value("ttl") ?? previous.find(([tag]) => tag === "ttl")?.[1];
+      const visibility = value("visibility");
       metadataEvents.set(
         source,
         metadata(relay, source, value("name") ?? "Work", ++clock, [
           ["t", "stream"],
-          [value("visibility") === "open" ? "public" : "private"],
-          ["about", value("about") ?? ""],
-          ...(value("ttl") ? [["ttl", value("ttl") ?? ""]] : []),
+          [
+            visibility
+              ? visibility === "open"
+                ? "public"
+                : "private"
+              : previous.some(([tag]) => tag === "public")
+                ? "public"
+                : "private",
+          ],
+          [
+            "about",
+            value("about") ??
+              previous.find(([tag]) => tag === "about")?.[1] ??
+              "",
+          ],
+          ...(ttl && ttl !== "0" ? [["ttl", ttl]] : []),
         ]),
       );
       if (loseDetailsResponse) throw new Error("Lost settings response");
@@ -896,3 +912,60 @@ it.each(["grant", "details", "placement", "uncertain"] as const)(
     expect(sessionShareAttempt(t.session, source)).toBeUndefined();
   },
 );
+
+it("Start over reloads editable settings after a rejected direct share", async () => {
+  const t = fixture(true);
+  const onShared = vi.fn();
+  const { user, dialog } = await openDirect(t, { onShared });
+  t.failDetails(true);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Settings refused",
+  );
+  t.failDetails(false);
+  await user.click(within(dialog).getByRole("button", { name: "Start over" }));
+  const name = await within(dialog).findByRole("textbox", { name: "Name" });
+  await waitFor(() => expect(name).toBeEnabled());
+  expect(name).toHaveValue("Work");
+  const share = within(dialog).getByRole("button", { name: "Share" });
+  expect(share).toBeEnabled();
+  await user.click(share);
+  await waitFor(() => expect(onShared).toHaveBeenCalledOnce());
+});
+
+it("Start over can edit promoted settings after placement fails without replaying grants or TTL", async () => {
+  const t = fixture(true);
+  const onShared = vi.fn();
+  const { user, dialog } = await openDirect(t, { onShared });
+  await user.type(
+    within(dialog).getByRole("combobox", { name: "Find people" }),
+    "Aria",
+  );
+  await user.click(await within(dialog).findByRole("option", { name: /Aria/ }));
+  await user.click(within(dialog).getByRole("radio", { name: /Temporary/ }));
+  t.placement.mockRejectedValueOnce(new Error("Placement refused"));
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Placement refused",
+  );
+  expect(t.channel()?.channelType).toBe("stream");
+  await user.click(within(dialog).getByRole("button", { name: "Start over" }));
+  const name = await within(dialog).findByRole("textbox", { name: "Name" });
+  await waitFor(() => expect(name).toBeEnabled());
+  expect(
+    within(dialog).getByRole("radio", { name: /Temporary/ }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.clear(name);
+  await user.type(name, "Shared work");
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(onShared).toHaveBeenCalledOnce());
+  expect(t.published.map(({ kind }) => kind)).toEqual([9000, 9002, 9002]);
+  expect(t.published[2]?.tags).toEqual([
+    ["h", source],
+    ["name", "Shared work"],
+    ["about", ""],
+  ]);
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]);
+  expect((await t.session.channelDetails.load(source)).ttlSeconds).toBe(604800);
+  expect(sessionShareAttempt(t.session, source)).toBeUndefined();
+});

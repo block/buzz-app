@@ -16,8 +16,8 @@ is still private, saves the settings with signed fresh authority/readback, then
 removes Me placement and opens Messages. The standalone session marker becomes an
 empty description so normal Messages behavior applies. A default Share therefore
 writes metadata once; unchanged visibility and TTL are omitted. Public sharing
-requires a second confirmation of history exposure. The Temporary control warns
-that cleanup deletes existing history as well as future messages.
+requires a second confirmation of history exposure. The Temporary control explains
+that expiry automatically archives the conversation; it does not delete history.
 
 A settings or placement failure retains confirmed work and frozen Retry intent.
 Confirmed grants are skipped; an uncertain details save is checked, never blindly

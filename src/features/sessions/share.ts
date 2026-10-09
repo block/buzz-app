@@ -1,4 +1,3 @@
-import { sessionMetadata } from "./metadata";
 import type { ChannelDetailsDraft } from "../relay/channel-details-protocol";
 import { addChannelMember, canShareSession } from "../channel-members/members";
 import { archiveHides } from "../relay/identity-archives";
@@ -296,7 +295,6 @@ export async function applySharedChannelDetails(
     );
   if (!matches(base)) {
     if (
-      !sessionMetadata(base.description) ||
       base.name !== expected.name ||
       base.description !== expected.description ||
       base.visibility !== expected.visibility ||

@@ -237,3 +237,15 @@ it("opens a pending Me start through its original receipt after its section was 
   ).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
+
+it("opens an already-moved Me route in Messages without a placement or settings write", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Open in Messages" }));
+  expect(f.open).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ kind: "conversation", channelId: id }),
+  );
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.session.channelDetails.load).not.toHaveBeenCalled();
+});

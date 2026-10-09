@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -561,4 +562,39 @@ it("Me multiple-agent activation keeps the chooser and unavailable Activity keep
     await screen.findByRole("dialog", { name: "Working now" }),
   ).toBeVisible();
   expect(open).not.toHaveBeenCalled();
+});
+
+it("Me ArrowDown exposes retained thread navigation without opening Activity", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry()]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      clickOpensPanel
+      canOpenActivity={() => true}
+      openActivity={open}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "ArrowDown", isComposing: true });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{ArrowDown}");
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  await waitFor(() => expect(dialog).toHaveFocus());
+  expect(open).not.toHaveBeenCalled();
+  await user.tab();
+  expect(
+    within(dialog).getByRole("button", { name: "Open thread for Agent" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    `buzz://message?channel=channel&id=${root}&thread=${root}`,
+  );
+  expect(trigger).toHaveFocus();
 });

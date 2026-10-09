@@ -456,7 +456,16 @@ function SessionWork({
             </div>
           )}
           {!inMe && placement.status === "ready" && (
-            <p role="status">This conversation is in Messages.</p>
+            <div role="status">
+              <p>This conversation is in Messages.</p>
+              {navigator && (
+                <Button
+                  onClick={() => openLink(`buzz://channel/${channel.id}`)}
+                >
+                  Open in Messages
+                </Button>
+              )}
+            </div>
           )}
           <SessionColumn enabled={false}>
             <MessageManagementStatus />

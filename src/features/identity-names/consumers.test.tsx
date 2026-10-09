@@ -3,7 +3,7 @@ import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { Context } from "@deepseek-ai/cordis";
 import userEvent from "@testing-library/user-event";
@@ -34,6 +34,13 @@ import { TypingIndicator } from "../messages/TypingIndicator";
 const a = "a".repeat(64),
   b = "b".repeat(64);
 const stops: (() => void)[] = [];
+// jsdom lacks scrollIntoView; mention and search highlights reveal their rows.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 afterEach(() => {
   cleanup();
   for (const stop of stops.splice(0)) stop();
@@ -421,11 +428,6 @@ it("uses channel scope in link previews and activity, and participant scope in s
   ).toBeVisible();
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {
-  // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
   const f = fixture();
   render(
     <SearchResults

@@ -212,9 +212,9 @@ fn rename_during_pending_team_import_preserves_profile_intents() {
         .save(&prepared.id, initial.revision, rename)
         .unwrap();
     // An earlier publication receipt cannot clear either the import or rename.
-    control
+    assert!(control
         .profile_published(&prepared.id, initial.revision)
-        .unwrap();
+        .is_err());
     let target = control.creation_profile(&prepared.id).unwrap();
     assert!(target.name_pending);
     assert_eq!(target.about.as_deref(), Some("Imported description"));

@@ -158,3 +158,24 @@ it("preserves unavailable saved choices and closes a process returned after unmo
   late.resolve(process);
   await waitFor(() => expect(process.end).toHaveBeenCalled());
 });
+
+it("shows the default workspace and restores it when the field is cleared", async () => {
+  const f = fixture();
+  const save = vi.fn(async () => {});
+  render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
+  expect(screen.getByLabelText("Workspace")).toHaveValue("~/.buzz");
+  await screen.findByRole("option", { name: "Model A" });
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Test instructions" },
+  });
+  const expected = { ...defaults, instructions: "Test instructions" };
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
+  await waitFor(() => expect(screen.getByLabelText("Workspace")).toBeEnabled());
+  save.mockClear();
+  fireEvent.change(screen.getByLabelText("Workspace"), {
+    target: { value: "   " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
+});

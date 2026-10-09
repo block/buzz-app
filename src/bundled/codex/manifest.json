@@ -5,6 +5,10 @@
   "host": {
     "processes": [
       {
+        "id": "workspace",
+        "program": "pwd"
+      },
+      {
         "id": "app-server",
         "program": "codex",
         "args": ["app-server"]

@@ -453,7 +453,7 @@ it("confirms on the grid without mounting detail, cancels safely, and removes on
       data: { items: [], partial: false },
     });
   });
-  expect(screen.getByText("Deleting workflow…")).toBeVisible();
+  expect(await screen.findByText("Deleting workflow…")).toBeVisible();
   expect(screen.queryByText("Deleting…")).toBeNull();
   expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
   expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();

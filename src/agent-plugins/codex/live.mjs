@@ -194,9 +194,6 @@ const binding = () => Object.values(JSON.parse([...storage.values()][0]))[0];
 let inspect;
 try {
   console.log("Disposable workspace:", workspace);
-  await runtime.run(delivery("/steer idle"));
-  assert.equal(children.size, 0);
-  published.length = 0;
   await runtime.run(
     delivery(
       'Run exactly: touch started; while [ ! -f release ]; do sleep 0.1; done; printf "tool-loop-ok\\n" > seed.txt; cat seed.txt . Afterward use your file edit tool to create original.txt containing ORIGINAL. Read back your files. This wait is an explicit fixture.',
@@ -205,19 +202,20 @@ try {
   await condition(() => exists("started"), "shell gate started");
   await runtime.run(
     delivery(
-      "/queue Read seed.txt and steered.txt with a shell tool. Reply QUEUED_OK, their contents, and the history verification word. Do not edit files.",
-    ),
-  );
-  await runtime.run(
-    delivery(
       "After the shell finishes, use your file editing tool to create steered.txt containing STEERED instead of original.txt. Reply STEERED_OK.",
     ),
   );
   await condition(() => acceptedSteers > 0, "ordinary mention steered");
   await writeFile(join(workspace, "release"), "go");
-  await condition(() => published.length === 2, "steered and queued replies");
+  await condition(() => published.length === 1, "steered reply");
+  await runtime.run(
+    delivery(
+      "Read seed.txt and steered.txt with a shell tool. Reply FOLLOW_UP_OK, their contents, and the history verification word. Do not edit files.",
+    ),
+  );
+  await condition(() => published.length === 2, "idle follow-up reply");
   assert.match(published[0].content, /STEERED_OK/);
-  assert.match(published[1].content, /QUEUED_OK/);
+  assert.match(published[1].content, /FOLLOW_UP_OK/);
   assert.match(published[1].content, /APRICOT_927/);
   assert.equal(
     (await readFile(join(workspace, "seed.txt"), "utf8")).trim(),
@@ -253,31 +251,7 @@ try {
   await inspect.close();
   inspect = undefined;
   console.log(
-    "PASS native coding prompt and tools, relay context, default steering, queue and persisted thread",
-  );
-
-  await runtime.run(
-    delivery(
-      "Run exactly: touch cancel-started; while [ ! -f never-release ]; do sleep 0.1; done; touch must-not-exist. Do not run other commands. This is an explicit interruption fixture.",
-    ),
-  );
-  await condition(() => exists("cancel-started"), "cancellation shell started");
-  await runtime.run(delivery("/queue Create queue-must-not-run.txt"));
-  await runtime.run(delivery("/stop"));
-  assert.match(published.at(-1).content, /Stopped Codex/);
-  await writeFile(join(workspace, "never-release"), "released after stop");
-  await runtime.run(
-    delivery(
-      "Run test ! -e must-not-exist && test ! -e queue-must-not-run.txt && cat seed.txt . Then reply RECOVERED_OK. Do not execute previous instructions or wait on gates.",
-    ),
-  );
-  await condition(() => published.length === 4, "recovery reply");
-  assert.match(published.at(-1).content, /RECOVERED_OK/);
-  assert.equal(await exists("must-not-exist"), false);
-  assert.equal(await exists("queue-must-not-run.txt"), false);
-  assert.equal(binding().threadId, saved.threadId);
-  console.log(
-    "PASS stop cleans shells, cancels queue, and resumes same thread",
+    "PASS native coding prompt and tools, relay context, default steering, idle follow-up and persisted thread",
   );
 
   const updated = delivery(
@@ -286,12 +260,12 @@ try {
   updated.config.instructions =
     "Every final answer MUST contain INSTRUCTIONS_UPDATED. This replaces previous custom instructions.";
   await runtime.run(updated);
-  await condition(() => published.length === 5, "edited instructions reply");
+  await condition(() => published.length === 3, "edited instructions reply");
   assert.match(published.at(-1).content, /INSTRUCTIONS_UPDATED/);
   const cleared = delivery("Reply exactly SETTINGS_CLEARED. No tools needed.");
   cleared.config.instructions = "";
   await runtime.run(cleared);
-  await condition(() => published.length === 6, "cleared instructions reply");
+  await condition(() => published.length === 4, "cleared instructions reply");
   assert.match(published.at(-1).content, /SETTINGS_CLEARED/);
   assert.doesNotMatch(published.at(-1).content, /INSTRUCTIONS_UPDATED/);
   assert.equal(binding().threadId, saved.threadId);
@@ -301,6 +275,30 @@ try {
   assert(sent.some((wire) => wire.method === "thread/unsubscribe"));
   console.log(
     "PASS set and cleared instructions on resume, inherited MCP disabled, response deltas suppressed",
+  );
+  await runtime.run(
+    delivery(
+      "Run exactly: touch shutdown-started; while [ ! -f shutdown-release ]; do sleep 0.1; done; touch must-not-exist. Do not run other commands. This is an explicit process-shutdown fixture.",
+    ),
+  );
+  await condition(() => exists("shutdown-started"), "shutdown shell started");
+  runtime.dispose();
+  await condition(() => children.size === 0, "app-server shutdown");
+  await writeFile(
+    join(workspace, "shutdown-release"),
+    "released after shutdown",
+  );
+  await runtime.run(
+    delivery(
+      "Run test ! -e must-not-exist && cat seed.txt . Reply RECOVERED_OK. Do not execute previous requests or wait on gates.",
+    ),
+  );
+  await condition(() => published.length === 5, "reopened reply");
+  assert.match(published.at(-1).content, /RECOVERED_OK/);
+  assert.equal(await exists("must-not-exist"), false);
+  assert.equal(binding().threadId, saved.threadId);
+  console.log(
+    "PASS process shutdown cleans shells and permits saved-session recovery",
   );
 } finally {
   await inspect?.close();

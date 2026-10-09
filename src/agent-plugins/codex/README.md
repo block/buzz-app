@@ -33,29 +33,16 @@ BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
 5. Reply in the same thread: `@Codex Test read hello.txt and remind me what you
    wrote`. Expect the same Codex session and correct file contents.
 
-While work is active, ordinary mentions steer it, incorporating the follow-up into
-the ongoing task. Messages arriving during startup wait for the turn to start
-and then steer it; idle and stopped conversations resume the saved session.
-Explicit controls follow the mention, for example `@Codex Test /stop`:
+While work is active, new mentions steer it, incorporating the follow-up into the
+ongoing task. Messages arriving during startup wait for the turn to start and
+then steer it; idle conversations continue the saved session. If a turn finishes
+while a follow-up is being delivered, the follow-up starts another turn.
+The final reply targets the latest accepted steering message.
 
-- `/queue <request>` explicitly waits for the active turn to finish.
-- `/steer <request>` explicitly steers the active turn; the final reply targets the last
-  accepted steering message. Rejected steering gets feedback.
-- `/stop` interrupts the turn, waits for background terminals to terminate,
-  verifies cleanup, and cancels queued requests. A new mention can continue.
-- `/reset` discards the conversation binding after work stops. The next mention
-  starts a fresh Codex thread; Codex's stored history is retained.
-
-For cancellation, ask it to run `sleep 30` before creating a file, then send
-`/stop` after the command appears in the Codex tab. Expect a stopped reply, no
-later file, and successful response to a fresh mention. For settings, change
-instructions to require a marker, save, and send another mention in the same
-thread. Expect the marker. Queued work keeps its original settings.
-
-After upgrading from the earlier plugin, use `/stop` if work is active, then
-`/reset` once in each existing conversation. Earlier sessions stored the old Buzz
-base prompt; reset lets Codex use its native coding prompt. Old Codex history
-remains on disk.
+There are no special chat commands. Asking the agent to stop is a steering request
+that Codex interprets. Disabling the plugin ends its processes. For settings,
+change instructions to require a marker, save, and send another mention after the
+current turn finishes. Expect the marker.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
@@ -71,9 +58,9 @@ bin/node src/agent-plugins/codex/live.mjs
 
 The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell
-and file tools, the native coding prompt, conversation context, default steering, queued
-follow-ups, cancellation of background shells, recovery, saved-thread reuse,
-changed instructions, and disabled inherited MCP tools. Set
+and file tools, the native coding prompt, conversation context, default steering,
+idle follow-ups, process shutdown, saved-thread reuse, changed and cleared
+instructions, and disabled inherited MCP tools. Set
 `BUZZ_CODEX_TEST_MODEL` to another available model if needed. It prints only
 sanitized outcomes; it does not save raw protocol or session logs.
 
@@ -81,7 +68,8 @@ Automated component tests cover model/effort choices, unavailable saved choices,
 workspace validation, pending saves, and closing a process returned after unmount.
 Protocol tests cover chunking, request correlation, interactive request rejection,
 malformed output, and consumer exception containment. Runtime tests cover
-conversation routing, controls, persistence, defaults, failures, and cleanup.
+conversation routing, ordinary message delivery, persistence, defaults, failures,
+and cleanup.
 
 ## Limits and boundaries
 
@@ -96,9 +84,9 @@ conversation routing, controls, persistence, defaults, failures, and cleanup.
 - Shared Agent Activity integration is deferred because this Agents2 delivery
   contract has no live-activity API. The Codex tab shows conversation status and
   the latest command/output. Responses are published once, without text streaming.
-- Each conversation allows 32 queued requests. Turns have a 29-minute deadline;
+- Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.
-- Uses experimental app-server APIs for model discovery and background terminal
+- Uses experimental app-server APIs for model discovery, application context, and terminal
   cleanup. The live check was exercised with `codex-cli 0.153.0` on macOS.
 - Linux and Windows native behavior, packaged app behavior, full relay signing,
   and human acceptance require separate validation. A forced native kill can
@@ -106,5 +94,5 @@ conversation routing, controls, persistence, defaults, failures, and cleanup.
   process implementation.
 
 Keep the PR in draft until the agent and human exercise the native mention/reply
-flow, including signer behavior and cancellation. Do not add
+flow, including signer behavior and process shutdown. Do not add
 `buzz-review-completed` before the repository's review checklist holds.

@@ -28,17 +28,13 @@ type Active = {
   threadId?: string;
   turnId?: string;
   ready: Promise<void>;
-  done: Promise<void>;
   steering: Promise<void>;
   reply: Request;
-  cancelled: boolean;
   finished: boolean;
 };
 type Lane = {
   tail: Promise<void>;
   active?: Active;
-  epoch: number;
-  queued: number;
 };
 type Entry = {
   storageKey: string;
@@ -156,11 +152,10 @@ export class CodexRuntime {
     return entry;
   }
   private storageKey(pubkey: string) {
-    return `buzz.codex.sessions.v1:${this.scope}:${pubkey}`;
+    return `buzz.codex.sessions.v2:${this.scope}:${pubkey}`;
   }
-  private save(request: Request, entry: Entry, key: string, saved?: Saved) {
-    if (saved) entry.saved[key] = saved;
-    else delete entry.saved[key];
+  private save(request: Request, entry: Entry, key: string, saved: Saved) {
+    entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
     try {
@@ -215,88 +210,28 @@ export class CodexRuntime {
       return;
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
-    let text = textOf(request.event, agent.name);
-    const command = /^\/(steer|queue|stop|reset)(?:\s|$)/.exec(text)?.[1];
-    if (command) text = text.replace(/^\/\w+\s*/, "");
-    if (command === "steer" && !text) {
-      await this.publish(request, "Add a message after /steer.");
-      return;
-    }
-    // Idle controls need no app-server startup.
-    const existing = this.entries.get(agent.pubkey);
-    const previous = existing?.lanes.get(key);
-    if (command === "steer" && !previous?.active) {
-      await this.publish(
-        request,
-        "Codex is not running a turn here. Send a regular mention to start one.",
-      );
-      return;
-    }
-    if (command === "stop" && !previous?.active) {
-      if (previous) previous.epoch++;
-      await this.publish(
-        request,
-        "Codex is not running a turn here. Cancelled queued work.",
-      );
-      return;
-    }
-    const entry = existing ?? this.entry(request);
+    const text = textOf(request.event, agent.name);
+    const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: Promise.resolve(), epoch: 0, queued: 0 };
+      lane = { tail: Promise.resolve() };
       entry.lanes.set(key, lane);
     }
-    if (command === "reset") {
-      if (lane.active) {
-        await this.publish(
-          request,
-          "Use /stop, then /reset once Codex has stopped.",
-        );
-        return;
-      }
-      lane.epoch++;
-      this.save(request, entry, key);
-      await this.publish(
-        request,
-        "Codex session reset. Your next mention starts a fresh session; previous Codex history is retained.",
-      );
-      return;
-    }
-    if (command === "stop" && lane.active) {
-      const active = lane.active;
-      lane.epoch++;
-      active.cancelled = true;
-      active.reply = request;
-      await active.ready.catch(() => undefined);
-      if (active.threadId && active.turnId)
-        await entry.rpc
-          .request("turn/interrupt", {
-            threadId: active.threadId,
-            turnId: active.turnId,
-          })
-          .catch(() => entry.rpc.close());
-      await active.done;
-      return;
-    }
-    if (
-      (command === "steer" || !command) &&
-      lane.active &&
-      !lane.active.cancelled
-    ) {
+    if (lane.active) {
       const active = lane.active;
       // Startup and history reads stay ordered without holding Agents2 delivery.
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
-          if (entry.abort.signal.aborted || active.cancelled) return;
-          if (active.finished && !command) {
-            this.enqueue(request, text, key, lane, entry);
+          if (entry.abort.signal.aborted) return;
+          if (active.finished) {
+            this.start(request, text, key, lane, entry);
             return;
           }
           const context = await this.history(request, entry.abort.signal);
-          if (entry.abort.signal.aborted || active.cancelled) return;
-          if (active.finished && !command) {
-            this.enqueue(request, text, key, lane, entry);
+          if (entry.abort.signal.aborted) return;
+          if (active.finished) {
+            this.start(request, text, key, lane, entry);
             return;
           }
           await entry.rpc.request("turn/steer", {
@@ -308,10 +243,10 @@ export class CodexRuntime {
           });
           active.reply = request;
         } catch (error) {
-          if (entry.abort.signal.aborted || active.cancelled) return;
+          if (entry.abort.signal.aborted) return;
           // A completion racing the request means this is the next ordinary turn.
-          if (!command && message(error) === "no active turn to steer") {
-            this.enqueue(request, text, key, lane, entry);
+          if (message(error) === "no active turn to steer") {
+            this.start(request, text, key, lane, entry);
             return;
           }
           await this.publish(
@@ -325,39 +260,25 @@ export class CodexRuntime {
       );
       return;
     }
-    this.enqueue(request, text, key, lane, entry);
+    this.start(request, text, key, lane, entry);
   }
-  private enqueue(
+  private start(
     request: Request,
     text: string,
     key: string,
     lane: Lane,
     entry: Entry,
   ) {
-    if (lane.queued >= 32) {
-      void this.publish(
-        request,
-        "Codex's conversation queue is full. Try again when it finishes some work.",
-      ).catch((error) => console.error("Codex queue feedback failed", error));
-      return;
-    }
-    lane.queued++;
-    const epoch = lane.epoch;
     const current = lane;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
-        current.queued--;
-        if (entry.abort.signal.aborted || current.epoch !== epoch) return;
+        if (entry.abort.signal.aborted) return;
         await this.execute(request, text, key, current, entry);
       });
     lane.tail = job;
-    this.status(
-      request.agent.pubkey,
-      key,
-      lane.active ? "Working · follow-up queued" : "Starting",
-    );
-    // Agents2 must be free to deliver /steer and other conversations now.
+    this.status(request.agent.pubkey, key, "Starting");
+    // Agents2 can deliver follow-ups and other conversations immediately.
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {
@@ -433,18 +354,13 @@ export class CodexRuntime {
   ) {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
-    let done!: () => void;
     const active: Active = {
       ready: new Promise((resolve, reject) => {
         ready = resolve;
         notReady = reject;
       }),
-      done: new Promise((resolve) => {
-        done = resolve;
-      }),
       steering: Promise.resolve(),
       reply: request,
-      cancelled: false,
       finished: false,
     };
     void active.ready.catch(() => undefined);
@@ -510,7 +426,6 @@ export class CodexRuntime {
         else finish(p.turn.status);
       }
     });
-    let resuming = false;
     try {
       const rpc = await entry.opening;
       signal.throwIfAborted();
@@ -560,7 +475,7 @@ export class CodexRuntime {
           "features.apps": false,
         },
       };
-      resuming = existing?.workspace === workspace;
+      const resuming = existing?.workspace === workspace;
       const started = await rpc.request<{
         thread: { id: string; cwd: string };
       }>(resuming ? "thread/resume" : "thread/start", {
@@ -569,7 +484,6 @@ export class CodexRuntime {
           ? { threadId: existing?.threadId, excludeTurns: true }
           : {}),
       });
-      resuming = false;
       active.threadId = started.thread.id;
       signal.throwIfAborted();
       this.save(request, entry, key, {
@@ -582,7 +496,6 @@ export class CodexRuntime {
       });
       const context = await this.history(request, signal);
       signal.throwIfAborted();
-      if (active.cancelled) throw new Error("Stopped during startup");
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
@@ -604,13 +517,13 @@ export class CodexRuntime {
       const status = await completed;
       await active.steering;
       signal.throwIfAborted();
-      if (status === "interrupted" || active.cancelled) {
+      if (status === "interrupted") {
         await this.terminals(rpc, active.threadId);
         await this.publish(
           active.reply,
-          "Stopped Codex and cancelled queued work. Send another mention to continue.",
+          "Codex’s turn was interrupted. Send another mention to continue.",
         );
-        this.status(agent.pubkey, key, "Stopped");
+        this.status(agent.pubkey, key, "Interrupted");
       } else {
         await this.publish(
           active.reply,
@@ -640,10 +553,7 @@ export class CodexRuntime {
         }
       }
       if (!entry.abort.signal.aborted) {
-        const reason =
-          active.cancelled && !active.turnId
-            ? "Stopped Codex during startup and cancelled queued work."
-            : `Codex could not finish: ${message(error)}.${resuming ? " Use /reset to start a fresh session." : ""}`;
+        const reason = `Codex could not finish: ${message(error)}.`;
         await this.publish(active.reply, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
@@ -659,7 +569,6 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => entry.rpc.close());
       if (lane.active === active) delete lane.active;
-      done();
     }
   }
 }

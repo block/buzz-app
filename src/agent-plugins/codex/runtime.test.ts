@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 /** External app-server protocol fixture: turns complete only when released by
- * the test. The runtime owns routing, queueing, cancellation and publication. */
+ * the test. The runtime owns routing, steering, cleanup and publication. */
 function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
@@ -206,6 +206,17 @@ function fixture(
     } as unknown as Parameters<typeof apply>[0]);
   }
   const starts = () => sent.filter((wire) => wire.method === "turn/start");
+  const interrupt = () => {
+    const index = starts().length - 1;
+    const params = starts()[index]?.params as { threadId: string };
+    emit({
+      method: "turn/completed",
+      params: {
+        threadId: params.threadId,
+        turn: { id: `turn-${index + 1}`, status: "interrupted" },
+      },
+    });
+  };
   const complete = (index = starts().length - 1, text = "DONE") => {
     const params = starts()[index]?.params as { threadId: string };
     emit({
@@ -242,27 +253,22 @@ function fixture(
     delivery,
     starts,
     complete,
+    interrupt,
     snapshot,
     exits,
   };
 }
-it("hands over promptly, queues one conversation, and runs another independently on one server", async () => {
+it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("@Codex first"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.publish).not.toHaveBeenCalled();
-  await f.runtime.run(f.delivery("@Codex /queue queued"));
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   expect(f.spawn).toHaveBeenCalledTimes(1);
   f.complete(0, "FIRST");
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
   f.complete(1, "OTHER");
-  f.complete(2, "QUEUED");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
-  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
-    1,
-  );
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
   const started = f.sent.find((wire) => wire.method === "thread/start")
     ?.params as Record<string, unknown>;
   expect(started).toMatchObject({
@@ -325,21 +331,20 @@ it("serializes steering history reads and waits for them before final publicatio
     tags: expect.arrayContaining([["e", "3".padStart(64, "0"), "", "reply"]]),
   });
 });
-it("stop cleans background terminals, drops queued work, and permits same-thread recovery", async () => {
+it("cleans background terminals on server interruption and permits same-thread recovery", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.runtime.run(f.delivery("/queue should never run"));
-  await f.runtime.run(f.delivery("/stop"));
+  f.interrupt();
   await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
   );
   expect(
     f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
   ).toBe(true);
   expect(f.starts()).toHaveLength(1);
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("Stopped Codex"),
+    content: expect.stringContaining("turn was interrupted"),
   });
   await f.runtime.run(f.delivery("recover"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
@@ -349,7 +354,7 @@ it("stop cleans background terminals, drops queued work, and permits same-thread
     1,
   );
 });
-it("honors stop while the native spawn is pending", async () => {
+it("closes a native process returned after runtime disposal", async () => {
   const f = fixture();
   const gate = deferred<Awaited<ReturnType<typeof f.spawn>>>();
   const started = deferred<void>();
@@ -361,28 +366,25 @@ it("honors stop while the native spawn is pending", async () => {
   });
   await f.runtime.run(f.delivery("work"));
   await started.promise;
-  const stopping = f.runtime.run(f.delivery("/stop"));
+  f.runtime.dispose();
   try {
     expect(f.starts()).toHaveLength(0);
   } finally {
     gate.resolve(f.process);
   }
-  await stopping;
+  await f.exits.promise;
   expect(f.starts()).toHaveLength(0);
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("Stopped Codex during startup"),
-  });
+  expect(f.process.end).toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
 });
-it("ignores non-owner messages and answers idle controls without spawning", async () => {
+it("ignores non-owner messages without spawning", async () => {
   const f = fixture();
   const other = f.delivery("work");
   if (other.trigger.type !== "timer")
     other.trigger.event.pubkey = "f".repeat(64);
   await f.runtime.run(other);
-  await f.runtime.run(f.delivery("/steer idle"));
-  await f.runtime.run(f.delivery("/stop"));
   expect(f.spawn).not.toHaveBeenCalled();
-  expect(f.publish).toHaveBeenCalledTimes(2);
+  expect(f.publish).not.toHaveBeenCalled();
 });
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();
@@ -412,11 +414,12 @@ it("ends the server on community change and suppresses a late final answer", asy
   expect(f.publish).not.toHaveBeenCalled();
 });
 
-it("does not claim a successful stop when Codex reports surviving terminals", async () => {
+it("reports an interruption cleanup failure when Codex reports surviving terminals", async () => {
   const f = fixture([{ processId: "42" }]);
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.runtime.run(f.delivery("/stop"));
+  f.interrupt();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining(
       "background terminals could not be stopped",
@@ -473,12 +476,12 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledTimes(3));
 });
 
-it("waits for terminal termination after asynchronous clean acknowledgement before reporting stopped", async () => {
+it("waits for terminal termination after asynchronous clean acknowledgement before reporting interruption", async () => {
   const gate = deferred<void>();
   const f = fixture([{ processId: "42" }], gate.promise);
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const stopping = f.runtime.run(f.delivery("/stop"));
+  f.interrupt();
   try {
     await vi.waitFor(() =>
       expect(
@@ -489,29 +492,22 @@ it("waits for terminal termination after asynchronous clean acknowledgement befo
   } finally {
     gate.resolve();
   }
-  await stopping;
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("Stopped Codex"),
+    content: expect.stringContaining("turn was interrupted"),
   });
   expect(f.process.end).not.toHaveBeenCalled();
 });
 
-it("publishes workspace and empty steering errors without starting work", async () => {
+it("publishes workspace errors without starting work", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("hello"), config: {} });
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("absolute workspace"),
   });
   expect(f.spawn).not.toHaveBeenCalled();
-  await f.runtime.run(f.delivery("work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.runtime.run(f.delivery("/steer"));
-  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
-    content: expect.stringContaining("Add a message"),
-  });
-  f.complete();
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
 });
+
 it("publishes every answer part in order and excludes commentary", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -607,4 +603,47 @@ it("starts the next turn when completion races a plain follow-up's history read"
   f.complete(1, "SECOND");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
   expect(f.publish.mock.calls[1]?.[0]).toMatchObject({ content: "SECOND" });
+});
+
+it.each(["/queue", "/stop", "/steer", "/reset"])(
+  "delivers %s as ordinary steering text",
+  async (command) => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const content = `${command} ordinary text`;
+    await f.runtime.run(f.delivery(content));
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    const steer = f.sent.find((wire) => wire.method === "turn/steer")
+      ?.params as { input: { text: string }[] };
+    expect(steer.input[0]?.text).toContain(
+      `Request: ${JSON.stringify(content)}`,
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    f.complete();
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  },
+);
+it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
+  const f = fixture();
+  f.storage.set(
+    `buzz.codex.sessions.v1:${scope}:${pubkey}`,
+    JSON.stringify({
+      [JSON.stringify(["channel", root])]: {
+        threadId: "legacy-thread",
+        workspace: "/tmp/codex-test",
+      },
+    }),
+  );
+  await f.runtime.run(f.delivery("new work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    0,
+  );
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });

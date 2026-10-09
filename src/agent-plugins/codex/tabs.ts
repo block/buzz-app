@@ -189,7 +189,7 @@ export function createTabs(
       h(
         "p",
         { className: "buzz-field-description" },
-        "Only your messages trigger this agent. New mentions steer active work; /queue waits for the turn to finish, /stop cancels it, and /reset starts a fresh session. Event watches work for your messages; timers are not supported yet.",
+        "Only your messages trigger this agent. New mentions steer active work and continue the same session when idle. Event watches work for your messages; timers are not supported yet.",
       ),
     );
   }
@@ -369,7 +369,7 @@ export function createTabs(
           onChange: (event: { target: { value: string } }) =>
             set({ instructions: event.target.value }),
         }),
-        "Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn; queued requests keep their original settings. A workspace change starts a fresh session.",
+        "Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn. A workspace change starts a fresh session.",
       ),
       error
         ? h("p", { role: "alert", className: "buzz-field-error" }, error)

@@ -84,6 +84,14 @@ test("same-ID builds preserve catalog metadata, lifecycle CSS and host compatibi
   }
 });
 
+test("React namespace shims use the production runtime exports, not Node's synthetic development names", async () => {
+  const result = await build("inbox", join(directory, "react-runtime"));
+  const code = await readFile(join(result.out, "plugin.js"), "utf8");
+  expect(code).toContain('"useState"');
+  expect(code).not.toContain('"act"');
+  expect(code).not.toContain('"captureOwnerStack"');
+});
+
 test("plugin-only edits preserve matching host identity and generate utilities without copying host CSS", async () => {
   const out = join(directory, "utilities");
   const before = await build("inbox", out);

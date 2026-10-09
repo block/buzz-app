@@ -160,10 +160,26 @@ export function bundledHostPlugin(directory = root) {
 }
 
 async function namespaceExports(path, directory) {
-  if (path === "react" || path === "react/jsx-runtime")
-    return Object.keys(await import(path)).filter(
-      (name) => name !== "module.exports",
+  if (path === "react" || path === "react/jsx-runtime") {
+    // Node's CJS namespace includes synthetic names from both conditional files
+    // (e.g. development-only act). Use actual production values: Vite's built
+    // host has that table, and a development host is a compatible superset.
+    return JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import runtime from ${JSON.stringify(path)}; console.log(JSON.stringify(["default", ...Object.keys(runtime)]));`,
+        ],
+        {
+          cwd: directory,
+          env: { ...process.env, NODE_ENV: "production" },
+          encoding: "utf8",
+        },
+      ),
     );
+  }
   // Inspect the build's public export table without evaluating host/browser code.
   const result = await build({
     root: directory,

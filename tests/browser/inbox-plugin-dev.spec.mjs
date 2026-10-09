@@ -1,9 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { selectSettingsSection } from "./navigation.mjs";
-import { buildInboxDev } from "../../scripts/plugin-dev.mjs";
-import { nativeFixture } from "./native-fixture.mjs";
-import { run } from "./run-command.mjs";
+import { selectSettingsSection, openPage } from "./navigation.mjs";
+import { buildBundledDev } from "../../scripts/plugin-dev.mjs";
+import { nativeFixtureSession } from "./native-fixture.mjs";
 import {
   cp,
   mkdtemp,
@@ -28,51 +27,44 @@ test.use({
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
 // Browser-only: a real built blob module shares React, drafts/attachments and CSS
-// with the production host through import, reload and revert. Native filesystem
-// operations use the real Rust manager; the OS picker/IPC wire is a fixture.
-test("Inbox Dev shares host state across two revisions and rejects mismatched hosts", async ({
+// with the production host through attach, reload and revert. Native filesystem
+// operations use one real Rust manager session; the OS picker/IPC and native
+// activation tokens are fixtures, not native WebView/process acceptance.
+test("same-ID Inbox development shares host state across revisions and rejects mismatched hosts", async ({
   page,
   app,
 }) => {
   const temp = await mkdtemp(join(tmpdir(), "inbox-dev-browser-"));
+  let native;
   try {
     const out = join(temp, "plugin");
-    const built = await buildInboxDev({ out });
-    const original = await readFile(join(out, "plugin.js"), "utf8");
-    const binary = nativeFixture();
-    const native = (op, ...args) =>
-      JSON.parse(run(binary, [join(temp, "home"), op, ...args]));
-    await page.exposeFunction("inboxPluginNative", (command, args = {}) => {
-      if (command === "plugin_catalog") return native("catalog");
-      if (command === "plugin_change")
-        return native("change", args.action, args.id);
-      if (command === "plugin_module")
-        return native("module", args.id, args.revision).code;
-      if (command === "plugin_reload") return native("reload", args.id);
-      if (command === "plugin_import_folder")
-        return {
-          token: "fixture-folder",
-          source: out,
-          commit: null,
-          warnings: [],
-          candidates: [
-            {
-              path: ".",
-              manifest: {
-                id: "local.inbox-dev",
-                name: "Inbox Dev",
-                apiVersion: 1,
-              },
-              revision: "preview",
-            },
-          ],
-        };
-      if (command === "plugin_import_install") return native("install", out);
-      if (command === "plugin_import_discard") return;
-      if (command === "deep_link_take") return [];
-      if (command === "deep_link_watch") return;
-      throw new Error(`Unexpected fixture IPC: ${command}`);
-    });
+    const built = await buildBundledDev({ plugin: "inbox", out });
+    native = nativeFixtureSession(join(temp, "home"));
+    let activation = 0;
+    const active = new Map();
+    await page.exposeFunction(
+      "inboxPluginNative",
+      async (command, args = {}) => {
+        if (command === "plugin_activation_begin") {
+          const token = ++activation;
+          active.set(token, args.id);
+          return token;
+        }
+        if (command === "plugin_activation_retire") {
+          expect(active.get(args.activation)).toBe(args.id);
+          active.delete(args.activation);
+          return;
+        }
+        if (command === "deep_link_take") return [];
+        if (command === "deep_link_watch") return;
+        return native.request(command, {
+          ...args,
+          ...(command === "plugin_development_folder"
+            ? { directory: out }
+            : {}),
+        });
+      },
+    );
     await page.addInitScript(() => {
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = {
@@ -106,22 +98,38 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
     });
     await hostEditor.fill("Host draft");
     await settings();
-    await toggle("Inbox").click();
-    await button(page, "Load from folder").click();
-    await button(page, "Install plugin").click();
-    await expect(toggle("Inbox Dev")).not.toBeChecked();
-    await button(page, "Close preview").click();
-    await toggle("Inbox Dev").click();
+    const row = page.locator("article").filter({ has: toggle("Inbox") });
+    await expect(toggle("Inbox")).toBeChecked();
+    await row
+      .getByRole("button", { name: "Use local dev build", exact: true })
+      .click();
+    await expect(
+      row.getByRole("region", { name: "Local build preview for Inbox" }),
+    ).toContainText("buzz.inbox");
+    await row
+      .getByRole("button", { name: "Attach local build", exact: true })
+      .click();
+    await expect(row.getByRole("status")).toHaveText(
+      "Local dev build · this launch only",
+    );
+    await expect(toggle("Inbox")).toBeChecked();
+    await expect(toggle("Inbox")).toHaveCount(1);
+    await expect(row.getByRole("alert")).toHaveCount(0);
+    await expect(
+      page.locator('head style[data-buzz-plugin="buzz.inbox"]'),
+    ).toHaveCount(1);
     await page
       .getByRole("complementary", { name: "Settings sidebar" })
       .getByRole("button", { name: "Back", exact: true })
       .click();
-    await button(page, "Inbox").click();
+    await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
     await expect(
       inbox.getByText("Unread reply 1", { exact: true }),
     ).toBeVisible();
-    await expect(button(page, "Inbox")).toHaveCount(1);
+    await expect(
+      page.getByRole("region", { name: "Inbox", exact: true }),
+    ).toHaveCount(1);
     // The draft created by the host composer must be usable in the plugin.
     // Use the actual host composer to prove same-window draft notifications;
     // do not expose additional host exports just for the test.
@@ -134,15 +142,15 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
       exact: true,
     });
     await expect(editor).toContainText("Host draft");
-    await editor.fill("Edited in Inbox Dev");
+    await editor.fill("Edited in local Inbox");
     await button(inbox, "Open in origin").click();
-    await expect(hostEditor).toContainText("Edited in Inbox Dev");
-    await button(page, "Inbox").click();
+    await expect(hostEditor).toContainText("Edited in local Inbox");
+    await openPage(page, "Inbox");
     await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
-    await expect(editor).toContainText("Edited in Inbox Dev");
+    await expect(editor).toContainText("Edited in local Inbox");
     await inbox.getByLabel("Choose attachments").setInputFiles({
       name: "notes.txt",
       mimeType: "text/plain",
@@ -151,22 +159,27 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
     await expect(inbox.getByText("notes.txt", { exact: true })).toBeVisible();
     // The lifecycle-owned stylesheet must be removed before the next revision.
     const styleCount = () =>
-      page.locator('head style[data-buzz-plugin="local.inbox-dev"]').count();
+      page.locator('head style[data-buzz-plugin="buzz.inbox"]').count();
     const beforeReload = await styleCount();
     expect(beforeReload).toBe(1);
     // Rebuild an actual source edit without changing the running host checkout.
     const root = fileURLToPath(new URL("../../", import.meta.url));
     const checkout = join(temp, "checkout");
-    for (const path of [
-      "src",
-      "scripts",
-      "vite.config.ts",
-      "package.json",
-      "pnpm-lock.yaml",
-      "postcss.config.js",
-      ".gitignore",
-    ])
+    const files = execFileSync("git", ["ls-files", "-z"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\0")
+      .filter(Boolean);
+    for (const path of files) {
+      if (
+        !/^(src\/|scripts\/|crates\/|src-tauri\/|vite.config.ts$|package.json$|pnpm-lock.yaml$|postcss.config.js$|.gitignore$)/.test(
+          path,
+        )
+      )
+        continue;
       await cp(join(root, path), join(checkout, path), { recursive: true });
+    }
     await symlink(
       join(root, "node_modules"),
       join(checkout, "node_modules"),
@@ -201,22 +214,33 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
         `className={\`\${styles.page} ${utility}\`}`,
       ),
     );
-    const second = await buildInboxDev({ directory: checkout, out });
+    const second = await buildBundledDev({
+      plugin: "inbox",
+      directory: checkout,
+      out,
+    });
     expect(second.buildId).toBe(built.buildId);
     await settings();
-    await toggle("Inbox Dev").click();
-    expect(await styleCount()).toBe(0);
-    await page
-      .locator("article")
-      .filter({ has: toggle("Inbox Dev") })
-      .getByRole("button", { name: "Reload", exact: true })
-      .click();
-    await toggle("Inbox Dev").click();
+    // Disable/re-enable proves CSS is activation-owned, not just overwritten.
+    await toggle("Inbox").click();
+    await expect(
+      page.locator('head style[data-buzz-plugin="buzz.inbox"]'),
+    ).toHaveCount(0);
+    await toggle("Inbox").click();
+    await expect(
+      page.locator('head style[data-buzz-plugin="buzz.inbox"]'),
+    ).toHaveCount(1);
+    const firstStyle = await page
+      .locator('head style[data-buzz-plugin="buzz.inbox"]')
+      .elementHandle();
+    // Reload an enabled same-ID selection, with no separate Inbox Dev toggle.
+    await row.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(toggle("Inbox")).toBeChecked();
     await page
       .getByRole("complementary", { name: "Settings sidebar" })
       .getByRole("button", { name: "Back", exact: true })
       .click();
-    await button(page, "Inbox Dev B").click();
+    await openPage(page, "Inbox Dev B");
     await expect(inbox.locator(`[class~="${utility}"]`)).toHaveCSS(
       "word-spacing",
       "3.7px",
@@ -225,42 +249,61 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
-    await expect(editor).toContainText("Edited in Inbox Dev");
+    await expect(editor).toContainText("Edited in local Inbox");
     await expect(inbox.getByText("notes.txt", { exact: true })).toBeVisible();
     expect(await styleCount()).toBe(1);
+    expect(await firstStyle.evaluate((style) => style.isConnected)).toBe(false);
     await settings();
-    await toggle("Inbox Dev").click();
+    const healthy = (
+      await native.request("plugin_catalog")
+    ).catalog.plugins.find((plugin) => plugin.manifest.id === built.id);
+    const compatibilityPath = join(out, "plugin.dev.json");
+    const compatibility = JSON.parse(await readFile(compatibilityPath, "utf8"));
     await writeFile(
-      join(out, "plugin.js"),
-      original.replaceAll(built.buildId, "0".repeat(64)),
+      compatibilityPath,
+      JSON.stringify({ ...compatibility, hostBuildId: "0".repeat(64) }),
     );
-    await page
-      .locator("article")
-      .filter({ has: toggle("Inbox Dev") })
-      .getByRole("button", { name: "Reload", exact: true })
-      .click();
-    await toggle("Inbox Dev").click();
+    await row.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(
-      page.getByText(/Inbox Dev targets a different Buzz host/),
+      page.getByText(/Local build is incompatible with this host/),
     ).toBeVisible();
-    expect(await styleCount()).toBe(0);
-    await toggle("Inbox Dev").click();
-    await toggle("Inbox").click();
+    const retained = (
+      await native.request("plugin_catalog")
+    ).catalog.plugins.find((plugin) => plugin.manifest.id === built.id);
+    expect(retained.revision).toBe(healthy.revision);
+    expect(retained.source).toBe("development");
+    await expect(toggle("Inbox")).toBeChecked();
+    expect(await styleCount()).toBe(1);
     await page
       .getByRole("complementary", { name: "Settings sidebar" })
       .getByRole("button", { name: "Back", exact: true })
       .click();
-    await button(page, "Inbox").click();
+    await openPage(page, "Inbox Dev B");
+    await expect(inbox.locator(`[class~="${utility}"]`)).toHaveCSS(
+      "word-spacing",
+      "3.7px",
+    );
+    await settings();
+    await row
+      .getByRole("button", { name: "Use compiled", exact: true })
+      .click();
+    await expect(row.getByRole("status")).toHaveText("Compiled build");
+    await expect(toggle("Inbox")).toBeChecked();
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await openPage(page, "Inbox");
     await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
-    await expect(editor).toContainText("Edited in Inbox Dev");
+    await expect(editor).toContainText("Edited in local Inbox");
     await expect(inbox.getByText("notes.txt", { exact: true })).toBeVisible();
     expect(await styleCount()).toBe(0);
     expect(await probeUtility()).not.toBe("3.7px");
     await button(inbox, "Open in origin").click();
-    await expect(hostEditor).toContainText("Edited in Inbox Dev");
+    await expect(hostEditor).toContainText("Edited in local Inbox");
     await expect(page.getByText("notes.txt", { exact: true })).toBeVisible();
   } finally {
     // Catalog polling invokes the native bridge and can recreate its profile.
@@ -269,7 +312,11 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
       await page.close();
       expect(page.isClosed()).toBe(true);
     } finally {
-      await rm(temp, { recursive: true, force: true });
+      try {
+        await native?.close();
+      } finally {
+        await rm(temp, { recursive: true, force: true });
+      }
     }
   }
 });

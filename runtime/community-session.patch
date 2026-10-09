@@ -44,7 +44,7 @@ index 3f74500..d15ff26 100644
      async fn observer_channel_controls_reject_sibling_sessions_without_signalling() {
          let mut pool = AgentPool::from_slots(vec![]);
 diff --git a/crates/buzz-acp/src/pool.rs b/crates/buzz-acp/src/pool.rs
-index 1278c17..0512612 100644
+index 1278c17..40fe5e5 100644
 --- a/crates/buzz-acp/src/pool.rs
 +++ b/crates/buzz-acp/src/pool.rs
 @@ -131,6 +131,10 @@ pub struct ChannelDeliveryState {
@@ -58,7 +58,7 @@ index 1278c17..0512612 100644
      pub heartbeat_session: Option<String>,
      /// Per-scope turn counters for proactive session rotation.
      /// Incremented on each successful prompt; reset when the session is rotated.
-@@ -178,9 +182,36 @@ impl SessionState {
+@@ -178,9 +182,41 @@ impl SessionState {
          }
      }
 
@@ -67,7 +67,12 @@ index 1278c17..0512612 100644
 +    /// Select provider history after current-turn eligibility is resolved.
 +    fn select_provider_history(&mut self, scope: &SessionScope, shared: bool) {
 +        if self.shared_scopes.contains(scope) != shared {
++            // History selection changes delivery state, not the current dispatch's fence.
++            let generation = self.scope_owner_generations.get(scope).copied();
 +            self.forget_route(scope);
++            if let Some(generation) = generation {
++                self.set_scope_owner_generation(scope.clone(), generation);
++            }
 +        }
 +        if shared {
 +            self.shared_scopes.insert(scope.clone());
@@ -97,7 +102,7 @@ index 1278c17..0512612 100644
          self.turn_counts.remove(scope);
          self.core_sections.remove(scope);
          self.canvas_sections.remove(scope);
-@@ -208,7 +239,7 @@ impl SessionState {
+@@ -208,7 +244,7 @@ impl SessionState {
              .collect();
          let mut count = 0;
          for scope in scopes {
@@ -106,7 +111,7 @@ index 1278c17..0512612 100644
                  count += 1;
              }
          }
-@@ -218,6 +249,8 @@ impl SessionState {
+@@ -218,6 +254,8 @@ impl SessionState {
      /// Invalidate all sessions and turn counters (e.g. after agent exit).
      pub fn invalidate_all(&mut self) {
          self.sessions.clear();
@@ -115,7 +120,7 @@ index 1278c17..0512612 100644
          self.turn_counts.clear();
          self.heartbeat_session = None;
          self.heartbeat_turn_count = 0;
-@@ -772,6 +805,7 @@ impl ChannelInfoResolver {
+@@ -772,6 +810,7 @@ impl ChannelInfoResolver {
                  (info.channel_type != "unknown").then_some((
                      id,
                      PromptChannelInfo {
@@ -123,7 +128,7 @@ index 1278c17..0512612 100644
                          name: info.name,
                          channel_type: info.channel_type,
                          description: info.description,
-@@ -810,9 +844,19 @@ impl ChannelInfoResolver {
+@@ -810,9 +849,19 @@ impl ChannelInfoResolver {
      /// be edited while the harness is running; the next prompt must use the
      /// relay's current kind-39000 event. On a transient refresh failure, retain
      /// the last known metadata so an otherwise healthy turn can still proceed.
@@ -143,7 +148,7 @@ index 1278c17..0512612 100644
      ) -> Result<Option<PromptChannelInfo>, ProjectLookupError> {
          let cached = self
              .cache
-@@ -835,6 +879,7 @@ impl ChannelInfoResolver {
+@@ -835,6 +884,7 @@ impl ChannelInfoResolver {
                  }
                  fresh
              }
@@ -151,7 +156,7 @@ index 1278c17..0512612 100644
              None => match cached {
                  Some(cached) => cached,
                  None => return Ok(None),
-@@ -887,6 +932,8 @@ impl ChannelInfoResolver {
+@@ -887,6 +937,8 @@ impl ChannelInfoResolver {
  }
 
  pub struct PromptContext {
@@ -160,7 +165,7 @@ index 1278c17..0512612 100644
      pub mcp_servers: Vec<McpServer>,
      pub initial_message: Option<String>,
      pub idle_timeout: Duration,
-@@ -2507,7 +2554,14 @@ pub async fn run_prompt_task(
+@@ -2507,7 +2559,14 @@ pub async fn run_prompt_task(
      // outcome: fail closed and preserve the batch without poisoning the healthy
      // ACP process.
      let resolved_channel_info = match &source {
@@ -176,7 +181,7 @@ index 1278c17..0512612 100644
              Ok(info) => info,
              Err(error) => {
                  tracing::warn!(
-@@ -2529,6 +2583,15 @@ pub async fn run_prompt_task(
+@@ -2529,6 +2588,15 @@ pub async fn run_prompt_task(
          PromptSource::Heartbeat => None,
      };
 
@@ -192,7 +197,7 @@ index 1278c17..0512612 100644
      //
      // Core memory is delivered inside the system prompt the harness already
      // builds (system role for protocol >= 2, the `<agent-instructions>` user-message
-@@ -2621,7 +2684,7 @@ pub async fn run_prompt_task(
+@@ -2621,7 +2689,7 @@ pub async fn run_prompt_task(
          let is_new_channel_session = !agent.state.sessions.contains_key(scope);
          let needs_canvas =
              is_new_channel_session && !agent.state.canvas_sections.contains_key(scope);
@@ -201,7 +206,7 @@ index 1278c17..0512612 100644
              let (is_dm, resolved_channel, resolved_channel_type) =
                  resolve_new_session_channel_context(resolved_channel_info.as_ref()).await;
              title_channel = resolved_channel;
-@@ -2631,7 +2694,7 @@ pub async fn run_prompt_task(
+@@ -2631,7 +2699,7 @@ pub async fn run_prompt_task(
              }
              // A confirmed DM never receives a canvas section; an undeterminable
              // channel type fails closed as a DM for the same reason.
@@ -210,7 +215,7 @@ index 1278c17..0512612 100644
                  if let Some(section) = fetch_canvas_section(cid, &ctx.rest_client).await {
                      pending_canvas = Some((scope.clone(), section));
                  }
-@@ -2672,8 +2735,16 @@ pub async fn run_prompt_task(
+@@ -2672,8 +2740,16 @@ pub async fn run_prompt_task(
                      &ctx,
                      agent_core.as_deref(),
                      NewSessionChannelContext {
@@ -229,7 +234,7 @@ index 1278c17..0512612 100644
                          name: title_channel.as_deref(),
                          scope: Some(scope),
                          channel_type: origin_channel_type.as_deref(),
-@@ -2688,6 +2759,9 @@ pub async fn run_prompt_task(
+@@ -2688,6 +2764,9 @@ pub async fn run_prompt_task(
                              scope.telemetry_label()
                          );
                          agent.state.sessions.insert(scope.clone(), sid.clone());
@@ -239,7 +244,7 @@ index 1278c17..0512612 100644
                          agent
                              .state
                              .deliveries
-@@ -2696,7 +2770,7 @@ pub async fn run_prompt_task(
+@@ -2696,7 +2775,7 @@ pub async fn run_prompt_task(
                          // so prior usage is zero by definition — first turn is reliable.
                          agent.acp.notify_session_spawned(&sid);
                          // Commit canvas only after session creation succeeds (I3).
@@ -248,7 +253,7 @@ index 1278c17..0512612 100644
                              agent.state.canvas_sections.insert(pending_scope, section);
                          }
                          (sid, true)
-@@ -2814,8 +2888,16 @@ pub async fn run_prompt_task(
+@@ -2814,8 +2893,16 @@ pub async fn run_prompt_task(
          system_prompt: ctx.system_prompt.as_deref(),
          team_instructions: ctx.team_instructions.as_deref(),
          agent_core: agent_core.as_deref(),
@@ -267,7 +272,7 @@ index 1278c17..0512612 100644
      };
      // Delivery state is committed only after ACP confirms success. Existing
      // sessions created before this field existed fail safe by behaving as
-@@ -3153,6 +3235,16 @@ pub async fn run_prompt_task(
+@@ -3153,6 +3240,16 @@ pub async fn run_prompt_task(
      // own block. Per-section blocks let the observer size trimmer elide a
      // section body in place while every `[Header]` line survives at the head
      // of its own leaf — so the "Prompt context" panel counts every section.
@@ -284,7 +289,7 @@ index 1278c17..0512612 100644
      let prompt_blocks: Vec<&str> = match slash_command {
          Some(ref cmd) => std::iter::once(cmd.as_str())
              .chain(prompt_sections.iter().map(String::as_str))
-@@ -3645,6 +3737,37 @@ pub(crate) async fn fetch_channel_info(
+@@ -3645,6 +3742,37 @@ pub(crate) async fn fetch_channel_info(
      fetch_with_retry(|| fetch_channel_info_once(channel_id, rest)).await
  }
 
@@ -322,7 +327,7 @@ index 1278c17..0512612 100644
  /// Fetch the current kind-39000 metadata with one bounded request.
  ///
  /// Used by prompt-turn refreshes when cached metadata is already available as
-@@ -3687,6 +3810,7 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
+@@ -3687,6 +3815,7 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
                  .filter(|s| !s.is_empty())
                  .map(str::to_string);
              Some(PromptChannelInfo {
@@ -330,7 +335,7 @@ index 1278c17..0512612 100644
                  name: name.unwrap_or(UNKNOWN_CHANNEL_NAME).to_string(),
                  channel_type,
                  description,
-@@ -7175,6 +7299,343 @@ mod tests {
+@@ -7175,6 +7304,357 @@ mod tests {
          }
      }
 
@@ -499,7 +504,9 @@ index 1278c17..0512612 100644
 +        ctx.rest_client.base_url = base_url;
 +        ctx.channel_info = ChannelInfoResolver::new(HashMap::new(), ctx.rest_client.clone());
 +        let ctx = Arc::new(ctx);
-+        let (tx, mut rx) = mpsc::unbounded_channel();
++        let mut pool = AgentPool::from_slots(vec![Some(agent)]);
++        let mut queue = crate::queue::EventQueue::new(ctx.dedup_mode);
++        let mut last_activity = tokio::time::Instant::now();
 +        let mut session_ids = vec![];
 +        let mut public_a = None;
 +        let mut turns = if protocol_error {
@@ -513,9 +520,7 @@ index 1278c17..0512612 100644
 +        for (turn, &i) in turns.iter().enumerate() {
 +            if turn == 5 {
 +                // Idle !rotate uses this pool seam. Reset A, then resume B.
-+                let mut pool = AgentPool::from_slots(vec![Some(agent)]);
 +                assert_eq!(pool.invalidate_scope_session(public_a.as_ref().unwrap()), 1);
-+                agent = pool.try_claim(None).unwrap();
 +            }
 +            let content = if protocol_error && turn == 7 {
 +                "fail-community-history".to_string()
@@ -548,17 +553,23 @@ index 1278c17..0512612 100644
 +            if turn == 0 {
 +                public_a = Some(scope.clone());
 +            }
-+            run_prompt_task(
-+                agent,
-+                Some(batch),
-+                None,
-+                Arc::clone(&ctx),
-+                tx.clone(),
-+                None,
-+                format!("turn-{i}"),
-+            )
-+            .await;
-+            let result = rx.recv().await.unwrap();
++            for event in batch.events {
++                assert!(queue.push(crate::queue::QueuedEvent {
++                    channel_id: batch.channel_id,
++                    scope: scope.clone(),
++                    event: event.event,
++                    received_at: event.received_at,
++                    prompt_tag: event.prompt_tag,
++                    edit: event.edit,
++                }));
++            }
++            let dispatched =
++                crate::dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, None);
++            assert_eq!(dispatched.len(), 1);
++            assert_eq!(dispatched[0].0, scope);
++            let (task_id, ()) = pool.join_set.join_next_with_id().await.unwrap().unwrap();
++            pool.task_map_mut().remove(&task_id).unwrap();
++            let result = pool.result_rx_try_recv().unwrap();
 +            assert_eq!(result.source.scope(), Some(&scope));
 +            if protocol_error && turn == 7 {
 +                assert!(matches!(
@@ -588,9 +599,17 @@ index 1278c17..0512612 100644
 +                ));
 +                session_ids.push(result.agent.state.sessions[&scope].clone());
 +            }
-+            agent = result.agent;
++            let succeeded = matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn));
++            pool.return_agent(result.agent);
++            queue.mark_complete(&scope);
++            if succeeded {
++                assert!(
++                    pool.has_session_for(&scope),
++                    "successful dispatch must retain owned history after pool return"
++                );
++            }
 +        }
-+        agent.acp.shutdown().await;
++        pool.try_claim(None).unwrap().acp.shutdown().await;
 +        server.abort();
 +        let requests: Vec<serde_json::Value> = std::fs::read_to_string(capture.path())
 +            .unwrap()
@@ -674,7 +693,7 @@ index 1278c17..0512612 100644
      #[tokio::test]
      async fn run_prompt_task_commits_standing_context_only_after_acp_success() {
          let capture = std::env::temp_dir().join(format!(
-@@ -10420,6 +10881,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+@@ -10420,6 +10900,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
      ) -> PromptContext {
          use crate::relay::RestClient;
          PromptContext {

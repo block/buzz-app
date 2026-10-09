@@ -62,7 +62,7 @@ function fixture(t) {
     "GST_PLUGIN_SYSTEM_PATH_1_0",
   );
   mkdirSync(join(extracted, "usr/bin"));
-  writeFileSync(join(extracted, "usr/bin/buzz"), "fixture app");
+  writeFileSync(join(extracted, "usr/bin/Buzz"), "fixture app");
   const image = join(root, "fixture.AppImage");
   writeFileSync(
     image,
@@ -120,7 +120,7 @@ test("AppImage repair restores original runtime bytes and removes transformed le
     false,
   );
   assert.equal(
-    readFileSync(join(f.repacked, "usr/bin/buzz.bin"), "utf8"),
+    readFileSync(join(f.repacked, "usr/bin/Buzz.bin"), "utf8"),
     "fixture app",
   );
 });

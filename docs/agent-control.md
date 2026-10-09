@@ -868,7 +868,7 @@ To prepare/build without launching any app or accessing old credentials:
 bin/pnpm install --frozen-lockfile
 bin/node scripts/build-agent-runtime.mjs
 bin/pnpm build
-bin/cargo build -p buzz
+bin/cargo build -p Buzz
 ```
 
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins five Buzz tools
@@ -939,7 +939,7 @@ sidecar; it never searches PATH for a CLI.
 Re-run the resource preparation and native build commands above, then validate:
 
 ```sh
-bin/cargo test --locked -p buzz -p buzz-agent-controller -- --include-ignored
+bin/cargo test --locked -p Buzz -p buzz-agent-controller -- --include-ignored
 bin/node --test tests/integration/agent-runtime.test.mjs
 ```
 

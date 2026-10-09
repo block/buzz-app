@@ -1620,8 +1620,8 @@ fn refuse_legacy_listing(listing: &str) -> Result<(), String> {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        // Our own bundle is also `Buzz.app`; only its `buzz` binary lives there.
-        let legacy_bundle = name != "buzz"
+        // Our own bundle is also `Buzz.app`; only its `Buzz` binary lives there.
+        let legacy_bundle = name != "Buzz"
             && (executable.contains("/Buzz.app/Contents/MacOS/")
                 || executable.contains("/Buzz Dev.app/Contents/MacOS/"));
         if name == "buzz-desktop" || legacy_bundle {

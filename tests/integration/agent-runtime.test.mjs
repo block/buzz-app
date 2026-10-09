@@ -35,7 +35,7 @@ test("native library and bundled tools pin the same immutable source", () => {
   assert.ifError(metadata.error);
   assert.equal(metadata.status, 0, metadata.stderr);
   const app = JSON.parse(metadata.stdout).packages.find(
-    (pkg) => pkg.name === "buzz",
+    (pkg) => pkg.name === "Buzz",
   );
   assert.ok(app, "native app package must be present");
   const agent = app.dependencies.find(

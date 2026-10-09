@@ -252,15 +252,15 @@ jobs:
           gh release download "v$VERSION" --pattern "$archive" --dir "$RUNNER_TEMP/candidate"
           gh release download "v$VERSION" --pattern "$archive.sig" --dir "$RUNNER_TEMP/candidate"
           test -s "$RUNNER_TEMP/candidate/$archive" && test -s "$RUNNER_TEMP/candidate/$archive.sig"
-          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz.app/Contents/MacOS/buzz' > "$RUNNER_TEMP/candidate/buzz"
-          test -s "$RUNNER_TEMP/candidate/buzz"
+          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz.app/Contents/MacOS/Buzz' > "$RUNNER_TEMP/candidate/Buzz"
+          test -s "$RUNNER_TEMP/candidate/Buzz"
           current=''
           if gh release view preview-feed >/dev/null 2>&1; then
             gh release download preview-feed --pattern latest.json --dir "$RUNNER_TEMP/current"
             current="$RUNNER_TEMP/current/latest.json"
           fi
-          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz" ${current:+"$current"}
-          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/buzz" ${current:+"$current"}
+          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
+          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate/$archive.sig" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/$archive" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
           if [[ -z "$current" ]]; then
             gh release create preview-feed "$RUNNER_TEMP/candidate/latest.json" \
               --target "$GITHUB_SHA" --prerelease --latest=false \
@@ -343,7 +343,7 @@ jobs:
           # NSIS /D must be last and unquoted, including paths containing spaces.
           $process = Start-Process $installers[0].FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-          if (!(Test-Path "$destination\buzz.exe")) { throw 'App executable missing' }
+          if (!(Test-Path "$destination\Buzz.exe")) { throw 'App executable missing' }
           node scripts/verify-runtime-bundle.mjs "$destination\agent-runtime" x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Stage candidate and checksum

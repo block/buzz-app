@@ -1,5 +1,5 @@
 [package]
-name = "buzz"
+name = "Buzz"
 version = "0.0.0"
 description = "Buzz application foundation"
 edition = "2021"

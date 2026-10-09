@@ -247,7 +247,7 @@ it("selects and restores a message color, including retry after a failed save", 
   ).toHaveAttribute("aria-pressed", "true");
   expect(document.documentElement.dataset.bubbleColor).toBe("blue");
   fireEvent.click(
-    screen.getByRole("button", { name: "Retry saving message color" }),
+    await screen.findByRole("button", { name: "Retry saving message color" }),
   );
   expect(localStorage.getItem("buzz-bubble-color.v1")).toBe("blue");
   save.mockRestore();

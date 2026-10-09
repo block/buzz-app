@@ -34,6 +34,7 @@ pub(crate) fn write_executable(path: &Path, contents: impl AsRef<[u8]>) {
 
 /// Copies the executable fixture at `from` to `path` without this process
 /// opening `path` for writing. `fs::copy` would hold that write descriptor.
+#[cfg(unix)]
 pub(crate) fn copy_executable(from: &Path, path: &Path) {
     write_executable(path, std::fs::read(from).unwrap());
 }

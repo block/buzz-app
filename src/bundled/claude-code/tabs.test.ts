@@ -9,6 +9,8 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+
 afterEach(cleanup);
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
@@ -62,7 +64,7 @@ function installed() {
   return { type, spawn };
 }
 
-it("is an installable agent type using the host's React", () => {
+it("is an agent type using the host's React", () => {
   expect(inject).toEqual(["react", "agents2", "host", "relay"]);
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });

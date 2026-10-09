@@ -1,7 +1,7 @@
 // Claude Code agents: an Agents2 type whose agents are Claude Code sessions on
 // this computer. Each conversation the agent is in is one continuing session;
-// Claude answers with the in-process Buzz tools. Built as an installable plugin
-// with `pnpm plugin:claude-code`.
+// Claude answers with the in-process Buzz tools.
+import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
@@ -13,6 +13,8 @@ const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["react", "agents2", "host", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  // Only the desktop app can start `claude`; no unusable type in a browser.
+  if (!isTauri()) return;
   const { agents2, host, relay } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);

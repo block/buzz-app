@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { RelayEvent } from "../relay/events";
+import { eventsDto, type RelayEvent } from "../relay/events";
 
 /** A plugin agent's identity as native custody reports it; never the key. The
  * saved identities are the agent list. */
@@ -82,8 +82,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
               tags: event.tags ?? [],
             },
           }),
-        query: (pubkey, filters) =>
-          invoke("app_agent_query", { pubkey, filters }),
+        query: async (pubkey, filters) =>
+          eventsDto(await invoke("app_agent_query", { pubkey, filters })),
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         remember: (pubkey, slug, body, after) =>

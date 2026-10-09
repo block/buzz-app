@@ -20,8 +20,9 @@ BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
 2. Open **Agents2 → New agent**, choose **Codex**, and create an agent. The Codex
    tab checks the installed CLI and existing account. If needed, install Codex
    and run `codex login` in a terminal, then click **Check again**.
-3. In the agent's **Settings** tab, set an absolute **Workspace** path. A
-   disposable directory is useful for the first test. Choose model, thinking,
+3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
+   **Settings** tab, you can set an absolute path instead; clearing it restores
+   the default. A disposable directory is useful for the first test. Choose model, thinking,
    session scope, and instructions, then **Save**.
 4. Mentions and replies are automatic; **Attention** also lets you add event
    watches. In a channel you can write to, select the agent from the `@` picker

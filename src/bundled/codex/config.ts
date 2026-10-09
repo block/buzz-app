@@ -17,7 +17,7 @@ export const defaults: Config = {
   model: "",
   effort: "",
   instructions: "",
-  workspace: "",
+  workspace: "~/.buzz",
   scope: "thread",
 };
 export function config(raw: unknown): Config {
@@ -41,3 +41,6 @@ export const effortName = (effort: string) =>
 
 export const absoluteWorkspace = (path: string) =>
   path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());
+
+export const validWorkspace = (path: string) =>
+  path.trim() === defaults.workspace || absoluteWorkspace(path);

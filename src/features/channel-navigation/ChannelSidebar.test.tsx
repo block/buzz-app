@@ -21,6 +21,7 @@ import { createRef, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
+import { buzzLinkTarget } from "../navigation/buzz-links";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -165,22 +166,24 @@ function fixture(
       </nav>
     ),
   ) => (
-    <ChannelNavigationProvider relay={relay}>
-      <ChannelSidebar
-        relay={relay}
-        navigator={navigator}
-        providers={providers}
-        target={{
-          version: 1,
-          kind: "conversation",
-          channelId: id,
-          scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-        }}
-        sessionsEnabled={sessionsEnabled}
-      >
-        {pages}
-      </ChannelSidebar>
-    </ChannelNavigationProvider>
+    <ToastProvider>
+      <ChannelNavigationProvider relay={relay}>
+        <ChannelSidebar
+          relay={relay}
+          navigator={navigator}
+          providers={providers}
+          target={{
+            version: 1,
+            kind: "conversation",
+            channelId: id,
+            scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
+          }}
+          sessionsEnabled={sessionsEnabled}
+        >
+          {pages}
+        </ChannelSidebar>
+      </ChannelNavigationProvider>
+    </ToastProvider>
   );
   return { view, navigator, snapshot, list, session, publish };
 }
@@ -245,6 +248,36 @@ it("rebuilds only the changed row on a list publish and never starts nested sess
   expect(h.navigator.open).not.toHaveBeenCalled();
   alpha.onNewSession("beta");
   expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
+it("copies a channel link that opens the same channel", async () => {
+  const writeText = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("denied"));
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  const h = fixture();
+  render(h.view("alpha"));
+  const copy = async () => {
+    fireEvent.keyDown(await screen.findByRole("button", { name: "beta" }), {
+      key: "ContextMenu",
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  };
+  await copy();
+  expect(await screen.findByText("Link copied.")).toBeInTheDocument();
+  const [link] = writeText.mock.calls[0] ?? [];
+  expect(link).toBe("buzz://channel/beta");
+  expect(
+    buzzLinkTarget(link, {
+      viewer: "a".repeat(64),
+      communityOrigin: "https://relay.test",
+    }),
+  ).toMatchObject({ kind: "conversation", channelId: "beta" });
+  await copy();
+  expect(
+    await screen.findByText("Couldn’t copy the link."),
+  ).toBeInTheDocument();
 });
 
 it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
@@ -355,7 +388,7 @@ async function failedMoveFixture(groupSource?: "personal") {
   await prefs.ensure();
   await expect(prefs.assign("beta")).rejects.toThrow("offline");
   const h = fixture(prefs);
-  const mounted = render(h.view("alpha"), { wrapper: ToastProvider });
+  const mounted = render(h.view("alpha"));
   const notice = await screen.findByRole("alert");
   expect(notice).toHaveTextContent("Couldn’t save the move for beta. offline");
   return { ...h, owner, prefs, read, write, star, data, notice, mounted };

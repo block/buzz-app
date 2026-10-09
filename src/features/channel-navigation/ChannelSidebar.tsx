@@ -47,6 +47,7 @@ import {
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import {
@@ -756,6 +757,9 @@ function ReadySidebar({
           }
         />,
       );
+    actions.push(
+      <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
+    );
     if (!surface && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu

@@ -182,12 +182,12 @@ test("Inbox archive survives reload and reopens Threads before fresh Mentions", 
 });
 
 // Browser-only: live DM delivery through the production broker and browser
-// reload must retain personal archive intent despite an older reply in the group.
+// reload must retain ordinary reopening without resurfacing an archived old tag.
 // Reply/top-level classification matrices remain in the mounted session tests.
 test.describe("DM archive delivery", () => {
   test.use({ dmMembers: { "dm-peer": [0] } });
 
-  test("ordinary DM activity stays archived across reload until a fresh mention", async ({
+  test("ordinary DM activity reopens across reload without resurfacing old mentions", async ({
     page,
     app,
   }) => {
@@ -199,7 +199,16 @@ test.describe("DM archive delivery", () => {
       content: "Our DM discussion",
     });
     app.histories.get(`primary/${dm}`).push(root);
-    app.append("primary", dm, "Earlier DM reply", false, false, root.id);
+    app.append(
+      "primary",
+      dm,
+      "Earlier DM reply",
+      false,
+      false,
+      root.id,
+      undefined,
+      [["p", app.viewer]],
+    );
     // app.append advances signed event time one second per message. Pin Date,
     // not timers, so startup speed cannot put Archive after the fresh mention.
     await page.clock.setFixedTime(new Date((root.created_at + 1) * 1000));
@@ -219,17 +228,19 @@ test.describe("DM archive delivery", () => {
     await expect(rows).toHaveCount(0);
     await choose(page, inbox, "Show", "Archived");
     app.append("primary", dm, "New ordinary DM message", true, false);
-    // The new preview proves delivery and mounted reconciliation completed
-    // before asserting that Inbox remains empty, including after reload.
+    await choose(page, inbox, "Show", "Inbox");
     await expect(rows).toHaveCount(1);
     await expect(rows).toContainText("New ordinary DM message");
-    await choose(page, inbox, "Show", "Inbox");
-    await expect(rows).toHaveCount(0);
     await page.reload();
     await openPage(page, "Inbox");
-    await choose(page, inbox, "Show", "Archived");
     await expect(rows).toHaveCount(1);
-    await expect(rows).toContainText("New ordinary DM message");
+    await choose(page, inbox, "Show", "Archived");
+    await expect(rows).toHaveCount(0);
+    await choose(page, inbox, "Activity type", "Mentions");
+    const dmRows = inbox.locator('[data-inbox-row="dm-peer:dm-peer"]');
+    await expect(dmRows).toHaveCount(1);
+    await choose(page, inbox, "Show", "Inbox");
+    await expect(dmRows).toHaveCount(0);
     app.append(
       "primary",
       dm,
@@ -240,10 +251,6 @@ test.describe("DM archive delivery", () => {
       undefined,
       [["p", app.viewer]],
     );
-    await choose(page, inbox, "Show", "Inbox");
-    await expect(rows).toHaveCount(1);
-    await choose(page, inbox, "Activity type", "Mentions");
-    const dmRows = inbox.locator('[data-inbox-row="dm-peer:dm-peer"]');
     await expect(dmRows).toHaveCount(1);
     await page.reload();
     await openPage(page, "Inbox");

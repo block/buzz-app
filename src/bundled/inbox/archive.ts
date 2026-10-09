@@ -69,16 +69,16 @@ function matches(index: ArchiveIndex, item: InboxItem) {
   ];
 }
 
-// The shared Inbox projection groups DMs under a channel read target;
-// a DM can still have `thread` set when one of its messages is a reply.
-const participatingThread = (item: InboxItem) =>
-  item.thread && item.target.kind !== "channel";
+// The shared Inbox projection groups DMs under a channel read target,
+// including top-level messages and replies. Both renew ordinary activity.
+const ordinaryActivity = (item: InboxItem) =>
+  item.thread || item.target.kind === "channel";
 
 function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   const observed = new Set(archive.messageIds);
   return item.messages.some(
     ({ id, createdAt, mentioned }) =>
-      (mentioned || (!mentionsOnly && participatingThread(item))) &&
+      (mentioned || (!mentionsOnly && ordinaryActivity(item))) &&
       !observed.has(id) &&
       createdAt >= archive.through,
   );
@@ -95,7 +95,7 @@ export function isArchived(
     entries.length > 0 &&
     !entries.some(
       (archive) =>
-        (!mentionsOnly && item.target.kind !== "channel" && archive.reopened) ||
+        (!mentionsOnly && ordinaryActivity(item) && archive.reopened) ||
         renewed(archive, item, mentionsOnly),
     )
   );

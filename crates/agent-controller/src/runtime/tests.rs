@@ -78,6 +78,7 @@ fn rename_publication_applies_saved_picture_only_when_avatar_intent_is_pending()
                 workspace: saved.workspace.clone(),
                 harness: saved.harness.clone(),
                 environment: BTreeMap::new(),
+                effort: None,
             };
             controller.save(&saved.id, saved.revision, edit).unwrap();
             let publication = controller.creation_profile(&saved.id).unwrap();

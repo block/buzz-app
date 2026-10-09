@@ -538,6 +538,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
+        effort: None,
         picture: None,
         name: "Edited".into(),
         system_prompt: "changed prompt".into(),
@@ -623,6 +624,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
         dir.path().join("ownership"),
     );
     let edit = AgentEdit {
+        effort: None,
         name: a.name.clone(),
         picture: None,
         system_prompt: a.system_prompt.clone(),
@@ -1576,6 +1578,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     let cache = config.join("buzz-agent/oauth/databricks");
     assert!(cache.is_dir());
     let edit = AgentEdit {
+        effort: None,
         picture: None,
         name: a.name.clone(),
         system_prompt: a.system_prompt.clone(),
@@ -2063,6 +2066,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
         dir.path().join("ownership"),
     );
     let edit = |override_provider: Option<&str>| AgentEdit {
+        effort: None,
         picture: None,
         name: "Goose".into(),
         system_prompt: String::new(),
@@ -2164,6 +2168,7 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
         assert_eq!(env["GOOSE_MODEL"], "fixture-model");
     }
     let edit = || AgentEdit {
+        effort: None,
         name: saved.name.clone(),
         picture: None,
         system_prompt: saved.system_prompt.clone(),
@@ -2512,6 +2517,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
                 &a.id,
                 a.revision,
                 AgentEdit {
+                    effort: None,
                     name: a.name.clone(),
                     picture: None,
                     system_prompt: a.system_prompt.clone(),
@@ -2640,6 +2646,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         dir.path().join("ownership"),
     );
     let edit = AgentEdit {
+        effort: None,
         name: a.name.clone(),
         picture: None,
         system_prompt: a.system_prompt.clone(),

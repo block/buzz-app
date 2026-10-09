@@ -35,6 +35,7 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        effort: None,
         picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),

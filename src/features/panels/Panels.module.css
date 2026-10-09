@@ -234,8 +234,18 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   overflow: auto;
 }
 
+.paneToggle {
+  display: flex;
+  border-inline-start: 1px solid var(--border-standard);
+  padding-inline-start: var(--space-2);
+}
+
 .addTab {
   display: flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-block-start: var(--space-1);
+  margin-inline-start: var(--space-1);
   opacity: 0;
   transition: opacity var(--duration-fast) var(--easing-state);
 }

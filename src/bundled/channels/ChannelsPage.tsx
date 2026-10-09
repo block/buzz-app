@@ -5,6 +5,7 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ChannelBody } from "./ChannelBody";
 import { useChannelTabState } from "./useChannelTabState";
@@ -1394,27 +1395,27 @@ function ChannelWorkspace({
                           );
                         }}
                       />
-                      {current && (
-                        <IconButton
-                          ref={splitTrigger}
-                          data-tab-pane-toggle=""
-                          size="toolbar"
-                          aria-label="Toggle tab pane"
-                          title={
-                            showingChannelPanel
-                              ? "Close tab pane"
-                              : "Open tab pane"
-                          }
-                          aria-expanded={!!showingChannelPanel}
-                          onClick={() => {
-                            tabState.setPaneOpen(!showingChannelPanel);
-                            if (!showingChannelPanel && !rootTabIds.length)
-                              addTab();
-                          }}
-                          icon={
-                            <SidebarRightIcon size="1rem" aria-hidden="true" />
-                          }
-                        />
+                      {current && !showingChannelPanel && (
+                        <span className={panelStyles.paneToggle}>
+                          <IconButton
+                            ref={splitTrigger}
+                            data-tab-pane-toggle=""
+                            size="toolbar"
+                            aria-label="Toggle tab pane"
+                            title="Open tab pane"
+                            aria-expanded={false}
+                            onClick={() => {
+                              tabState.setPaneOpen(true);
+                              if (!rootTabIds.length) addTab();
+                            }}
+                            icon={
+                              <SidebarRightIcon
+                                size="1rem"
+                                aria-hidden="true"
+                              />
+                            }
+                          />
+                        </span>
                       )}
                     </>
                   }
@@ -1573,6 +1574,7 @@ function ChannelWorkspace({
                     }
                     select={selectPanelTab}
                     add={addTab}
+                    closePane={secondary.closePane}
                     items={[
                       ...(settings
                         ? [

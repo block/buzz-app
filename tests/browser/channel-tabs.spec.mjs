@@ -20,12 +20,18 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await open(page, app);
   const main = page.getByRole("article", { name: "Conversation", exact: true });
   const workspace = page.locator("[data-panel-workspace]");
-  const split = main.getByRole("button", {
+  const split = page.getByRole("button", {
     name: "Toggle tab pane",
     exact: true,
   });
   const fullWidth = (await main.boundingBox()).width;
   await split.click();
+  await expect(
+    main.getByRole("button", { name: "Toggle tab pane", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    workspace.getByRole("button", { name: "Toggle tab pane", exact: true }),
+  ).toBeVisible();
   await expect(
     workspace.getByRole("tab", { name: "New tab", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -57,6 +63,10 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await split.click();
   await expect(workspace).toBeHidden();
   await expect(split).toHaveAttribute("aria-expanded", "false");
+  await expect(split).toBeFocused();
+  await expect(
+    main.getByRole("button", { name: "Toggle tab pane", exact: true }),
+  ).toBeVisible();
   await expect
     .poll(async () => (await main.boundingBox()).width)
     .toBeCloseTo(fullWidth, 0);
@@ -282,8 +292,8 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   ).toBeFocused();
 });
 
-// Scrollbar geometry and scrollIntoView's effect on the fixed action need a browser.
-test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin scrollbar", async ({
+// Tab adjacency, overflow geometry, and scrollIntoView need a browser.
+test("Add tab follows the final tab and stays reachable beside an overflowing strip", async ({
   page,
   app,
 }, testInfo) => {
@@ -301,7 +311,11 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
       el.getAnimations().map((animation) => animation.finished),
     );
   });
-  const initial = await add.boundingBox();
+  const firstItem = await list.locator(".buzz-tabs-item").first().boundingBox();
+  expect((await add.boundingBox()).x).toBeCloseTo(
+    firstItem.x + firstItem.width + 4,
+    1,
+  );
   const height = (await header.boundingBox()).height;
   const tabBounds = await list.getByRole("tab").first().boundingBox();
   const expectTabPosition = async () => {
@@ -349,19 +363,21 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   expect(geometry.scrollbar).toBeLessThanOrEqual(4);
   expect(geometry.nativeWidth).toBe("auto");
   expect(geometry.trackHeight).toBe("4px");
-  expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
+  const overflowList = await list.boundingBox();
+  const crowdedAdd = await add.boundingBox();
+  expect(crowdedAdd.x).toBeCloseTo(overflowList.x + overflowList.width + 4, 1);
   expect((await header.boundingBox()).height).toBeCloseTo(height, 1);
   await list.getByRole("tab").last().press("Home");
   await expect(list.getByRole("tab").first()).toBeFocused();
   await expect(closeButtons.first()).toHaveCSS("opacity", "1");
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
-  expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
+  expect((await add.boundingBox()).x).toBeCloseTo(crowdedAdd.x, 1);
   await list.getByRole("tab").first().press("End");
   await expect(list.getByRole("tab").last()).toBeFocused();
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
-  expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
+  expect((await add.boundingBox()).x).toBeCloseTo(crowdedAdd.x, 1);
   // Hover leaving hides the thumb even when keyboard focus stays in the tabs.
   await add.hover();
   await expect.poll(thumbColor).toBe("rgba(0, 0, 0, 0)");

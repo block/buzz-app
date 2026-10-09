@@ -31,7 +31,8 @@
   /* A stepped dialog paints only its visible cards, not their shared wrapper. */
   .buzz-dialog:not([data-stepped]),
   .buzz-dialog-step {
-    @apply elevated-material;
+    /* Opaque modal fill keeps inset fields distinct from the dimmed page. */
+    background: var(--surface-popover);
   }
   /* Steps share one centered popup/backdrop; overlap only for the crossfade. */
   .buzz-dialog[data-stepped] {
@@ -327,10 +328,8 @@
 
 @layer components {
   .buzz-toast-viewport {
-    /* Keep shell navigation, conversation tools and the composer outside the stack. */
-    --toast-top: 8rem;
     position: fixed;
-    top: calc(var(--toast-top) + env(safe-area-inset-top));
+    bottom: max(var(--space-4), env(safe-area-inset-bottom));
     right: max(var(--space-4), env(safe-area-inset-right));
     z-index: calc(var(--layer-dialog-backdrop) - 1);
     display: flex;
@@ -339,22 +338,12 @@
     width: min(24rem, calc(100vw - 2 * var(--space-4)));
     max-height: min(
       40dvh,
-      calc(
-        100dvh -
-        var(--toast-top) -
-        min(10rem, 25dvh) -
-        env(safe-area-inset-top)
-      )
+      calc(100dvh - 2 * var(--space-4) - env(safe-area-inset-bottom))
     );
     overflow-y: auto;
     padding: var(--space-1);
     /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
     pointer-events: none;
-  }
-  @media (max-width: 43.75rem) {
-    .buzz-toast-viewport {
-      --toast-top: 12rem;
-    }
   }
   .buzz-toast {
     flex-shrink: 0;

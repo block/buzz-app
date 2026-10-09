@@ -1508,6 +1508,11 @@ function Composer({
                     )
               }
               data-single-emoji={largeEmojiDraft || undefined}
+              data-emoji-images-only={
+                (largeEmojiDraft &&
+                  /^(\s*:[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
+                undefined
+              }
               maxLength={16000}
               aria-label={label}
               placeholder={placeholder ?? label}

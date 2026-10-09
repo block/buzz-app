@@ -134,8 +134,12 @@ test("Me tabs retain drafts and send to their own conversation with the Messages
     exact: true,
   });
   await tabComposer.fill("From the Me secondary tab");
+  await expect(
+    workspace.getByRole("button", { name: "Toggle tab pane", exact: true }),
+  ).toBeVisible();
   await split.click();
   await expect(workspace).toBeHidden();
+  await expect(split).toBeFocused();
   await split.click();
   await expect(tabComposer).toHaveText("From the Me secondary tab");
   await workspace.getByRole("button", { name: "Add tab", exact: true }).click();

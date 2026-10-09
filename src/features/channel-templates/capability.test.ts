@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { createChannelKit, type Resume } from "./capability";
 import { TEAM_MANIFEST_TAG } from "./team-payload";
+import { readTeamTexts, teamTextConflict } from "../agents/team-instructions";
 import {
   coordinate,
   KIT_TAG,
@@ -1047,4 +1048,42 @@ it("a retry confirms the event an earlier attempt enqueued", async () => {
     await f.capability.publishText("team", manifest, undefined, team, resume),
   ).toBe(head);
   expect(f.events).toHaveLength(count);
+});
+
+it("a save check never joins a catalog read that began before it", async () => {
+  const f = fixture();
+  const member = "a".repeat(64);
+  const other = await f.capability.save(
+    { type: "team", id: "other", name: "Reviewers", agents: [] },
+    undefined,
+  );
+  await saveText(f, "THEIRS", undefined, other, "other");
+  // A background catalog read starts and sees the roster as it is now.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let gated = false;
+  vi.mocked(f.reader.read).mockImplementation(async (filters) => {
+    const seen = f.events.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    );
+    if (gated || !filters.some((filter) => filter["#t"])) return seen;
+    gated = true;
+    await gate;
+    return seen;
+  });
+  const background = f.capability.refresh();
+  // Another team then gains an overlapping member. (Its own post-save
+  // refresh joins the background read, so it settles only after release.)
+  const sent = f.events.length;
+  const saving = f.capability.save(
+    { type: "team", id: "other", name: "Reviewers", agents: [member] },
+    other,
+  );
+  await vi.waitFor(() => expect(f.events.length).toBe(sent + 1));
+  const check = readTeamTexts(f.capability, undefined);
+  release();
+  await Promise.all([background, saving]);
+  expect(
+    teamTextConflict(await check, { id: "team", agents: [member] }, "OURS"),
+  ).toMatch(/"Reviewers", which has different team instructions/);
 });

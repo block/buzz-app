@@ -107,8 +107,11 @@ export function createChannelKit({
       ),
     );
   }
-  async function refresh() {
+  /** `after: true` never joins a read that began before this call, so the
+   * result reflects every change visible when the caller asked. */
+  async function refresh({ after = false } = {}) {
     if (!host) return;
+    if (pending && after) await pending;
     if (pending) return pending;
     const generation = epoch;
     update({ ...state, status: "loading", error: undefined });

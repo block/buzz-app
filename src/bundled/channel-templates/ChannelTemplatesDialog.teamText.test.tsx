@@ -138,6 +138,7 @@ function setup(
     save,
     savePortable,
     readText,
+    readTextHead: kit.readTextHead as ReturnType<typeof vi.fn>,
     prepareText,
     publishText,
     syncTeamInstructions,
@@ -420,6 +421,29 @@ it("a combined save checks the text head before changing members", async () => {
   );
   expect(f.save).not.toHaveBeenCalled();
   expect(f.prepareText).not.toHaveBeenCalled();
+});
+
+it("a members-only save refuses when this team's text changed elsewhere", async () => {
+  const other: Team = {
+    ...ordinary,
+    id: "other",
+    name: "Reviewers",
+    agents: [second],
+  };
+  const f = setup(ordinary, [entryOf(ordinary), entryOf(other)], {
+    ordinary: "OLD",
+    other: "OLD",
+  });
+  await loaded("OLD");
+  // Another device replaced this team's text after the dialog loaded it.
+  f.texts.ordinary = "NEW";
+  f.readTextHead.mockResolvedValue({ head: "ordinary-newer" });
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "instructions changed",
+  );
+  expect(f.save).not.toHaveBeenCalled();
 });
 
 it("can't certify a save when an overlapping team is unreadable", async () => {

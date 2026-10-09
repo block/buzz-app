@@ -59,7 +59,7 @@ export async function readTeamTexts(
   kit: ChannelKit,
   control: AgentControl | undefined,
 ): Promise<TeamText[]> {
-  await kit.refresh();
+  await kit.refresh({ after: true });
   if (kit.snapshot().status !== "ready")
     throw new Error("Teams can't be read right now");
   const texts: TeamText[] = [];

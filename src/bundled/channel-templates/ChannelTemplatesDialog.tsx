@@ -188,7 +188,9 @@ export function ChannelTemplatesDialog({
         const recheck = async () => {
           if (!control) return;
           const others = await readTeamTexts(kit, control);
-          if (textChanged && !run.textDone) {
+          // Members-only saves check too: the conflict checks assume the
+          // text this dialog loaded is still the team's current text.
+          if (!run.textDone) {
             const current = await kit.readTextHead(draft.id);
             if (current?.head !== saved.head)
               throw new Error(

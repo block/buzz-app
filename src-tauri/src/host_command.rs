@@ -790,6 +790,7 @@ mod windows_tests {
                 Duration::from_secs(10),
                 &effective_path(),
                 super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
+                None,
             )
             .await
         });
@@ -817,6 +818,7 @@ mod windows_tests {
                 Duration::from_secs(5),
                 &effective_path(),
                 super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
+                None,
             )
             .await
         });

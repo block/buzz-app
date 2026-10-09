@@ -235,15 +235,13 @@ function inlineProtectionKey(
   ]);
 }
 
-const phrasingParents = new Set([
-  "paragraph",
-  "heading",
-  "emphasis",
-  "strong",
-  "delete",
-  "link",
-  "linkReference",
-  "tableCell",
+/** Containers whose children are blocks. Raw HTML anywhere else is inline,
+ * including plugin nodes such as `spoiler`, so it stays inline as text. */
+const flowParents = new Set([
+  "root",
+  "blockquote",
+  "listItem",
+  "footnoteDefinition",
 ]);
 
 /** Chat never renders raw HTML, but `<harness>` is still something the author
@@ -270,7 +268,7 @@ function remarkLiteralHtml() {
         const source = visibleHtmlSource(child.value ?? "");
         if (!source.trim()) return [];
         const text = literal(source);
-        return phrasingParents.has(parent.type)
+        return !flowParents.has(parent.type)
           ? text
           : [
               {

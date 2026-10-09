@@ -991,6 +991,26 @@ describe("text spoilers", () => {
     );
   });
 
+  it("keeps angle-bracket text inline inside a spoiler through reveal and hide", () => {
+    expect(render("Before ||<harness>|| after").match(/<p[\s>]/g)).toHaveLength(
+      1,
+    );
+    const view = renderDom(
+      <MessageMarkdown {...props("Before ||<harness>|| after")} />,
+    );
+    const paragraph = () => view.container.querySelectorAll("p");
+    expect(paragraph()).toHaveLength(1);
+    expect(paragraph()[0]).toHaveTextContent("Before <harness> after");
+    expect(view.container.querySelector("[inert]")).toHaveTextContent(
+      "<harness>",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+    expect(paragraph()).toHaveLength(1);
+    expect(paragraph()[0]).toHaveTextContent("Before <harness> after");
+    fireEvent.click(screen.getByRole("button", { name: "Hide spoiler" }));
+    expect(paragraph()).toHaveLength(1);
+  });
+
   it.each([
     "`||code||`",
     "```\n||code||\n```",

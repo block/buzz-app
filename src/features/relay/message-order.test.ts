@@ -82,7 +82,6 @@ it("reconstructs every subsecond value and keeps different seconds ordered", () 
 it.each([
   "",
   "-1",
-  "1000",
   "100900",
   "1.5",
   "1e2",

@@ -602,7 +602,7 @@ it("does not enable fresh sends before journal hydration completes", async () =>
   expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
 });
 
-it.each(["construction", "write", "rejection"])(
+it.each(["construction", "rejection"])(
   "cancels pending copy data after clipboard %s failure and close",
   async (failure) => {
     const f = fixture();

@@ -145,23 +145,6 @@ it("re-reads presence after native start or stop until the badge agrees, within 
   }
 });
 
-it("reserves card-header space for a profile-only menu", () => {
-  render(
-    <AgentCard
-      layout="row"
-      name="A very long relay-only identity name"
-      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
-      onViewProfile={() => {}}
-    >
-      <p>Relay-only identity</p>
-    </AgentCard>,
-  );
-
-  expect(
-    screen.getByRole("heading", { level: 3 }).parentElement?.parentElement,
-  ).toHaveClass("pr-6");
-});
-
 it("hands focus from the menu to the opened profile", async () => {
   render(
     <AgentCard

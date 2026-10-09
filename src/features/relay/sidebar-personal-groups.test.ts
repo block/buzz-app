@@ -71,10 +71,21 @@ function fixture(personal = true) {
     legacy = { ...legacy, assignments };
     return legacy;
   });
+  const removal = vi.fn(async (sectionId: string) => {
+    legacy = {
+      ...legacy,
+      sections: legacy.sections.filter(({ id }) => id !== sectionId),
+      assignments: Object.fromEntries(
+        Object.entries(legacy.assignments).filter(([, id]) => id !== sectionId),
+      ),
+    };
+    return legacy;
+  });
   const star = vi.fn(async ({ channelId, starred }) => {
     legacy = { ...legacy, starred: starred ? [channelId] : [] };
     return legacy.starred;
   });
+  const sort = vi.fn(async () => ({}));
   const publish = vi.fn(async (event: RelayEvent) => {
     events.push(event);
   });
@@ -90,19 +101,9 @@ function fixture(personal = true) {
       query,
       decodeSidebarPreferences: async () => legacy,
       writeSidebarAssignment: assignment,
-      removeSidebarSection: async (id) => {
-        legacy = {
-          ...legacy,
-          sections: legacy.sections.filter((section) => section.id !== id),
-          assignments: Object.fromEntries(
-            Object.entries(legacy.assignments).filter(
-              ([, section]) => section !== id,
-            ),
-          ),
-        };
-        return legacy;
-      },
+      removeSidebarSection: removal,
       writeSidebarStar: star,
+      writeSidebarSort: sort,
       channelKit: {
         decode: async (rows) =>
           rows.map((event) => ({
@@ -123,6 +124,8 @@ function fixture(personal = true) {
     ...owner,
     query,
     assignment,
+    removal,
+    sort,
     star,
     publish,
     prepare,
@@ -331,6 +334,104 @@ it.each(["clearCache", "dispose"] as const)(
   },
 );
 
+it.each([false, true])(
+  "removes only the section in the active store (personal=%s)",
+  async (personal) => {
+    const f = fixture(personal);
+    try {
+      await f.preferences.ensure();
+      await f.preferences.removeSection("work");
+      expect(f.sort).toHaveBeenCalledWith(
+        "section:work",
+        "alpha",
+        ["work"],
+        expect.any(AbortSignal),
+      );
+      expect(f.preferences.snapshot().data).toMatchObject({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      });
+      if (personal) {
+        expect(f.removal).not.toHaveBeenCalled();
+        const event = f.publish.mock.calls.at(-1)?.[0];
+        if (!event) throw new Error("Missing personal group publication");
+        const saved = JSON.parse(event.content);
+        expect(saved.deleted).toBe(false);
+        expect(saved.value).toMatchObject({
+          type: "groups",
+          id: "personal",
+          groups: [],
+          assignments: {},
+        });
+        await f.preferences.refresh();
+        expect(f.preferences.snapshot().data?.groupSource).toBe("personal");
+      } else {
+        expect(f.removal).toHaveBeenCalledOnce();
+        expect(f.publish).not.toHaveBeenCalled();
+      }
+      expect(f.assignment).not.toHaveBeenCalled();
+      expect(f.star).not.toHaveBeenCalled();
+    } finally {
+      f.dispose();
+    }
+  },
+);
+it("rejects stale-source removal even when both stores use the same section ID", async () => {
+  const f = fixture(false);
+  try {
+    await f.preferences.ensure();
+    f.install(groups);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      /source changed/,
+    );
+    expect(f.removal).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("explains same-second personal section removal without enqueuing, then permits explicit retry", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    vi.mocked(Date.now).mockReturnValue(1_700_000_000_000);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "This section was just saved. Wait a second, then choose Remove section again.",
+    );
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    vi.mocked(Date.now).mockReturnValue(1_700_000_001_000);
+    await f.preferences.removeSection("work");
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.preferences.snapshot().data?.sections).toEqual([]);
+  } finally {
+    f.dispose();
+  }
+});
+it("names the personal section's exact-event recovery path and fences a fresh retry after failed delivery", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    f.publish.mockRejectedValue(new Error("offline"));
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "Channel settings → Diagnostics → Outbox",
+    );
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    expect(f.prepare).toHaveBeenCalledOnce();
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "A section removal or other personal-group save is unresolved.",
+    );
+    expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.session.outbox?.snapshot()).toHaveLength(1);
+    expect(f.removal).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
 it("removes active personal groups without altering legacy groups or channel membership", async () => {
   const h = fixture();
   await h.session.sidebarPreferences.ensure();

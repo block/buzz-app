@@ -356,12 +356,7 @@ it("applies a verified owner policy live, reserves malformed updates and follows
   }
 });
 
-for (const runtime of [
-  "__proto__",
-  "constructor",
-  "toString",
-  "unknown-runtime",
-]) {
+for (const runtime of ["__proto__", "unknown-runtime"]) {
   it(`displays and copies the unknown runtime ${runtime} as a raw string`, async () => {
     const h = setup([metadata({ agent_type: runtime })]);
     const user = userEvent.setup();

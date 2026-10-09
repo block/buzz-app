@@ -1586,32 +1586,6 @@ it("does not accept a second row selection while its explicit read is pending", 
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
   );
 });
-it("Retry repeats a rejected mark-unread mutation, not just evidence refresh", async () => {
-  const h = fixture();
-  render(h.view);
-  await screen.findByText("Please review this");
-  await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("img", { name: "Unread" }),
-    ).not.toBeInTheDocument(),
-  );
-  h.failSave();
-  fireEvent.click(await openRowMenu());
-  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
-  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeUndefined();
-  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
-  await waitFor(() =>
-    expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf(
-      "number",
-    ),
-  );
-  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
-  expect(screen.queryByText("disk full")).not.toBeInTheDocument();
-});
 it("a failed captured read cannot retry after access retirement", async () => {
   const h = fixture();
   render(h.view);

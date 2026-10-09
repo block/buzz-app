@@ -220,6 +220,14 @@ cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
 The fixture uses per-test isolated synthetic identities/servers, preserving the
 base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
 
+The counts above are historical PR-head counts. A later test prune removed two
+mounted cases whose assertions stronger cases already make: `InboxPage.test.tsx`
+"Retry repeats a rejected mark-unread mutation, not just evidence refresh"
+(kept by the failed mark-unread Retry cases) and `DraftsView.test.tsx` "a
+selected draft edits through the shared scoped composer without navigating or
+sending" (kept by the same-window editor, 128 KiB rich-editor and emptied-editor
+cases). `InboxPage.test.tsx` now collects 61 cases and `DraftsView.test.tsx` 29.
+
 ## Verification status
 
 `inbox-feed.test.ts` exercises the real session reader/visibility/unread owners
@@ -291,12 +299,13 @@ tracing fetched events, participation evidence and filtering. Agree mixed/unknow
 sender behavior, mention policy and filter persistence separately. Coordinate
 John's archive/refresh/development work; progressive relay loading is not fixed here.
 
-**Evidence:** the latest-main integration on `30606adb` preserves John's #757
-archive retirement and #758 refresh status without shifting rows. It passes 118
-Inbox tests, 2 shared-hook tests, types/design guards/build, and 74 Chromium/WebKit
-executions across Inbox, sidebar and existing panel journeys. The hosted sidebar
-selector was repaired; the prior JavaScript lane hit its 10-minute timeout, a
-separate CI concern. Common splitter checks stay in Inbox; Drafts keeps cross-view
-width, header alignment, narrow sizing, editing and modal/focus coverage. No browser
-cases were removed. Human confirmation and hosted CI remain gates; local synthetic
+**Evidence:** integration with main `ce2f66ea` preserves John's #757 archive
+retirement and #758 refresh status without shifting rows, plus main's #800 test
+pruning. It passes 116 Inbox tests, 2 shared-hook tests, TypeScript/build and 74
+Chromium/WebKit executions across Inbox, sidebar and existing panel journeys.
+Independent merge-resolution review found no blockers. The prior `5b4d45d0` head
+passed hosted CI and DCO; current-head hosted checks remain a separate gate.
+Common splitter checks stay in Inbox; Drafts keeps cross-view width, header
+alignment, narrow sizing, editing and modal/focus coverage. No browser cases were
+removed. Human confirmation and required review remain open; local synthetic
 checks do not attest native/live acceptance.

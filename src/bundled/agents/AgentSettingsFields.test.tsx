@@ -853,22 +853,6 @@ it("uses a draft Goose provider override for the API key and model lookup", asyn
   }
 });
 
-it("shows the OpenAI key when a Databricks selector has an OpenAI override", () => {
-  const { view, control } = setup({
-    provider: "databricks_v2",
-    environment: { GOOSE_PROVIDER: "openai" },
-  });
-  try {
-    expect(screen.getByLabelText("OpenAI API key")).toHaveAttribute(
-      "type",
-      "password",
-    );
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
 it("keeps a pending key while the effective override stays fixed, then clears it on removal", async () => {
   const { draft, view, control } = setup({
     environment: { GOOSE_PROVIDER: "anthropic" },

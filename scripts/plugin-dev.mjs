@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { build } from "vite";
+import { build, loadEnv } from "vite";
 import { parseSync, transformSync, Visitor } from "rolldown/utils";
 import {
   inside,
@@ -30,6 +30,36 @@ const virtualHost = "virtual:buzz-plugin-host";
 const cssToken = "__BUZZ_PLUGIN_DEV_CSS__";
 const shimPrefix = "\0buzz-host:";
 const cssImport = (path) => /\.css(?:\?|$)/.test(path);
+
+// Only this public build input enters artifacts/compatibility. Never capture
+// the whole environment, which can contain identities and credentials.
+export function bundledPublicConfig(directory = root, mode = "development") {
+  return {
+    builderlabUrl:
+      loadEnv(mode, directory, "BUZZ_BUILDERLAB_URL").BUZZ_BUILDERLAB_URL ?? "",
+  };
+}
+
+function builderlabOrigin({ builderlabUrl }) {
+  if (!builderlabUrl) return "";
+  let url;
+  try {
+    url = new URL(builderlabUrl);
+  } catch {
+    throw new Error("Invalid Builderlab build URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.href.includes("?") ||
+    url.href.includes("#")
+  )
+    throw new Error(
+      "Builderlab build URL must use HTTPS without credentials, query, or fragment",
+    );
+  return url.origin;
+}
 
 async function hostSources(directory) {
   const tracked = execFileSync(
@@ -72,9 +102,13 @@ async function hostSources(directory) {
   return sources;
 }
 
-function fingerprint(selected, directory, graph, sources) {
+function fingerprint(selected, directory, graph, sources, publicConfig) {
   const hash = createHash("sha256");
   hash.update(selected.manifest.id).update("\0");
+  if (selected.manifest.id === "block.builderlab") {
+    builderlabOrigin(publicConfig);
+    hash.update(publicConfig.builderlabUrl).update("\0");
+  }
   // A new host import/export requires a host rebuild even if its source bytes
   // were already present. Validate compatibility before retiring healthy code.
   hash
@@ -93,18 +127,32 @@ function fingerprint(selected, directory, graph, sources) {
   return hash.digest("hex");
 }
 
-export async function hostBuildId(plugin, directory = root, graph) {
+export async function hostBuildId(
+  plugin,
+  directory = root,
+  graph,
+  publicConfig = bundledPublicConfig(directory),
+) {
   graph ??= await pluginGraph(directory);
   const selected = graph.catalog.find(
     (entry) => entry.slug === plugin || entry.manifest.id === plugin,
   );
   if (!selected) throw new Error(`Unknown bundled plugin: ${plugin}`);
-  return fingerprint(selected, directory, graph, await hostSources(directory));
+  return fingerprint(
+    selected,
+    directory,
+    graph,
+    await hostSources(directory),
+    publicConfig,
+  );
 }
 
 // Native debug policy also gates attachment. This projection is explicitly
 // supplied only by a development host, never selected by dotenv/runtime flags.
-export function bundledHostPlugin(directory = root) {
+export function bundledHostPlugin(
+  directory = root,
+  publicConfig = bundledPublicConfig(directory),
+) {
   return {
     name: "buzz-plugin-host-modules",
     resolveId(id) {
@@ -131,6 +179,7 @@ export function bundledHostPlugin(directory = root) {
             directory,
             graph,
             sources,
+            publicConfig,
           );
         } else {
           this.warn(
@@ -223,7 +272,12 @@ async function namespaceExports(path, directory) {
   ).exports;
 }
 
-export async function buildBundledDev({ plugin, directory = root, out } = {}) {
+export async function buildBundledDev({
+  plugin,
+  directory = root,
+  out,
+  publicConfig = bundledPublicConfig(directory),
+} = {}) {
   const catalog = await pluginCatalog(directory);
   let selected = catalog.find(
     (entry) => entry.slug === plugin || entry.manifest.id === plugin,
@@ -233,6 +287,8 @@ export async function buildBundledDev({ plugin, directory = root, out } = {}) {
       `Unknown bundled plugin: ${plugin}. Choose ${catalog.map((entry) => entry.slug).join(", ")}`,
     );
   const id = selected.manifest.id;
+  const origin =
+    id === "block.builderlab" ? builderlabOrigin(publicConfig) : "";
   out = resolve(out ?? join(directory, "dist-plugins", selected.slug));
   if (
     out === resolve(directory) ||
@@ -268,7 +324,17 @@ export async function buildBundledDev({ plugin, directory = root, out } = {}) {
       `Plugin-private source is still consumed outside ${id}:\n${incoming.join("\n")}`,
     );
   const modules = graph.dependencies(selected);
-  const buildId = await hostBuildId(plugin, directory, graph);
+  const buildId = await hostBuildId(plugin, directory, graph, publicConfig);
+  const manifest =
+    selected.manifest.id === "block.builderlab"
+      ? {
+          ...selected.manifest,
+          host: {
+            commands: [],
+            networkOrigins: origin ? [origin] : [],
+          },
+        }
+      : selected.manifest;
   const entry = vitePath(join(directory, ".bundled-plugin-dev-entry.js"));
   const check = `const host = globalThis.${registry}; if (!host || host.fingerprints[${JSON.stringify(id)}] !== ${JSON.stringify(buildId)}) throw new Error("Local plugin targets a different Buzz development host. Rebuild/restart the host after shared or native changes.");`;
   const exported = new Map();
@@ -281,6 +347,11 @@ export async function buildBundledDev({ plugin, directory = root, out } = {}) {
     envDir: false,
     publicDir: false,
     logLevel: "warn",
+    define: {
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
+        publicConfig.builderlabUrl,
+      ),
+    },
     oxc: { jsx: { development: false } },
     plugins: [
       {
@@ -443,7 +514,7 @@ export function apply(ctx) {
   try {
     await writeFile(
       join(temporary, "manifest.json"),
-      `${JSON.stringify(selected.manifest, null, 2)}\n`,
+      `${JSON.stringify(manifest, null, 2)}\n`,
     );
     await writeFile(
       join(temporary, "plugin.dev.json"),

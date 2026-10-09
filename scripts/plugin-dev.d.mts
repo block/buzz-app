@@ -1,2 +1,6 @@
 import type { Plugin } from "vite";
-export function bundledHostPlugin(directory?: string): Plugin;
+export type BundledPublicConfig = { builderlabUrl: string };
+export function bundledHostPlugin(
+  directory?: string,
+  publicConfig?: BundledPublicConfig,
+): Plugin;

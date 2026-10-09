@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   buildBundledDev,
   bundledHostPlugin,
+  bundledPublicConfig,
   hostBuildId,
 } from "./plugin-dev.mjs";
 import { pluginGraph, root } from "./plugin-graph.mjs";
@@ -91,6 +92,108 @@ test("React namespace shims use the production runtime exports, not Node's synth
   expect(code).toContain('"useState"');
   expect(code).not.toContain('"act"');
   expect(code).not.toContain('"captureOwnerStack"');
+});
+
+test("Builderlab artifacts preserve the public deployment target and exact-origin grant", async () => {
+  vi.stubEnv("BUZZ_BUILDERLAB_URL", "https://login.example:8443/deployment/");
+  try {
+    const result = await build(
+      "builderlab",
+      join(directory, "builderlab-config"),
+    );
+    const manifest = JSON.parse(
+      await readFile(join(result.out, "manifest.json"), "utf8"),
+    );
+    const code = await readFile(join(result.out, "plugin.js"), "utf8");
+    expect(code.match(/function oauthTarget\([^)]*\)/)?.[0]).toBe(
+      'function oauthTarget(value = "https://login.example:8443/deployment/")',
+    );
+    expect(manifest.host).toEqual({
+      commands: [],
+      networkOrigins: ["https://login.example:8443"],
+    });
+    const graph = await pluginGraph(checkout);
+    const projection = await bundledHostPlugin(checkout).load.call(
+      { warn: vi.fn() },
+      "\0virtual:buzz-plugin-host",
+    );
+    expect(projection).toContain(`"block.builderlab":"${result.buildId}"`);
+    vi.stubEnv("BUZZ_BUILDERLAB_URL", "https://login.example:8443/other/");
+    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(
+      result.buildId,
+    );
+    vi.stubEnv("BUZZ_BUILDERLAB_URL", "");
+    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(
+      result.buildId,
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("public config uses development files and explicit process overrides, without unrelated inputs", async () => {
+  const fixture = join(directory, "public-config");
+  await mkdir(fixture);
+  await writeFile(
+    join(fixture, ".env.local"),
+    "BUZZ_BUILDERLAB_URL=https://local.example/path/\nPRIVATE_VALUE=must-not-ship\n",
+  );
+  await writeFile(
+    join(fixture, ".env.development"),
+    "BUZZ_BUILDERLAB_URL=https://development.example/\n",
+  );
+  await writeFile(
+    join(fixture, ".env.production"),
+    "BUZZ_BUILDERLAB_URL=https://production.example/\n",
+  );
+  const saved = process.env.BUZZ_BUILDERLAB_URL;
+  delete process.env.BUZZ_BUILDERLAB_URL;
+  try {
+    expect(bundledPublicConfig(fixture)).toEqual({
+      builderlabUrl: "https://development.example/",
+    });
+    expect(bundledPublicConfig(fixture, "production")).toEqual({
+      builderlabUrl: "https://production.example/",
+    });
+    vi.stubEnv("BUZZ_BUILDERLAB_URL", "https://process.example/");
+    expect(bundledPublicConfig(fixture)).toEqual({
+      builderlabUrl: "https://process.example/",
+    });
+    vi.stubEnv("BUZZ_BUILDERLAB_URL", "");
+    expect(bundledPublicConfig(fixture)).toEqual({ builderlabUrl: "" });
+  } finally {
+    vi.unstubAllEnvs();
+    if (saved === undefined) delete process.env.BUZZ_BUILDERLAB_URL;
+    else process.env.BUZZ_BUILDERLAB_URL = saved;
+  }
+});
+
+test("Builderlab rejects invalid public targets without echoing them or replacing a healthy artifact", async () => {
+  const out = join(directory, "builderlab-config");
+  await buildBundledDev({
+    plugin: "builderlab",
+    directory: checkout,
+    out,
+    publicConfig: { builderlabUrl: "" },
+  });
+  const before = await readFile(join(out, "plugin.js"), "utf8");
+  for (const builderlabUrl of [
+    "http://login.example",
+    "https://user:secret@login.example",
+    "https://login.example?",
+    "https://login.example#",
+    "invalid",
+  ]) {
+    await expect(
+      buildBundledDev({
+        plugin: "builderlab",
+        directory: checkout,
+        out,
+        publicConfig: { builderlabUrl },
+      }),
+    ).rejects.toThrow(/Builderlab build URL/);
+    expect(await readFile(join(out, "plugin.js"), "utf8")).toBe(before);
+  }
 });
 
 test("plugin-only edits preserve matching host identity and generate utilities without copying host CSS", async () => {

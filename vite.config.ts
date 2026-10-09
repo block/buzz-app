@@ -33,7 +33,13 @@ export default defineConfig(async ({ command, mode }) => {
     );
   const plugins: PluginOption[] = [
     react(),
-    ...(command === "serve" ? [bundledHostPlugin()] : []),
+    ...(command === "serve"
+      ? [
+          bundledHostPlugin(process.cwd(), {
+            builderlabUrl: env.BUZZ_BUILDERLAB_URL ?? "",
+          }),
+        ]
+      : []),
   ];
   if (command === "serve")
     plugins.push(

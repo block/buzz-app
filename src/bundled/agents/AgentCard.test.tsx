@@ -23,27 +23,35 @@ import { AgentCard } from "./AgentCard";
 afterEach(cleanup);
 
 it.each(["tile", "row"] as const)(
-  "shows an accessible restart-required badge only for drifted managed %s cards",
+  "shows a restart-required badge when any saved %s setup drifts, but not for unmanaged or legacy cards",
   (layout) => {
     const fixture = controlFixture();
+    const drift: AgentView["restartDiff"] = [
+      {
+        field: "systemPrompt",
+        change: { kind: "text", beforeChars: 18, afterChars: 21 },
+      },
+    ];
+    const stable = {
+      ...fixture.agent,
+      id: "stable-fixture-agent",
+      restartDiff: [],
+    } satisfies AgentView;
     const drifted = {
       ...fixture.agent,
-      restartDiff: [
-        {
-          field: "systemPrompt",
-          change: { kind: "text", beforeChars: 18, afterChars: 21 },
-        },
-      ],
+      id: "drifted-fixture-agent",
+      relayUrl: "wss://other-relay.example.test",
+      restartDiff: drift,
     } satisfies AgentView;
-    const card = (agent: AgentView) => (
+    const card = (editable: AgentView[]) => (
       <AgentCard
         name="Agent"
-        identities={[agent]}
-        editable={[agent]}
+        identities={[{ pubkey: fixture.agent.pubkey, name: "Agent" }]}
+        editable={editable}
         layout={layout}
       />
     );
-    const view = render(card(drifted));
+    const view = render(card([stable, drifted]));
     const article = screen.getByRole("article", { name: "Agent Agent" });
     const badge = within(article).getByRole("status", {
       name: "Restart required",
@@ -52,7 +60,32 @@ it.each(["tile", "row"] as const)(
     expect(badge).toBeVisible();
     expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
 
-    view.rerender(card({ ...drifted, restartDiff: [] }));
+    view.rerender(
+      card([
+        {
+          ...stable,
+          restartDiff: [],
+        },
+        {
+          ...drifted,
+          restartDiff: [],
+        },
+      ]),
+    );
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    view.rerender(card([]));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    const legacy = { ...drifted } as Omit<AgentView, "restartDiff"> & {
+      restartDiff?: AgentView["restartDiff"];
+    };
+    delete legacy.restartDiff;
+    view.rerender(card([legacy as AgentView]));
     expect(
       within(article).queryByRole("status", { name: "Restart required" }),
     ).toBeNull();

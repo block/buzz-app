@@ -158,7 +158,9 @@ export function AgentCard({
         ? "Custom model"
         : managed.harness.model || "Default model"))
     : undefined;
-  const restartRequired = (managed?.restartDiff?.length ?? 0) > 0;
+  const restartRequired = editable.some(
+    (agent) => (agent.restartDiff?.length ?? 0) > 0,
+  );
   const restartBadge = restartRequired ? (
     <span
       role="status"

@@ -848,6 +848,7 @@ fn codex_launch_child(test: &str) -> bool {
         .env("HOME", home.path())
         .env("PATH", "/usr/bin:/bin")
         .env(CHILD, "1")
+        .env("SSH_AUTH_SOCK", "/tmp/buzz-test-ssh.sock")
         .output()
         .unwrap();
     assert!(
@@ -922,7 +923,7 @@ fn codex_command_binds_exact_interpreters_and_default_selection() {
     assert!(!environment.contains_key("BUZZ_ACP_EFFORT_LEVEL"));
     assert!(!environment.contains_key("BUZZ_AGENT_MODEL"));
     assert!(!environment.contains_key("BUZZ_AGENT_PROVIDER"));
-    assert!(!environment.contains_key("SSH_AUTH_SOCK"));
+    assert_eq!(environment["SSH_AUTH_SOCK"], "/tmp/buzz-test-ssh.sock");
     let path: Vec<_> = std::env::split_paths(&environment["PATH"]).collect();
     assert_eq!(path.first(), Some(&dir.path().to_path_buf()));
     assert!(path[0].join("buzz").is_file());

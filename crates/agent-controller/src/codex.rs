@@ -230,6 +230,10 @@ impl CodexContext {
             .envs(&self.environment)
             .env("PATH", path)
             .current_dir(&self.workspace);
+        // Like every other harness, agents reach the host SSH agent for git.
+        if let Some(socket) = std::env::var_os("SSH_AUTH_SOCK") {
+            command.env("SSH_AUTH_SOCK", socket);
+        }
         Ok(())
     }
 

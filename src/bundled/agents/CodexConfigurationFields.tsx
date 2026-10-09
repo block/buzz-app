@@ -32,15 +32,13 @@ export function CodexConfigurationFields({
   const changeDraft = useRef(onChange);
   currentDraft.current = draft;
   changeDraft.current = onChange;
+  // Typed Workspace and environment edits apply on Refresh, not per keystroke.
   const contextKey = JSON.stringify([
     id,
     savedRevision,
     draft.revision,
     draft.integration,
     draft.command,
-    draft.args,
-    draft.workspace,
-    draft.environment,
   ]);
   const currentContext = useRef(contextKey);
   currentContext.current = contextKey;

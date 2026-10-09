@@ -201,7 +201,10 @@ it("does not restart discovery on unrelated renders and preserves a stale saved 
     ).toBeVisible();
     expect(run).toHaveBeenCalledTimes(1);
     await user.type(screen.getByLabelText("Name"), " updated");
+    await user.click(screen.getByRole("button", { name: "Environment" }));
+    await user.type(screen.getByLabelText("Workspace"), "/proj");
     expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("combobox", { name: "Codex model" })).toBeEnabled();
     expect(current().configuration).toEqual({
       mode: "advanced",
       effort: { kind: "value", value: "high" },

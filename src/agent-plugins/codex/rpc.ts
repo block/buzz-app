@@ -1,3 +1,4 @@
+import type { Model } from "./config";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -182,4 +183,16 @@ export class AppServer {
     })();
     return this.closing;
   }
+}
+
+export async function listModels(rpc: AppServer) {
+  const models: Model[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: { data: Model[]; nextCursor: string | null } =
+      await rpc.request("model/list", { limit: 100, cursor });
+    models.push(...page.data);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return models;
 }

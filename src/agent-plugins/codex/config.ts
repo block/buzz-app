@@ -38,3 +38,6 @@ export function config(raw: unknown): Config {
 export const effortName = (effort: string) =>
   ({ xhigh: "Extra high", max: "Maximum", ultra: "Ultra" })[effort] ??
   `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`;
+
+export const absoluteWorkspace = (path: string) =>
+  path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());

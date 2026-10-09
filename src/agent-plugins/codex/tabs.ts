@@ -1,8 +1,14 @@
 import type * as ReactModule from "react";
 import type { ReactNode } from "react";
 import type { AgentViewProps } from "../../features/agents2/service";
-import { config, effortName, type Config, type Model } from "./config";
-import { AppServer, type Spawn } from "./rpc";
+import {
+  config,
+  effortName,
+  absoluteWorkspace,
+  type Config,
+  type Model,
+} from "./config";
+import { AppServer, listModels, type Spawn } from "./rpc";
 import type { CodexRuntime } from "./runtime";
 
 type Catalog = { models: Model[]; account: string };
@@ -24,14 +30,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
       throw new Error(
         "Codex needs you to sign in. Run codex login in a terminal, then check again.",
       );
-    const models: Model[] = [];
-    let cursor: string | null = null;
-    do {
-      const page: { data: Model[]; nextCursor: string | null } =
-        await rpc.request("model/list", { limit: 100, cursor });
-      models.push(...page.data);
-      cursor = page.nextCursor;
-    } while (cursor);
+    const models = await listModels(rpc);
     return { models, account: account.account.email ?? account.account.type };
   } finally {
     signal.removeEventListener("abort", abort);
@@ -190,7 +189,7 @@ export function createTabs(
       h(
         "p",
         { className: "buzz-field-description" },
-        "Only your messages trigger this agent. Ordinary mentions queue; /steer redirects active work, /stop cancels it, and /reset starts a fresh session. Event watches work for your messages; timers are not supported yet.",
+        "Only your messages trigger this agent. New mentions steer active work; /queue waits for the turn to finish, /stop cancels it, and /reset starts a fresh session. Event watches work for your messages; timers are not supported yet.",
       ),
     );
   }
@@ -219,10 +218,7 @@ export function createTabs(
       setSaving(true);
       setError("");
       try {
-        if (
-          !draft.workspace.startsWith("/") &&
-          !/^[A-Za-z]:[\\/]/.test(draft.workspace)
-        )
+        if (!absoluteWorkspace(draft.workspace))
           throw new Error("Enter an absolute workspace path.");
         await save({ ...draft, workspace: draft.workspace.trim() });
       } catch (reason) {
@@ -373,7 +369,7 @@ export function createTabs(
           onChange: (event: { target: { value: string } }) =>
             set({ instructions: event.target.value }),
         }),
-        "Buzz's base instructions are included. Saved changes apply to new messages; queued requests keep their original settings. A workspace change starts a fresh session.",
+        "Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn; queued requests keep their original settings. A workspace change starts a fresh session.",
       ),
       error
         ? h("p", { role: "alert", className: "buzz-field-error" }, error)

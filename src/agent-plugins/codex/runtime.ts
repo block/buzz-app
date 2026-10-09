@@ -5,16 +5,16 @@ import type {
 } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
-import { config, type Config, type Model } from "./config";
+import { config, absoluteWorkspace, type Config } from "./config";
 import { conversationHistory } from "./history";
 import {
-  baseInstructions,
+  developerInstructions,
   rootOf,
   sessionName,
   turnInput,
   type Conversation,
 } from "./prompt";
-import { AppServer, type Spawn } from "./rpc";
+import { AppServer, listModels, type Spawn } from "./rpc";
 
 type Request = {
   event: EventData;
@@ -32,6 +32,7 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   cancelled: boolean;
+  finished: boolean;
 };
 type Lane = {
   tail: Promise<void>;
@@ -187,13 +188,6 @@ export class CodexRuntime {
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = config(delivery.config);
-    if (
-      !settings.workspace.startsWith("/") &&
-      !/^[A-Za-z]:[\\/]/.test(settings.workspace)
-    )
-      throw new Error(
-        "Choose an absolute workspace path in Codex settings first.",
-      );
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
@@ -213,10 +207,21 @@ export class CodexRuntime {
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
     };
+    if (!absoluteWorkspace(settings.workspace)) {
+      await this.publish(
+        request,
+        "Choose an absolute workspace path in Codex settings first.",
+      );
+      return;
+    }
     const key = JSON.stringify([channelId, root ?? "channel"]);
     let text = textOf(request.event, agent.name);
     const command = /^\/(steer|queue|stop|reset)(?:\s|$)/.exec(text)?.[1];
     if (command) text = text.replace(/^\/\w+\s*/, "");
+    if (command === "steer" && !text) {
+      await this.publish(request, "Add a message after /steer.");
+      return;
+    }
     // Idle controls need no app-server startup.
     const existing = this.entries.get(agent.pubkey);
     const previous = existing?.lanes.get(key);
@@ -273,38 +278,67 @@ export class CodexRuntime {
       await active.done;
       return;
     }
-    if (command === "steer" && lane.active) {
-      if (!text) throw new Error("Add a message after /steer");
+    if (
+      (command === "steer" || !command) &&
+      lane.active &&
+      !lane.active.cancelled
+    ) {
       const active = lane.active;
-      // Include the history read in the chain so delayed reads cannot reorder steers.
+      // Startup and history reads stay ordered without holding Agents2 delivery.
       const accepted = active.steering.then(async () => {
-        await active.ready;
-        const context = await this.history(request, entry.abort.signal);
-        await entry.rpc.request("turn/steer", {
-          threadId: active.threadId,
-          expectedTurnId: active.turnId,
-          input: input(
-            `${context}${turnInput(request.event, request.conversation, text, request.interest, true)}`,
-          ),
-        });
-        active.reply = request;
+        try {
+          await active.ready;
+          if (entry.abort.signal.aborted || active.cancelled) return;
+          if (active.finished && !command) {
+            this.enqueue(request, text, key, lane, entry);
+            return;
+          }
+          const context = await this.history(request, entry.abort.signal);
+          if (entry.abort.signal.aborted || active.cancelled) return;
+          if (active.finished && !command) {
+            this.enqueue(request, text, key, lane, entry);
+            return;
+          }
+          await entry.rpc.request("turn/steer", {
+            threadId: active.threadId,
+            expectedTurnId: active.turnId,
+            input: input(
+              `${context}${turnInput(request.event, request.conversation, text, request.interest, true)}`,
+            ),
+          });
+          active.reply = request;
+        } catch (error) {
+          if (entry.abort.signal.aborted || active.cancelled) return;
+          // A completion racing the request means this is the next ordinary turn.
+          if (!command && message(error) === "no active turn to steer") {
+            this.enqueue(request, text, key, lane, entry);
+            return;
+          }
+          await this.publish(
+            request,
+            `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
+          );
+        }
       });
-      active.steering = accepted.catch(() => undefined);
-      try {
-        await accepted;
-      } catch {
-        await this.publish(
-          request,
-          "Steering was not accepted; the turn may have finished. Send a regular mention to continue.",
-        );
-      }
+      active.steering = accepted.catch((error) =>
+        console.error("Codex steering failed", error),
+      );
       return;
     }
+    this.enqueue(request, text, key, lane, entry);
+  }
+  private enqueue(
+    request: Request,
+    text: string,
+    key: string,
+    lane: Lane,
+    entry: Entry,
+  ) {
     if (lane.queued >= 32) {
-      await this.publish(
+      void this.publish(
         request,
         "Codex's conversation queue is full. Try again when it finishes some work.",
-      );
+      ).catch((error) => console.error("Codex queue feedback failed", error));
       return;
     }
     lane.queued++;
@@ -319,7 +353,7 @@ export class CodexRuntime {
       });
     lane.tail = job;
     this.status(
-      agent.pubkey,
+      request.agent.pubkey,
       key,
       lane.active ? "Working · follow-up queued" : "Starting",
     );
@@ -411,6 +445,7 @@ export class CodexRuntime {
       steering: Promise.resolve(),
       reply: request,
       cancelled: false,
+      finished: false,
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
@@ -421,7 +456,7 @@ export class CodexRuntime {
     ]);
     let finish!: (status: string) => void;
     let fail!: (error: Error) => void;
-    let answer = "";
+    const answers: string[] = [];
     const completed = new Promise<string>((resolve, reject) => {
       finish = resolve;
       fail = reject;
@@ -455,7 +490,7 @@ export class CodexRuntime {
         p.item?.type === "agentMessage" &&
         p.item.phase !== "commentary"
       )
-        answer = p.item.text ?? "";
+        answers.push(p.item.text ?? "");
       if (wire.method === "item/started" && p.item?.command)
         this.status(agent.pubkey, key, "Working", p.item.command);
       if (
@@ -469,6 +504,7 @@ export class CodexRuntime {
           `${p.item.command ?? ""}\n${p.item.aggregatedOutput ?? ""}`,
         );
       if (wire.method === "turn/completed" && p.turn) {
+        active.finished = true;
         if (p.turn.status === "failed")
           fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
         else finish(p.turn.status);
@@ -485,14 +521,7 @@ export class CodexRuntime {
           mcp_servers?: Record<string, Record<string, unknown>>;
         };
       }>("config/read", { cwd: settings.workspace });
-      const models: Model[] = [];
-      let cursor: string | null = null;
-      do {
-        const page: { data: Model[]; nextCursor: string | null } =
-          await rpc.request("model/list", { limit: 100, cursor });
-        models.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
+      const models = await listModels(rpc);
       const model =
         settings.model ||
         normalized.config.model ||
@@ -508,18 +537,23 @@ export class CodexRuntime {
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
             name,
-            { ...withoutNulls(server), enabled: false },
+            // CLI overrides replace this table; disabled servers still need a transport.
+            {
+              ...(typeof server.command === "string"
+                ? { command: server.command }
+                : { url: server.url }),
+              enabled: false,
+            },
           ],
         ),
       );
       const params = {
         model,
         cwd: workspace,
-        baseInstructions: baseInstructions(agent, settings),
+        developerInstructions: developerInstructions(agent),
         approvalPolicy: "never",
         sandbox: "workspace-write",
         config: {
-          model_reasoning_effort: effort,
           "sandbox_workspace_write.network_access": false,
           mcp_servers: mcp,
           "features.plugins": false,
@@ -531,7 +565,9 @@ export class CodexRuntime {
         thread: { id: string; cwd: string };
       }>(resuming ? "thread/resume" : "thread/start", {
         ...params,
-        ...(resuming ? { threadId: existing?.threadId } : {}),
+        ...(resuming
+          ? { threadId: existing?.threadId, excludeTurns: true }
+          : {}),
       });
       resuming = false;
       active.threadId = started.thread.id;
@@ -554,6 +590,13 @@ export class CodexRuntime {
         ),
         model,
         effort,
+        // Application context is a developer message that updates on each turn.
+        additionalContext: {
+          "buzz.instructions": {
+            kind: "application",
+            value: developerInstructions(agent, settings),
+          },
+        },
       });
       active.turnId = turn.turn.id;
       ready();
@@ -571,12 +614,13 @@ export class CodexRuntime {
       } else {
         await this.publish(
           active.reply,
-          answer.trim() ||
+          answers.join("\n\n").trim() ||
             "Codex ended this turn without a final reply. Send another mention to ask it to continue.",
         );
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      active.finished = true;
       notReady(error);
       await active.steering;
       if (
@@ -609,7 +653,7 @@ export class CodexRuntime {
       signal.removeEventListener("abort", abort);
       off();
       // Release the subscription before the next resume: loaded-thread rejoin
-      // ignores baseInstructions/config overrides while a client is subscribed.
+      // ignores instruction/config overrides while a client is subscribed.
       if (active.threadId && !entry.abort.signal.aborted)
         await entry.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
@@ -620,15 +664,3 @@ export class CodexRuntime {
   }
 }
 const EMPTY: readonly SessionView[] = Object.freeze([]);
-function withoutNulls(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, item]) => item != null)
-      .map(([key, item]) => [
-        key,
-        typeof item === "object" && !Array.isArray(item)
-          ? withoutNulls(item as Record<string, unknown>)
-          : item,
-      ]),
-  );
-}

@@ -14,15 +14,6 @@ await build({
     runtime: new URL("./runtime.ts", import.meta.url).pathname,
     rpc: new URL("./rpc.ts", import.meta.url).pathname,
   },
-  plugins: [
-    {
-      name: "prompt-text",
-      async load(id) {
-        if (id.endsWith(".md?raw"))
-          return `export default ${JSON.stringify(await readFile(id.slice(0, -4), "utf8"))}`;
-      },
-    },
-  ],
   output: { dir: workspace, entryFileNames: "[name].mjs", format: "esm" },
 });
 const { CodexRuntime } = await import(join(workspace, "runtime.mjs"));
@@ -30,11 +21,14 @@ const { AppServer } = await import(join(workspace, "rpc.mjs"));
 const children = new Set();
 const notices = [];
 const sent = [];
+let acceptedSteers = 0;
 const nativeSpawn = async (_id, options = {}) => {
   const child = spawn(
     "codex",
     [
       "app-server",
+      "-c",
+      "include_collaboration_mode_instructions=false",
       "-c",
       `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
     ],
@@ -51,6 +45,7 @@ const nativeSpawn = async (_id, options = {}) => {
   );
   children.add(child);
   let buffer = "";
+  const requests = new Map();
   child.stdout.on("data", (data) => {
     buffer += data;
     while (buffer.includes("\n")) {
@@ -58,6 +53,13 @@ const nativeSpawn = async (_id, options = {}) => {
       const line = buffer.slice(0, end);
       buffer = buffer.slice(end + 1);
       const wire = JSON.parse(line);
+      if (
+        wire.id != null &&
+        !wire.method &&
+        requests.get(wire.id) === "turn/steer" &&
+        !wire.error
+      )
+        acceptedSteers++;
       // Never retain config/read values, which can contain local credentials.
       if (wire.method) notices.push(wire);
       options.onStdout?.(`${line}\n`);
@@ -74,6 +76,7 @@ const nativeSpawn = async (_id, options = {}) => {
   return {
     write(data) {
       const wire = JSON.parse(data);
+      if (wire.id != null) requests.set(wire.id, wire.method);
       if (wire.method)
         sent.push({ method: wire.method, threadId: wire.params?.threadId });
       return new Promise((resolve, reject) =>
@@ -171,6 +174,10 @@ const delivery = (content) => ({
 async function condition(test, description) {
   const deadline = Date.now() + 180_000;
   while (!(await test())) {
+    const failure = published.find((event) =>
+      event.content.startsWith("Codex could not finish:"),
+    );
+    if (failure) throw new Error(failure.content);
     if (Date.now() > deadline)
       throw new Error(
         `Timed out: ${description}; ${JSON.stringify(runtime.sessions(pubkey))}`,
@@ -203,9 +210,10 @@ try {
   );
   await runtime.run(
     delivery(
-      "/steer After the shell finishes, use your file editing tool to create steered.txt containing STEERED instead of original.txt. Reply STEERED_OK.",
+      "After the shell finishes, use your file editing tool to create steered.txt containing STEERED instead of original.txt. Reply STEERED_OK.",
     ),
   );
+  await condition(() => acceptedSteers > 0, "ordinary mention steered");
   await writeFile(join(workspace, "release"), "go");
   await condition(() => published.length === 2, "steered and queued replies");
   assert.match(published[0].content, /STEERED_OK/);
@@ -237,7 +245,7 @@ try {
   assert.match(
     rollout.find((row) => row.type === "session_meta").payload.base_instructions
       .text,
-    /Incoming Turn Contract/,
+    /apply_patch|apply patch/i,
   );
   assert(
     rollout.some((row) => JSON.stringify(row).includes("<thread-context>")),
@@ -245,7 +253,7 @@ try {
   await inspect.close();
   inspect = undefined;
   console.log(
-    "PASS native shell/file tools, base prompt, relay context, steering, queue and persisted thread",
+    "PASS native coding prompt and tools, relay context, default steering, queue and persisted thread",
   );
 
   await runtime.run(
@@ -280,13 +288,19 @@ try {
   await runtime.run(updated);
   await condition(() => published.length === 5, "edited instructions reply");
   assert.match(published.at(-1).content, /INSTRUCTIONS_UPDATED/);
+  const cleared = delivery("Reply exactly SETTINGS_CLEARED. No tools needed.");
+  cleared.config.instructions = "";
+  await runtime.run(cleared);
+  await condition(() => published.length === 6, "cleared instructions reply");
+  assert.match(published.at(-1).content, /SETTINGS_CLEARED/);
+  assert.doesNotMatch(published.at(-1).content, /INSTRUCTIONS_UPDATED/);
   assert.equal(binding().threadId, saved.threadId);
   assert.equal(await exists("mcp-must-not-start"), false);
   assert(!notices.some((wire) => wire.params?.item?.type === "mcpToolCall"));
   assert(!notices.some((wire) => wire.method === "item/agentMessage/delta"));
   assert(sent.some((wire) => wire.method === "thread/unsubscribe"));
   console.log(
-    "PASS edited instructions on resume, inherited MCP disabled, response deltas suppressed",
+    "PASS set and cleared instructions on resume, inherited MCP disabled, response deltas suppressed",
   );
 } finally {
   await inspect?.close();

@@ -1,6 +1,6 @@
 # Codex for Agents2
 
-An installable desktop plugin based on the native plugin-process host in #731.
+An installable desktop plugin using the native process host introduced in #731.
 Agents2 owns the identity, admission, configuration, and signed reply. This plugin
 owns Codex work after delivery handover. It starts one `codex app-server` per agent
 and uses independent Codex threads for Buzz conversations.
@@ -33,11 +33,13 @@ BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
 5. Reply in the same thread: `@Codex Test read hello.txt and remind me what you
    wrote`. Expect the same Codex session and correct file contents.
 
-While work is active, ordinary mentions queue. Explicit controls follow the
-mention, for example `@Codex Test /stop`:
+While work is active, ordinary mentions steer it, incorporating the follow-up into
+the ongoing task. Messages arriving during startup wait for the turn to start
+and then steer it; idle and stopped conversations resume the saved session.
+Explicit controls follow the mention, for example `@Codex Test /stop`:
 
-- `/queue <request>` queues a follow-up, like an ordinary mention.
-- `/steer <request>` redirects the active turn; the final reply targets the last
+- `/queue <request>` explicitly waits for the active turn to finish.
+- `/steer <request>` explicitly steers the active turn; the final reply targets the last
   accepted steering message. Rejected steering gets feedback.
 - `/stop` interrupts the turn, waits for background terminals to terminate,
   verifies cleanup, and cancels queued requests. A new mention can continue.
@@ -49,6 +51,11 @@ For cancellation, ask it to run `sleep 30` before creating a file, then send
 later file, and successful response to a fresh mention. For settings, change
 instructions to require a marker, save, and send another mention in the same
 thread. Expect the marker. Queued work keeps its original settings.
+
+After upgrading from the earlier plugin, use `/stop` if work is active, then
+`/reset` once in each existing conversation. Earlier sessions stored the old Buzz
+base prompt; reset lets Codex use its native coding prompt. Old Codex history
+remains on disk.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
@@ -64,7 +71,7 @@ bin/node src/agent-plugins/codex/live.mjs
 
 The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell
-and file tools, the base prompt, conversation context, accepted steering, queued
+and file tools, the native coding prompt, conversation context, default steering, queued
 follow-ups, cancellation of background shells, recovery, saved-thread reuse,
 changed instructions, and disabled inherited MCP tools. Set
 `BUZZ_CODEX_TEST_MODEL` to another available model if needed. It prints only
@@ -81,8 +88,8 @@ conversation routing, controls, persistence, defaults, failures, and cleanup.
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
 - Replies use Agents2's host signer. Codex receives no Buzz agent key and does not
-  publish through the Buzz CLI. The base prompt is adapted from #698; its CLI
-  publishing instructions are replaced by final-text publication through the host.
+  publish through the Buzz CLI. Short Buzz guidance and custom instructions are
+  supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex uses workspace-write with no network access and approval policy `never`.
   Inherited MCP servers, Apps, and plugins are disabled. The declared native
   process grant itself has full user access; the Codex sandbox governs its tools.

@@ -383,7 +383,7 @@ export function AgentControlPanel({
         </div>
       )}
       {teamProblem && <p role="alert">{teamProblem}</p>}
-      {session?.viewer && (
+      {session?.viewer && control.betaTeams && (
         <BetaTeamSetup
           control={control}
           state={state}

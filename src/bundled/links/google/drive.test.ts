@@ -41,14 +41,10 @@ const named = (name: string): HostResponse => ({
   body: JSON.stringify({ name }),
 });
 function fixture(request: Host["request"]) {
-  const token = vi.fn(async () => "token-1");
-  const credential: GoogleCredential = Object.freeze({
-    account: { subject: "123", email: "a@block.xyz" },
-    token,
-  });
-  const session = createOAuthSession<GoogleCredential>(
-    "Google",
-    async () => credential,
+  const token = vi.fn(async (_force?: boolean) => "token-1");
+  // Each sign-in yields a distinct credential, as the real flow does.
+  const session = createOAuthSession<GoogleCredential>("Google", async () =>
+    Object.freeze({ account: { subject: "123", email: "a@block.xyz" }, token }),
   );
   const host: Host = { runCommand: vi.fn(), request: vi.fn(request) };
   const titles = createDriveTitles(host, session);
@@ -147,4 +143,54 @@ it("runs at most four lookups at once", async () => {
   await vi.waitFor(() => expect(host.request).toHaveBeenCalledTimes(5));
   expect(titles.title(urls[0] ?? "")).toBe("First");
   expect(titles.title(urls[5] ?? "")).toBeUndefined();
+});
+
+it("leaves transient failures uncached so a later request retries, and signs out when the token cannot renew", async () => {
+  const responses: HostResponse[] = [
+    { status: 503, headers: {}, body: "" },
+    { status: 429, headers: {}, body: "" },
+    named("Buzzin"),
+  ];
+  const { session, host, titles, token } = fixture(
+    async () => responses.shift() ?? named("unexpected"),
+  );
+  await session.signIn();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    titles.ensure(docUrl);
+    await vi.waitFor(() =>
+      expect(host.request).toHaveBeenCalledTimes(attempt + 1),
+    );
+    await Promise.resolve();
+  }
+  await vi.waitFor(() => expect(titles.title(docUrl)).toBe("Buzzin"));
+  expect(session.snapshot().status).toBe("signed-in");
+
+  token.mockRejectedValue(new Error("Google sign-in expired. Sign in again."));
+  const other = "https://drive.google.com/file/d/0000000000other/view";
+  titles.ensure(other);
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  expect(titles.title(docUrl)).toBeUndefined();
+  expect(host.request).toHaveBeenCalledTimes(3);
+});
+
+it("a retired credential neither renews after sign-out nor blocks the next account's lookup", async () => {
+  const first = deferred<HostResponse>();
+  const { session, host, titles, token } = fixture(
+    vi
+      .fn<Host["request"]>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(named("Fresh")),
+  );
+  await session.signIn();
+  titles.ensure(docUrl);
+  await vi.waitFor(() => expect(host.request).toHaveBeenCalledTimes(1));
+  session.signOut();
+  await session.signIn();
+  expect(titles.revision()).toBeGreaterThan(0);
+  titles.ensure(docUrl);
+  await vi.waitFor(() => expect(host.request).toHaveBeenCalledTimes(2));
+  first.resolve({ status: 401, headers: {}, body: "" });
+  await vi.waitFor(() => expect(titles.title(docUrl)).toBe("Fresh"));
+  expect(token).not.toHaveBeenCalledWith(true);
+  expect(host.request).toHaveBeenCalledTimes(2);
 });

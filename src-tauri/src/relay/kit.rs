@@ -5,6 +5,9 @@ const KIT_TAG: &str = "buzz-channel-kit-v1";
 const ME_KIT_TAG: &str = "buzz-me-kit-v1";
 const MANIFEST_TAG: &str = "buzz-channel-kit-v2";
 const PAYLOAD_TAG: &str = "buzz-team-payload-v1";
+const TEXT_TAG: &str = "buzz-team-text-v1";
+/// `v1:` plus at most 128 KiB of UTF-8 team instructions.
+const TEXT_MANIFEST_BYTES: std::ops::RangeInclusive<u64> = 3..=3 + 128 * 1024;
 fn portable(value: &Value) -> bool {
     let Some(manifest) = value.as_object() else {
         return false;
@@ -145,6 +148,23 @@ fn record(raw: &Value, community: &str) -> Result<String> {
                 }
         }
         "team-payload" => version == 1 && raw["deleted"] == false && payload(value, community),
+        "team-text" => {
+            let manifest = &value["manifest"];
+            version == 1
+                && only(value, &["type", "id", "owner", "manifest"])
+                && value.as_object().is_some_and(|v| v.len() == 4)
+                && identifier(id)
+                && value["owner"].as_str().is_some_and(super::hex_key)
+                && if raw["deleted"] == true {
+                    manifest.is_null()
+                } else {
+                    portable(manifest)
+                        && manifest["owner"] == value["owner"]
+                        && manifest["bytes"]
+                            .as_u64()
+                            .is_some_and(|bytes| TEXT_MANIFEST_BYTES.contains(&bytes))
+                }
+        }
         "template" => {
             exact_lineup(
                 value,
@@ -226,7 +246,10 @@ fn record(raw: &Value, community: &str) -> Result<String> {
             }
         })
         .collect();
-    if kind == "team-payload" {
+    if kind == "team-text" {
+        let owner = value["owner"].as_str().ok_or("Invalid team text owner")?;
+        Ok(format!("{TEXT_TAG}:{encoded}:{owner}:{id}"))
+    } else if kind == "team-payload" {
         Ok(format!(
             "{PAYLOAD_TAG}:{encoded}:{}:{}:{}:{}",
             value["owner"].as_str().ok_or("Invalid payload owner")?,
@@ -245,6 +268,8 @@ fn record_tag(raw: &Value) -> &'static str {
     let value = &raw["value"];
     if value["type"] == "team-payload" {
         PAYLOAD_TAG
+    } else if value["type"] == "team-text" {
+        TEXT_TAG
     } else if raw["version"] == 2 {
         MANIFEST_TAG
     } else if (value["type"] == "groups" && value["id"] == "me")
@@ -306,7 +331,11 @@ pub(super) async fn validate_ciphertext(
     }
     let raw: Value = serde_json::from_str(&plaintext).map_err(|_| "Invalid channel recipe")?;
     admission(event, &raw, community)?;
-    if raw["value"]["type"] == "team-payload" || raw["version"] == 2 {
+    if matches!(
+        raw["value"]["type"].as_str(),
+        Some("team-payload" | "team-text")
+    ) || raw["version"] == 2
+    {
         let owner = if raw["version"] == 2 {
             &raw["value"]["portable"]["owner"]
         } else {
@@ -377,7 +406,7 @@ async fn decode_team_members(
     if events.len() >= 500 {
         return Err("Team catalog reached its read limit".into());
     }
-    let mut heads: std::collections::BTreeMap<String, (u64, String, Vec<String>)> =
+    let mut heads: std::collections::BTreeMap<String, (bool, u64, String, Vec<String>)> =
         std::collections::BTreeMap::new();
     for event in events {
         let signed: nostr::event::Event =
@@ -426,10 +455,14 @@ async fn decode_team_members(
             serde_json::from_value(raw["value"]["agents"].clone())
                 .map_err(|_| "Invalid team catalog")?
         };
-        if heads.get(&id).map_or(true, |(time, old, _)| {
-            timestamp > *time || (timestamp == *time && event_id < *old)
+        // A portable record supersedes the ordinary record it replaced, even
+        // though retiring the ordinary record is the later write.
+        let portable = coordinate.starts_with(&format!("{MANIFEST_TAG}:"));
+        if heads.get(&id).map_or(true, |(old_portable, time, old, _)| {
+            (portable, timestamp) > (*old_portable, *time)
+                || (portable == *old_portable && timestamp == *time && event_id < *old)
         }) {
-            heads.insert(id, (timestamp, event_id, members));
+            heads.insert(id, (portable, timestamp, event_id, members));
         }
     }
     if host.viewer().await? != owner {
@@ -437,7 +470,7 @@ async fn decode_team_members(
     }
     Ok(heads
         .into_iter()
-        .map(|(id, (created_at, event_id, members))| {
+        .map(|(id, (_, created_at, event_id, members))| {
             (
                 id,
                 buzz_agent_controller::TeamCatalogEntry {
@@ -619,5 +652,126 @@ mod binding_catalog_tests {
                 .await
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn portable_record_outranks_the_later_retired_ordinary_record() {
+        let host = IdentityHost::fixture();
+        let owner = host.viewer().await.unwrap();
+        let community = "https://relay.test";
+        let member = "ab".repeat(32);
+        let ordinary = serde_json::json!({"version":1,"community":community,"deleted":false,
+            "value":{"type":"team","id":"team-a","name":"Team","agents":[member]}});
+        let portable = serde_json::json!({"version":2,"community":community,"deleted":false,
+            "value":{"type":"team","id":"team-a","name":"Team","agents":[member],
+            "portable":{"version":1,"owner":owner,"revision":"11111111-1111-4111-8111-111111111111",
+            "digest":"cd".repeat(32),"bytes":4,"chunks":1}}});
+        let mut retired = ordinary.clone();
+        retired["deleted"] = serde_json::json!(true);
+        let events = vec![
+            signed(&host, ordinary, 1).await,
+            signed(&host, portable, 2).await,
+            signed(&host, retired, 3).await,
+        ];
+        let teams = decode_team_members(&host, community, &owner, events)
+            .await
+            .unwrap();
+        assert_eq!(teams["team-a"].members, vec![member]);
+    }
+}
+
+#[cfg(test)]
+mod team_text_tests {
+    use super::*;
+    fn text(owner: &str, community: &str, bytes: u64) -> Value {
+        serde_json::json!({"version":1,"community":community,"deleted":false,
+            "value":{"type":"team-text","id":"crew","owner":owner,
+            "manifest":{"version":1,"owner":owner,"revision":"11111111-1111-4111-8111-111111111111",
+            "digest":"cd".repeat(32),"bytes":bytes,"chunks":bytes.div_ceil(16 * 1024)}}})
+    }
+    #[tokio::test]
+    async fn team_text_heads_bind_owner_tag_and_coordinate() {
+        let host = IdentityHost::fixture();
+        let owner = host.viewer().await.unwrap();
+        let community = "https://relay.test";
+        let live = text(&owner, community, 3);
+        let mut tombstone = live.clone();
+        tombstone["deleted"] = serde_json::json!(true);
+        tombstone["value"]["manifest"] = Value::Null;
+        for raw in [&live, &tombstone] {
+            prepare(raw, community).unwrap();
+            let coordinate = record(raw, community).unwrap();
+            assert_eq!(
+                coordinate,
+                format!("{TEXT_TAG}:https%3A%2F%2Frelay.test:{owner}:crew")
+            );
+            let ciphertext = host.kit_cipher(raw.to_string(), true).await.unwrap();
+            let mut event = serde_json::json!({"kind":30078,"content":ciphertext,
+                "tags":[["d",coordinate],["t",TEXT_TAG]]});
+            assert_eq!(
+                validate_ciphertext(&host, &event, community).await.unwrap(),
+                *raw
+            );
+            // Never admitted under either team-record tag.
+            for tag in [KIT_TAG, MANIFEST_TAG] {
+                event["tags"][1][1] = serde_json::json!(tag);
+                assert!(validate_ciphertext(&host, &event, community).await.is_err());
+            }
+        }
+        // Another owner's head, even self-consistent, is refused.
+        let other = text(&"ef".repeat(32), community, 3);
+        let ciphertext = host.kit_cipher(other.to_string(), true).await.unwrap();
+        let event = serde_json::json!({"kind":30078,"content":ciphertext,
+            "tags":[["d",record(&other,community).unwrap()],["t",TEXT_TAG]]});
+        assert!(validate_ciphertext(&host, &event, community).await.is_err());
+    }
+    /// The same corpus runs against browser admission in
+    /// `browser-host/channel-kit.test.mjs`.
+    #[test]
+    fn team_text_heads_match_the_shared_admission_corpus() {
+        let owner = "ab".repeat(32);
+        let corpus = include_str!(
+            "../../../src/features/channel-templates/team-text-admission-contract.json"
+        )
+        .replace("OWNER", &owner);
+        let cases: Vec<Value> = serde_json::from_str(&corpus).unwrap();
+        assert!(cases.len() > 10);
+        for case in cases {
+            let event = serde_json::json!({"tags": case["tags"]});
+            assert_eq!(
+                admission(&event, &case["record"], "https://relay.test").is_ok(),
+                case["accepted"] == true,
+                "{}",
+                case["name"]
+            );
+        }
+    }
+    #[test]
+    fn team_text_heads_reject_bad_shapes() {
+        let owner = "ab".repeat(32);
+        let community = "https://relay.test";
+        assert!(prepare(&text(&owner, community, 3 + 128 * 1024), community).is_ok());
+        let mut bad = vec![
+            text(&owner, community, 2),
+            text(&owner, community, 4 + 128 * 1024),
+            text(&owner, "https://other.test", 3),
+        ];
+        let mut extra = text(&owner, community, 3);
+        extra["value"]["text"] = serde_json::json!("inline");
+        bad.push(extra);
+        let mut mismatched = text(&owner, community, 3);
+        mismatched["value"]["manifest"]["owner"] = serde_json::json!("ef".repeat(32));
+        bad.push(mismatched);
+        let mut live_null = text(&owner, community, 3);
+        live_null["value"]["manifest"] = Value::Null;
+        bad.push(live_null);
+        let mut dead_manifest = text(&owner, community, 3);
+        dead_manifest["deleted"] = serde_json::json!(true);
+        bad.push(dead_manifest);
+        let mut v2 = text(&owner, community, 3);
+        v2["version"] = serde_json::json!(2);
+        bad.push(v2);
+        for raw in bad {
+            assert!(prepare(&raw, community).is_err(), "{raw}");
+        }
     }
 }

@@ -1431,13 +1431,6 @@ function ChannelWorkspace({
               )}
               <SessionColumn enabled={flatSession}>
                 <MessageManagementStatus />
-                {!cached && (
-                  <LiveStatus
-                    live={queries.live}
-                    channelId={current?.id}
-                    partialRoster={list.coverage === "partial"}
-                  />
-                )}
                 {flatSession &&
                 current &&
                 navigation &&
@@ -1506,6 +1499,20 @@ function ChannelWorkspace({
                         current.channelType === "forum")
                     }
                     onJoin={() => setJoiningChannel(current.id)}
+                  />
+                )}
+                {!cached && (
+                  <LiveStatus
+                    live={queries.live}
+                    channelId={current?.id}
+                    partialRoster={list.coverage === "partial"}
+                    // Retry removes this focused control. Reuse the composer’s
+                    // explicit focus handoff instead of relying on browser Tab memory.
+                    onRetry={
+                      current
+                        ? () => setComposerFocus((value) => value + 1)
+                        : undefined
+                    }
                   />
                 )}
                 {current && (

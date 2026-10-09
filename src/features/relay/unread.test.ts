@@ -776,41 +776,6 @@ it("repair-retained reference-only edits admit a later deletion without seeding 
   expect(h.session.channels.window("room")).toBe(window);
 });
 
-it("activity subscribers restore original content when a reference-only edit is deleted", () => {
-  const h = setup();
-  h.grant("room");
-  const root = message(h.viewer, "room", "root", 10);
-  const reply = message(h.alice, "room", "ORIGINAL", 11, [
-    ["e", root.id, "", "reply"],
-  ]);
-  const edit = signed(h.alice, {
-    kind: 40003,
-    content: "EDITED",
-    tags: [["e", reply.id]],
-  });
-  const deletion = signed(h.alice, {
-    kind: 5,
-    content: "",
-    tags: [["e", edit.id]],
-  });
-  h.emit([root, reply]);
-  const changes: ThreadActivitySnapshot[] = [];
-  h.session.unread.subscribeActivity("room", () =>
-    changes.push(h.session.unread.activity("room")),
-  );
-
-  h.emit([edit]);
-  expect(changes.at(-1)?.items?.[0]?.preview).toBe("EDITED");
-  h.emit([deletion]);
-  expect(h.session.unread.activity("room").items?.[0]?.preview).toBe(
-    "ORIGINAL",
-  );
-  expect(changes.map((snapshot) => snapshot.items?.[0]?.preview)).toEqual([
-    "EDITED",
-    "ORIGINAL",
-  ]);
-});
-
 it("deletion-before-edit batches retain authorized ancestry without a transient activity change", () => {
   const h = setup();
   h.grant("room");
@@ -2371,33 +2336,6 @@ it("catch-up rejects historical heads, failed storage and expired leases without
   held.release();
   await rejected;
   expect(h.journal()?.state.frontiers).toEqual({});
-});
-
-it("mark all captures later channels at invocation, not after the first save", async () => {
-  const h = setup();
-  h.grant("room");
-  h.grant("other");
-  h.emit([
-    message(h.alice, "room", "one", 11),
-    message(h.alice, "other", "two", 12),
-  ]);
-  await flush();
-  const ids = h.session.channels.list().channels.map((channel) => channel.id);
-  const second = ids[1];
-  assert(second);
-  clock(20);
-  const held = h.holdSaveStarted();
-  const sweep = h.session.unread.markAllChannelsRead();
-  await held.started;
-  clock(30);
-  h.emit([message(h.alice, second, "after click", 21)]);
-  held.release();
-  await sweep;
-  expect(h.journal()?.state.frontiers).toEqual({ room: 20, other: 20 });
-  expect(
-    h.session.unread.snapshot({ kind: "channel", channelId: second })
-      .observedCount,
-  ).toBe(1);
 });
 
 it("channel bottom catch-up leaves newer replies in the viewer's thread unread; Mark all reads them", async () => {

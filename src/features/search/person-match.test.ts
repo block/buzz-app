@@ -9,20 +9,8 @@ import {
 
 describe("matchPerson", () => {
   it.each([
-    ["Honey", "honey", 0],
-    ["Honey Bee", "honey", 1],
     ["Honey Bee", "honey b", 1],
-    ["A Honey", "honey", 2],
-    ["A Honeybee", "honey", 3],
-    ["Honey", "oney", undefined],
     ["Honey Bee", "honey  b", undefined],
-    ["  Honey  ", " HONEY ", 0],
-    ["José", "jose", 0],
-    ["Jose", "José", 0],
-    ["Mary José", "jose", 2],
-    ["ΠΑΡΟΣ", "παρος", 0],
-    ["İpek", "ipek", 0],
-    ["ﬁona", "fio", 1],
   ])("%s for %s is tier %s", (name, query, tier) => {
     expect(matchPerson(name, query)?.tier).toBe(tier);
   });

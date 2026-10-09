@@ -2,7 +2,10 @@ import type { RelayReader } from "../relay/reader";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { ChannelKitHost } from "./host";
-import { isDefinitiveCanvasConflict } from "./canvas-conflict";
+import {
+  CanvasConflictError,
+  isDefinitiveCanvasConflict,
+} from "./canvas-conflict";
 import {
   CANVAS_BYTES,
   coordinate,
@@ -27,9 +30,6 @@ import {
   parseTeamManifest,
 } from "./team-payload";
 import type { TeamSnapshot } from "../agents/team-bundles";
-
-const canvasConflict =
-  "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -193,7 +193,7 @@ export function createChannelKit({
       if (outbox && isDefinitiveCanvasConflict(failed)) {
         // Refused before mutation. Release the pending gate, not uncertain saves.
         await outbox.dismiss(id);
-        throw new Error(canvasConflict);
+        throw new CanvasConflictError();
       }
       throw error;
     }
@@ -493,7 +493,7 @@ export function createChannelKit({
       await ready;
       signal.throwIfAborted();
       const head = await canvas.read(channel);
-      if (head?.id !== expected) throw new Error(canvasConflict);
+      if (head?.id !== expected) throw new CanvasConflictError();
       const pending = local
         ?.snapshot()
         .find(

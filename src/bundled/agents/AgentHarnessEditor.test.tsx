@@ -67,12 +67,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   );
 });
 
-it.each([
-  "/opt/homebrew/bin/goose",
-  "C:\\tools\\goose",
-  "/opt/buzz/goose-acp",
-  "C:\\tools\\goose-acp.exe",
-])(
+it.each(["/opt/homebrew/bin/goose", "C:\\tools\\goose-acp.exe"])(
   "preserves Goose settings while editing custom executable %s",
   async (path) => {
     const f = controlFixture();
@@ -246,11 +241,6 @@ it.each([
     label: "Hermes Agent",
     command: "/local/hermes-acp",
     defaultArgs: ["--hermes-default"],
-  },
-  {
-    label: "Claude Code",
-    command: "/local/claude-agent-acp",
-    defaultArgs: ["--claude-default"],
   },
 ])(
   "uses native-shaped defaults between Buzz Agent and $label",

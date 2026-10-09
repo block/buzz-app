@@ -34,6 +34,7 @@ fn member() -> MemberSnapshot {
 }
 fn edit(root: &std::path::Path) -> AgentEdit {
     AgentEdit {
+        effort: None,
         name: "Fixture".into(),
         system_prompt: "INDIVIDUAL_MARKER".into(),
         picture: None,
@@ -60,11 +61,15 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
     snapshot.profile.about = Some("Fixture profile".into());
     snapshot.definition.respond_to = Some("allowlist".into());
     snapshot.definition.respond_to_allowlist = vec!["ab".repeat(32)];
+    snapshot.definition.effort = Some("high".into());
     for (request, prepared) in [("request-one", &first), ("request-two", &second)] {
         control
             .create_bundle_member(
                 prepared,
-                edit(root.path()),
+                AgentEdit {
+                    effort: snapshot.definition.effort.clone(),
+                    ..edit(root.path())
+                },
                 &crate::secret::test_attestation(prepared.key.pubkey()),
                 request,
                 &BundleMember {
@@ -100,6 +105,10 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         )
         .unwrap();
     assert!(exported.members[0].definition.source_is_builtin);
+    assert_eq!(
+        exported.members[0].definition.effort.as_deref(),
+        Some("high")
+    );
     let target = control.creation_profile(&first.id).unwrap();
     let initial = target.event(&first.key, &[]).unwrap();
     assert_eq!(initial["kind"], 0);
@@ -111,6 +120,7 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         .profile(
             "Fixture",
             Some("https://example.test/avatar.png"),
+            false,
             Some("stale about"),
             &target.auth,
             &[],
@@ -136,6 +146,7 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         .profile(
             "Fixture",
             None,
+            false,
             Some("Updated elsewhere"),
             &target.auth,
             &[retried],
@@ -181,6 +192,70 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         )
         .unwrap();
     assert_eq!(control.store.agents().unwrap().len(), 2);
+}
+#[test]
+fn rename_during_pending_team_import_preserves_profile_intents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("wss://relay.example", &owner()).unwrap();
+    let mut snapshot = member();
+    snapshot.profile.about = Some("Imported description".into());
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "rename-pending-import",
+            &BundleMember {
+                team: "rename-pending-import".into(),
+                member: snapshot,
+                instructions: String::new(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let initial = control.creation_profile(&prepared.id).unwrap();
+    let mut rename = edit(root.path());
+    rename.name = "Renamed member".into();
+    control
+        .save(&prepared.id, initial.revision, rename)
+        .unwrap();
+    // An earlier publication receipt cannot clear either the import or rename.
+    assert!(control
+        .profile_published(&prepared.id, initial.revision)
+        .is_err());
+    let target = control.creation_profile(&prepared.id).unwrap();
+    assert!(target.name_pending);
+    assert_eq!(target.about.as_deref(), Some("Imported description"));
+    let existing = prepared
+        .key
+        .profile(
+            "External name",
+            Some("https://example.test/current.png"),
+            false,
+            Some("External description"),
+            &target.auth,
+            &[],
+        )
+        .unwrap();
+    let event = target.event(&prepared.key, &[existing]).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+    assert_eq!(content["name"], "Renamed member");
+    assert_eq!(content["display_name"], "Renamed member");
+    assert_eq!(content["about"], "Imported description");
+    assert_eq!(content["picture"], "https://example.test/current.png");
+    target
+        .confirm(std::slice::from_ref(&event), event["id"].as_str().unwrap())
+        .unwrap();
+    control
+        .profile_published(&prepared.id, target.revision)
+        .unwrap();
+    assert!(control.creation_profile(&prepared.id).is_err());
+    let memory = control.memory_target(&prepared.id).unwrap();
+    assert!(!memory.name_pending);
+    assert!(memory.about.is_none());
+    assert!(memory.picture.is_none());
 }
 #[test]
 fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
@@ -942,16 +1017,16 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
         .unwrap_err()
         .contains("harness"));
     agent.harness.command = "buzz-agent".into();
+    let effort = |agent: &Agent, defaults: &crate::agent_defaults::AgentDefaults| {
+        snapshot_member(agent, defaults).unwrap().definition.effort
+    };
+    assert_eq!(effort(&agent, &defaults), None);
     agent.imported["record"]["effort_level"] = json!("high");
-    assert!(snapshot_member(&agent, &defaults)
-        .unwrap_err()
-        .contains("effort"));
+    assert_eq!(effort(&agent, &defaults).as_deref(), Some("high"));
     agent.imported["record"]["effort_level"] = serde_json::Value::Null;
     let mut inherited = defaults.clone();
-    inherited.effort = "high".into();
-    assert!(snapshot_member(&agent, &inherited)
-        .unwrap_err()
-        .contains("effort"));
+    inherited.effort = "medium".into();
+    assert_eq!(effort(&agent, &inherited).as_deref(), Some("medium"));
     agent
         .environment
         .insert("BUZZ_AGENT_MODEL".into(), "synthetic-secret-model".into());
@@ -969,7 +1044,7 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
 }
 
 #[test]
-fn native_export_rejects_effective_pi_goose_effort_without_leaking_values() {
+fn native_export_refuses_and_hides_pi_goose_effort_overrides() {
     let mut agent = crate::store::tests::fixture();
     let mut defaults = crate::agent_defaults::AgentDefaults::default();
     for (harness, command) in [("pi", "buzz-pi-acp"), ("goose", "goose")] {
@@ -981,21 +1056,69 @@ fn native_export_rejects_effective_pi_goose_effort_without_leaking_values() {
         let exported = snapshot_member(&agent, &defaults).unwrap();
         assert_eq!(exported.definition.runtime.as_deref(), Some(harness));
 
-        agent.environment.insert(
-            "BUZZ_ACP_EFFORT_LEVEL".into(),
-            "private-agent-effort".into(),
+        agent.extra.insert("effort".into(), "high".into());
+        assert_eq!(
+            snapshot_member(&agent, &defaults)
+                .unwrap()
+                .definition
+                .effort
+                .as_deref(),
+            Some("high")
         );
-        let error = snapshot_member(&agent, &defaults).unwrap_err();
-        assert!(error.contains("effort") && !error.contains("private-agent-effort"));
-
-        agent.environment.clear();
-        defaults.environment.insert(
-            "BUZZ_ACP_EFFORT_LEVEL".into(),
-            "private-inherited-effort".into(),
-        );
-        let error = snapshot_member(&agent, &defaults).unwrap_err();
-        assert!(error.contains("effort") && !error.contains("private-inherited-effort"));
+        for (own, value) in [
+            (true, "private-effort"),
+            (false, "private-effort"),
+            (true, ""),
+            (false, ""),
+        ] {
+            agent.environment.clear();
+            defaults.environment.clear();
+            let environment = if own {
+                &mut agent.environment
+            } else {
+                &mut defaults.environment
+            };
+            environment.insert("BUZZ_ACP_EFFORT_LEVEL".into(), value.into());
+            let error = snapshot_member(&agent, &defaults).err().unwrap();
+            assert!(error.contains("environment-selected effort"));
+            assert!(!error.contains("private-effort"));
+            assert_eq!(agent.view(&defaults).launch_effort, None);
+        }
+        agent.extra.remove("effort");
     }
+}
+
+#[test]
+fn native_export_refuses_effort_the_app_import_parser_rejects() {
+    let mut agent = crate::store::tests::fixture();
+    let mut defaults = crate::agent_defaults::AgentDefaults::default();
+    let snapshot = |agent: &Agent, defaults: &crate::agent_defaults::AgentDefaults| TeamSnapshot {
+        format: "buzz-team-snapshot".into(),
+        version: 1,
+        team: TeamMeta {
+            name: "Fixture".into(),
+            description: None,
+            instructions: None,
+        },
+        members: vec![snapshot_member(agent, defaults).unwrap()],
+    };
+    for effort in ["low", "high", "xhigh", "max", "off"] {
+        agent.extra.insert("effort".into(), effort.into());
+        snapshot(&agent, &defaults).validate().unwrap();
+    }
+    // Saved before the effort rule matched the app's parser, which rejects these.
+    for effort in ["high\u{200b}low", "\u{d15}\u{d4d}\u{200d}$"] {
+        agent.extra.insert("effort".into(), effort.into());
+        assert!(snapshot(&agent, &defaults).validate().is_err());
+    }
+    // A device default that breaks the rule is refused the same way.
+    agent.extra.remove("effort");
+    snapshot(&agent, &defaults).validate().unwrap();
+    defaults.harness = crate::agent_defaults::harness_kind(&agent.harness.command)
+        .unwrap()
+        .into();
+    defaults.effort = "\u{d15}\u{d4d}\u{200d}$".into();
+    assert!(snapshot(&agent, &defaults).validate().is_err());
 }
 
 #[test]
@@ -1025,6 +1148,7 @@ fn merged_existing_profile_overflow_keeps_import_about_pending() {
         .profile(
             "Fixture",
             None,
+            false,
             Some(&"x".repeat(crate::profile::MAX_PROFILE_CONTENT_BYTES - 160)),
             &target.auth,
             &[],

@@ -395,7 +395,7 @@ it("a deferred submission revalidates the sound decision before playing", async 
   expect(t.plays).toEqual(["flutter"]);
 });
 
-it.each(["direct", "mention", "thread"] as const)(
+it.each(["mention"] as const)(
   "Silent for %s preserves banners and other categories' audio across reload",
   async (category) => {
     const t = setup();

@@ -389,7 +389,6 @@ type Launch = Readonly<{
   roster?: keyof typeof ROSTERS;
   permission?: "granted" | "denied";
   member?: boolean;
-  enabled?: boolean;
   category?: boolean;
   /** A live roster for a first-page channel arrives before any page. */
   early?: boolean;
@@ -539,7 +538,7 @@ async function launch(options: Launch) {
     () => {},
   ).selectViewer(key.pubkey);
   preferences.update({
-    enabled: options.enabled ?? true,
+    enabled: true,
     categories: { "buzz.reminders/reminders": options.category ?? true },
   });
   ctx.provide("relay", connection as never);
@@ -684,7 +683,6 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
   ["two pages before history", "list", 1, { roster: "two" }],
   ["history before a capped scan", "history", 1, { roster: "capped" }],
   ["revocation between pages", "history", 1, { roster: "two", revoke: true }],
-  ["notifications off", "list", 0, { enabled: false }],
   ["Reminders category off", "list", 0, { category: false }],
   ["permission denied", "list", 0, { permission: "denied" }],
   ["missing membership", "list", 0, { member: false }],

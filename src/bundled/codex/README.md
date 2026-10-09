@@ -48,6 +48,7 @@ threads; DMs always share a conversation. Workspace changes start a fresh sessio
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities, removing an agent, or disabling the plugin ends its server.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
+To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,

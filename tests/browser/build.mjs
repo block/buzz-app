@@ -1,4 +1,4 @@
-import { inboxHostPlugin } from "../../scripts/plugin-dev.mjs";
+import { bundledHostPlugin } from "../../scripts/plugin-dev.mjs";
 import { fixtureAliases } from "../relay-config.ts";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
@@ -31,7 +31,7 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
-        inboxHostPlugin(root),
+        bundledHostPlugin(root),
         ...(pairingFixture
           ? [
               {

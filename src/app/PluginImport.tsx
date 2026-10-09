@@ -13,7 +13,7 @@ import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
 import type { PluginManifest } from "../plugins/api";
 
-function hostGrants(manifest: PluginManifest): string[] {
+export function hostGrants(manifest: PluginManifest): string[] {
   return [
     ...(manifest.host?.commands ?? []).map(
       (command) =>

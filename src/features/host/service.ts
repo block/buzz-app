@@ -146,8 +146,8 @@ export class HostService extends Service implements Host {
     { onStdout, onStderr, ...options }: HostProcessOptions = {},
   ): Promise<HostProcess> {
     const owner = this.ctx.pluginOwner;
-    if (!owner || !isTauri())
-      throw new Error("Processes require an installed desktop plugin");
+    if (!owner || owner.activation === undefined || !isTauri())
+      throw new Error("Processes require an active installed desktop plugin");
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       exit = resolve;
@@ -166,6 +166,7 @@ export class HostService extends Service implements Host {
     const handle = await invoke<number>("plugin_host_process_spawn", {
       id: owner.id,
       revision: owner.revision,
+      activation: owner.activation,
       processId: id,
       args: options.args ?? [],
       cwd: options.cwd ?? null,
@@ -175,12 +176,17 @@ export class HostService extends Service implements Host {
     const write = (data: string, close: boolean) =>
       invoke<void>("plugin_host_process_write", {
         id: owner.id,
+        activation: owner.activation,
         handle,
         data,
         close,
       });
     const kill = () =>
-      invoke<void>("plugin_host_process_kill", { id: owner.id, handle }).catch(
+      invoke<void>("plugin_host_process_kill", {
+        id: owner.id,
+        activation: owner.activation,
+        handle,
+      }).catch(
         // Already gone.
         () => undefined,
       );
@@ -188,7 +194,7 @@ export class HostService extends Service implements Host {
     // was unloading.
     let release: () => void;
     try {
-      release = this.ctx.effect(() => () => void kill(), `process ${id}`);
+      release = this.ctx.effect(() => () => kill(), `process ${id}`);
     } catch (error) {
       void kill();
       throw error;

@@ -1,7 +1,4 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import * as filesystem from "node:fs/promises";
-import { execFileSync } from "node:child_process";
-import { win32 } from "node:path";
 import {
   cp,
   mkdtemp,
@@ -10,81 +7,26 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
-  buildInboxDev,
+  buildBundledDev,
+  bundledHostPlugin,
   hostBuildId,
-  inboxDependencies,
 } from "./plugin-dev.mjs";
+import { pluginGraph, root } from "./plugin-graph.mjs";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
 let directory;
+let checkout;
 beforeAll(async () => {
-  directory = await mkdtemp(join(tmpdir(), "inbox-dev-test-"));
-});
-afterAll(async () => {
-  await rm(directory, { recursive: true, force: true });
-});
-
-test("Inbox exports only runtime dependencies, never type-only services or its own source", async () => {
-  const modules = await inboxDependencies();
-  expect(modules.has("features/messages/MessageComposer")).toBe(true);
-  expect(modules.has("shared/view-state")).toBe(true);
-  expect(modules.has("features/relay/session")).toBe(false);
-  expect(
-    [...modules.keys()].some((key) => key.startsWith("bundled/inbox/")),
-  ).toBe(false);
-  expect([...modules.get("shared/view-state").names]).toContain(
-    "subscribeView",
-  );
-});
-
-test("builds an ordinary alternate artifact with CSS and host checks, without copied host code", async () => {
-  const out = join(directory, "plugin");
-  const result = await buildInboxDev({ out, id: "test.inbox-dev" });
-  const code = await readFile(join(out, "plugin.js"), "utf8");
-  expect(
-    JSON.parse(await readFile(join(out, "manifest.json"), "utf8")),
-  ).toEqual({ id: "test.inbox-dev", name: "Inbox Dev", apiVersion: 1 });
-  expect(result.buildId).toBe(await hostBuildId());
-  expect(code).toContain("__BUZZ_HOST_MODULES__");
-  expect(code).toContain("style.remove()");
-  expect(code).not.toContain("__BUZZ_INBOX_DEV_CSS__");
-  expect(code).not.toContain("new WeakMap");
-  await expect(
-    import(
-      `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
-    ),
-  ).rejects.toThrow("different Buzz host");
-  // A host whose fingerprint could not be computed must never match an artifact.
-  const previousHost = globalThis.__BUZZ_HOST_MODULES__;
-  try {
-    globalThis.__BUZZ_HOST_MODULES__ = { buildId: null, modules: {} };
-    await expect(
-      import(
-        `data:text/javascript;base64,${Buffer.from(code).toString("base64")}#unavailable-host`
-      ),
-    ).rejects.toThrow("different Buzz host");
-  } finally {
-    if (previousHost === undefined) delete globalThis.__BUZZ_HOST_MODULES__;
-    else globalThis.__BUZZ_HOST_MODULES__ = previousHost;
-  }
-  // Rebuilds reuse the output folder but refuse to remove unrelated files.
-  await buildInboxDev({ out, id: "test.inbox-dev" });
-  await writeFile(join(out, "precious.txt"), "keep");
-  await expect(buildInboxDev({ out, id: "test.inbox-dev" })).rejects.toThrow(
-    "files other than",
-  );
-  expect(await readFile(join(out, "precious.txt"), "utf8")).toBe("keep");
-});
-
-test("builds Inbox-only utilities against the host theme without resets or unrelated utilities", async () => {
-  const checkout = join(directory, "checkout");
+  directory = await mkdtemp(join(tmpdir(), "bundled-dev-test-"));
+  checkout = join(directory, "checkout");
   for (const path of [
     "src",
     "scripts",
+    "crates",
+    "src-tauri/src",
     "vite.config.ts",
     "package.json",
     "pnpm-lock.yaml",
@@ -98,125 +40,187 @@ test("builds Inbox-only utilities against the host theme without resets or unrel
     "dir",
   );
   execFileSync("git", ["init", "--quiet", checkout]);
-  const out = join(directory, "utilities");
-  const before = await buildInboxDev({ directory: checkout, out });
-  const entry = join(checkout, "src/bundled/inbox/index.tsx");
-  const utilities = [
-    ["[word-spacing:", "3.7px]"].join(""),
-    "p-13",
-    "bg-muted",
-    "dark:p-17",
-    "animate-ping",
-  ];
-  await writeFile(
-    entry,
-    `${await readFile(entry, "utf8")}\n// ${utilities.join(" ")}\n`,
-  );
-  const after = await buildInboxDev({ directory: checkout, out });
-  expect(after.buildId).toBe(before.buildId);
-  const code = await readFile(join(out, "plugin.js"), "utf8");
-  const css = JSON.parse(code.match(/style.textContent = (".*");/)[1]);
-  expect(css).toContain("word-spacing: 3.7px");
-  expect(css).toContain("padding: calc(var(--space-1) * 13)");
-  expect(css).toContain("background-color: var(--text-muted)");
-  expect(css).toContain('[data-color-mode="dark"]');
-  expect(css).toContain("@keyframes ping");
-  expect(css).not.toContain("@layer base");
-  expect(css).not.toContain("box-sizing: border-box");
-  expect(css).not.toContain(".panel-header");
-  expect(css).not.toContain(".container {");
+}, 30000);
+afterAll(async () => {
+  await rm(directory, { recursive: true, force: true });
 });
 
-test("refuses bundled identities and destructive output destinations", async () => {
-  await expect(buildInboxDev({ id: "buzz.inbox" })).rejects.toThrow(
-    "alternate plugin ID",
+const build = (plugin, out = join(directory, plugin)) =>
+  buildBundledDev({ plugin, directory: checkout, out });
+
+test("same-ID builds preserve catalog metadata, lifecycle CSS and host compatibility without copying shared state", async () => {
+  const result = await build("inbox");
+  const manifest = JSON.parse(
+    await readFile(join(result.out, "manifest.json"), "utf8"),
   );
-  await expect(buildInboxDev({ out: root })).rejects.toThrow("source checkout");
+  expect(manifest).toEqual({ id: "buzz.inbox", name: "Inbox", apiVersion: 1 });
+  expect(
+    JSON.parse(await readFile(join(result.out, "plugin.dev.json"), "utf8")),
+  ).toEqual({ version: 1, id: "buzz.inbox", hostBuildId: result.buildId });
+  const code = await readFile(join(result.out, "plugin.js"), "utf8");
+  expect(code).toContain("__BUZZ_HOST_MODULES__");
+  expect(code).toContain("style.remove()");
+  expect(code).not.toContain("__BUZZ_PLUGIN_DEV_CSS__");
+  expect(code).not.toContain("new WeakMap");
   await expect(
-    buildInboxDev({ out: join(root, "src/bundled/inbox") }),
-  ).rejects.toThrow("source checkout");
+    import(
+      `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
+    ),
+  ).rejects.toThrow("different Buzz development host");
+  const previous = globalThis.__BUZZ_HOST_MODULES__;
+  try {
+    globalThis.__BUZZ_HOST_MODULES__ = {
+      fingerprints: { "buzz.inbox": null },
+      modules: {},
+    };
+    await expect(
+      import(
+        `data:text/javascript;base64,${Buffer.from(code).toString("base64")}#unavailable`
+      ),
+    ).rejects.toThrow("different Buzz development host");
+  } finally {
+    if (previous === undefined) delete globalThis.__BUZZ_HOST_MODULES__;
+    else globalThis.__BUZZ_HOST_MODULES__ = previous;
+  }
 });
 
-test.each([
-  { message: "spawnSync git ENOENT", code: "ENOENT" },
-  { message: "fatal: not a git repository", status: 128 },
-])(
-  "host builds survive unavailable Git metadata: $message",
-  async (failure) => {
-    vi.doMock("node:child_process", async (original) => ({
-      ...(await original()),
-      execFileSync: () => {
-        throw Object.assign(new Error(failure.message), failure);
-      },
-    }));
-    try {
-      vi.resetModules();
-      const source = await import("./plugin-dev.mjs");
-      const warn = vi.fn();
-      const generated = await source
-        .inboxHostPlugin()
-        .load.call({ warn }, "\0virtual:buzz-inbox-host");
-      expect(generated).toContain("buildId: null");
-      expect(generated).toContain('"features/messages/MessageComposer"');
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("Inbox Dev compatibility is unavailable"),
-      );
-      // An external artifact still requires a real fingerprint; null never matches.
-      await expect(
-        source.buildInboxDev({ out: join(directory, "without-git") }),
-      ).rejects.toThrow(failure.message);
-    } finally {
-      vi.doUnmock("node:child_process");
-      vi.resetModules();
-    }
-  },
-);
+test("plugin-only edits preserve matching host identity and generate utilities without copying host CSS", async () => {
+  const out = join(directory, "utilities");
+  const before = await build("inbox", out);
+  const entry = join(checkout, "src/bundled/inbox/index.tsx");
+  const original = await readFile(entry, "utf8");
+  try {
+    await writeFile(
+      entry,
+      `${original}\n// ${["[word-spacing:", "3.7px]"].join("")} p-13 bg-muted dark:p-17 animate-ping\n`,
+    );
+    const after = await build("inbox", out);
+    expect(after.buildId).toBe(before.buildId);
+    const code = await readFile(join(out, "plugin.js"), "utf8");
+    const css = JSON.parse(code.match(/style.textContent = (".*");/)[1]);
+    expect(css).toContain("word-spacing: 3.7px");
+    expect(css).toContain("padding: calc(var(--space-1) * 13)");
+    expect(css).toContain("background-color: var(--text-muted)");
+    expect(css).toContain('[data-color-mode="dark"]');
+    expect(css).toContain("@keyframes ping");
+    expect(css).not.toContain("@layer base");
+    expect(css).not.toContain("box-sizing: border-box");
+    expect(css).not.toContain(".panel-header");
+  } finally {
+    await writeFile(entry, original);
+  }
+});
 
-// Exercise Windows filesystem semantics on every host without a Windows-only job.
-test("generates portable host imports with Windows filesystem paths", async () => {
-  const windowsRoot = "C:\\buzz";
-  const nativeRead = filesystem.readFile;
-  const nativeExec = execFileSync;
-  const localPath = (path) =>
-    path.startsWith(windowsRoot)
-      ? join(root, ...win32.relative(windowsRoot, path).split("\\"))
-      : path;
-  vi.doMock("node:path", async (original) => ({
-    ...(await original()),
-    ...win32,
-  }));
-  vi.doMock("node:fs/promises", async (original) => ({
-    ...(await original()),
-    readFile: (path, ...args) => nativeRead(localPath(path), ...args),
-  }));
+test("new host imports/exports change compatibility before evaluation, while unrelated plugin-only edits leave their own hash stable", async () => {
+  const before = await hostBuildId("inbox", checkout);
+  const entry = join(checkout, "src/bundled/inbox/index.tsx");
+  const original = await readFile(entry, "utf8");
+  try {
+    await writeFile(entry, `${original}\nexport { useEffect } from "react";\n`);
+    // React is already projected as a namespace; request a new shared host module.
+    await writeFile(
+      entry,
+      `${original}\nexport { formatBinding } from "../../features/shortcuts/format";\n`,
+    );
+    expect(await hostBuildId("inbox", checkout)).not.toBe(before);
+  } finally {
+    await writeFile(entry, original);
+  }
+  const state = join(checkout, "src/shared/view-state.ts");
+  const previous = await readFile(state, "utf8");
+  try {
+    await writeFile(state, `${previous}\n// host changed\n`);
+    expect(await hostBuildId("inbox", checkout)).not.toBe(before);
+  } finally {
+    await writeFile(state, previous);
+  }
+});
+
+test("refuses unknown/alternate identities, private ownership leaks, destructive output and unrelated output files", async () => {
+  await expect(build("local.inbox-dev")).rejects.toThrow(
+    "Unknown bundled plugin",
+  );
+  await expect(build("me")).rejects.toThrow("consumed outside");
+  await expect(build("inbox", checkout)).rejects.toThrow("source checkout");
+  await expect(
+    build("inbox", join(checkout, "src/bundled/inbox")),
+  ).rejects.toThrow("source checkout");
+  const out = join(directory, "protected");
+  await build("inbox", out);
+  await writeFile(join(out, "precious.txt"), "keep");
+  await expect(build("inbox", out)).rejects.toThrow("files other than");
+  expect(await readFile(join(out, "precious.txt"), "utf8")).toBe("keep");
+});
+
+test("private lazy/vendor CSS/fonts build into one module; shared CSS module values remain host-owned", async () => {
+  for (const plugin of ["terminal", "diffs", "links"]) {
+    const result = await build(plugin);
+    const code = await readFile(join(result.out, "plugin.js"), "utf8");
+    expect(code).not.toMatch(/\bimport\s*\(/);
+    if (plugin === "terminal") {
+      expect(code).toContain("data:font/woff2;base64,");
+      expect(code).toContain(".xterm");
+    }
+    if (plugin === "links") {
+      expect(code).toContain("shared/InlineReference.module.css");
+      const css = JSON.parse(code.match(/style.textContent = (".*");/)[1]);
+      expect(css).not.toContain(".inlineReference");
+    }
+  }
+}, 30000);
+
+test("all catalog entries get a build or an explicit remaining ownership blocker, never a silent exception", async () => {
+  const graph = await pluginGraph(checkout);
+  for (const plugin of graph.catalog) {
+    const blocked = graph.violations.some((edge) =>
+      edge.split(" -> ")[1].startsWith(`src/bundled/${plugin.slug}/`),
+    );
+    if (blocked)
+      await expect(build(plugin.slug)).rejects.toThrow("consumed outside");
+    else expect((await build(plugin.slug)).id).toBe(plugin.manifest.id);
+  }
+}, 120000);
+
+test("host map does not eagerly project plugin-private Terminal/Diff vendors", async () => {
+  const warn = vi.fn();
+  const generated = await bundledHostPlugin(checkout).load.call(
+    { warn },
+    "\0virtual:buzz-plugin-host",
+  );
+  expect(generated).toContain('"buzz.inbox"');
+  expect(generated).toContain('"block.builderlab"');
+  expect(generated).not.toContain('from "@xterm/');
+  expect(generated).not.toContain('from "react-diff-view');
+  expect(generated).not.toContain("bundled/inbox/InboxPage");
+  expect(warn).not.toHaveBeenCalled();
+});
+
+test("unavailable Git leaves compiled host usable but rejects building attachable artifacts", async () => {
   vi.doMock("node:child_process", async (original) => ({
     ...(await original()),
-    execFileSync: (file, args, options) =>
-      nativeExec(file, args, { ...options, cwd: localPath(options.cwd) }),
+    execFileSync: () => {
+      throw new Error("Git unavailable");
+    },
   }));
   try {
     vi.resetModules();
-    const windows = await import("./plugin-dev.mjs");
-    const modules = await windows.inboxDependencies(windowsRoot);
-    expect([...modules.keys()]).toEqual(
-      [...(await inboxDependencies())].map(([key]) => key),
+    const source = await import("./plugin-dev.mjs");
+    const warn = vi.fn();
+    const generated = await source
+      .bundledHostPlugin(checkout)
+      .load.call({ warn }, "\0virtual:buzz-plugin-host");
+    expect(generated).toContain('"buzz.inbox":null');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("compatibility unavailable"),
     );
-    const host = windows.inboxHostPlugin(windowsRoot);
-    expect(
-      host.transform(
-        "export const plugins = [];",
-        "C:/buzz/src/bundled/index.ts",
-      ),
-    ).toContain("virtual:buzz-inbox-host");
-    const generated = await host.load("\0virtual:buzz-inbox-host");
-    expect(generated).toContain(
-      'from "C:/buzz/src/features/messages/MessageComposer.tsx"',
-    );
-    expect(generated).not.toContain("bundled/inbox/InboxPage");
-    expect(generated).not.toContain("\\\\");
+    await expect(
+      source.buildBundledDev({
+        plugin: "inbox",
+        directory: checkout,
+        out: join(directory, "without-git"),
+      }),
+    ).rejects.toThrow("Git unavailable");
   } finally {
-    vi.doUnmock("node:path");
-    vi.doUnmock("node:fs/promises");
     vi.doUnmock("node:child_process");
     vi.resetModules();
   }

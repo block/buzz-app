@@ -84,7 +84,8 @@ use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_process::{
-    plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
+    plugin_activation_begin, plugin_activation_retire, plugin_host_process_kill,
+    plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
 };
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -100,6 +101,8 @@ use terminal::{
 
 #[derive(Clone, Default)]
 struct Imports(Arc<Mutex<Option<PreparedImport>>>);
+#[derive(Clone, Default)]
+struct DevelopmentImport(Arc<Mutex<Option<buzzodz_plugins::development::PreparedDevelopment>>>);
 
 #[cfg(any(target_os = "macos", test))]
 #[derive(Debug, PartialEq, Eq)]
@@ -367,6 +370,100 @@ async fn with_manager<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn plugin_development_initialize(
+    manager: tauri::State<'_, PluginManager>,
+    fingerprints: std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    with_manager(manager, move |m| m.initialize_development(fingerprints)).await
+}
+#[tauri::command]
+async fn plugin_development_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    manager: tauri::State<'_, PluginManager>,
+    imports: tauri::State<'_, DevelopmentImport>,
+    id: String,
+) -> Result<Option<buzzodz_plugins::development::Preview>, String> {
+    let imports = imports.inner().clone();
+    with_manager(manager, move |m| {
+        if !m
+            .catalog()?
+            .plugins
+            .iter()
+            .any(|plugin| plugin.manifest.id == id && plugin.development_supported)
+        {
+            return Err("Local bundled development is unavailable in this host".into());
+        }
+        let mut pending = imports
+            .0
+            .try_lock()
+            .map_err(|_| "Another development preview is in progress")?;
+        *pending = None;
+        if let Some(folder) = app
+            .dialog()
+            .file()
+            .set_title("Choose a built local plugin folder")
+            .blocking_pick_folder()
+        {
+            *pending = Some(m.prepare_development(
+                &id,
+                &folder.into_path().map_err(|error| error.to_string())?,
+            )?);
+        }
+        Ok(pending.as_ref().map(|prepared| prepared.preview.clone()))
+    })
+    .await
+}
+#[tauri::command]
+async fn plugin_development_attach(
+    manager: tauri::State<'_, PluginManager>,
+    imports: tauri::State<'_, DevelopmentImport>,
+    token: String,
+) -> Result<InstallationResult, String> {
+    let imports = imports.inner().clone();
+    with_manager(manager, move |m| {
+        let mut pending = imports
+            .0
+            .try_lock()
+            .map_err(|_| "Another development preview is in progress")?;
+        let catalog = m.attach_development(
+            pending
+                .as_ref()
+                .ok_or("Development preview expired; choose the folder again")?,
+            &token,
+        )?;
+        *pending = None;
+        Ok(ready(&m, catalog))
+    })
+    .await
+}
+#[tauri::command]
+fn plugin_development_discard(
+    imports: tauri::State<'_, DevelopmentImport>,
+    token: String,
+) -> Result<(), String> {
+    let mut pending = imports
+        .0
+        .try_lock()
+        .map_err(|_| "Another development preview is in progress")?;
+    if pending
+        .as_ref()
+        .is_some_and(|prepared| prepared.preview.token == token)
+    {
+        *pending = None;
+    }
+    Ok(())
+}
+#[tauri::command]
+async fn plugin_development_compiled(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+) -> Result<InstallationResult, String> {
+    with_manager(manager, move |m| {
+        m.use_compiled(&id).map(|catalog| ready(&m, catalog))
+    })
+    .await
+}
+#[tauri::command]
 async fn plugin_catalog(
     manager: tauri::State<'_, PluginManager>,
 ) -> Result<InstallationResult, String> {
@@ -488,12 +585,19 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_import_install,
         plugin_import_discard,
         plugin_catalog,
+        plugin_development_initialize,
+        plugin_development_folder,
+        plugin_development_attach,
+        plugin_development_discard,
+        plugin_development_compiled,
         plugin_change,
         plugin_reload,
         plugin_module,
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_activation_begin,
+        plugin_activation_retire,
         plugin_host_process_spawn,
         plugin_host_process_write,
         plugin_host_process_kill,
@@ -703,6 +807,7 @@ pub fn run() {
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
+        .manage(DevelopmentImport::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
         .manage(HostProcesses::default())

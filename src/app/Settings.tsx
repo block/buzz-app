@@ -14,6 +14,7 @@ import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { PluginDevelopment } from "./PluginDevelopment";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 
@@ -335,15 +336,17 @@ export function Settings({
                                 {plugin.rollbackBlockedReason}
                               </span>
                             )}
-                            {plugin.reloadable && !plugin.enabled && (
-                              <Button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => plugins.reload(id)}
-                              >
-                                Reload
-                              </Button>
-                            )}
+                            {plugin.reloadable &&
+                              (!plugin.enabled ||
+                                plugin.source === "development") && (
+                                <Button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => plugins.reload(id)}
+                                >
+                                  Reload
+                                </Button>
+                              )}
                             {plugin.source === "external" && (
                               <Button
                                 type="button"
@@ -355,6 +358,11 @@ export function Settings({
                               </Button>
                             )}
                           </div>
+                          <PluginDevelopment
+                            plugin={plugin}
+                            plugins={plugins}
+                            busy={busy}
+                          />
                         </article>
                       );
                     })}

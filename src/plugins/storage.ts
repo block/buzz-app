@@ -4,6 +4,7 @@ import type {
   StorageResult,
   ManagementAction,
   PluginImports,
+  PluginDevelopment,
 } from "./types";
 
 export const desktop = isTauri();
@@ -51,8 +52,27 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
       if (plugin.manifest.id === "buzz.channels") plugin.enabled = true;
     return { status: "ready", catalog, externalPluginsPaused: false };
   }
+  let initialized: Promise<void> | undefined;
   async function getCatalog(): Promise<StorageResult> {
-    return desktop ? invoke("plugin_catalog") : webCatalog();
+    if (!desktop) return webCatalog();
+    const host = (
+      globalThis as typeof globalThis & {
+        __BUZZ_HOST_MODULES__?: { fingerprints: Record<string, string | null> };
+      }
+    ).__BUZZ_HOST_MODULES__;
+    if (host) {
+      initialized ??= invoke<void>("plugin_development_initialize", {
+        fingerprints: Object.fromEntries(
+          Object.entries(host.fingerprints).filter(
+            ([, value]) => value !== null,
+          ),
+        ),
+      }).catch(() => {
+        // Native release/safe mode refuses initialization; its catalog hides the controls.
+      });
+      await initialized;
+    }
+    return invoke("plugin_catalog");
   }
   async function changePlugin(
     action: ManagementAction,
@@ -111,7 +131,16 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         discard: (token) => invoke("plugin_import_discard", { token }),
       }
     : undefined;
+  const development: PluginDevelopment | undefined = desktop
+    ? {
+        folder: (id) => invoke("plugin_development_folder", { id }),
+        attach: (token) => invoke("plugin_development_attach", { token }),
+        compiled: (id) => invoke("plugin_development_compiled", { id }),
+        discard: (token) => invoke("plugin_development_discard", { token }),
+      }
+    : undefined;
   return {
+    development,
     getCatalog,
     changePlugin,
     recoverSettings,
@@ -122,7 +151,8 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,
-  "imports"
+  "imports" | "development"
 > & {
   imports?: PluginImports | undefined;
+  development?: PluginDevelopment | undefined;
 };

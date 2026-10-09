@@ -37,6 +37,10 @@ export type PluginModule = {
 declare module "@deepseek-ai/cordis" {
   interface Context {
     react: typeof React;
-    readonly pluginOwner?: Readonly<{ id: string; revision: string }>;
+    readonly pluginOwner?: Readonly<{
+      id: string;
+      revision: string;
+      activation?: number;
+    }>;
   }
 }

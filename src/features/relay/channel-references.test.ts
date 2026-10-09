@@ -255,3 +255,25 @@ it("rechecks a mounted withheld link after five minutes", async () => {
   await h.lookup([SECRET], [open(SECRET, "launch")]);
   expect(link.result.current).toMatchObject({ state: "found", name: "launch" });
 });
+
+it("arms the recheck for a link remounted during its backoff", async () => {
+  const h = await setup();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const first = renderHook(() => useChannelReference(h.channels, SECRET));
+  await flush();
+  const request = await h.next(39000);
+  // The last link leaves while its lookup is in flight; the read then fails.
+  first.unmount();
+  request.fail(new Error("503"));
+  await vi.waitFor(() => expect(h.pending).toHaveLength(0));
+  await flush();
+  await h.advance(10_000);
+  const link = renderHook(() => useChannelReference(h.channels, SECRET));
+  await flush();
+  expect(h.pending).toHaveLength(0);
+  await h.advance(19_999);
+  expect(h.pending).toHaveLength(0);
+  await h.advance(1);
+  await h.lookup([SECRET], []);
+  expect(link.result.current).toEqual({ state: "withheld" });
+});

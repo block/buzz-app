@@ -193,9 +193,9 @@ hosted CI owns broad validation.
 5. Run the changed gate: the lefthook pre-push hook (`scripts/check-push.mjs`).
    Deleting any file under `src/` or `browser-host/`, test files included, makes
    it run the full Vitest suite; report failures that also fail on the baseline
-   to the human, and never bypass the hook. When browser specs, tags, or
-   projects change, also run `bin/node --test
-   tests/integration/browser-ci.test.mjs`.
+   to the human, and never bypass the hook. After any browser-routing change,
+   including moving or deleting a spec or tagged case, also run
+   `bin/node --test tests/integration/browser-ci.test.mjs`.
 6. Inspect `git diff --numstat`; report production/tooling separately from
    tests and test support.
 7. After final audit edits, run an independent agent review under the root

@@ -171,7 +171,14 @@ Keep moved suites routed in each of these places:
 - the explicit extras in `scripts/check-push.mjs`;
 - `measurementFiles` in `tests/browser/playwright.config.mjs`;
 - the tag filters in `tests/browser/playwright.ci.config.mjs`;
+- the selections outside the engine shards: the `chromium-classic-scrollbars`
+  project (`@classic-scrollbars`) and the macOS WebKit `media_recorder` job
+  (`@media-recorder`) in `.github/workflows/ci.yml`;
 - the CI shards, whose counts `docs/` repeats.
+
+After any browser-routing change, including moving or deleting a spec or a
+tagged case, run `bin/node --test tests/integration/browser-ci.test.mjs`.
+Passing engine shards do not prove these separate selections still run.
 
 Update every `docs/` page that cites deleted coverage; #783 left
 `docs/channels.md` and `docs/browser-testing.md` describing tests that no

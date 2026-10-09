@@ -460,3 +460,116 @@ test("pending modal Escape in narrow navigation preserves visible recovery after
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   expect(app.report.unexpected).toEqual([]);
 });
+
+// Browser-only: the legacy header branch must keep a working details entry after
+// Archive removes its row, with real menu/dialog focus and retained transcript.
+test.describe("legacy sessions", () => {
+  test.use({ sessionChannels: ["11111111-1111-4111-8111-111111111111"] });
+
+  test("sidebar and header manage a legacy session without converting it", async ({
+    page,
+    app,
+  }) => {
+    await openLifecycle(page, app);
+    const row = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Lifecycle channel", exact: true });
+    await row.click();
+    const composer = page.getByRole("textbox", {
+      name: "Message this session",
+    });
+    await expect(composer).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Share", exact: true }),
+    ).toBeVisible();
+    const url = page.url();
+    await row.focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", {
+      name: "Actions for Lifecycle channel",
+    });
+    await menu
+      .getByRole("menuitem", { name: "Delete channel", exact: true })
+      .click();
+    const deletion = page.getByRole("dialog", {
+      name: "Delete channel: Lifecycle channel",
+    });
+    await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(deletion).toHaveCount(0);
+    await expect(row).toBeFocused();
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+
+    const header = page.getByRole("button", {
+      name: "Channel actions",
+      exact: true,
+    });
+    await header.click();
+    await page
+      .getByRole("menuitem", { name: "Archive channel", exact: true })
+      .click();
+    const archive = page.getByRole("dialog", {
+      name: "Archive channel: Lifecycle channel",
+    });
+    await archive
+      .getByRole("button", { name: "Archive channel", exact: true })
+      .click();
+    await expect(archive).toHaveCount(0);
+    await expect(row).toHaveCount(0);
+    await expect(page).toHaveURL(url);
+    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Share", exact: true }),
+    ).toHaveCount(0);
+    await page.reload();
+    await expect(composer).toBeDisabled();
+    await expect(page).toHaveURL(url);
+    await openChannelDetails(page);
+    await expect(
+      page.getByRole("button", { name: "View members" }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .click();
+    const restore = page.getByRole("dialog", {
+      name: "Unarchive channel: Lifecycle channel",
+    });
+    await restore
+      .getByRole("button", { name: "Unarchive channel", exact: true })
+      .click();
+    await expect(restore).toHaveCount(0);
+    await expect(row).toBeVisible();
+    await expect(composer).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "Share", exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(url);
+    await page
+      .getByRole("button", { name: "Delete channel", exact: true })
+      .click();
+    await deletion
+      .getByRole("button", { name: "Delete channel", exact: true })
+      .click();
+    await expect(deletion).toHaveCount(0);
+    await expect(row).toHaveCount(0);
+    expect(
+      app.report.lifecyclePublications.map((event) => [event.kind, event.tags]),
+    ).toEqual([
+      [
+        9002,
+        [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          ["archived", "true"],
+        ],
+      ],
+      [
+        9002,
+        [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          ["archived", "false"],
+        ],
+      ],
+      [9008, [["h", "11111111-1111-4111-8111-111111111111"]]],
+    ]);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});

@@ -224,3 +224,39 @@ it("keeps completed feedback after its source leaves and dismisses by its return
   await waitFor(() => expect(screen.queryByText("Copied")).toBeNull());
   view.unmount();
 });
+
+it("preserves a toast action's focus destination after the toast host leaves", async () => {
+  function Host() {
+    const [visible, setVisible] = useState(true);
+    return (
+      <>
+        <Button>Previous page</Button>
+        <Button id="toast-focus-destination">Channel row</Button>
+        {visible && (
+          <ToastProvider>
+            <ToastNotice title="Mute failed">
+              <Button
+                onClick={() => {
+                  document.getElementById("toast-focus-destination")?.focus();
+                  setVisible(false);
+                }}
+              >
+                Retry mute
+              </Button>
+            </ToastNotice>
+          </ToastProvider>
+        )}
+      </>
+    );
+  }
+  render(<Host />);
+  const retry = await screen.findByRole("button", { name: "Retry mute" });
+  act(() => screen.getByRole("button", { name: "Previous page" }).focus());
+  act(() => retry.focus());
+  expect(retry).toHaveFocus();
+  fireEvent.click(retry);
+  expect(screen.getByRole("button", { name: "Channel row" })).toHaveFocus();
+  expect(
+    screen.queryByRole("region", { name: "App notifications" }),
+  ).toBeNull();
+});

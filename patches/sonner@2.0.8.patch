@@ -1,0 +1,70 @@
+diff --git a/dist/index.js b/dist/index.js
+index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..0dd75ccd6ee53efc0f8aada219737fadb9beceb4 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1133,9 +1133,10 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+         if (listRef.current) {
+             return ()=>{
+                 if (lastFocusedElementRef.current) {
+-                    lastFocusedElementRef.current.focus({
+-                        preventScroll: true
+-                    });
++                    // Preserve a destination intentionally focused by a toast action.
++                    if (document.activeElement === document.body || listRef.current?.contains(document.activeElement)) {
++                        lastFocusedElementRef.current.focus({ preventScroll: true });
++                    }
+                     lastFocusedElementRef.current = null;
+                     isFocusWithinRef.current = false;
+                 }
+@@ -1178,11 +1179,11 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+             onBlur: (event)=>{
+                 if (isFocusWithinRef.current && !event.currentTarget.contains(event.relatedTarget)) {
+                     isFocusWithinRef.current = false;
+-                    if (lastFocusedElementRef.current) {
+-                        lastFocusedElementRef.current.focus({
+-                            preventScroll: true
+-                        });
+-                        lastFocusedElementRef.current = null;
++                    const previous = lastFocusedElementRef.current;
++                    lastFocusedElementRef.current = null;
++                    // Tab, pointer and action-driven focus moves already have a destination.
++                    if (previous && (!event.relatedTarget || event.relatedTarget === document.body)) {
++                        previous.focus({ preventScroll: true });
+                     }
+                 }
+             },
+diff --git a/dist/index.mjs b/dist/index.mjs
+index c124f821a68f7070647a5a04441d0caa53689662..e09c7def2ff948c13e1d5ed47524fee1f8ad03f1 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1126,9 +1126,10 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+         if (listRef.current) {
+             return ()=>{
+                 if (lastFocusedElementRef.current) {
+-                    lastFocusedElementRef.current.focus({
+-                        preventScroll: true
+-                    });
++                    // Preserve a destination intentionally focused by a toast action.
++                    if (document.activeElement === document.body || listRef.current?.contains(document.activeElement)) {
++                        lastFocusedElementRef.current.focus({ preventScroll: true });
++                    }
+                     lastFocusedElementRef.current = null;
+                     isFocusWithinRef.current = false;
+                 }
+@@ -1171,11 +1172,11 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+             onBlur: (event)=>{
+                 if (isFocusWithinRef.current && !event.currentTarget.contains(event.relatedTarget)) {
+                     isFocusWithinRef.current = false;
+-                    if (lastFocusedElementRef.current) {
+-                        lastFocusedElementRef.current.focus({
+-                            preventScroll: true
+-                        });
+-                        lastFocusedElementRef.current = null;
++                    const previous = lastFocusedElementRef.current;
++                    lastFocusedElementRef.current = null;
++                    // Tab, pointer and action-driven focus moves already have a destination.
++                    if (previous && (!event.relatedTarget || event.relatedTarget === document.body)) {
++                        previous.focus({ preventScroll: true });
+                     }
+                 }
+             },

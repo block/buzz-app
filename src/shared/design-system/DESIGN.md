@@ -620,6 +620,9 @@ independent of the text group so its 32px hit target cannot open a gap between
 title and description. It extends 8px toward the trailing edge and 4px vertically
 into the padding; title-only confirmations stay centered beside it. Descriptions
 use secondary text, and actions align with the message's leading edge.
+The pinned Sonner patch preserves intentional focus destinations when leaving a
+toast; fallback restoration still applies when focus is otherwise lost.
+
 Sonner is the toast behavior owner; other matching controls use Base UI. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections

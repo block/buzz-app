@@ -6,6 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.8.0': 7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f
+  sonner@2.0.8: a03813761c6edb9ca39f00839d3b94442cd6b9e76ac515ed990ed6ab09d14a32
   virtua@0.51.0: a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b
 
 importers:
@@ -140,7 +141,7 @@ importers:
         version: 4.0.1
       sonner:
         specifier: 2.0.8
-        version: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 2.0.8(patch_hash=a03813761c6edb9ca39f00839d3b94442cd6b9e76ac515ed990ed6ab09d14a32)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       virtua:
         specifier: 0.51.0
         version: 0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -3675,7 +3676,7 @@ snapshots:
 
   siginfo@2.0.0: {}
 
-  sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  sonner@2.0.8(patch_hash=a03813761c6edb9ca39f00839d3b94442cd6b9e76ac515ed990ed6ab09d14a32)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

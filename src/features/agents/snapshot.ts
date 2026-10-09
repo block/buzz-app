@@ -15,7 +15,7 @@ const LEGACY_AGENT_FILE_SUFFIXES = [
   ".zip",
 ] as const;
 const LEGACY_AGENT_FILE_MESSAGE =
-  "This is an agent file from old Buzz. Use Import from old Buzz on the Agents page to bring that agent over.";
+  "This is an agent file from old Buzz. On the Agents page, find that agent under Available to import and click Import.";
 export function legacyAgentFileError(fileName: string): string | undefined {
   return LEGACY_AGENT_FILE_SUFFIXES.some((suffix) =>
     fileName.toLowerCase().endsWith(suffix),

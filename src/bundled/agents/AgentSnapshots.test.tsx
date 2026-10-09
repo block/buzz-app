@@ -138,7 +138,7 @@ it("rejects legacy beta filenames with snapshot migration guidance before parsin
     />,
   );
   const message =
-    "This is an agent file from old Buzz. Use Import from old Buzz on the Agents page to bring that agent over.";
+    "This is an agent file from old Buzz. On the Agents page, find that agent under Available to import and click Import.";
   for (const [name, type] of [
     ["worker.persona.md", "text/markdown"],
     ["worker.PERSONA.JSON", "application/json"],

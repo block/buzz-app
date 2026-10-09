@@ -2,7 +2,14 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import * as filesystem from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { win32 } from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +78,53 @@ test("builds an ordinary alternate artifact with CSS and host checks, without co
     "files other than",
   );
   expect(await readFile(join(out, "precious.txt"), "utf8")).toBe("keep");
+});
+
+test("builds Inbox-only utilities against the host theme without resets or unrelated utilities", async () => {
+  const checkout = join(directory, "checkout");
+  for (const path of [
+    "src",
+    "scripts",
+    "vite.config.ts",
+    "package.json",
+    "pnpm-lock.yaml",
+    "postcss.config.js",
+    ".gitignore",
+  ])
+    await cp(join(root, path), join(checkout, path), { recursive: true });
+  await symlink(
+    join(root, "node_modules"),
+    join(checkout, "node_modules"),
+    "dir",
+  );
+  execFileSync("git", ["init", "--quiet", checkout]);
+  const out = join(directory, "utilities");
+  const before = await buildInboxDev({ directory: checkout, out });
+  const entry = join(checkout, "src/bundled/inbox/index.tsx");
+  const utilities = [
+    ["[word-spacing:", "3.7px]"].join(""),
+    "p-13",
+    "bg-muted",
+    "dark:p-17",
+    "animate-ping",
+  ];
+  await writeFile(
+    entry,
+    `${await readFile(entry, "utf8")}\n// ${utilities.join(" ")}\n`,
+  );
+  const after = await buildInboxDev({ directory: checkout, out });
+  expect(after.buildId).toBe(before.buildId);
+  const code = await readFile(join(out, "plugin.js"), "utf8");
+  const css = JSON.parse(code.match(/style.textContent = (".*");/)[1]);
+  expect(css).toContain("word-spacing: 3.7px");
+  expect(css).toContain("padding: calc(var(--space-1) * 13)");
+  expect(css).toContain("background-color: var(--text-muted)");
+  expect(css).toContain('[data-color-mode="dark"]');
+  expect(css).toContain("@keyframes ping");
+  expect(css).not.toContain("@layer base");
+  expect(css).not.toContain("box-sizing: border-box");
+  expect(css).not.toContain(".panel-header");
+  expect(css).not.toContain(".container {");
 });
 
 test("refuses bundled identities and destructive output destinations", async () => {

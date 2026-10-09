@@ -20,6 +20,8 @@ const nonIconDependencies = new Set([
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
   "@noble/curves",
   "@playwright/test",
+  "@tailwindcss/node",
+  "@tailwindcss/oxide",
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",

@@ -516,7 +516,9 @@ Use a Buzz host built from the same checkout with the Inbox host-module integrat
 No app rebuild is needed for Inbox-only edits. Inbox Dev has its own page identity;
 existing bundled Inbox links do not redirect. Its drafts and attachments still use
 the running host's shared state, while plugin-local React state ends on disable.
-Plugin-owned CSS is added during activation and removed during disposal.
+Plugin-owned CSS, including Tailwind utilities detected in Inbox source, is added
+during activation and removed during disposal. Utilities use the host's theme and
+custom variants without copying its reset, component styles or appearance lifecycle.
 
 Vite generates `globalThis.__BUZZ_HOST_MODULES__` from Inbox's runtime imports,
 limited to the modules and selected exports it consumes, including the host React

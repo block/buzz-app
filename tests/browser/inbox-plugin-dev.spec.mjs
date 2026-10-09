@@ -181,6 +181,26 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
         'title: "Inbox Dev B"',
       ),
     );
+    // Neither the host nor revision A has this utility. Verify real CSS resolution,
+    // not merely a class name or a changed title after Reload.
+    // Assemble it so Tailwind's host scan cannot discover it in this test source.
+    const utility = ["[word-spacing:", "3.7px]"].join("");
+    const probeUtility = () =>
+      inbox.evaluate((element, className) => {
+        element.classList.add(className);
+        const spacing = getComputedStyle(element).wordSpacing;
+        element.classList.remove(className);
+        return spacing;
+      }, utility);
+    expect(await probeUtility()).not.toBe("3.7px");
+    const view = join(checkout, "src/bundled/inbox/InboxPage.tsx");
+    await writeFile(
+      view,
+      (await readFile(view, "utf8")).replaceAll(
+        "className={styles.page}",
+        `className={\`\${styles.page} ${utility}\`}`,
+      ),
+    );
     const second = await buildInboxDev({ directory: checkout, out });
     expect(second.buildId).toBe(built.buildId);
     await settings();
@@ -197,6 +217,10 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
       .getByRole("button", { name: "Back", exact: true })
       .click();
     await button(page, "Inbox Dev B").click();
+    await expect(inbox.locator(`[class~="${utility}"]`)).toHaveCSS(
+      "word-spacing",
+      "3.7px",
+    );
     await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
@@ -234,6 +258,7 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
     await expect(editor).toContainText("Edited in Inbox Dev");
     await expect(inbox.getByText("notes.txt", { exact: true })).toBeVisible();
     expect(await styleCount()).toBe(0);
+    expect(await probeUtility()).not.toBe("3.7px");
     await button(inbox, "Open in origin").click();
     await expect(hostEditor).toContainText("Edited in Inbox Dev");
     await expect(page.getByText("notes.txt", { exact: true })).toBeVisible();

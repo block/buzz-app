@@ -1,3 +1,5 @@
+import { compile, optimize } from "@tailwindcss/node";
+import { Scanner } from "@tailwindcss/oxide";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
@@ -317,7 +319,19 @@ export function apply(ctx) {
     throw new Error(
       `Inbox Dev must contain one module and inline CSS only: ${output.map((file) => file.fileName).join(", ")}`,
     );
-  const css = assets.map((file) => String(file.source)).join("\n");
+  // Reference the host's theme/custom variants, never its reset or component CSS.
+  // Supply only Inbox candidates: referenced @source directives belong to the host.
+  const utilities = await compile(
+    '@reference "./src/shared/styles/globals.css";\n@layer utilities { @tailwind utilities; }',
+    { base: directory, onDependency() {} },
+  );
+  const candidates = new Scanner({
+    sources: [{ base: owned, pattern: "**/*.{ts,tsx,js,jsx}", negated: false }],
+  }).scan();
+  const css = [
+    ...assets.map((file) => String(file.source)),
+    optimize(utilities.build(candidates)).code,
+  ].join("\n");
   const code = chunks[0].code.replace(
     JSON.stringify(cssToken),
     JSON.stringify(css),

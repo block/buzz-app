@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { createChannelKit } from "./capability";
+import { createChannelKit, type Resume } from "./capability";
+import { TEAM_MANIFEST_TAG } from "./team-payload";
 import {
   coordinate,
   KIT_TAG,
+  TEAM_TEXT_TAG,
   type KitRecord,
   type PayloadRecord,
 } from "./model";
@@ -866,45 +868,165 @@ it("keeps private catalog refresh and saves independent of native bindings", asy
   ).resolves.toBeTypeOf("string");
 });
 
-it("converts an ordinary team to a portable one and retires the ordinary record", async () => {
-  const f = fixture();
-  const team = {
-    type: "team" as const,
-    id: "team",
-    name: "Team",
-    agents: [keypair().pubkey],
-  };
-  const ordinary = await f.capability.save(team, undefined);
-  const snapshot = {
-    format: "buzz-team-snapshot" as const,
-    version: 1 as const,
-    team: { name: team.name, instructions: "SHARED" },
-    members: [
-      {
-        format: "buzz-agent-snapshot" as const,
-        version: 1 as const,
-        definition: { name: "Agent", systemPrompt: "INDIVIDUAL" },
-        profile: { displayName: "Agent" },
-        memory: { level: "none" as const, entries: [] },
-      },
-    ],
-  };
-  const id = await f.capability.savePortable(
-    team,
-    snapshot,
-    ordinary,
+async function savedTeam(f: ReturnType<typeof fixture>, id = "team") {
+  const head = await f.capability.save(
+    { type: "team", id, name: "Team", agents: [] },
+    undefined,
+  );
+  return head;
+}
+async function saveText(
+  f: ReturnType<typeof fixture>,
+  text: string,
+  expected: string | undefined,
+  team: string | undefined,
+  teamId = "team",
+) {
+  const manifest = await f.capability.prepareText(
+    teamId,
+    text,
     crypto.randomUUID(),
   );
-  const retired = f.events.at(-1);
-  expect(retired?.id).not.toBe(id);
-  expect(JSON.parse(retired?.content ?? "{}")).toMatchObject({
-    version: 1,
-    deleted: true,
-    value: { id: "team" },
-  });
+  return f.capability.publishText(teamId, manifest, expected, team);
+}
+
+it("round-trips maximum multibyte text through chunks a text head and old readers ignore", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  expect(await f.capability.readText("team")).toBeUndefined();
+  // 4-byte characters and JSON escapes, exactly 128 KiB.
+  const text = '\u{1F600}"\\\n'.repeat(131_072 / 7) + "x".repeat(131_072 % 7);
+  expect(new TextEncoder().encode(text)).toHaveLength(131_072);
+  const head = await saveText(f, text, undefined, team);
+  expect(await f.capability.readText("team")).toEqual({ text, head });
+  const headEvent = f.events.find((event) => event.id === head);
+  expect(headEvent?.tags).toContainEqual(["t", TEAM_TEXT_TAG]);
+  // Neither the old v1 nor v2 catalog query sees the head or its chunks.
+  expect(
+    f.events.filter((event) =>
+      matchesEvent(event, { "#t": [KIT_TAG, TEAM_MANIFEST_TAG], limit: 500 }),
+    ),
+  ).toHaveLength(1);
   await f.capability.refresh();
-  const entries = f.capability.snapshot().entries;
-  expect(entries).toHaveLength(1);
-  expect(entries[0]?.eventId).toBe(id);
-  expect(entries[0]?.record.version).toBe(2);
+  expect(f.capability.snapshot().entries).toHaveLength(1);
+});
+
+it.each([
+  ["one byte over the cap", "x".repeat(131_073), "exceed"],
+  ["a NUL", "a\0b", "NUL"],
+  ["a lone surrogate", "a\uD800", "valid text"],
+])("refuses text with %s before writing anything", async (_, text, error) => {
+  const f = fixture();
+  await expect(
+    f.capability.prepareText("team", text, crypto.randomUUID()),
+  ).rejects.toThrow(error);
+  expect(f.events).toHaveLength(0);
+});
+
+it("an empty head and a tombstone read as empty text, never absent", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  const empty = await saveText(f, "", undefined, team);
+  expect(await f.capability.readText("team")).toEqual({
+    text: "",
+    head: empty,
+  });
+  vi.useFakeTimers({ now: Date.now() + 2_000, toFake: ["Date"] });
+  const tombstone = await f.capability.publishText(
+    "team",
+    null,
+    empty,
+    undefined,
+  );
+  expect(await f.capability.readText("team")).toEqual({
+    text: "",
+    head: tombstone,
+  });
+  expect(await f.capability.readTextHead("team")).toEqual({
+    head: tombstone,
+    deleted: true,
+  });
+});
+
+it("refuses unreadable text instead of reporting it absent", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  await saveText(f, "SHARED", undefined, team);
+  const chunk = f.events.findIndex((event) =>
+    event.tags.some(([t, v]) => t === "t" && v === "buzz-team-payload-v1"),
+  );
+  const [removed] = f.events.splice(chunk, 1);
+  await expect(f.capability.readText("team")).rejects.toThrow();
+  if (removed) f.events.splice(chunk, 0, removed);
+  // A head this session saw that disappears is an error too.
+  f.events.splice(
+    f.events.findIndex((event) =>
+      event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
+    ),
+    1,
+  );
+  await expect(f.capability.readText("team")).rejects.toThrow("unavailable");
+});
+
+it("publishes a live text head only against the expected live team head", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  await expect(saveText(f, "SHARED", undefined, "stale")).rejects.toThrow(
+    "changed or was deleted",
+  );
+  vi.useFakeTimers({ now: Date.now() + 2_000, toFake: ["Date"] });
+  await f.capability.save(
+    { type: "team", id: "team", name: "Team", agents: [] },
+    team,
+    true,
+  );
+  await expect(saveText(f, "SHARED", undefined, team)).rejects.toThrow(
+    "changed or was deleted",
+  );
+  expect(
+    f.events.some((event) =>
+      event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
+    ),
+  ).toBe(false);
+});
+
+it("refuses a stale text head and reuse of a revision with different text", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  await saveText(f, "FIRST", undefined, team);
+  await expect(saveText(f, "SECOND", undefined, team)).rejects.toThrow(
+    "changed",
+  );
+  const revision = crypto.randomUUID();
+  await f.capability.prepareText("team", "ONE", revision);
+  await expect(
+    f.capability.prepareText("team", "TWO", revision),
+  ).rejects.toThrow("different content");
+});
+
+it("a retry confirms the event an earlier attempt enqueued", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  const manifest = await f.capability.prepareText(
+    "team",
+    "SHARED",
+    crypto.randomUUID(),
+  );
+  const resume: Resume = {
+    enqueued(id) {
+      this.id = id;
+    },
+  };
+  const head = await f.capability.publishText(
+    "team",
+    manifest,
+    undefined,
+    team,
+    resume,
+  );
+  const count = f.events.length;
+  expect(
+    await f.capability.publishText("team", manifest, undefined, team, resume),
+  ).toBe(head);
+  expect(f.events).toHaveLength(count);
 });

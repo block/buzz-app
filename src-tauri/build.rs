@@ -116,7 +116,6 @@ fn main() {
             "agent_control_creation_profile",
             "agent_control_snapshot_memory_write",
             "agent_control_team_preview",
-            "agent_control_team_capture",
             "agent_control_team_export",
             "agent_control_team_instructions",
             "agent_control_team_sync",

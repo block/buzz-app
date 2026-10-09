@@ -1,12 +1,10 @@
-import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
-import type { TeamSnapshot } from "../../features/agents/team-bundles";
 import {
   deliverTeamTexts,
   readTeamTexts,
+  resolveTeamText,
   teamTextConflict,
 } from "../../features/agents/team-instructions";
-import { relayOrigin } from "../../features/communities/destination";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -16,7 +14,10 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ChannelKit } from "../../features/channel-templates/capability";
+import type {
+  ChannelKit,
+  Resume,
+} from "../../features/channel-templates/capability";
 import type {
   AgentChoice,
   Team,
@@ -112,138 +113,122 @@ export function ChannelTemplatesDialog({
   const [draft, setDraft] = useState<Team | Template>(() =>
     structuredClone(initial),
   );
-  const [portable, setPortable] = useState<TeamSnapshot>();
-  const [loading, setLoading] = useState(
-    initial.type === "team" && !!initial.portable,
-  );
-  const revision = useRef(crypto.randomUUID());
-  // The head after a save in this dialog, so a retry after a failed delivery
-  // does not conflict with the save it already made.
-  const head = useRef(expected);
-  const prepared = useRef<TeamSnapshot | undefined>(undefined);
+  // Instructions as saved, and the head they came from. Only an edited
+  // existing team loads them; a new team starts empty with no head.
+  const [saved, setSaved] = useState<{
+    text: string;
+    head?: string | undefined;
+  }>();
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(initial.type === "team" && !!expected);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // One save attempt: its text revision and the phases it finished or
+  // enqueued, so a retry confirms the same events instead of writing again.
+  // Any draft edit starts a new attempt.
+  const attempt = useRef(newAttempt(expected));
+  // The roster as last saved, so a text-only retry never rewrites the team.
+  const savedTeam = useRef(expected ? initial : undefined);
+  const edit = () => {
+    attempt.current = newAttempt(attempt.current.teamHead);
+  };
   useEffect(() => {
     if (open) {
       kit.ensure();
     }
   }, [open, kit]);
   useEffect(() => {
-    if (initial.type !== "team" || !initial.portable) return;
+    if (initial.type !== "team") return;
+    if (!expected) {
+      setSaved({ text: "" });
+      return;
+    }
     let cancelled = false;
-    void kit
-      .loadTeam(initial)
-      .then(async (value) => {
-        if (!control?.previewTeam)
-          throw new Error("Team preview is unavailable");
-        const snapshot = await control.previewTeam(JSON.stringify(value));
-        if (snapshot.members.length !== initial.agents.length)
-          throw new Error(
-            "Portable team members do not match their definitions",
-          );
-        if (!cancelled) {
-          setPortable(snapshot);
-          setLoading(false);
-        }
+    void resolveTeamText(kit, control, initial)
+      .then((value) => {
+        if (cancelled) return;
+        setSaved(value);
+        setText(value.text);
+        setLoading(false);
       })
       .catch((reason) => {
         if (!cancelled)
-          setError(reason instanceof Error ? reason.message : String(reason));
+          setError(
+            `This team's instructions can't be read, so it can't be saved now: ${reason instanceof Error ? reason.message : String(reason)}`,
+          );
       });
     return () => {
       cancelled = true;
     };
-  }, [initial, kit, control]);
-  const localMembers = sameCommunityAgents(
-    control?.captureTeam ? (control.snapshot().data?.agents ?? []) : [],
-    session?.scope ?? "",
-  );
-  const canCapture =
-    draft.type === "team" &&
-    !!control?.captureTeam &&
-    draft.agents.length > 0 &&
-    draft.agents.every((key) =>
-      localMembers.some((agent) => agent.pubkey === key),
-    );
-  const hasPortableFields =
-    !!portable?.team.description?.trim() ||
-    !!portable?.team.instructions?.trim();
+  }, [initial, expected, kit, control]);
   const save = async () => {
     if (!live.current || !active() || loading || catalogBusy) return;
     setBusy(true);
     setError("");
+    const run = attempt.current;
     try {
-      if (
-        draft.type === "team" &&
-        ((initial.type === "team" && initial.portable) ||
-          (canCapture && hasPortableFields))
-      ) {
-        if (!session?.viewer)
-          throw new Error("Choose a community before saving a team");
-        const text = portable?.team.instructions ?? "";
-        if (text.trim() && control) {
-          const conflict = teamTextConflict(
-            await readTeamTexts(kit, control),
-            draft,
-            text,
-          );
-          if (conflict) throw new Error(conflict);
-        }
-        const community = relayOrigin(
-          session.scope.slice(0, -(session.viewer.length + 1)),
-        );
-        const previous =
-          initial.type === "team" && initial.portable ? initial.agents : [];
-        const added = draft.agents.filter(
-          (pubkey) => !portable || !previous.includes(pubkey),
-        );
-        const captured =
-          !prepared.current && added.length
-            ? await control?.captureTeam?.(
-                { name: draft.name },
-                added,
-                community,
-              )
-            : undefined;
-        const members =
-          prepared.current?.members ??
-          draft.agents.map((pubkey) => {
-            const index = previous.indexOf(pubkey);
-            const member =
-              portable && index >= 0
-                ? portable.members[index]
-                : captured?.members[added.indexOf(pubkey)];
-            if (!member)
-              throw new Error("A selected agent has no portable definition");
-            return member;
-          });
-        const snapshot: TeamSnapshot = {
-          format: "buzz-team-snapshot",
-          version: 1,
-          team: { ...portable?.team, name: draft.name },
-          members,
-        };
-        prepared.current = snapshot;
-        head.current = await kit.savePortable(
-          draft,
-          snapshot,
-          head.current,
-          revision.current,
-        );
-        revision.current = crypto.randomUUID();
-        prepared.current = undefined;
+      if (draft.type !== "team") {
+        run.teamHead = await kit.save(draft, run.teamHead);
       } else {
-        if (hasPortableFields)
+        if (!saved) throw new Error("Team instructions are still loading");
+        const base = savedTeam.current;
+        const rosterChanged =
+          base?.type !== "team" ||
+          draft.name !== base.name ||
+          draft.agents.join() !== base.agents.join();
+        const textChanged = text !== saved.text;
+        if (draft.portable && !draft.agents.length)
           throw new Error(
-            "Description and team instructions require nonempty local team members",
+            "A team imported from a file needs at least one member.",
           );
-        head.current = await kit.save(draft, head.current);
+        if (!run.checked && control && (rosterChanged || textChanged)) {
+          // Saving goes members first, then text, so check the in-between
+          // state as well as the final one.
+          const others = await readTeamTexts(kit, control);
+          const conflict =
+            (rosterChanged && teamTextConflict(others, draft, saved.text)) ||
+            teamTextConflict(others, draft, text);
+          if (conflict) throw new Error(conflict);
+          run.checked = true;
+        }
+        if (textChanged)
+          run.manifest ??= await kit.prepareText(draft.id, text, run.revision);
+        if (rosterChanged && !run.teamDone) {
+          run.teamHead = await kit.save(
+            draft,
+            run.teamHead,
+            false,
+            undefined,
+            run.team,
+          );
+          run.teamDone = true;
+          savedTeam.current = draft;
+        }
+        if (run.manifest && !run.textDone) {
+          const head = await kit.publishText(
+            draft.id,
+            run.manifest,
+            saved.head,
+            run.teamHead,
+            run.text,
+          );
+          run.textDone = true;
+          setSaved({ text, head });
+        }
+        await deliverTeamTexts(kit, control, session);
       }
-      if (draft.type === "team") await deliverTeamTexts(kit, control, session);
       if (live.current && active()) onOpenChange(false);
     } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
       if (live.current && active())
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(
+          run.teamDone && run.manifest && !run.textDone
+            ? `Members and name saved; instructions not saved: ${message}`
+            : draft.type === "team" &&
+                (run.textDone || (run.teamDone && !run.manifest))
+              ? `Saved; members' instructions not updated: ${message}`
+              : message,
+        );
     } finally {
       if (live.current && active()) setBusy(false);
     }
@@ -443,72 +428,33 @@ export function ChannelTemplatesDialog({
                 maxLength={120}
                 value={draft.name}
                 onChange={(e) => {
-                  revision.current = crypto.randomUUID();
-                  prepared.current = undefined;
+                  edit();
                   setDraft({ ...draft, name: e.target.value });
                 }}
               />
             </Field>
             {draft.type === "team" ? (
               <>
-                {((initial.type === "team" && initial.portable) ||
-                  canCapture ||
-                  hasPortableFields) && (
-                  <>
-                    <Field label="Description">
-                      <Textarea
-                        placeholder="Optional description for this team."
-                        value={portable?.team.description ?? ""}
-                        onChange={(event) => {
-                          revision.current = crypto.randomUUID();
-                          prepared.current = undefined;
-                          setPortable((value) => ({
-                            ...(value ?? {
-                              format: "buzz-team-snapshot",
-                              version: 1,
-                              members: [],
-                            }),
-                            team: {
-                              ...value?.team,
-                              name: draft.name,
-                              description: event.target.value,
-                            },
-                          }));
-                        }}
-                      />
-                    </Field>
-                    <Field label="Team Instructions">
-                      <Textarea
-                        placeholder="Optional instructions every member gets after its own."
-                        value={portable?.team.instructions ?? ""}
-                        onChange={(event) => {
-                          revision.current = crypto.randomUUID();
-                          prepared.current = undefined;
-                          setPortable((value) => ({
-                            ...(value ?? {
-                              format: "buzz-team-snapshot",
-                              version: 1,
-                              members: [],
-                            }),
-                            team: {
-                              ...value?.team,
-                              name: draft.name,
-                              instructions: event.target.value,
-                            },
-                          }));
-                        }}
-                      />
-                    </Field>
-                  </>
+                <Field label="Team Instructions">
+                  <Textarea
+                    placeholder="Optional instructions every member gets after its own."
+                    value={text}
+                    disabled={!saved}
+                    onChange={(event) => {
+                      edit();
+                      setText(event.target.value);
+                    }}
+                  />
+                </Field>
+                {loading && !error && (
+                  <p role="status">Loading team instructions…</p>
                 )}
-                {loading && <p role="status">Loading team definitions…</p>}
                 <AgentSelection
                   session={session}
                   agents={agents}
                   selected={draft.agents}
                   onChange={(agents) => {
-                    revision.current = crypto.randomUUID();
-                    prepared.current = undefined;
+                    edit();
                     setDraft({ ...draft, agents });
                   }}
                 />
@@ -541,6 +487,30 @@ export function ChannelTemplatesDialog({
       </div>
     </Dialog>
   );
+}
+
+type Attempt = {
+  revision: string;
+  teamHead: string | undefined;
+  checked?: boolean;
+  manifest?: Awaited<ReturnType<ChannelKit["prepareText"]>>;
+  teamDone?: boolean;
+  textDone?: boolean;
+  team: Resume;
+  text: Resume;
+};
+function newAttempt(teamHead: string | undefined): Attempt {
+  const resume = (): Resume => ({
+    enqueued(id) {
+      this.id = id;
+    },
+  });
+  return {
+    revision: crypto.randomUUID(),
+    teamHead,
+    team: resume(),
+    text: resume(),
+  };
 }
 
 const emptySubscribe = () => () => {};

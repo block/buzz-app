@@ -1,3 +1,4 @@
+import { teamExportMeta } from "../../features/agents/team-instructions";
 import {
   useCallback,
   useEffect,
@@ -264,34 +265,23 @@ export function AgentShareSwitch({
   );
 }
 
-/** The team's saved portable metadata, read and validated through the same
- * owners Export and Deploy use. A team that has a portable definition
- * refuses to share without it rather than publishing a lossy copy. */
-async function portableTeamText(
-  kit: Pick<ChannelKit, "loadTeam">,
-  control: AgentControl,
-  team: Team,
-) {
-  if (!team.portable) return {};
-  const loaded = await kit.loadTeam(team);
-  if (!control.previewTeam) throw new Error("Team preview is unavailable");
-  const { description, instructions } = (
-    await control.previewTeam(JSON.stringify(loaded))
-  ).team;
-  return { description, instructions };
-}
-
 /** Complete catalog projection shared by the catalog and direct-share dialogs. */
 export async function buildTeamCatalogContent(
   session: RelaySession,
   control: AgentControl,
-  kit: Pick<ChannelKit, "loadTeam">,
+  kit: Pick<ChannelKit, "loadTeam" | "readText">,
   team: Team,
 ) {
-  const text = await portableTeamText(kit, control, team);
+  // Current text and retained description; refuses rather than sharing a
+  // lossy copy when either can't be read.
+  const { description, instructions } = await teamExportMeta(
+    kit,
+    control,
+    team,
+  );
   const data = control.snapshot().data;
   return teamCatalogContent(
-    { ...team, ...text },
+    { ...team, description, instructions },
     sameCommunityAgents(data?.agents ?? [], session.scope),
     data?.defaultSettings?.sessionPolicy,
   );
@@ -308,7 +298,7 @@ export function TeamShareDialog({
 }: {
   session: RelaySession;
   control: AgentControl;
-  kit: Pick<ChannelKit, "loadTeam">;
+  kit: Pick<ChannelKit, "loadTeam" | "readText">;
   team: Team;
   onClose(): void;
 }) {

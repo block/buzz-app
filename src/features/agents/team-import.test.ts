@@ -54,6 +54,9 @@ function fixture() {
     refresh: vi.fn(),
     snapshot: () => ({ entries: [] }),
     savePortable,
+    readText: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => "text-manifest"),
+    publishText: vi.fn(async () => "text-head"),
   } as unknown as ChannelKit;
   return { control, kit, writeSnapshotMemory, savePortable };
 }
@@ -105,4 +108,25 @@ it("retains the same creation requests on memory failure and reports per-member 
     "copy",
     snapshot.members[0]?.memory.entries,
   );
+});
+it("writes the imported text as an explicit text head, and leaves an existing one alone", async () => {
+  const { control, kit } = fixture();
+  const options = {
+    destination: "https://relay.example",
+    owner: "b".repeat(64),
+    keepAllowlist: false,
+  };
+  const result = await importTeamSnapshot(control, kit, snapshot, options);
+  expect(vi.mocked(kit.prepareText).mock.calls[0]?.slice(0, 2)).toEqual([
+    result.id,
+    snapshot.team.instructions ?? "",
+  ]);
+  expect(vi.mocked(kit.publishText).mock.calls[0]?.slice(0, 3)).toEqual([
+    result.id,
+    "text-manifest",
+    undefined,
+  ]);
+  vi.mocked(kit.readText).mockResolvedValueOnce({ text: "EDITED", head: "h" });
+  await importTeamSnapshot(control, kit, snapshot, options);
+  expect(kit.publishText).toHaveBeenCalledOnce();
 });

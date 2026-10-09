@@ -73,6 +73,9 @@ function fixture(memoryCount = 0, body = "Memory") {
     refresh: vi.fn(async () => {}),
     snapshot: () => ({ entries: [] }),
     savePortable,
+    readText: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => "text-manifest"),
+    publishText: vi.fn(async () => "text-head"),
   } as unknown as ChannelKit;
   return { source, control, kit, create, writeSnapshotMemory, savePortable };
 }

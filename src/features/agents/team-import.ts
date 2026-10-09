@@ -83,6 +83,25 @@ export async function importTeamSnapshot(
       receipt.id,
     );
   }
+  // An explicit text head, even when empty, so later reads never fall back
+  // to bundle text. A head that exists already (an earlier attempt or an
+  // edit since) is left alone.
+  if (!(await kit.readText(receipt.id))) {
+    const manifest = await kit.prepareText(
+      receipt.id,
+      validated.team.instructions ?? "",
+      crypto.randomUUID(),
+    );
+    const team = kit
+      .snapshot()
+      .entries.find(
+        (entry) =>
+          !entry.record.deleted &&
+          entry.record.value.type === "team" &&
+          entry.record.value.id === receipt.id,
+      );
+    await kit.publishText(receipt.id, manifest, undefined, team?.eventId);
+  }
   const memories: {
     pubkey: string;
     written: number;

@@ -241,7 +241,7 @@ export interface AgentControlHost {
     bundle?: BundleMember,
   ): Promise<ControlSnapshot>;
   exportTeam?(
-    snapshot: TeamSnapshot,
+    team: TeamSnapshot["team"],
     members: string[],
     community: string,
     memoryLevel?: "none" | "core" | "everything",
@@ -259,11 +259,6 @@ export interface AgentControlHost {
     community: string,
     teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
-  captureTeam?(
-    team: TeamSnapshot["team"],
-    members: string[],
-    community: string,
-  ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
@@ -336,7 +331,7 @@ export interface AgentControl {
     bundle?: BundleMember,
   ): Promise<AgentView>;
   exportTeam?(
-    snapshot: TeamSnapshot,
+    team: TeamSnapshot["team"],
     members: string[],
     community: string,
     memoryLevel?: "none" | "core" | "everything",
@@ -354,11 +349,6 @@ export interface AgentControl {
     community: string,
     teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
-  captureTeam?(
-    team: TeamSnapshot["team"],
-    members: string[],
-    community: string,
-  ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
@@ -728,30 +718,17 @@ export function createAgentControl(
             }, ready),
         }
       : {}),
-    ...(host?.captureTeam
-      ? {
-          captureTeam: (
-            team: TeamSnapshot["team"],
-            members: string[],
-            community: string,
-          ) => {
-            if (!host.captureTeam)
-              throw new Error("Team capture is unavailable.");
-            return host.captureTeam(team, members, community);
-          },
-        }
-      : {}),
     ...(host?.exportTeam
       ? {
           exportTeam: (
-            snapshot: TeamSnapshot,
+            team: TeamSnapshot["team"],
             members: string[],
             community: string,
             memoryLevel: "none" | "core" | "everything" = "none",
           ) => {
             if (!host.exportTeam)
               throw new Error("Team export is unavailable.");
-            return host.exportTeam(snapshot, members, community, memoryLevel);
+            return host.exportTeam(team, members, community, memoryLevel);
           },
         }
       : {}),

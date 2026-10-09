@@ -114,6 +114,7 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
     previewTeam: async (content: string) => JSON.parse(content) as TeamSnapshot,
   } as unknown as AgentControl;
   let saved: { team: Team; snapshot: TeamSnapshot } | undefined;
+  const texts = new Map<string, string>();
   const kit = {
     refresh: async () => {},
     snapshot: () => ({ entries: [] }),
@@ -123,6 +124,14 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
     loadTeam: async (team: Team) => {
       expect(team.id).toBe(saved?.team.id);
       return saved?.snapshot;
+    },
+    // Adoption writes the text record; re-sharing reads it back.
+    readText: async (id: string) =>
+      texts.has(id) ? { text: texts.get(id), head: "text-head" } : undefined,
+    prepareText: async (_id: string, text: string) => text,
+    publishText: async (id: string, text: string) => {
+      texts.set(id, text);
+      return "text-head";
     },
   } as unknown as ChannelKit;
   const imported = await importTeamSnapshot(
@@ -253,7 +262,9 @@ function pendingShare(defaultSessionPolicy: "channel" | "thread" = "channel") {
     <TeamDirectShare
       session={session}
       control={control}
-      kit={{ loadTeam } as unknown as ChannelKit}
+      kit={
+        { loadTeam, readText: async () => undefined } as unknown as ChannelKit
+      }
       team={{
         type: "team",
         id: "crew",

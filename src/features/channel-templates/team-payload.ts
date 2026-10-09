@@ -96,19 +96,16 @@ export function withoutTeamMemories(snapshot: TeamSnapshot): TeamSnapshot {
     })),
   };
 }
-export async function encodeTeamPayload(
-  snapshot: TeamSnapshot,
+/** Splits bytes into immutable digest-bound chunks for one revision. */
+async function encodePayloadBytes(
+  bytes: Uint8Array<ArrayBuffer>,
   community: string,
   owner: string,
   teamId: string,
-  operationRevision: string = crypto.randomUUID(),
+  operationRevision: string,
+  parseManifest: (raw: unknown) => TeamManifest,
 ) {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify(withoutTeamMemories(snapshot)),
-  );
-  if (!bytes.length || bytes.length > TEAM_PAYLOAD_BYTES)
-    throw new Error("Team snapshot exceeds the size limit");
-  const manifest = parseTeamManifest({
+  const manifest = parseManifest({
     version: 1,
     owner,
     revision: operationRevision,
@@ -141,15 +138,15 @@ export async function encodeTeamPayload(
   }
   return { manifest, payloads };
 }
-/** Host decode already verifies signature/owner. Check every immutable binding before JSON. */
-export async function decodeTeamPayload(
-  manifestValue: TeamManifest,
+/** Host decode already verifies signature/owner. Checks every immutable
+ * binding, exact chunk length and the digest before returning bytes. */
+async function decodePayloadBytes(
+  manifest: TeamManifest,
   payloads: readonly TeamPayload[],
   community: string,
   owner: string,
   teamId: string,
-): Promise<unknown> {
-  const manifest = parseTeamManifest(manifestValue);
+) {
   if (manifest.owner !== owner || payloads.length !== manifest.chunks)
     throw new Error("Incomplete portable team payload");
   const bytes = new Uint8Array(manifest.bytes);
@@ -176,5 +173,107 @@ export async function decodeTeamPayload(
   }
   if ((await digest(bytes)) !== manifest.digest)
     throw new Error("Portable team integrity check failed");
+  return bytes;
+}
+export async function encodeTeamPayload(
+  snapshot: TeamSnapshot,
+  community: string,
+  owner: string,
+  teamId: string,
+  operationRevision: string = crypto.randomUUID(),
+) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify(withoutTeamMemories(snapshot)),
+  );
+  if (!bytes.length || bytes.length > TEAM_PAYLOAD_BYTES)
+    throw new Error("Team snapshot exceeds the size limit");
+  return encodePayloadBytes(
+    bytes,
+    community,
+    owner,
+    teamId,
+    operationRevision,
+    parseTeamManifest,
+  );
+}
+export async function decodeTeamPayload(
+  manifestValue: TeamManifest,
+  payloads: readonly TeamPayload[],
+  community: string,
+  owner: string,
+  teamId: string,
+): Promise<unknown> {
+  const bytes = await decodePayloadBytes(
+    parseTeamManifest(manifestValue),
+    payloads,
+    community,
+    owner,
+    teamId,
+  );
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
+/** Team instructions travel as ASCII `v1:` plus their raw UTF-8 bytes. */
+export const TEAM_TEXT_BYTES = 128 * 1024;
+const TEXT_PREFIX = "v1:";
+export function parseTextManifest(raw: unknown): TeamManifest {
+  const manifest = parseTeamManifest(raw);
+  if (
+    manifest.bytes < TEXT_PREFIX.length ||
+    manifest.bytes > TEXT_PREFIX.length + TEAM_TEXT_BYTES
+  )
+    throw new Error("Invalid team instructions manifest");
+  return manifest;
+}
+/** Valid UTF-8, no NUL and at most 128 KiB before any trimming. */
+export function teamTextBytes(text: string) {
+  const bytes = new TextEncoder().encode(text);
+  if (new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes) !== text)
+    throw new Error("Team instructions must be valid text");
+  if (text.includes("\0"))
+    throw new Error("Team instructions cannot contain NUL characters");
+  if (bytes.length > TEAM_TEXT_BYTES)
+    throw new Error("Team instructions exceed 128 KiB");
+  return bytes;
+}
+export function encodeTeamText(
+  text: string,
+  community: string,
+  owner: string,
+  teamId: string,
+  operationRevision: string,
+) {
+  const body = teamTextBytes(text);
+  const bytes = new Uint8Array(TEXT_PREFIX.length + body.length);
+  bytes.set(new TextEncoder().encode(TEXT_PREFIX));
+  bytes.set(body, TEXT_PREFIX.length);
+  return encodePayloadBytes(
+    bytes,
+    community,
+    owner,
+    teamId,
+    operationRevision,
+    parseTextManifest,
+  );
+}
+export async function decodeTeamText(
+  manifestValue: TeamManifest,
+  payloads: readonly TeamPayload[],
+  community: string,
+  owner: string,
+  teamId: string,
+) {
+  const bytes = await decodePayloadBytes(
+    parseTextManifest(manifestValue),
+    payloads,
+    community,
+    owner,
+    teamId,
+  );
+  const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (!decoded.startsWith(TEXT_PREFIX))
+    throw new Error("Unsupported team instructions format");
+  const text = decoded.slice(TEXT_PREFIX.length);
+  teamTextBytes(text);
+  return text;
 }

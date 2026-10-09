@@ -1,3 +1,4 @@
+import { teamExportMeta } from "../../features/agents/team-instructions";
 import { useState } from "react";
 import type { AgentControl, AgentView } from "../../features/agents/control";
 import { useAgentControl } from "../../features/agents/control-react";
@@ -248,14 +249,11 @@ export function TeamDirectShare({
     session.scope.slice(0, -((session.viewer?.length ?? 0) + 1)),
   );
   async function encode(level: MemoryLevel, signal?: AbortSignal) {
-    if (!control.previewTeam || !control.exportTeam)
-      throw new Error("Team export is unavailable");
-    const loaded = await kit.loadTeam(team);
-    signal?.throwIfAborted();
-    const portable = await control.previewTeam(JSON.stringify(loaded));
+    if (!control.exportTeam) throw new Error("Team export is unavailable");
+    const meta = await teamExportMeta(kit, control, team);
     signal?.throwIfAborted();
     const snapshot = await control.exportTeam(
-      portable,
+      meta,
       team.agents,
       community,
       level,

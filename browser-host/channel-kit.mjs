@@ -33,9 +33,11 @@ export function admitChannelKit(event, secret, community) {
     const boundOwner =
       record.value.type === "team-payload"
         ? record.value.owner
-        : record.version === 2
-          ? record.value.portable?.owner
-          : undefined;
+        : record.value.type === "team-text"
+          ? record.value.owner
+          : record.version === 2
+            ? record.value.portable?.owner
+            : undefined;
     if (boundOwner !== undefined && boundOwner !== getPublicKey(secret))
       throw new Error("Portable team belongs to another viewer");
     const ds = event.tags.filter((t) => t[0] === "d"),

@@ -1729,26 +1729,10 @@ pub(crate) async fn agent_control_team_sync(
 }
 
 #[tauri::command]
-pub(crate) async fn agent_control_team_capture(
-    state: tauri::State<'_, AgentHost>,
-    team: buzz_agent_controller::TeamMeta,
-    members: Vec<String>,
-    community: String,
-) -> Result<buzz_agent_controller::TeamSnapshot, String> {
-    let relay = community
-        .trim_end_matches('/')
-        .replacen("https://", "wss://", 1);
-    run(state.inner().clone(), move |host| {
-        host.controller.export_team(team, &members, &relay)
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn agent_control_team_export(
     state: tauri::State<'_, AgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
-    snapshot: buzz_agent_controller::TeamSnapshot,
+    team: buzz_agent_controller::TeamMeta,
     members: Vec<String>,
     community: String,
     memory_level: Option<String>,
@@ -1762,10 +1746,6 @@ pub(crate) async fn agent_control_team_export(
     } else {
         Some(identity.with_key(|_, viewer| Ok(viewer.to_owned())).await?)
     };
-    snapshot.validate()?;
-    if snapshot.members.len() != members.len() {
-        return Err("Portable team members do not match their definitions".into());
-    }
     let relay = community
         .trim_end_matches('/')
         .replacen("https://", "wss://", 1);
@@ -1781,10 +1761,9 @@ pub(crate) async fn agent_control_team_export(
                 Ok((agent.pubkey.clone(), community.clone()))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        // Export the members' current saved settings; the portable team owns metadata.
-        let snapshot = host
-            .controller
-            .export_team(snapshot.team, &members, &relay)?;
+        // Export the members' current saved settings with the team's current
+        // metadata; `export_team` validates the result.
+        let snapshot = host.controller.export_team(team, &members, &relay)?;
         Ok((snapshot, targets))
     })
     .await?;

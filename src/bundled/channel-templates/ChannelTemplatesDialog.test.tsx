@@ -67,6 +67,14 @@ function fixture(
     savePortable: vi.fn(async () => {
       throw new Error("No portable fixture save");
     }),
+    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => {
+      throw new Error("No text fixture prepare");
+    }),
+    publishText: vi.fn(async () => {
+      throw new Error("No text fixture publish");
+    }),
     snapshot: () => state,
     subscribe: () => () => {},
     ensure: vi.fn(),
@@ -322,6 +330,9 @@ it("editing saves against the original revision and closes back to its caller", 
   expect(save).toHaveBeenCalledExactlyOnceWith(
     { ...team, name: "Renamed team" },
     "head",
+    false,
+    undefined,
+    expect.anything(),
   );
   expect(close).toHaveBeenCalledExactlyOnceWith(false);
 });
@@ -397,14 +408,14 @@ it.each(["template", "team"] as const)(
       `New saved ${type}`,
     );
     await user.click(screen.getByRole("button", { name: `Save ${type}` }));
-    expect(save).toHaveBeenCalledWith(
+    expect(save.mock.calls[0]?.slice(0, 2)).toEqual([
       expect.objectContaining({
         type,
         id: expect.any(String),
         name: `New saved ${type}`,
       }),
       undefined,
-    );
+    ]);
     await waitFor(() => expect(trigger).toHaveFocus());
   },
 );
@@ -487,6 +498,14 @@ it("closes the save-as-template editor after successful creation", async () => {
     }),
     savePortable: vi.fn(async () => {
       throw new Error("No portable fixture save");
+    }),
+    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => {
+      throw new Error("No text fixture prepare");
+    }),
+    publishText: vi.fn(async () => {
+      throw new Error("No text fixture publish");
     }),
     snapshot: () => state,
     subscribe: () => () => {},
@@ -631,209 +650,3 @@ it("keeps a team editor free of template-only or empty-search fields", async () 
     within(editor).getByText(/No agents from the Agents page/),
   ).toBeVisible();
 });
-
-it("edits portable metadata without reconstructing or dropping member definitions", async () => {
-  const user = userEvent.setup();
-  const pubkey = "a".repeat(64);
-  const snapshot: TeamSnapshot = {
-    format: "buzz-team-snapshot",
-    version: 1,
-    team: {
-      name: "Portable",
-      description: "Shared purpose",
-      instructions: "TEAM_A",
-    },
-    members: [
-      {
-        format: "buzz-agent-snapshot",
-        version: 1,
-        definition: {
-          name: "Member",
-          systemPrompt: "INDIVIDUAL_A",
-          runtime: "goose",
-          model: "model-a",
-          provider: "provider-a",
-          sessionPolicy: "thread",
-          respondTo: "allowlist",
-          respondToAllowlist: ["b".repeat(64)],
-          parallelism: 3,
-          idleTimeoutSeconds: 60,
-          maxTurnDurationSeconds: 120,
-          namePool: ["Alias"],
-        },
-        profile: {
-          displayName: "Member",
-          about: "Profile",
-          avatarUrl: "https://example.test/a.png",
-        },
-        memory: { level: "none", entries: [] },
-      },
-    ],
-  };
-  const value: Team = {
-    type: "team",
-    id: "portable",
-    name: "Portable",
-    agents: [pubkey],
-    portable: {
-      version: 1,
-      owner: "c".repeat(64),
-      revision: crypto.randomUUID(),
-      digest: "d".repeat(64),
-      bytes: 100,
-      chunks: 1,
-    },
-  };
-  const savePortable = vi
-    .fn<ChannelKit["savePortable"]>()
-    .mockResolvedValue("new-head");
-  const save = vi.fn<ChannelKit["save"]>();
-  const state = { status: "ready" as const, entries: [] };
-  const kit = {
-    available: true,
-    snapshot: () => state,
-    subscribe: () => () => {},
-    ensure: vi.fn(),
-    refresh: vi.fn(),
-    save,
-    loadTeam: vi.fn(async () => snapshot),
-    savePortable,
-  } as ChannelKit;
-  const captureTeam = vi.fn();
-  const control = {
-    previewTeam: vi.fn(async () => structuredClone(snapshot)),
-    snapshot: () => ({ data: { agents: [] } }),
-    captureTeam,
-  } as unknown as AgentControl;
-  const viewer = "c".repeat(64);
-  const session = {
-    viewer,
-    scope: `https://relay.example.test:${viewer}`,
-  } as RelaySession;
-  render(
-    <ChannelTemplatesDialog
-      open
-      onOpenChange={vi.fn()}
-      kit={kit}
-      initial={value}
-      expected="old-head"
-      active={() => true}
-      session={session}
-      control={control}
-      agents={[{ pubkey, name: "Member", avatar: undefined }]}
-    />,
-    { wrapper: ToastProvider },
-  );
-  const instructions = await screen.findByRole("textbox", {
-    name: "Team Instructions",
-  });
-  await waitFor(() => expect(instructions).toHaveValue("TEAM_A"));
-  await user.clear(instructions);
-  await user.type(instructions, "TEAM_B");
-  await user.click(screen.getByRole("button", { name: "Save team" }));
-  expect(savePortable).toHaveBeenCalledOnce();
-  expect(savePortable.mock.calls[0]?.[1]).toEqual({
-    ...snapshot,
-    team: { ...snapshot.team, instructions: "TEAM_B" },
-  });
-  expect(savePortable.mock.calls[0]?.[0].agents).toEqual([pubkey]);
-  expect(savePortable.mock.calls[0]?.[2]).toBe("old-head");
-  expect(captureTeam).not.toHaveBeenCalled();
-  expect(save).not.toHaveBeenCalled();
-});
-
-it.each(
-  [[], ["a".repeat(64)], ["a".repeat(64), "b".repeat(64)]].map((selected) => ({
-    selected,
-  })),
-)(
-  "routes new-team metadata and save through the same membership eligibility (%j)",
-  async ({ selected }) => {
-    const user = userEvent.setup();
-    const viewer = "c".repeat(64);
-    const member = {
-      format: "buzz-agent-snapshot",
-      version: 1,
-      definition: { name: "Local", systemPrompt: "INDIVIDUAL" },
-      profile: { displayName: "Local" },
-      memory: { level: "none", entries: [] },
-    };
-    const captureTeam = vi.fn(async () => ({
-      format: "buzz-team-snapshot",
-      version: 1,
-      team: { name: "New" },
-      members: [member],
-    }));
-    const save = vi.fn();
-    const savePortable = vi.fn();
-    const state = { status: "ready", entries: [] };
-    const kit = {
-      available: true,
-      snapshot: () => state,
-      subscribe: () => () => {},
-      ensure: vi.fn(),
-      save,
-      savePortable,
-    } as unknown as ChannelKit;
-    const control = {
-      captureTeam,
-      snapshot: () => ({
-        data: {
-          agents: [
-            { pubkey: "a".repeat(64), relayUrl: "wss://relay.example.test" },
-          ],
-        },
-      }),
-    } as unknown as AgentControl;
-    render(
-      <ChannelTemplatesDialog
-        open
-        onOpenChange={vi.fn()}
-        kit={kit}
-        active={() => true}
-        initial={{ type: "team", id: "new", name: "New", agents: selected }}
-        agents={[]}
-        session={
-          {
-            viewer,
-            scope: `https://relay.example.test:${viewer}`,
-          } as RelaySession
-        }
-        control={control}
-      />,
-      { wrapper: ToastProvider },
-    );
-    const eligible = selected.length === 1 && selected[0] === "a".repeat(64);
-    if (eligible) {
-      await user.type(
-        screen.getByRole("textbox", { name: "Description" }),
-        "Purpose",
-      );
-      await user.type(
-        screen.getByRole("textbox", { name: "Team Instructions" }),
-        "TEAM",
-      );
-    } else {
-      expect(
-        screen.queryByRole("textbox", { name: "Description" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("textbox", { name: "Team Instructions" }),
-      ).not.toBeInTheDocument();
-    }
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    if (eligible) {
-      expect(save).not.toHaveBeenCalled();
-      expect(savePortable).toHaveBeenCalledOnce();
-      expect(savePortable.mock.calls[0]?.[1].team).toEqual({
-        name: "New",
-        description: "Purpose",
-        instructions: "TEAM",
-      });
-    } else {
-      expect(save).toHaveBeenCalledOnce();
-      expect(savePortable).not.toHaveBeenCalled();
-      expect(captureTeam).not.toHaveBeenCalled();
-    }
-  },
-);

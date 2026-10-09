@@ -8,6 +8,7 @@ import type { TeamSnapshot } from "../../features/agents/team-bundles";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import type { KitEntry, Team } from "../../features/channel-templates/model";
+import type { TeamManifest } from "../../features/channel-templates/team-payload";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 
@@ -20,17 +21,10 @@ const community = "https://relay.example.test";
 const member = "a".repeat(64);
 const second = "b".repeat(64);
 const session = { viewer, scope: `${community}:${viewer}` } as RelaySession;
-const memberSnapshot = {
-  format: "buzz-agent-snapshot",
+const manifest = (revision: string = crypto.randomUUID()): TeamManifest => ({
   version: 1,
-  definition: { name: "Member", systemPrompt: "INDIVIDUAL" },
-  profile: { displayName: "Member" },
-  memory: { level: "none", entries: [] },
-} as unknown as TeamSnapshot["members"][number];
-const manifest = () => ({
-  version: 1 as const,
   owner: viewer,
-  revision: crypto.randomUUID(),
+  revision,
   digest: "d".repeat(64),
   bytes: 100,
   chunks: 1,
@@ -58,17 +52,14 @@ const entryOf = (team: Team): KitEntry => ({
     value: team,
   },
 });
+/** `texts` are team-text heads; `legacy` is v2 bundle text. A text of
+ * `null` makes that team's head unreadable. */
 function setup(
   initial: Team,
   entries: KitEntry[],
-  texts: Record<string, string>,
+  texts: Record<string, string | null>,
+  legacy: Record<string, string> = {},
 ) {
-  const snapshotOf = (team: Team): TeamSnapshot => ({
-    format: "buzz-team-snapshot",
-    version: 1,
-    team: { name: team.name, instructions: texts[team.id] ?? "" },
-    members: team.agents.map(() => structuredClone(memberSnapshot)),
-  });
   const kitState = { status: "ready" as const, entries };
   const controlState = {
     data: {
@@ -78,10 +69,19 @@ function setup(
       })),
     },
   };
-  const save = vi.fn<ChannelKit["save"]>().mockResolvedValue("saved");
-  const savePortable = vi
-    .fn<ChannelKit["savePortable"]>()
-    .mockResolvedValue("saved");
+  const save = vi.fn<ChannelKit["save"]>().mockResolvedValue("team-saved");
+  const savePortable = vi.fn();
+  const readText = vi.fn(async (id: string) => {
+    const text = texts[id];
+    if (text === null) throw new Error("chunk missing");
+    return text === undefined ? undefined : { text, head: `${id}-text` };
+  });
+  const prepareText = vi.fn(
+    async (_id: string, _text: string, revision: string) => manifest(revision),
+  );
+  const publishText = vi
+    .fn<ChannelKit["publishText"]>()
+    .mockResolvedValue("text-saved");
   const kit = {
     available: true,
     snapshot: () => kitState,
@@ -90,24 +90,22 @@ function setup(
     refresh: vi.fn(),
     save,
     savePortable,
+    readText,
+    prepareText,
+    publishText,
     loadTeam: vi.fn(async (team: Team) => team.id),
   } as unknown as ChannelKit;
-  const captureTeam = vi.fn(async (_team: unknown, members: string[]) => ({
-    format: "buzz-team-snapshot",
-    version: 1,
-    team: { name: initial.name },
-    members: members.map(() => structuredClone(memberSnapshot)),
-  }));
   const syncTeamInstructions = vi.fn(async () => controlState);
   const control = {
     syncTeamInstructions,
-    previewTeam: vi.fn(async (id: string) => {
-      const team = entries.find(
-        (entry) => entry.record.value.id === JSON.parse(id),
-      )?.record.value as Team;
-      return snapshotOf(team);
-    }),
-    captureTeam,
+    previewTeam: vi.fn(
+      async (id: string): Promise<TeamSnapshot> => ({
+        format: "buzz-team-snapshot",
+        version: 1,
+        team: { name: "", instructions: legacy[JSON.parse(id)] ?? "" },
+        members: [],
+      }),
+    ),
     snapshot: () => controlState,
   } as unknown as AgentControl;
   render(
@@ -116,7 +114,11 @@ function setup(
       onOpenChange={vi.fn()}
       kit={kit}
       initial={initial}
-      expected={`${initial.id}-head`}
+      expected={
+        entries.some((e) => e.record.value.id === initial.id)
+          ? `${initial.id}-head`
+          : undefined
+      }
       active={() => true}
       session={session}
       control={control}
@@ -127,135 +129,278 @@ function setup(
     />,
     { wrapper: ToastProvider },
   );
-  return { save, savePortable, captureTeam, syncTeamInstructions };
+  return {
+    save,
+    savePortable,
+    readText,
+    prepareText,
+    publishText,
+    syncTeamInstructions,
+  };
 }
 const instructions = () =>
   screen.findByRole("textbox", { name: "Team Instructions" });
+const loaded = async (text: string) => {
+  const field = await instructions();
+  await waitFor(() => expect(field).toHaveValue(text));
+  await waitFor(() => expect(field).toBeEnabled());
+  return field;
+};
 const saveTeam = () =>
   userEvent.click(screen.getByRole("button", { name: "Save team" }));
 
-it("adds team text to an existing ordinary team by converting it", async () => {
-  const { save, savePortable, captureTeam } = setup(
-    ordinary,
-    [entryOf(ordinary)],
-    {},
+it("shows the saved text head when the dialog reopens", async () => {
+  setup(
+    portable,
+    [entryOf(portable)],
+    { portable: "SAVED" },
+    {
+      portable: "OLD BUNDLE",
+    },
   );
-  const field = await instructions();
-  expect(field).toHaveValue("");
-  await userEvent.type(field, "SHARED");
-  await saveTeam();
-  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
-  expect(captureTeam).toHaveBeenCalledOnce();
-  expect(savePortable.mock.calls[0]?.[1].team.instructions).toBe("SHARED");
-  expect(savePortable.mock.calls[0]?.[2]).toBe("ordinary-head");
-  expect(save).not.toHaveBeenCalled();
+  await loaded("SAVED");
 });
 
-it("keeps an ordinary team ordinary when no text is added", async () => {
-  const { save, savePortable } = setup(ordinary, [entryOf(ordinary)], {});
-  await instructions();
-  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "!");
+it("an empty text head wins over legacy bundle text", async () => {
+  setup(
+    portable,
+    [entryOf(portable)],
+    { portable: "" },
+    {
+      portable: "OLD BUNDLE",
+    },
+  );
+  await loaded("");
+});
+
+it("shows legacy bundle text only when no text head exists", async () => {
+  setup(portable, [entryOf(portable)], {}, { portable: "OLD BUNDLE" });
+  await loaded("OLD BUNDLE");
+});
+
+it("refuses to edit when the text head can't be read, never falling back", async () => {
+  const { save, publishText } = setup(
+    portable,
+    [entryOf(portable)],
+    { portable: null },
+    { portable: "OLD BUNDLE" },
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("chunk missing");
+  expect(await instructions()).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Save team" })).toBeDisabled();
+  expect(save).not.toHaveBeenCalled();
+  expect(publishText).not.toHaveBeenCalled();
+});
+
+it("adds text to an ordinary team without converting or rewriting it", async () => {
+  const { save, savePortable, prepareText, publishText, syncTeamInstructions } =
+    setup(ordinary, [entryOf(ordinary)], {});
+  await userEvent.type(await loaded(""), "SHARED");
   await saveTeam();
-  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
+  expect(prepareText.mock.calls[0]?.slice(0, 2)).toEqual([
+    "ordinary",
+    "SHARED",
+  ]);
+  expect(publishText.mock.calls[0]?.slice(0, 4)).toEqual([
+    "ordinary",
+    expect.objectContaining({ revision: prepareText.mock.calls[0]?.[2] }),
+    undefined,
+    "ordinary-head",
+  ]);
+  expect(save).not.toHaveBeenCalled();
+  expect(savePortable).not.toHaveBeenCalled();
+  await waitFor(() => expect(syncTeamInstructions).toHaveBeenCalledOnce());
+});
+
+it.each([
+  ["an empty team", []],
+  ["a mixed team of non-exportable members", [member, second]],
+])("saves text on %s", async (_, agents) => {
+  const team = { ...ordinary, agents };
+  const { publishText, savePortable } = setup(team, [entryOf(team)], {});
+  await userEvent.type(await loaded(""), "SHARED");
+  await saveTeam();
+  await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
   expect(savePortable).not.toHaveBeenCalled();
 });
 
-it("shows the saved text and keeps it on a name-only edit", async () => {
-  const { savePortable, syncTeamInstructions } = setup(
+it("a name-only edit saves the team and leaves the text untouched", async () => {
+  const { save, prepareText, publishText } = setup(
     portable,
     [entryOf(portable)],
     { portable: "SAVED" },
   );
-  const field = await instructions();
-  await waitFor(() => expect(field).toHaveValue("SAVED"));
+  await loaded("SAVED");
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "!");
   await saveTeam();
-  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
-  const [team, snapshot] = savePortable.mock.calls[0] ?? [];
-  expect(team?.agents).toEqual([member]);
-  expect(snapshot?.team.instructions).toBe("SAVED");
-  expect(snapshot?.members).toHaveLength(1);
-  await waitFor(() =>
-    expect(syncTeamInstructions).toHaveBeenCalledExactlyOnceWith(community, {
-      portable: "SAVED",
-    }),
-  );
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(save.mock.calls[0]?.[0]).toMatchObject({
+    name: "Portable!",
+    agents: [member],
+    portable: portable.portable,
+  });
+  expect(prepareText).not.toHaveBeenCalled();
+  expect(publishText).not.toHaveBeenCalled();
 });
 
-it("saves an explicit clear as empty text", async () => {
-  const { savePortable } = setup(portable, [entryOf(portable)], {
-    portable: "SAVED",
+it("a members-only edit keeps the saved text", async () => {
+  const { save, publishText } = setup(ordinary, [entryOf(ordinary)], {
+    ordinary: "SAVED",
   });
-  const field = await instructions();
-  await waitFor(() => expect(field).toHaveValue("SAVED"));
-  await userEvent.clear(field);
+  await loaded("SAVED");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
   await saveTeam();
-  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
-  expect(savePortable.mock.calls[0]?.[1].team.instructions).toBe("");
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(save.mock.calls[0]?.[0]).toMatchObject({ agents: [member, second] });
+  expect(publishText).not.toHaveBeenCalled();
+});
+
+it("an explicit clear writes an empty text head over legacy text", async () => {
+  const { prepareText, publishText } = setup(
+    portable,
+    [entryOf(portable)],
+    {},
+    { portable: "OLD BUNDLE" },
+  );
+  await userEvent.clear(await loaded("OLD BUNDLE"));
+  await saveTeam();
+  await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
+  expect(prepareText.mock.calls[0]?.[1]).toBe("");
+});
+
+it("saves members before text when both change", async () => {
+  const { save, publishText } = setup(ordinary, [entryOf(ordinary)], {
+    ordinary: "OLD",
+  });
+  const field = await loaded("OLD");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await userEvent.clear(field);
+  await userEvent.type(field, "NEW");
+  await saveTeam();
+  await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
+  expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+    publishText.mock.invocationCallOrder[0] ?? 0,
+  );
+  expect(publishText.mock.calls[0]?.[2]).toBe("ordinary-text");
+  expect(publishText.mock.calls[0]?.[3]).toBe("team-saved");
+});
+
+it("retries only the unfinished text write after a partial save", async () => {
+  const { save, prepareText, publishText } = setup(
+    ordinary,
+    [entryOf(ordinary)],
+    { ordinary: "OLD" },
+  );
+  publishText.mockRejectedValueOnce(new Error("relay offline"));
+  const field = await loaded("OLD");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await userEvent.clear(field);
+  await userEvent.type(field, "NEW");
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Members and name saved; instructions not saved: relay offline",
+  );
+  expect(field).toHaveValue("NEW");
+  await saveTeam();
+  await waitFor(() => expect(publishText).toHaveBeenCalledTimes(2));
+  expect(save).toHaveBeenCalledOnce();
+  expect(prepareText).toHaveBeenCalledOnce();
+  expect(publishText.mock.calls[1]?.[1]).toBe(publishText.mock.calls[0]?.[1]);
+  expect(publishText.mock.calls[1]?.[4]).toBe(publishText.mock.calls[0]?.[4]);
+});
+
+it("retries only the delivery after a save whose delivery failed", async () => {
+  const { publishText, syncTeamInstructions } = setup(
+    ordinary,
+    [entryOf(ordinary)],
+    {},
+  );
+  syncTeamInstructions.mockRejectedValueOnce(new Error("controller offline"));
+  await userEvent.type(await loaded(""), "SHARED");
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Saved; members' instructions not updated",
+  );
+  await saveTeam();
+  await waitFor(() => expect(syncTeamInstructions).toHaveBeenCalledTimes(2));
+  expect(publishText).toHaveBeenCalledOnce();
 });
 
 it("refuses a save that gives a member two different team texts", async () => {
-  const other = { ...portable, id: "other", name: "Reviewers" };
-  const { save, savePortable, syncTeamInstructions } = setup(
+  const other = { ...ordinary, id: "other", name: "Reviewers" };
+  const { save, publishText, syncTeamInstructions } = setup(
     ordinary,
     [entryOf(ordinary), entryOf(other)],
     { other: "THEIRS" },
   );
-  await userEvent.type(await instructions(), "OURS");
+  await userEvent.type(await loaded(""), "OURS");
   await saveTeam();
   expect(await screen.findByRole("alert")).toHaveTextContent('"Reviewers"');
-  expect(savePortable).not.toHaveBeenCalled();
   expect(save).not.toHaveBeenCalled();
+  expect(publishText).not.toHaveBeenCalled();
   expect(syncTeamInstructions).not.toHaveBeenCalled();
+});
+
+it("checks the in-between roster against the old text too", async () => {
+  const other = {
+    ...ordinary,
+    id: "other",
+    name: "Reviewers",
+    agents: [second],
+  };
+  const { save } = setup(ordinary, [entryOf(ordinary), entryOf(other)], {
+    ordinary: "OLD",
+    other: "NEW",
+  });
+  const field = await loaded("OLD");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await userEvent.clear(field);
+  await userEvent.type(field, "NEW");
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent('"Reviewers"');
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("can't certify a save when an overlapping team is unreadable", async () => {
+  const other = { ...ordinary, id: "other", name: "Reviewers" };
+  const { publishText } = setup(ordinary, [entryOf(ordinary), entryOf(other)], {
+    other: null,
+  });
+  await userEvent.type(await loaded(""), "OURS");
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent("can't be read");
+  expect(publishText).not.toHaveBeenCalled();
 });
 
 it.each([
   ["has no text", ""],
   ["has the same text", "OURS"],
 ])("allows sharing a member with a team that %s", async (_, text) => {
-  const other = { ...portable, id: "other", name: "Reviewers" };
-  const { savePortable } = setup(
-    ordinary,
-    [entryOf(ordinary), entryOf(other)],
-    { other: text },
-  );
-  await userEvent.type(await instructions(), "OURS");
-  await saveTeam();
-  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
-});
-
-it("keeps the saved text on a members-only edit", async () => {
-  const { savePortable, captureTeam } = setup(portable, [entryOf(portable)], {
-    portable: "SAVED",
+  const other = { ...ordinary, id: "other", name: "Reviewers" };
+  const { publishText } = setup(ordinary, [entryOf(ordinary), entryOf(other)], {
+    other: text,
   });
-  const field = await instructions();
-  await waitFor(() => expect(field).toHaveValue("SAVED"));
-  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await userEvent.type(await loaded(""), "OURS");
   await saveTeam();
-  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
-  const [team, snapshot] = savePortable.mock.calls[0] ?? [];
-  expect(team?.agents).toEqual([member, second]);
-  expect(snapshot?.team.instructions).toBe("SAVED");
-  expect(captureTeam.mock.calls[0]?.[1]).toEqual([second]);
+  await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
 });
 
-it("retries only the delivery after a save whose delivery failed", async () => {
-  const { savePortable, syncTeamInstructions } = setup(
-    portable,
-    [entryOf(portable)],
-    { portable: "SAVED" },
-  );
-  syncTeamInstructions.mockRejectedValueOnce(new Error("controller offline"));
-  const field = await instructions();
-  await waitFor(() => expect(field).toHaveValue("SAVED"));
+it("refuses to empty a team imported from a file", async () => {
+  const { save } = setup(portable, [entryOf(portable)], { portable: "" });
+  await loaded("");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Member/ }));
   await saveTeam();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "controller offline",
+    "needs at least one member",
   );
-  await saveTeam();
-  await waitFor(() => expect(syncTeamInstructions).toHaveBeenCalledTimes(2));
-  expect(savePortable.mock.calls.map((call) => call[2])).toEqual([
-    "portable-head",
-    "saved",
-  ]);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("has no Description field", async () => {
+  setup(portable, [entryOf(portable)], { portable: "" });
+  await loaded("");
+  expect(
+    screen.queryByRole("textbox", { name: "Description" }),
+  ).not.toBeInTheDocument();
 });

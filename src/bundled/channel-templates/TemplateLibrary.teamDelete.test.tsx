@@ -41,7 +41,7 @@ const entryOf = (team: Team, deleted = false): KitEntry => ({
   record: { version: 2, community, deleted, value: team },
 });
 
-it("deleting one of two teams with identical text releases only the deleted team, and a retry only resends", async () => {
+it("deleting a team retires its text head and releases only that team; a retry repeats only unfinished phases", async () => {
   const user = userEvent.setup();
   const crew = portableTeam("crew", "Crew");
   const pair = portableTeam("pair", "Pair");
@@ -59,6 +59,18 @@ it("deleting one of two teams with identical text releases only the deleted team
     return "tombstone";
   });
   const loadTeam = vi.fn(async (team: Team) => team.id);
+  // Crew has a text head whose chunks are gone; deletion still retires it.
+  const readText = vi.fn(async (id: string) => {
+    if (id === "crew") throw new Error("chunk missing");
+    return undefined;
+  });
+  const readTextHead = vi.fn(async (id: string) =>
+    id === "crew" ? { head: "crew-text", deleted: false } : undefined,
+  );
+  const publishText = vi
+    .fn<ChannelKit["publishText"]>()
+    .mockRejectedValueOnce(new Error("relay offline"))
+    .mockResolvedValue("crew-text-tombstone");
   const kit = {
     available: true,
     snapshot: () => state,
@@ -67,6 +79,9 @@ it("deleting one of two teams with identical text releases only the deleted team
     refresh: vi.fn(),
     save,
     loadTeam,
+    readText,
+    readTextHead,
+    publishText,
   } as unknown as ChannelKit;
   const syncTeamInstructions = vi
     .fn(async () => ({}))
@@ -113,12 +128,17 @@ it("deleting one of two teams with identical text releases only the deleted team
   const confirmation = screen.getByRole("dialog", { name: "Delete “Crew”?" });
   const remove = within(confirmation).getByRole("button", { name: "Delete" });
   await user.click(remove);
+  // Text cleanup failed and so did delivery, which still ran.
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "controller offline",
+    "Team deleted; instructions cleanup or member update pending",
   );
+  expect(syncTeamInstructions).toHaveBeenCalledTimes(1);
   await user.click(remove);
   await waitFor(() => expect(confirmation).not.toBeInTheDocument());
   expect(save).toHaveBeenCalledExactlyOnceWith(crew, "crew-head", true);
+  expect(publishText).toHaveBeenCalledTimes(2);
+  for (const call of publishText.mock.calls)
+    expect(call.slice(0, 4)).toEqual(["crew", null, "crew-text", undefined]);
   // The deleted team goes out as empty text without loading its payload;
   // the surviving team keeps its text.
   expect(syncTeamInstructions).toHaveBeenCalledTimes(2);

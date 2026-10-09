@@ -178,11 +178,6 @@ export type StaffContext = {
 export type ReportsQuery = {
   communityId?: string;
   status?: ReportDto["status"];
-  reportType?: string;
-  targetKind?: string;
-  /** RFC 3339. */
-  before?: string;
-  after?: string;
   limit?: number;
   /** Omit for the relay's escalated-only default; the console sends `"all"`. */
   scope?: "all";

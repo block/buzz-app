@@ -5,17 +5,10 @@
 
 #![allow(dead_code)] // Fields exist to be checked, not read.
 
-use super::route::StaffRequest;
+use super::route::{FeedbackStatus, ReportAction, ReportStatus, Role, StaffRequest};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Role {
-    Operator,
-    Moderator,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,17 +44,6 @@ struct Probe {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Action {
-    Delete,
-    Kick,
-    Ban,
-    Timeout,
-    Dismiss,
-    Escalate,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
 enum ActionStatus {
     Pending,
     Enforcing,
@@ -77,23 +59,13 @@ struct ActionRecord {
     request_id: String,
     actor_pubkey: String,
     actor_role: Role,
-    action: Action,
+    action: ReportAction,
     status: ActionStatus,
     reason: Option<String>,
     expires_at: Option<String>,
     error_message: Option<String>,
     created_at: String,
     updated_at: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ReportStatus {
-    Open,
-    Processing,
-    Resolved,
-    Dismissed,
-    Escalated,
 }
 
 #[derive(Deserialize)]
@@ -154,14 +126,6 @@ enum Reopened {
 #[derive(Deserialize)]
 struct Reopen {
     status: Reopened,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum FeedbackStatus {
-    New,
-    Reviewed,
-    Archived,
 }
 
 #[derive(Deserialize)]

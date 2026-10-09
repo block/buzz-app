@@ -52,6 +52,7 @@ export const test = base.extend({
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   personalSidebar: [false, { option: true }],
+  meChannels: [[], { option: true }],
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
@@ -107,6 +108,7 @@ export const test = base.extend({
       sidebarUnread,
       savedSidebar,
       personalSidebar,
+      meChannels,
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
@@ -369,6 +371,41 @@ export const test = base.extend({
             [
               ["d", coordinate],
               ["t", "buzz-channel-kit-v1"],
+            ],
+            nip44.v2.encrypt(
+              JSON.stringify(record),
+              nip44.v2.utils.getConversationKey(userKey, viewer),
+            ),
+            userKey,
+          ),
+        );
+      }
+    }
+    if (meChannels.length) {
+      if (!productionBroker)
+        throw new Error("Me placement fixtures require the production decoder");
+      for (const community of ["primary", "secondary"]) {
+        const scope = JSON.parse(fixtureAliases)[community];
+        const coordinate = `buzz-me-kit-v1:${encodeURIComponent(scope)}:groups:me`;
+        const record = {
+          version: 1,
+          community: scope,
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "me",
+            groups: [],
+            assignments: {},
+            channels: meChannels,
+          },
+        };
+        readEvents.get(community).set(
+          coordinate,
+          sign(
+            30078,
+            [
+              ["d", coordinate],
+              ["t", "buzz-me-kit-v1"],
             ],
             nip44.v2.encrypt(
               JSON.stringify(record),

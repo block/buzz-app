@@ -14,6 +14,7 @@ import {
 import {
   ArrowsClockwiseIcon,
   ArrowSquareOutIcon,
+  CodexLogoIcon,
   CopyIcon,
   GooseLogoIcon,
   HermesLogoIcon,
@@ -53,6 +54,7 @@ const labels = {
 // Artwork only; native harnessOptions still own availability and configuration.
 const harnessIcons: Record<string, ReactNode> = {
   "buzz-agent": <RobotIcon size={32} className="shrink-0" />,
+  codex: <CodexLogoIcon size={32} className="shrink-0" />,
   goose: <GooseLogoIcon size={32} className="shrink-0" />,
   hermes: <HermesLogoIcon size={32} className="shrink-0" />,
   pi: <PiLogoIcon size={32} className="shrink-0" />,
@@ -252,7 +254,9 @@ export function AgentSettings({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="flex items-center gap-3">
                         {option &&
-                          (harnessIcons[harnessKind(option.command) ?? ""] ?? (
+                          (harnessIcons[
+                            harnessKind(option.command) ?? option.id ?? ""
+                          ] ?? (
                             <TerminalWindowIcon
                               size={32}
                               className="shrink-0"

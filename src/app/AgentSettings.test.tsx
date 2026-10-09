@@ -363,6 +363,12 @@ it("reads Codex sign-in only once its tools are found, and rechecks on Check aga
   render(<AgentSettings control={control} />, { wrapper: ToastProvider });
 
   await screen.findByText("Codex");
+  const codexIcon = screen
+    .getByText("Codex")
+    .closest("li")
+    ?.querySelector("svg");
+  expect(codexIcon).not.toHaveClass("tabler-icon");
+  expect(codexIcon).toHaveAttribute("viewBox", "176 176 364 364");
   expect(await codexRow().findByText("CLI needed")).toBeVisible();
   expect(codexRow().getByText(/Install the Codex CLI/)).toBeVisible();
   expect(codexRow().queryByRole("button", { name: "Install" })).toBeNull();

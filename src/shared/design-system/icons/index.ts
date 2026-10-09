@@ -6,6 +6,7 @@ import {
   GooseLogoArtwork,
   PiLogoArtwork,
   ClaudeLogoArtwork,
+  CodexLogoArtwork,
   HermesLogoArtwork,
 } from "./HarnessLogos";
 
@@ -397,6 +398,14 @@ export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
   category: "Custom brand mark",
   provenance:
     "Bundled Claude mark reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+
+export const CodexLogoIcon = defineIcon("custom", CodexLogoArtwork, {
+  meaning: "Codex harness",
+  category: "Custom brand mark",
+  provenance:
+    "OpenAI Blossom mark from OpenAI's brand kit, by explicit design request; see NOTICE.md",
   intendedSizes: [{ width: 32, height: 32 }],
 });
 

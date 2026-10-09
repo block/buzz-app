@@ -95,10 +95,22 @@ async function setup(
     if (applyAddition) members.push(target);
     clock++;
   });
+  // Reuse immutable signed records; only the roster changes during this fixture.
+  const personProfile = profile(person, { name: "Morgan" });
+  const records = [
+    signed(relay, {
+      kind: 39000,
+      content: "",
+      tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
+    }),
+    signed(relay, { kind: 13535, content: "", tags: [["-"]] }),
+    profile(viewer, { name: "Carl" }),
+    personProfile,
+  ];
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
     if (filters.some((filter) => filter.search)) {
       if (searchFailure) throw new Error("Search offline");
-      return [profile(person, { name: "Morgan" })];
+      return [personProfile];
     }
     if (
       missingNames &&
@@ -112,17 +124,9 @@ async function setup(
     }
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
-    return [
-      roster(relay, id, members, clock),
-      signed(relay, {
-        kind: 39000,
-        content: "",
-        tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
-      }),
-      signed(relay, { kind: 13535, content: "", tags: [["-"]] }),
-      profile(viewer, { name: "Carl" }),
-      profile(person, { name: "Morgan" }),
-    ].filter((event) => filters.some((filter) => matchesEvent(event, filter)));
+    return [roster(relay, id, members, clock), ...records].filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    );
   });
   const readAgentLibrary = vi.fn(
     async (): Promise<AgentLibrary> => ({

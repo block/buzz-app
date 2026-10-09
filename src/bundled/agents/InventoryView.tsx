@@ -64,9 +64,10 @@ function communitySections(group: string, identities: InventoryEntry[]) {
 function orderedGroups(entries: InventoryEntry[], combineImports: boolean) {
   const groups = new Map<string, InventoryEntry[]>();
   for (const entry of entries) {
-    const group = combineImports && [relayGroup, importGroup].includes(entry.decision.group)
-      ? localHereGroup
-      : entry.decision.group;
+    const group =
+      combineImports && [relayGroup, importGroup].includes(entry.decision.group)
+        ? localHereGroup
+        : entry.decision.group;
     groups.set(group, [...(groups.get(group) ?? []), entry]);
   }
   for (const identities of groups.values()) {

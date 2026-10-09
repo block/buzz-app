@@ -201,7 +201,15 @@ export function InventoryIdentityCard({
                   ? "Set up this identity on this computer to choose its model."
                   : "Import this agent’s original setup to choose its model."
               }
-              disabled={state.busy || state.status !== "ready"}
+              disabled={
+                state.busy ||
+                state.status !== "ready" ||
+                !!decision.blocked ||
+                (needsSource && !source) ||
+                (decision.action === "use"
+                  ? !control.configureHere
+                  : data.importAvailable === false)
+              }
               onClick={() =>
                 decision.action === "use"
                   ? onUseHere(row.pubkey, "use")

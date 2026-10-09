@@ -646,7 +646,9 @@ it("does not replay a failed Goose provider choice after a preset custom-path ro
     expect(screen.queryByLabelText("Model")).toBeNull();
 
     await user.clear(screen.getByRole("textbox", { name: "Executable" }));
-    await user.paste("/custom/goose-acp");
+    fireEvent.change(screen.getByRole("textbox", { name: "Executable" }), {
+      target: { value: "/custom/goose-acp" },
+    });
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible(),
     );
@@ -1067,6 +1069,7 @@ it.each([
         button.compareDocumentPosition(model) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
+      await userEvent.setup().keyboard("{Escape}");
       await userEvent.setup().click(button);
       expect(
         await screen.findByText("Connected using openai/gpt."),

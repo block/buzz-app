@@ -26,6 +26,33 @@ import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UnifiedInventory } from "./UnifiedInventory";
+function detailSurface(card: HTMLElement) {
+  const name = card.getAttribute("aria-label")?.replace(/^Agent /, "");
+  return screen.queryByRole("dialog", { name: `Manage ${name}` }) ?? card;
+}
+async function manage(card: HTMLElement) {
+  const current = detailSurface(card);
+  if (current !== card) return current;
+  const menu = within(card).queryByRole("button", { name: /^Actions for / });
+  if (!menu) {
+    const details = card.querySelector("details");
+    if (details && !details.open)
+      fireEvent.click(within(card).getByLabelText(/^Details for /));
+    return card;
+  }
+  fireEvent.click(menu);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: /^Manage / });
+  const details = dialog.querySelector("details");
+  if (details && !details.open)
+    fireEvent.click(within(dialog).getByText("Identity & sources"));
+  return dialog;
+}
+async function removeButton(card: HTMLElement) {
+  return within(await manage(card)).getByRole("button", { name: "Remove" });
+}
 const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
@@ -174,10 +201,15 @@ it("does not let late inventory from the previous community expose Use here", as
     });
   }
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Source",
   });
-  expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
-  expect(within(card).getByRole("button", { name: "Import" })).toBeEnabled();
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Use here" }),
+  ).toBeNull();
+  expect(
+    within(detailSurface(card)).getByRole("button", { name: "Set up model" }),
+  ).toBeEnabled();
 });
 
 it("retries failed inventory without offering import for relay-only identities", async () => {
@@ -190,19 +222,29 @@ it("retries failed inventory without offering import for relay-only identities",
   });
   await screen.findByText(/Community inventory could not be checked/);
   expect(screen.queryByRole("button", { name: "Use here" })).toBeNull();
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   const group = await screen.findByRole("region", {
     name: "Relay-only agents",
   });
   expect(
-    within(group).getByRole("article", { name: "Agent Not imported" }),
+    within(group).getByRole("article", {
+      hidden: true,
+      name: "Agent Not imported",
+    }),
   ).toBeVisible();
   await waitFor(() =>
     expect(
       request.mock.calls.filter(([, route]) => route === "agent-inventory"),
     ).toHaveLength(2),
   );
-  expect(within(group).queryByRole("button", { name: "Import" })).toBeNull();
+  expect(
+    within(group).queryByRole("button", { name: "Set up model" }),
+  ).toBeNull();
   expect(within(group).queryByText(/No import source confirmed/)).toBeNull();
 });
 
@@ -223,14 +265,19 @@ it("preserves placement and independent setup and Clone after a read failure", a
   const section = await screen.findByRole("region", {
     name: "Local agents in this community",
   });
-  const cards = within(section).getAllByRole("article");
+  const cards = within(section).getAllByRole("article", { hidden: true });
   expect(cards).toHaveLength(2);
   request.mockRejectedValue(Error("Access denied"));
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await screen.findByText(/Community inventory could not be checked/);
   expect(section).toBeVisible();
   for (const card of cards) {
-    fireEvent.click(within(card).getByRole("button", { name: /^Manage / }));
+    await manage(card);
     const dialog = await screen.findByRole("dialog", { name: /^Manage / });
     expect(within(dialog).getByRole("button", { name: "Clone" })).toBeEnabled();
     if (card.dataset.agentPubkey === "cd".repeat(32))
@@ -267,6 +314,7 @@ it("retains multiple verified associations and renders inventory keys absent fro
       name: "Relay-only agents",
     });
     const card = within(group).getByRole("article", {
+      hidden: true,
       name: `Agent ${key.slice(0, 12)}`,
     });
     expect(
@@ -276,17 +324,25 @@ it("retains multiple verified associations and renders inventory keys absent fro
       within(group).queryByRole("region", { name: "https://second.example" }),
     ).toBeNull();
     const details = card.querySelector("details");
-    if (!details?.open)
-      fireEvent.click(
-        within(card).queryByText("Identity & sources") ??
-          within(card).getByLabelText(/^Details for /),
-      );
-    expect(within(card).getByText(`https://${community}`)).toBeVisible();
+    if (!details?.open) await manage(card);
     expect(
-      screen.getAllByRole("article", { name: `Agent ${key.slice(0, 12)}` }),
+      within(detailSurface(card)).getByText(`https://${community}`),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("article", {
+        hidden: true,
+        name: `Agent ${key.slice(0, 12)}`,
+      }),
     ).toHaveLength(1);
-    expect(within(card).queryByRole("button", { name: "Import" })).toBeNull();
+    expect(
+      within(detailSurface(card)).queryByRole("button", {
+        name: "Set up model",
+      }),
+    ).toBeNull();
     expect(within(group).queryByText(/No import source confirmed/)).toBeNull();
+    fireEvent.click(
+      within(detailSurface(card)).getByRole("button", { name: "Close" }),
+    );
   }
 });
 
@@ -297,7 +353,10 @@ it("lists archived identities after all discovery joins in an Archived section w
     ];
   });
   await waitFor(() => expect(communityApi.communityRequest).toHaveBeenCalled());
-  await screen.findByRole("article", { name: "Agent Fixture agent" });
+  await screen.findByRole("article", {
+    hidden: true,
+    name: "Agent Fixture agent",
+  });
   // Every agent is archived: the section opens instead of first-run text.
   expect(
     screen.getByText("All your agents are archived in this community."),
@@ -307,10 +366,11 @@ it("lists archived identities after all discovery joins in an Archived section w
     within(section).getByRole("button", { name: "Archived (2)" }),
   ).toHaveAttribute("aria-expanded", "true");
   const local = within(section).getByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   expect(within(local).getByText("Archived")).toBeVisible();
-  fireEvent.click(within(local).getByLabelText("Manage Fixture agent"));
+  await manage(local);
   const management = await screen.findByRole("dialog", {
     name: "Manage Fixture agent",
   });
@@ -320,7 +380,10 @@ it("lists archived identities after all discovery joins in an Archived section w
   fireEvent.click(within(management).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(management).not.toBeInTheDocument());
   expect(
-    within(section).getByRole("article", { name: "Agent Hidden" }),
+    within(section).getByRole("article", {
+      hidden: true,
+      name: "Agent Hidden",
+    }),
   ).toBeVisible();
 });
 it("omits redundant profile text and uses configured names for native WSS setups in an HTTPS session", async () => {
@@ -335,20 +398,17 @@ it("omits redundant profile text and uses configured names for native WSS setups
   );
   act(() => changeScope(`https://relay.example.test:${"de".repeat(32)}`, 1));
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Raw local fallback",
   });
-  fireEvent.click(within(card).getByLabelText("Manage Raw local fallback"));
+  await manage(card);
   const management = await screen.findByRole("dialog", {
     name: "Manage Raw local fallback",
   });
   expect(within(management).queryByText(/^Profile:/)).toBeNull();
   expect(
     within(management).getByText(npubEncode("cd".repeat(32))),
-  ).not.toBeVisible();
-  fireEvent.click(
-    within(management).queryByText("Identity & sources") ??
-      within(management).getByLabelText(/^Details for /),
-  );
+  ).toBeVisible();
   expect(
     within(management).getByText(npubEncode("cd".repeat(32))),
   ).toBeVisible();
@@ -364,14 +424,20 @@ it("keeps exact local controls while disconnected and after switching to another
     f.data.parked = [];
   });
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
-  expect(within(card).getByRole("button", { name: "Stop" })).toBeVisible();
   expect(
-    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    within(detailSurface(card)).getByRole("button", { name: "Stop" }),
+  ).toBeVisible();
+  expect(
+    within(detailSurface(card)).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
   ).toBeVisible();
   act(() => changeScope(`wss://other.example.test:${"de".repeat(32)}`, 2));
   const switched = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   expect(within(switched).getByRole("button", { name: "Stop" })).toBeVisible();
@@ -389,10 +455,13 @@ it("shows source failures without claiming a missing import source was proved", 
     "Development Buzz could not be read.",
   );
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
   expect(screen.queryByText(/No import source confirmed/)).toBeNull();
-  expect(within(card).queryByRole("button", { name: "Import" })).toBeNull();
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Set up model" }),
+  ).toBeNull();
 });
 
 const joined = (ids: string[], viewer = "de".repeat(32)): ClientSnapshot => ({
@@ -426,7 +495,10 @@ it("discovers an unselected configured membership alias by its origin", async ()
     client,
   );
   expect(
-    await screen.findByRole("article", { name: `Agent ${key.slice(0, 12)}` }),
+    await screen.findByRole("article", {
+      hidden: true,
+      name: `Agent ${key.slice(0, 12)}`,
+    }),
   ).toBeVisible();
   expect(
     request.mock.calls
@@ -461,16 +533,28 @@ it("reads unvisited joined communities, deduplicates identities, and retries onl
   );
   await screen.findByText(/could not be checked for https:\/\/failed.example/);
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: `Agent ${key.slice(0, 12)}`,
   });
   expect(
-    screen.getAllByRole("article", { name: `Agent ${key.slice(0, 12)}` }),
+    screen.getAllByRole("article", {
+      hidden: true,
+      name: `Agent ${key.slice(0, 12)}`,
+    }),
   ).toHaveLength(1);
-  fireEvent.click(within(card).getByLabelText(/^Details for /));
-  expect(within(card).getByText("https://unvisited.example")).toBeVisible();
-  expect(within(card).getByText("https://relay.example.test")).toBeVisible();
-  expect(within(card).queryByRole("button", { name: "Import" })).toBeNull();
-  expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
+  await manage(card);
+  expect(
+    within(detailSurface(card)).getByText("https://unvisited.example"),
+  ).toBeVisible();
+  expect(
+    within(detailSurface(card)).getByText("https://relay.example.test"),
+  ).toBeVisible();
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Set up model" }),
+  ).toBeNull();
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Use here" }),
+  ).toBeNull();
   expect(
     request.mock.calls
       .filter(([, route]) => route === "agent-inventory")
@@ -484,6 +568,11 @@ it("reads unvisited joined communities, deduplicates identities, and retries onl
   request.mockImplementation(async (_id, route) =>
     route === "query" ? [] : { identities: [key] },
   );
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await waitFor(() =>
     expect(screen.queryByText(/could not be checked/)).toBeNull(),
@@ -493,6 +582,7 @@ it("reads unvisited joined communities, deduplicates identities, and retries onl
   });
   expect(
     within(refreshed).getByRole("article", {
+      hidden: true,
       name: `Agent ${key.slice(0, 12)}`,
     }),
   ).toBeVisible();
@@ -528,7 +618,10 @@ it("discards late results across viewers and removes departed communities withou
   );
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   act(() => changeClient(joined(["https://new.example"], "ee".repeat(32))));
-  await screen.findByRole("article", { name: `Agent ${newKey.slice(0, 12)}` });
+  await screen.findByRole("article", {
+    hidden: true,
+    name: `Agent ${newKey.slice(0, 12)}`,
+  });
   await act(async () => {
     finish({ identities: [oldKey] });
     await late;
@@ -566,15 +659,23 @@ it("keeps the last public name for a retained identity when its community read f
     joined(["https://other.example"]),
   );
   expect(
-    await screen.findByRole("article", { name: "Agent Docs writer" }),
+    await screen.findByRole("article", {
+      hidden: true,
+      name: "Agent Docs writer",
+    }),
   ).toBeVisible();
   request.mockImplementation(async () => {
     throw Error("unavailable");
   });
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await screen.findByText(/could not be checked for https:\/\/other.example/);
   expect(
-    screen.getByRole("article", { name: "Agent Docs writer" }),
+    screen.getByRole("article", { hidden: true, name: "Agent Docs writer" }),
   ).toBeVisible();
   expect(
     screen.queryByRole("article", {
@@ -640,6 +741,7 @@ it("loads public names and pictures for discovered and importable identities wit
   );
   try {
     await screen.findByRole("article", {
+      hidden: true,
       name: `Agent ${relayOnly.pubkey.slice(0, 12)}`,
     });
     await waitFor(() =>
@@ -653,6 +755,7 @@ it("loads public names and pictures for discovered and importable identities wit
       release();
     });
     const relayCard = await screen.findByRole("article", {
+      hidden: true,
       name: "Agent Public relay agent",
     });
     expect(relayCard.querySelector("img")).toHaveAttribute(
@@ -660,9 +763,10 @@ it("loads public names and pictures for discovered and importable identities wit
       "https://images.example/0.png",
     );
     expect(
-      within(relayCard).queryByRole("button", { name: "Import" }),
+      within(relayCard).queryByRole("button", { name: "Set up model" }),
     ).toBeNull();
     const importCard = await screen.findByRole("article", {
+      hidden: true,
       name: "Agent Public importable",
     });
     expect(importCard.querySelector("img")).toHaveAttribute(
@@ -670,11 +774,14 @@ it("loads public names and pictures for discovered and importable identities wit
       "https://images.example/1.png",
     );
     expect(
-      within(importCard).getByRole("button", { name: "Import" }),
+      within(importCard).getByRole("button", { name: "Set up model" }),
     ).toBeEnabled();
     expect(
       (
-        await screen.findByRole("article", { name: "Agent Saved artwork" })
+        await screen.findByRole("article", {
+          hidden: true,
+          name: "Agent Saved artwork",
+        })
       ).querySelector("img"),
     ).toHaveAttribute("src", artwork);
   } finally {
@@ -707,6 +814,7 @@ it("keeps discovery visible when public profiles fail and retries from Refresh a
     { query },
   );
   await screen.findByRole("article", {
+    hidden: true,
     name: `Agent ${agent.pubkey.slice(0, 12)}`,
   });
   await waitFor(() =>
@@ -717,8 +825,16 @@ it("keeps discovery visible when public profiles fail and retries from Refresh a
     ).toBe(true),
   );
   failed = false;
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
-  await screen.findByRole("article", { name: "Agent Recovered profile" });
+  await screen.findByRole("article", {
+    hidden: true,
+    name: "Agent Recovered profile",
+  });
 });
 
 it.each(["connected", "disconnected"])(
@@ -755,13 +871,16 @@ it.each(["connected", "disconnected"])(
       joined([source]),
     );
     const card = await screen.findByRole("article", {
+      hidden: true,
       name: "Agent Source agent",
     });
     expect(card.querySelector("img")).toHaveAttribute(
       "src",
       `/api/relay/${encodeURIComponent(source)}/media?url=${encodeURIComponent(picture.replace(/\.png$/, ".thumb.jpg"))}`,
     );
-    expect(within(card).getByRole("button", { name: "Import" })).toBeEnabled();
+    expect(
+      within(detailSurface(card)).getByRole("button", { name: "Set up model" }),
+    ).toBeEnabled();
     expect(request.mock.calls.map(([, route]) => route)).toEqual([
       "agent-inventory",
       "query",
@@ -804,9 +923,17 @@ it("keeps source discovery after profile failure, retries enrichment, and fences
   );
   await screen.findByText(/Agent names and pictures could not be checked/);
   expect(
-    screen.getByRole("article", { name: `Agent ${key.pubkey.slice(0, 12)}` }),
+    screen.getByRole("article", {
+      hidden: true,
+      name: `Agent ${key.pubkey.slice(0, 12)}`,
+    }),
   ).toBeVisible();
   fail = false;
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await waitFor(() =>
     expect(
@@ -848,7 +975,10 @@ for (const duplicate of [false, true]) {
         ? `Local name · ${npubEncode(key.repeat(32)).slice(-4)}`
         : "Local name";
       expect(
-        await screen.findByRole("article", { name: `Agent ${label}` }),
+        await screen.findByRole("article", {
+          hidden: true,
+          name: `Agent ${label}`,
+        }),
       ).toBeVisible();
     }
   });
@@ -883,9 +1013,10 @@ it("removes a relay-only agent after confirmation and keeps it on Cancel or fail
     name: "Relay-only agents",
   });
   const card = within(group).getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   let dialog = await screen.findByRole("alertdialog", {
     name: "Remove Not imported?",
   });
@@ -893,12 +1024,12 @@ it("removes a relay-only agent after confirmation and keeps it on Cancel or fail
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(published).toEqual([]);
 
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "restricted: not authorized",
-  );
+  expect(
+    await within(detailSurface(card)).findByRole("alert"),
+  ).toHaveTextContent("restricted: not authorized");
   expect(card).toBeInTheDocument();
 
   refuse = undefined;
@@ -907,7 +1038,7 @@ it("removes a relay-only agent after confirmation and keeps it on Cancel or fail
       .mocked(communityApi.communityRequest)
       .mock.calls.filter(([, route]) => route === "agent-inventory").length;
   const reads = inventoryReads();
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
   await waitFor(() => expect(card).not.toBeInTheDocument());
@@ -945,19 +1076,20 @@ it("keeps an archived card until its record deletion succeeds", async () => {
     name: "Relay-only agents",
   });
   const card = within(group).getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   let dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "restricted: not authorized",
-  );
+  expect(
+    await within(detailSurface(card)).findByRole("alert"),
+  ).toHaveTextContent("restricted: not authorized");
   expect(relay.archived.has(agent)).toBe(true);
   expect(card).toBeInTheDocument();
 
   delete relay.removal.fail;
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
   await waitFor(() => expect(card).not.toBeInTheDocument());
@@ -1009,19 +1141,24 @@ it("keeps already archived agents out of the active list while Remove re-reads a
     name: "Relay-only agents",
   });
   await waitFor(() =>
-    expect(within(group).getAllByRole("article")).toHaveLength(1),
+    expect(
+      within(group).getAllByRole("article", { hidden: true }),
+    ).toHaveLength(1),
   );
   expect(
     screen.getByRole("button", { name: "Archived (1)" }),
   ).toBeInTheDocument();
   const card = within(group).getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   const dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
   await waitFor(() => expect(release).toBeDefined());
-  expect(within(group).getAllByRole("article")).toEqual([card]);
+  expect(within(group).getAllByRole("article", { hidden: true })).toEqual([
+    card,
+  ]);
   release?.();
   await waitFor(() =>
     expect(
@@ -1066,8 +1203,13 @@ function archiveSetup(
   return { ...mounted, relay, agent, viewer, local: "ab".repeat(32) };
 }
 async function openMenuItem(card: HTMLElement, name: string, item: string) {
+  const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+  if (dialog)
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
   fireEvent.click(
-    await within(card).findByRole("button", { name: `Actions for ${name}` }),
+    await within(detailSurface(card)).findByRole("button", {
+      name: `Actions for ${name}`,
+    }),
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
@@ -1075,6 +1217,7 @@ async function openMenuItem(card: HTMLElement, name: string, item: string) {
 it("archives a running local agent, moves it to Archived, and Undo restores it", async () => {
   const { relay, local } = archiveSetup();
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   await openMenuItem(card, "Fixture agent", "Archive agent");
@@ -1111,7 +1254,10 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
       screen.queryByRole("region", { name: "Archived agents" }),
     ).toBeNull(),
   );
-  const restored = screen.getByRole("article", { name: "Agent Fixture agent" });
+  const restored = screen.getByRole("article", {
+    hidden: true,
+    name: "Agent Fixture agent",
+  });
   await waitFor(() =>
     expect(
       within(restored).getByRole("button", {
@@ -1119,7 +1265,7 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
       }),
     ).toHaveFocus(),
   );
-  fireEvent.click(within(restored).getByLabelText("Manage Fixture agent"));
+  await manage(restored);
   const management = await screen.findByRole("dialog", {
     name: "Manage Fixture agent",
   });
@@ -1132,6 +1278,7 @@ it("reopens Archived each time the last active agent is archived", async () => {
   const { relay, local } = archiveSetup(undefined, true);
   async function archiveLast() {
     const card = await screen.findByRole("article", {
+      hidden: true,
       name: "Agent Fixture agent",
     });
     await openMenuItem(card, "Fixture agent", "Archive agent");
@@ -1165,6 +1312,7 @@ it("archives a relay-only agent from its menu and unarchives it without confirma
     name: "Relay-only agents",
   });
   const card = within(group).getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
   await openMenuItem(card, "Not imported", "Archive agent");
@@ -1180,6 +1328,7 @@ it("archives a relay-only agent from its menu and unarchives it without confirma
     within(section).getByRole("button", { name: "Archived (1)" }),
   );
   const archived = await within(section).findByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
   expect(within(archived).getByText("Archived")).toBeVisible();
@@ -1194,9 +1343,7 @@ it("archives a relay-only agent from its menu and unarchives it without confirma
     within(archived).getByRole("heading", { name: "Not imported" }).tagName,
   ).toBe("H5");
   // Remove stays available for the extra cleanup it does.
-  expect(
-    within(archived).getByRole("button", { name: "Remove" }),
-  ).toBeVisible();
+  expect(await removeButton(archived)).toBeVisible();
   await openMenuItem(archived, "Not imported", "Unarchive agent");
   expect(screen.queryByRole("alertdialog")).toBeNull();
   await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
@@ -1204,7 +1351,7 @@ it("archives a relay-only agent from its menu and unarchives it without confirma
     expect(
       within(
         screen.getByRole("region", { name: "Relay-only agents" }),
-      ).getByRole("article", { name: "Agent Not imported" }),
+      ).getByRole("article", { hidden: true, name: "Agent Not imported" }),
     ).toBeVisible(),
   );
   expect(relay.published.map((event) => event.kind)).toEqual([9035, 9036]);
@@ -1213,6 +1360,7 @@ it("archives a relay-only agent from its menu and unarchives it without confirma
 it("keeps a card in place with a retryable error when Archive fails", async () => {
   const { relay, local } = archiveSetup(Error("restricted: not authorized"));
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   await openMenuItem(card, "Fixture agent", "Archive agent");
@@ -1221,12 +1369,14 @@ it("keeps a card in place with a retryable error when Archive fails", async () =
       name: "Archive agent",
     }),
   );
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "Archive failed: restricted: not authorized",
-  );
+  expect(
+    await within(detailSurface(card)).findByRole("alert"),
+  ).toHaveTextContent("Archive failed: restricted: not authorized");
   expect(screen.queryByRole("region", { name: "Archived agents" })).toBeNull();
   delete relay.script.fail;
-  fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
+  fireEvent.click(
+    within(detailSurface(card)).getByRole("button", { name: "Retry" }),
+  );
   await waitFor(() => expect(relay.archived.has(local)).toBe(true));
   expect(
     await screen.findByRole("region", { name: "Archived agents" }),
@@ -1242,6 +1392,7 @@ it("keeps a card in Archived with a retryable error when Unarchive fails", async
     within(section).getByRole("button", { name: "Archived (1)" }),
   );
   const card = await within(section).findByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
   relay.script.fail = Error("restricted: not authorized");
@@ -1252,11 +1403,15 @@ it("keeps a card in Archived with a retryable error when Unarchive fails", async
   );
   // The failed card stays in its starting section with its badge.
   const failed = within(section).getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
   expect(within(failed).getByText("Archived")).toBeVisible();
   expect(
-    screen.getAllByRole("article", { name: "Agent Not imported" }),
+    screen.getAllByRole("article", {
+      hidden: true,
+      name: "Agent Not imported",
+    }),
   ).toEqual([failed]);
   delete relay.script.fail;
   fireEvent.click(within(failed).getByRole("button", { name: "Retry" }));
@@ -1283,9 +1438,10 @@ it("keeps an archived card in Archived while Remove runs and after it fails", as
     within(section).getByRole("button", { name: "Archived (1)" }),
   );
   const card = await within(section).findByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Remove agent",
@@ -1294,25 +1450,31 @@ it("keeps an archived card in Archived while Remove runs and after it fails", as
   // Moving the card to the active list would unmount Remove and cancel it.
   await waitFor(() =>
     expect(
-      within(card).getByRole("button", { name: "Remove" }),
+      within(detailSurface(card)).getByRole("button", { name: "Remove" }),
     ).toHaveAttribute("aria-busy", "true"),
   );
   expect(section).toContainElement(card);
   expect(
-    screen.getAllByRole("article", { name: "Agent Not imported" }),
+    screen.getAllByRole("article", {
+      hidden: true,
+      name: "Agent Not imported",
+    }),
   ).toEqual([card]);
   release();
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "restricted: not authorized",
-  );
+  expect(
+    await within(detailSurface(card)).findByRole("alert"),
+  ).toHaveTextContent("restricted: not authorized");
   expect(card).toBeInTheDocument();
   expect(section).toContainElement(card);
   expect(
-    screen.getAllByRole("article", { name: "Agent Not imported" }),
+    screen.getAllByRole("article", {
+      hidden: true,
+      name: "Agent Not imported",
+    }),
   ).toEqual([card]);
   delete relay.removal.hold;
   delete relay.removal.fail;
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Remove agent",
@@ -1333,15 +1495,16 @@ it("moves an archived card to the active list when Unarchive succeeds after a fa
     within(section).getByRole("button", { name: "Archived (1)" }),
   );
   const card = await within(section).findByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(await removeButton(card));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Remove agent",
     }),
   );
-  await within(card).findByRole("alert");
+  await within(detailSurface(card)).findByRole("alert");
   await openMenuItem(card, "Not imported", "Unarchive agent");
   await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
   await waitFor(() =>
@@ -1351,7 +1514,7 @@ it("moves an archived card to the active list when Unarchive succeeds after a fa
   );
   const active = within(
     screen.getByRole("region", { name: "Relay-only agents" }),
-  ).getByRole("article", { name: "Agent Not imported" });
+  ).getByRole("article", { hidden: true, name: "Agent Not imported" });
   expect(within(active).queryByText("Archived")).toBeNull();
   await openMenuItem(active, "Not imported", "Archive agent");
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
@@ -1368,10 +1531,11 @@ it("asks for archive permission again on Refresh agents after a failed read", as
     },
   }));
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   fireEvent.click(
-    await within(card).findByRole("button", {
+    await within(detailSurface(card)).findByRole("button", {
       name: "Actions for Fixture agent",
     }),
   );
@@ -1380,6 +1544,11 @@ it("asks for archive permission again on Refresh agents after a failed read", as
   fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   refuse = false;
+  {
+    const dialog = screen.queryByRole("dialog", { name: /^Manage / });
+    if (dialog)
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   // The same mounted card offers Archive once the new read succeeds.
   await openMenuItem(card, "Fixture agent", "Archive agent");
@@ -1391,6 +1560,7 @@ it("asks for archive permission again on Refresh agents after a failed read", as
 it("keeps keyboard focus on the card when Retry fails again", async () => {
   const { relay } = archiveSetup(Error("restricted: not authorized"));
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   await openMenuItem(card, "Fixture agent", "Archive agent");
@@ -1399,23 +1569,27 @@ it("keeps keyboard focus on the card when Retry fails again", async () => {
       name: "Archive agent",
     }),
   );
-  await within(card).findByRole("alert");
+  await within(detailSurface(card)).findByRole("alert");
   let release!: () => void;
   relay.script.hold = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const retry = within(card).getByRole("button", { name: "Retry" });
+  const retry = within(detailSurface(card)).getByRole("button", {
+    name: "Retry",
+  });
   retry.focus();
   fireEvent.click(retry);
-  const menu = within(card).getByRole("button", {
+  const menu = within(detailSurface(card)).getByRole("button", {
     name: "Actions for Fixture agent",
   });
-  expect(await within(card).findByText("Archiving…")).toBeInTheDocument();
+  expect(
+    await within(detailSurface(card)).findByText("Archiving…"),
+  ).toBeInTheDocument();
   expect(menu).toHaveFocus();
   release();
-  expect(await within(card).findByRole("alert")).toHaveTextContent(
-    "Archive failed: restricted: not authorized",
-  );
+  expect(
+    await within(detailSurface(card)).findByRole("alert"),
+  ).toHaveTextContent("Archive failed: restricted: not authorized");
   expect(menu).toHaveFocus();
 });
 
@@ -1423,6 +1597,7 @@ for (const end of ["community change", "leaving the page"] as const)
   it(`closes the Undo notice on ${end}`, async () => {
     const { relay, local, viewer, changeScope, leave } = archiveSetup();
     const card = await screen.findByRole("article", {
+      hidden: true,
       name: "Agent Fixture agent",
     });
     await openMenuItem(card, "Fixture agent", "Archive agent");

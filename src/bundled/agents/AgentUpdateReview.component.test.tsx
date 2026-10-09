@@ -200,9 +200,7 @@ it("preserves owner edits while blocking writes during membership revalidation",
   const model = screen.getByRole("combobox", { name: "Model" });
   await userEvent.clear(model);
   await userEvent.type(model, "owner-model");
-  await userEvent.click(
-    screen.getByRole("option", { name: /owner-model.*Custom ID/ }),
-  );
+  await userEvent.click(screen.getByRole("option", { name: "owner-model" }));
   const resume = f.holdRoster();
   try {
     await act(async () => f.setListStatus("error"));

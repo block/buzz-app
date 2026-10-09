@@ -585,6 +585,7 @@ export function AgentControlPanel({
             ? { initialSettings: adding.initialSettings }
             : {})}
           onClose={() => setAdding(null)}
+          catalogSession={catalog ? session : undefined}
           onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
         />

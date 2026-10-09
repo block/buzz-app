@@ -827,6 +827,8 @@ impl Controller {
             provider: saved.provider,
             model: saved.model,
             databricks: None,
+            integration: None,
+            configuration: None,
         };
         let resolved = crate::build_defaults().resolve(&harness, &saved.environment);
         let context = model_context(&resolved, &saved.environment)?;

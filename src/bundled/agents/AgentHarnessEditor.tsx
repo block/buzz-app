@@ -251,14 +251,17 @@ function ConfigChoice({
   // Custom is an editing mode, not a saved value. Entering it never erases data.
   const [custom, setCustom] = useState(false);
   const index = options.findIndex((option) => option.value === value);
-  const showInput = custom || index < 0;
+  const showInput =
+    custom ||
+    index < 0 ||
+    !!options[index]?.label.endsWith("(current executable)");
   return (
     <div className="min-w-0 space-y-3">
       <Select
         label={label}
         variant="field"
         disabled={disabled}
-        value={showInput ? "custom" : String(index)}
+        value={custom || index < 0 ? "custom" : String(index)}
         groups={[
           {
             label: "",

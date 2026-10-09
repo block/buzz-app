@@ -10,9 +10,7 @@ import {
   render,
   screen,
   within,
-  waitFor,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
@@ -21,6 +19,30 @@ import { InventoryIdentityCard } from "./InventoryIdentityCard";
 import { inventoryDecision } from "./inventory-decisions";
 import { useState } from "react";
 import type { ImportSource } from "../../features/agents/control";
+function detailSurface(card: HTMLElement) {
+  const name = card.getAttribute("aria-label")?.replace(/^Agent /, "");
+  return screen.queryByRole("dialog", { name: `Manage ${name}` }) ?? card;
+}
+async function manage(card: HTMLElement) {
+  const current = detailSurface(card);
+  if (current !== card) return current;
+  const menu = within(card).queryByRole("button", { name: /^Actions for / });
+  if (!menu) {
+    const details = card.querySelector("details");
+    if (details && !details.open)
+      fireEvent.click(within(card).getByLabelText(/^Details for /));
+    return card;
+  }
+  fireEvent.click(menu);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: /^Manage / });
+  const details = dialog.querySelector("details");
+  if (details && !details.open)
+    fireEvent.click(within(dialog).getByText("Identity & sources"));
+  return dialog;
+}
 const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
@@ -109,25 +131,35 @@ it("browses durable parked identities while disconnected without reading old fil
     ];
   });
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Saved offline",
   });
   expect(
-    within(card).queryByText(/^(Not imported|Imported locally)$/),
+    within(detailSurface(card)).queryByText(
+      /^(Not imported|Imported locally)$/,
+    ),
   ).toBeNull();
-  expect(within(card).getByText(npubEncode("cd".repeat(32)))).not.toBeVisible();
-  fireEvent.click(
-    within(card).queryByText("Identity & sources") ??
-      within(card).getByLabelText(/^Details for /),
-  );
-  expect(within(card).getByText(npubEncode("cd".repeat(32)))).toBeVisible();
-  expect(within(card).getByText("Development Buzz")).toBeVisible();
+  expect(
+    within(detailSurface(card)).queryByText(npubEncode("cd".repeat(32))),
+  ).toBeNull();
+  await manage(card);
+  expect(
+    within(detailSurface(card)).getByText(npubEncode("cd".repeat(32))),
+  ).toBeVisible();
+  expect(
+    within(detailSurface(card)).getByText("Development Buzz"),
+  ).toBeVisible();
   expect(
     f.calls.some(
       (call) => call.action === "preview" || call.action === "import",
     ),
   ).toBe(false);
-  expect(within(card).getByRole("button", { name: "Import" })).toBeEnabled();
-  expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
+  expect(
+    within(detailSurface(card)).getByRole("button", { name: "Import" }),
+  ).toBeEnabled();
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Use here" }),
+  ).toBeNull();
   expect(f.calls.some((call) => call.action === "preview")).toBe(false);
 });
 
@@ -138,30 +170,43 @@ it("offers Clone for a configured other-community setup and keeps its exact cont
     f.agent.enabled = true;
   });
   const card = await screen.findByRole("article", {
+    hidden: true,
     name: "Agent Fixture agent",
   });
   expect(card).toHaveClass("agent-inventory-row");
   expect(
-    within(card).getByLabelText("Details for Fixture agent"),
+    within(detailSurface(card)).getByLabelText("Details for Fixture agent"),
   ).toBeVisible();
   // The app runs this setup, so its lifecycle and settings stay reachable here.
-  expect(within(card).getByRole("button", { name: "Start" })).toBeVisible();
   expect(
-    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    within(detailSurface(card)).getByRole("button", { name: "Start" }),
   ).toBeVisible();
-  expect(within(card).getByRole("button", { name: "Clone" })).toBeEnabled();
   expect(
-    within(card).queryByRole("button", { name: /^(Import|Use here)$/ }),
+    within(detailSurface(card)).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  ).toBeVisible();
+  expect(
+    within(detailSurface(card)).getByRole("button", { name: "Clone" }),
+  ).toBeEnabled();
+  expect(
+    within(detailSurface(card)).queryByRole("button", {
+      name: /^(Import|Use here)$/,
+    }),
   ).toBeNull();
   expect(
-    within(card).queryByText("Configured locally · community shown below"),
+    within(detailSurface(card)).queryByText(
+      "Configured locally · community shown below",
+    ),
   ).toBeNull();
   expect(
-    within(card).queryByText(/Connect to a destination|Imported locally/),
+    within(detailSurface(card)).queryByText(
+      /Connect to a destination|Imported locally/,
+    ),
   ).toBeNull();
 });
 
-it("makes Import primary and explains how secondary Clone creates a different identity", async () => {
+it("offers model setup on the card and Clone in management", async () => {
   setup("connected", (fixture) => {
     fixture.data.parked = [
       {
@@ -176,29 +221,23 @@ it("makes Import primary and explains how secondary Clone creates a different id
     });
   });
   const card = screen.getByRole("article", {
+    hidden: true,
     name: "Agent Not imported",
   });
-  const importButton = within(card).getByRole("button", { name: "Import" });
-  expect(within(card).getByRole("button", { name: "Clone" })).not.toBeVisible();
-  fireEvent.click(within(card).getByLabelText(/^Details for /));
-  const cloneButton = within(card).getByRole("button", { name: "Clone" });
+  const importButton = within(detailSurface(card)).getByRole("button", {
+    name: "Set up model",
+  });
+  expect(
+    within(detailSurface(card)).queryByRole("button", { name: "Clone" }),
+  ).toBeNull();
+  await manage(card);
+  const cloneButton = within(detailSurface(card)).getByRole("button", {
+    name: "Clone",
+  });
   expect(importButton).toBeEnabled();
   expect(cloneButton).toBeEnabled();
-  expect(importButton).toHaveAttribute("data-variant", "prominent");
+  expect(importButton).toHaveAttribute("data-variant", "ghost");
   expect(cloneButton).toHaveAttribute("data-variant", "subtle");
-  const user = userEvent.setup();
-  await user.hover(importButton);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "existing identity and key",
-  );
-  expect(importButton).toHaveAccessibleDescription(/It stays stopped/);
-  await user.unhover(importButton);
-  await user.hover(cloneButton);
-  await waitFor(() =>
-    expect(cloneButton).toHaveAccessibleDescription(
-      /new identity and key.*Memories and history are not copied/,
-    ),
-  );
 });
 
 it.each([
@@ -229,19 +268,24 @@ it.each([
       },
       community ? [pubkey] : [],
     );
-    const card = screen.getByRole("article", { name: "Agent Not imported" });
-    expect(!!within(card).queryByRole("button", { name: "Import" })).toBe(
-      showImport,
-    );
-    fireEvent.click(within(card).getByLabelText(/^Details for /));
-    expect(!!within(card).queryByRole("button", { name: "Clone" })).toBe(
-      showClone,
-    );
+    const card = screen.getByRole("article", {
+      hidden: true,
+      name: "Agent Not imported",
+    });
+    expect(
+      !!within(detailSurface(card)).queryByRole("button", {
+        name: "Set up model",
+      }),
+    ).toBe(showImport || local);
+    await manage(card);
+    expect(
+      !!within(detailSurface(card)).queryByRole("button", { name: "Clone" }),
+    ).toBe(showClone);
     expect(screen.queryByText(/No import source confirmed/)).toBeNull();
   },
 );
 
-it("dispatches the chosen source and exact key without importing credentials", () => {
+it("dispatches the chosen source and exact key without importing credentials", async () => {
   const { f, onImport, onUseHere } = setup("connected", (f) => {
     f.host.cloneSettings = vi.fn(async () => ({
       name: "Reviewed agent",
@@ -255,15 +299,28 @@ it("dispatches the chosen source and exact key without importing credentials", (
       },
     ];
   });
-  const card = screen.getByRole("article", { name: "Agent Shared source" });
-  expect(within(card).getByRole("button", { name: "Import" })).toBeDisabled();
-  fireEvent.change(within(card).getByLabelText("Old Buzz installation"), {
-    target: { value: "development" },
+  const card = screen.getByRole("article", {
+    hidden: true,
+    name: "Agent Shared source",
   });
-  fireEvent.click(within(card).getByRole("button", { name: "Import" }));
+  expect(
+    within(detailSurface(card)).getByRole("button", { name: "Set up model" }),
+  ).toBeDisabled();
+  await manage(card);
+  fireEvent.change(
+    within(detailSurface(card)).getByLabelText("Old Buzz installation"),
+    {
+      target: { value: "development" },
+    },
+  );
+  fireEvent.click(
+    within(detailSurface(card)).getByRole("button", { name: "Import" }),
+  );
   expect(onImport).toHaveBeenCalledWith("cd".repeat(32), "development");
-  fireEvent.click(within(card).getByLabelText(/^Details for /));
-  fireEvent.click(within(card).getByRole("button", { name: "Clone" }));
+  await manage(card);
+  fireEvent.click(
+    within(detailSurface(card)).getByRole("button", { name: "Clone" }),
+  );
   expect(onUseHere).toHaveBeenCalledWith(
     "cd".repeat(32),
     "clone",

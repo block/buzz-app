@@ -144,7 +144,7 @@ it.each(["retry", "source"])(
       recovery === "retry" ? "development" : "installed",
       "https://relay.example.test",
     );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(f.calls.some((call) => call.action === "import")).toBe(false);
   },
 );

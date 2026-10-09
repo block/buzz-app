@@ -330,7 +330,19 @@ export function UnifiedInventory({
       teams={importTab ? undefined : teams}
       newAgent={newAgent}
     >
-      {(errors.length > 0 || profileErrors.length > 0 || archives.snapshot().status === "error") && <Button onClick={() => { setRefresh((value) => value + 1); void archives.refresh(); }}>Retry inventory</Button>}
+      {(importTab === undefined ||
+        errors.length > 0 ||
+        profileErrors.length > 0 ||
+        archives.snapshot().status === "error") && (
+        <Button
+          onClick={() => {
+            setRefresh((value) => value + 1);
+            void archives.refresh();
+          }}
+        >
+          Retry inventory
+        </Button>
+      )}
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">
           {warning} Retry local discovery by reopening the app.

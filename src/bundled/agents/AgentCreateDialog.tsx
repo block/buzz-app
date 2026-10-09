@@ -494,7 +494,6 @@ export function AgentCreateDialog({
                       Retry status
                     </Button>
                   )}
-                  <Button onClick={onClose}>Close</Button>
                   {saved && (
                     <Button
                       variant="primary"
@@ -551,7 +550,7 @@ export function AgentCreateDialog({
                   configurationOpen={configurationOpen}
                   onConfigurationOpenChange={setConfigurationOpen}
                   onInstructionBusyChange={setInstructionBusy}
-                  cardLayout
+                  cardLayout={!!state.data?.avatarEditingAvailable}
                   modelTarget={modelTarget}
                   hideInstructions={!!state.data?.avatarEditingAvailable}
                   hideName={!!state.data?.avatarEditingAvailable}

@@ -56,16 +56,27 @@ async fn until_exit(
 #[tokio::test]
 async fn streams_stdin_to_stdout_until_input_closes() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            0,
+            "a.plugin".into(),
+            "rev".into(),
+            activation,
+            "cat",
+            command("cat", &[]),
+            channel,
+        )
         .unwrap();
     processes
-        .write("a.plugin", handle, "one\n".into(), false)
+        .write("a.plugin", activation, handle, "one\n".into(), false)
         .await
         .unwrap();
     processes
-        .write("a.plugin", handle, "two\n".into(), true)
+        .write("a.plugin", activation, handle, "two\n".into(), true)
         .await
         .unwrap();
     let (stdout, _, exit) = until_exit(&mut events).await;
@@ -74,7 +85,7 @@ async fn streams_stdin_to_stdout_until_input_closes() {
     assert!(processes.registry().entries.is_empty());
     assert_eq!(
         processes
-            .write("a.plugin", handle, "late".into(), false)
+            .write("a.plugin", activation, handle, "late".into(), false)
             .await,
         Err("No such process".into())
     );
@@ -84,11 +95,16 @@ async fn streams_stdin_to_stdout_until_input_closes() {
 #[tokio::test]
 async fn reports_stderr_and_exit_code() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     processes
         .start(
             0,
             "a.plugin".into(),
+            "rev".into(),
+            activation,
             "sh",
             command("sh", &["-c", "echo oops >&2; exit 3"]),
             channel,
@@ -103,16 +119,33 @@ async fn reports_stderr_and_exit_code() {
 #[tokio::test]
 async fn only_the_owning_plugin_can_write_or_kill() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            0,
+            "a.plugin".into(),
+            "rev".into(),
+            activation,
+            "cat",
+            command("cat", &[]),
+            channel,
+        )
         .unwrap();
     assert!(processes
-        .write("b.plugin", handle, "x".into(), false)
+        .write("b.plugin", activation, handle, "x".into(), false)
         .await
         .is_err());
-    assert!(processes.kill("b.plugin", handle).is_err());
-    processes.kill("a.plugin", handle).unwrap();
+    assert!(processes
+        .kill("b.plugin", activation, handle)
+        .await
+        .is_err());
+    processes
+        .kill("a.plugin", activation, handle)
+        .await
+        .unwrap();
     let (_, _, exit) = until_exit(&mut events).await;
     assert_eq!(exit["type"], "exit");
 }
@@ -121,12 +154,17 @@ async fn only_the_owning_plugin_can_write_or_kill() {
 #[tokio::test]
 async fn kill_ends_the_process_and_its_descendants() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     // The shell ignores the polite signal; its child would outlive it.
     let handle = processes
         .start(
             0,
             "a.plugin".into(),
+            "rev".into(),
+            activation,
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),
             channel,
@@ -138,7 +176,10 @@ async fn kill_ends_the_process_and_its_descendants() {
             break event["data"].as_str().unwrap().trim().parse().unwrap();
         }
     };
-    processes.kill("a.plugin", handle).unwrap();
+    processes
+        .kill("a.plugin", activation, handle)
+        .await
+        .unwrap();
     let (_, _, exit) = until_exit(&mut events).await;
     assert_eq!(exit["code"], serde_json::Value::Null);
     assert_dead(child).await;
@@ -148,13 +189,35 @@ async fn kill_ends_the_process_and_its_descendants() {
 #[tokio::test]
 async fn stop_all_ends_every_process() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (first, mut first_events) = channel();
     let (second, mut second_events) = channel();
-    processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), first)
+    let second_activation = processes
+        .begin(processes.page(), "b.plugin".into(), "rev".into())
         .unwrap();
     processes
-        .start(0, "b.plugin".into(), "cat", command("cat", &[]), second)
+        .start(
+            0,
+            "a.plugin".into(),
+            "rev".into(),
+            activation,
+            "cat",
+            command("cat", &[]),
+            first,
+        )
+        .unwrap();
+    processes
+        .start(
+            0,
+            "b.plugin".into(),
+            "rev".into(),
+            second_activation,
+            "cat",
+            command("cat", &[]),
+            second,
+        )
         .unwrap();
     processes.stop_all();
     until_exit(&mut first_events).await;
@@ -166,11 +229,16 @@ async fn stop_all_ends_every_process() {
 #[tokio::test]
 async fn a_page_that_stops_listening_stops_the_process() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let channel = Channel::new(|_| Err(tauri::Error::FailedToReceiveMessage));
     let handle = processes
         .start(
             0,
             "a.plugin".into(),
+            "rev".into(),
+            activation,
             "sh",
             command("sh", &["-c", "echo hi; sleep 30"]),
             channel,
@@ -189,10 +257,21 @@ async fn a_page_that_stops_listening_stops_the_process() {
 #[tokio::test]
 async fn a_spawn_from_before_a_reload_is_refused() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let page = processes.page();
     processes.stop_all();
     let (channel, _events) = channel();
-    let refused = processes.start(page, "a.plugin".into(), "cat", command("cat", &[]), channel);
+    let refused = processes.start(
+        page,
+        "a.plugin".into(),
+        "rev".into(),
+        activation,
+        "cat",
+        command("cat", &[]),
+        channel,
+    );
     assert_eq!(refused.err().as_deref(), Some("The page reloaded"));
     assert!(processes.registry().entries.is_empty());
 }
@@ -201,11 +280,16 @@ async fn a_spawn_from_before_a_reload_is_refused() {
 #[tokio::test]
 async fn a_process_may_close_its_output_and_carry_on() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     processes
         .start(
             0,
             "a.plugin".into(),
+            "rev".into(),
+            activation,
             "sh",
             command("sh", &["-c", "exec >&- 2>&-; sleep 1; exit 4"]),
             channel,
@@ -219,11 +303,16 @@ async fn a_process_may_close_its_output_and_carry_on() {
 #[tokio::test]
 async fn shutdown_kills_every_group_without_waiting() {
     let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
     let (channel, mut events) = channel();
     processes
         .start(
             0,
             "a.plugin".into(),
+            "rev".into(),
+            activation,
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),
             channel,
@@ -276,4 +365,113 @@ async fn assert_dead(pid: i32) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(dead(), "descendant survived");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn retirement_fences_pending_spawns_and_repeated_same_revision_activations() {
+    let processes = HostProcesses::default();
+    let first = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
+    let (output, mut events) = channel();
+    let handle = processes
+        .start(
+            0,
+            "a.plugin".into(),
+            "rev".into(),
+            first,
+            "cat",
+            command("cat", &[]),
+            output,
+        )
+        .unwrap();
+    assert!(processes
+        .begin(processes.page(), "a.plugin".into(), "new".into())
+        .is_err());
+    assert!(processes
+        .write("a.plugin", first + 1, handle, "stale".into(), false)
+        .await
+        .is_err());
+    assert!(processes.kill("a.plugin", first + 1, handle).await.is_err());
+    processes.retire("a.plugin", first).await.unwrap();
+    assert!(!processes.registry().entries.contains_key(&handle));
+    until_exit(&mut events).await;
+    let second = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
+    assert_ne!(first, second);
+    let (late, _) = channel();
+    assert_eq!(
+        processes
+            .start(
+                0,
+                "a.plugin".into(),
+                "rev".into(),
+                first,
+                "cat",
+                command("cat", &[]),
+                late
+            )
+            .err()
+            .as_deref(),
+        Some("Plugin activation retired")
+    );
+    processes.retire("a.plugin", first).await.unwrap();
+    assert_eq!(
+        processes.registry().activations.get("a.plugin").unwrap().0,
+        second
+    );
+    processes.retire("a.plugin", second).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn kill_and_retire_wait_for_actual_exit_before_successor_start() {
+    let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
+    let (output, mut events) = channel();
+    let handle = processes
+        .start(
+            0,
+            "a.plugin".into(),
+            "rev".into(),
+            activation,
+            "sh",
+            command("sh", &["-c", "trap '' TERM; echo ready; exec cat"]),
+            output,
+        )
+        .unwrap();
+    assert_eq!(events.recv().await.unwrap()["data"], "ready\n");
+    processes
+        .kill("a.plugin", activation, handle)
+        .await
+        .unwrap();
+    assert!(!processes.registry().entries.contains_key(&handle));
+    until_exit(&mut events).await;
+    // Killing one process does not retire the owning activation.
+    assert!(processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .is_err());
+    processes.retire("a.plugin", activation).await.unwrap();
+    processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .unwrap();
+}
+
+#[tokio::test]
+async fn begin_from_a_retired_page_cannot_reserve_an_activation() {
+    let processes = HostProcesses::default();
+    let page = processes.page();
+    processes.stop_all();
+    assert_eq!(
+        processes
+            .begin(page, "a.plugin".into(), "rev".into())
+            .err()
+            .as_deref(),
+        Some("The page reloaded")
+    );
+    assert!(processes.registry().activations.is_empty());
 }

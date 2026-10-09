@@ -566,12 +566,13 @@ but the process can sign any event as the agent; the kind allowlist on
 `publish` does not bound it.
 
 A process lives until it exits, the plugin kills it, the plugin unloads, the
-page reloads or the app exits. `kill` sends SIGTERM to its process group and
+page reloads or the app exits. `kill` waits for actual exit, sends SIGTERM to its process group and
 SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access and no sandbox; the import preview says so.
 
-Bundled host grants use the effective compiled manifest at revision `bundled` and
+Bundled host grants use the effective compiled manifest at revision `bundled`, or
+the explicitly attached development artifact at its current revision, and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
@@ -596,57 +597,71 @@ immediately. These declarations help review and catch mistakes. Plugins share th
 main WebView and can invoke app commands directly, so the declarations do not
 isolate a malicious plugin. Load only trusted plugin code.
 
-### Inbox Dev: a host-matched external build
+### Bundled-plugin local development (development builds only)
 
-Inbox's source can be built as an ordinary external plugin with a separate identity:
+Build a catalog plugin under its original identity:
 
 ```sh
 bin/pnpm plugin:dev inbox
+bin/pnpm plugin:dev links
 ```
 
-The default output is `dist-inbox-dev/manifest.json` and `dist-inbox-dev/plugin.js`,
-with ID `local.inbox-dev` and catalog name **Inbox Dev**. Optional positional
-arguments select an output folder and alternate ID. The command refuses bundled
-`buzz.*` IDs and output folders containing unrelated files. Rebuilds replace the
-unsigned output, not the installed artifact.
+The command discovers the bundled catalog, rather than a separate plugin list.
+Output defaults to `dist-<catalog-name>-dev/manifest.json` and `plugin.js`; an
+optional second argument selects another output folder. It refuses unrelated files
+in that folder. These are local development artifacts, not ordinary external
+installations; **Load from folder still refuses bundled identities**.
 
-Use a Buzz host built from the same checkout with the Inbox host-module integration:
+In a native development host built from the same checkout:
 
-1. In Settings → Plugins, disable bundled **Inbox**.
-2. Choose **Load from folder**, select `dist-inbox-dev`, install, then enable **Inbox Dev**.
-3. Edit files under `src/bundled/inbox`, run the build command again, disable
-   **Inbox Dev**, click **Reload** on its row, then enable it.
-4. To revert, disable **Inbox Dev** and enable bundled **Inbox**.
+1. Open Settings → Plugins → Inbox → **Use local dev build** and select
+   `dist-inbox-dev`.
+2. Review the exact identity, source folder and declared host access, then choose
+   **Attach local build**. The same catalog row, page identity and saved enabled
+   state are retained. An enabled plugin may run immediately.
+3. Edit `src/bundled/inbox`, run the command again, then disable Inbox, choose
+   **Reload**, and re-enable it. Reload revalidates identity, host compatibility and
+   unchanged declarations; changed declarations require a fresh reviewed attachment.
+4. Choose **Use compiled** to restore the compiled implementation. Restarting the
+   native app also clears local selection. Neither action rolls back data writes.
 
-No app rebuild is needed for Inbox-only edits. Inbox Dev has its own page identity;
-existing bundled Inbox links do not redirect. Its drafts and attachments still use
-the running host's shared state, while plugin-local React state ends on disable.
-Plugin-owned CSS, including Tailwind utilities detected in Inbox source, is added
-during activation and removed during disposal. Utilities use the host's theme and
-custom variants without copying its reset, component styles or appearance lifecycle.
+The host owns these controls and recovery independently of the selected plugin.
+The selection is native-process-local, never a persistent install or public update
+policy. Safe mode and release hosts reject it. Browser mode is not a native attach
+acceptance environment. Installed-app development support is not implemented here.
 
-Vite generates `globalThis.__BUZZ_HOST_MODULES__` from Inbox's runtime imports,
-limited to the modules and selected exports it consumes, including the host React
-instance. The external build reads those running modules rather than copying shared
-components or state. This is a **private, unstable Inbox development interface**,
-not a public SDK or a replacement-plugin contract. The existing loader, injection
-API, reserved IDs, import preview, toggles and routing are unchanged. Host dependencies
-must use static imports; dynamic host imports are not collected and fail the external
-build unless that module is already in the static dependency map.
+Plugin-only edits do not require a host rebuild. Shared host/native changes or newly
+consumed shared exports require rebuilding/restarting the host and rebuilding the
+artifact. Per-plugin fingerprints include shared dependencies and host contracts,
+exclude plugin-private implementation, and fail closed on mismatch. Missing Git
+metadata leaves compiled plugins usable, but prevents attachable artifact builds.
+Artifacts are not portable across arbitrary Buzz versions.
 
-The map is included in packaged builds so Inbox Dev can run in released Buzz.
-Fingerprinting requires Git and checkout metadata; a shallow checkout is sufficient.
-If fingerprinting fails, the host build warns and continues with an unavailable
-fingerprint, so Inbox Dev is rejected while bundled Inbox remains usable. Building an
-external artifact still requires a valid fingerprint.
+The private `globalThis.__BUZZ_HOST_MODULES__` map uses the running host's React,
+shared capabilities and reusable components. It is development-only, not an external
+SDK. Plugin-private modules/vendors, literal lazy imports, CSS and fonts are bundled
+into one Blob-loadable module; styles are removed on disposal. Shared drafts and
+attachments stay host-owned; transient plugin UI state ends on reload.
 
-A source/dependency fingerprint excludes Inbox-owned files and tests, but includes
-host source, build scripts and locked dependencies. Module evaluation refuses a
-missing or incompatible host before activation. After shared-host changes, rebuild
-and restart the host and rebuild Inbox Dev; after installing an app update, use
-its matching source checkout. Newly consumed host exports also require a host
-rebuild. Artifacts are not portable across arbitrary Buzz versions. Load only
-trusted code: this does not change the existing unsandboxed plugin trust model.
+Ownership checks reject host imports of plugin-private code and cross-plugin
+implementation imports. The migration baseline can shrink, not grow. Current
+catalog blockers are **Me, Sessions, Emoji, Agents and Channels**; this is unfinished
+migration, not a permanent support exemption. The builder must reject a future
+plugin that violates these boundaries instead of silently claiming support.
+
+Reload waits for Cordis disposal and native process retirement before starting the
+next implementation. Native processes belong to a unique activation, including
+repeated activations of the same code revision. Retirement fences late spawns and
+waits for actual exit; stale activation handles cannot write or kill successor
+processes. Pending native activation from a retired WebView is rejected. Cleanup
+failure/timeout fails the replacement instead of allowing overlap; restart remains
+the recovery path for stuck cleanup. Output callbacks stop at scope disposal,
+including a spawn still awaiting its native response.
+
+This does not sandbox plugins: only attach trusted code. Developer replacement
+support says nothing about whether bundled features should be visible, toggleable
+or updatable for ordinary users. Deterministic lifecycle/manager tests do not prove
+native picker/WebView edit → build → Reload acceptance on macOS or Windows.
 
 ### Loading from folders and repositories
 

@@ -148,12 +148,19 @@ export class HostService extends Service implements Host {
     const owner = this.ctx.pluginOwner;
     if (!owner || owner.activation === undefined || !isTauri())
       throw new Error("Processes require an active installed desktop plugin");
+    // Fence output even while native spawn is pending. Cordis removes this
+    // effect on unload/dependency loss and rejects calls from a disposed scope.
+    let active = true;
+    const releaseOutput = this.ctx.effect(() => () => {
+      active = false;
+    });
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       exit = resolve;
     });
     const onEvent = new Channel<ProcessEvent>((event) => {
       if (event.type === "exit") return exit(event.code);
+      if (!active) return;
       // A throw here would stall the channel, so no later output or exit
       // would arrive.
       try {
@@ -163,16 +170,22 @@ export class HostService extends Service implements Host {
         console.error(`Process ${id} output handler failed`, error);
       }
     });
-    const handle = await invoke<number>("plugin_host_process_spawn", {
-      id: owner.id,
-      revision: owner.revision,
-      activation: owner.activation,
-      processId: id,
-      args: options.args ?? [],
-      cwd: options.cwd ?? null,
-      env: options.env ?? null,
-      onEvent,
-    });
+    let handle: number;
+    try {
+      handle = await invoke<number>("plugin_host_process_spawn", {
+        id: owner.id,
+        revision: owner.revision,
+        activation: owner.activation,
+        processId: id,
+        args: options.args ?? [],
+        cwd: options.cwd ?? null,
+        env: options.env ?? null,
+        onEvent,
+      });
+    } catch (error) {
+      releaseOutput();
+      throw error;
+    }
     const write = (data: string, close: boolean) =>
       invoke<void>("plugin_host_process_write", {
         id: owner.id,
@@ -186,20 +199,27 @@ export class HostService extends Service implements Host {
         id: owner.id,
         activation: owner.activation,
         handle,
-      }).catch(
-        // Already gone.
-        () => undefined,
-      );
+      });
     // The plugin's processes end with it, including one that started as it
     // was unloading.
     let release: () => void;
     try {
-      release = this.ctx.effect(() => () => kill(), `process ${id}`);
+      if (!active) throw new Error("Plugin scope retired during process spawn");
+      release = this.ctx.effect(
+        () => () => {
+          active = false;
+          return kill();
+        },
+        `process ${id}`,
+      );
     } catch (error) {
-      void kill();
+      await kill();
       throw error;
     }
-    void exited.then(() => release());
+    void exited.then(() => {
+      releaseOutput();
+      release();
+    });
     return Object.freeze({
       write: (data: string) => write(data, false),
       end: (data = "") => write(data, true),

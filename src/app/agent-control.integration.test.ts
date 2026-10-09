@@ -31,6 +31,8 @@ beforeEach(() => {
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async (cmd, args) => {
+      if (cmd === "plugin_activation_begin") return 1;
+      if (cmd === "plugin_activation_retire") return undefined;
       // Desktop startup drains OS deep links; none arrive in this fixture.
       if (cmd === "deep_link_take") return [];
       if (cmd === "deep_link_watch") return undefined;

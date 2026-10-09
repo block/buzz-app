@@ -29,7 +29,7 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function harness(load, timeoutMs) {
+function harness(load, timeoutMs, lifecycle) {
   let states = {};
   const waiters = new Set();
   const root = new Context();
@@ -37,6 +37,7 @@ function harness(load, timeoutMs) {
     root,
     async (plugin) => ({ inject: ["pages"], ...(await load(plugin)) }),
     timeoutMs,
+    lifecycle,
   );
   runtime.subscribe(() => {
     states = runtime.snapshot();
@@ -473,4 +474,121 @@ test("a replacement timeout never releases the actual predecessor cleanup barrie
     cleanup.resolve();
     await h.dispose();
   }
+});
+
+test("replacement waits for native retirement after Cordis cleanup", async () => {
+  const retiring = deferred();
+  const cleanup = deferred();
+  const events = [];
+  let activation = 0;
+  const h = harness(
+    async (p) => ({
+      apply(ctx) {
+        events.push(`apply ${p.revision} ${ctx.pluginOwner.activation}`);
+        ctx.effect(() => () => {
+          events.push(`dispose ${p.revision}`);
+        });
+      },
+    }),
+    undefined,
+    {
+      async begin(_id, revision) {
+        events.push(`begin ${revision}`);
+        return ++activation;
+      },
+      async retire(_id, current) {
+        events.push(`retire ${current}`);
+        if (current === 1) {
+          retiring.resolve();
+          await cleanup.promise;
+        }
+      },
+    },
+  );
+  try {
+    h.runtime.reconcile([plugin()]);
+    await h.wait((s) => s["example.page"]?.status === "active");
+    h.runtime.reconcile([plugin("example.page", "two")]);
+    await retiring.promise;
+    assert.deepEqual(events, [
+      "begin one",
+      "apply one 1",
+      "dispose one",
+      "retire 1",
+    ]);
+    cleanup.resolve();
+    await h.wait(
+      (s) =>
+        s["example.page"]?.status === "active" &&
+        s["example.page"].revision === "two",
+    );
+    assert.deepEqual(events.slice(-2), ["begin two", "apply two 2"]);
+  } finally {
+    cleanup.resolve();
+    await h.dispose();
+  }
+});
+
+test("disable during native begin retires the late activation without applying it", async () => {
+  const beginning = deferred();
+  const begun = deferred();
+  const retired = [];
+  let starts = 0;
+  const h = harness(
+    async () => ({
+      apply() {
+        starts++;
+      },
+    }),
+    undefined,
+    {
+      begin() {
+        beginning.resolve();
+        return begun.promise;
+      },
+      async retire(id, activation) {
+        retired.push([id, activation]);
+      },
+    },
+  );
+  try {
+    h.runtime.reconcile([plugin()]);
+    await beginning.promise;
+    h.runtime.reconcile([]);
+    begun.resolve(42);
+    await h.dispose();
+    assert.equal(starts, 0);
+    assert.deepEqual(retired, [["example.page", 42]]);
+  } finally {
+    begun.resolve(42);
+    await h.dispose();
+  }
+});
+
+test("native retirement failure blocks a replacement instead of overlapping it", async () => {
+  const starts = [];
+  const h = harness(
+    async (p) => ({
+      apply() {
+        starts.push(p.revision);
+      },
+    }),
+    undefined,
+    {
+      async begin() {
+        return 42;
+      },
+      async retire() {
+        throw new Error("native cleanup failed");
+      },
+    },
+  );
+  h.runtime.reconcile([plugin()]);
+  await h.wait((s) => s["example.page"]?.status === "active");
+  h.runtime.reconcile([plugin("example.page", "two")]);
+  await h.wait((s) => s["example.page"]?.status === "failed");
+  assert.match(h.states["example.page"].error, /native cleanup failed/);
+  assert.deepEqual(starts, ["one"]);
+  await assert.rejects(h.dispose(), /native cleanup failed/);
+  await h.root.fiber.dispose();
 });

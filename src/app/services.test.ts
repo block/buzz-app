@@ -296,6 +296,8 @@ it.each(["MacIntel", "Linux x86_64", "Win32"])(
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(fetch).mockClear();
     vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_activation_begin") return 1;
+      if (command === "plugin_activation_retire") return undefined;
       if (command === "identity_restore") return viewer;
       if (command === "deep_link_take") return [];
       if (command === "deep_link_watch") return null;
@@ -330,6 +332,8 @@ it.each(["Linux x86_64", "Win32"])(
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(fetch).mockClear();
     vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_activation_begin") return 1;
+      if (command === "plugin_activation_retire") return undefined;
       if (command === "deep_link_take") return [];
       if (command === "deep_link_watch") return null;
       throw new Error("Fixture native capability unavailable");

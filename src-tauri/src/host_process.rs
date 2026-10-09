@@ -87,8 +87,11 @@ impl HostProcesses {
             _ => Err("No such process".into()),
         }
     }
-    fn begin(&self, id: String, revision: String) -> Result<u64, String> {
+    fn begin(&self, page: u64, id: String, revision: String) -> Result<u64, String> {
         let mut registry = self.registry();
+        if registry.page != page {
+            return Err("The page reloaded".into());
+        }
         if registry.activations.contains_key(&id)
             || registry.entries.values().any(|entry| entry.plugin == id)
         {
@@ -137,6 +140,7 @@ impl HostProcesses {
     }
     /// Starts `command`, owned by `plugin`, and streams its output to `on_event`,
     /// unless the page that asked during `page` has since gone.
+    #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
         page: u64,
@@ -288,13 +292,22 @@ impl HostProcesses {
             .map_err(|_| "The process is not reading its input".into())
     }
     async fn kill(&self, plugin: &str, activation: u64, handle: u64) -> Result<(), String> {
-        let exit = self.owned(plugin, activation, handle, |entry| {
+        // Lookup and request stop under one lock: a natural exit may remove
+        // the entry concurrently, and cleanup of an already-gone process is OK.
+        let exit = {
+            let mut registry = self.registry();
+            let Some(entry) = registry.entries.get_mut(&handle) else {
+                return Ok(());
+            };
+            if entry.plugin != plugin || entry.activation != activation {
+                return Err("No such process".into());
+            }
             entry.stdin = None;
             if let Some(stop) = entry.stop.take() {
                 let _ = stop.send(());
             }
             entry.exited.clone()
-        })?;
+        };
         wait_for_exit(exit).await
     }
     /// Stops every process: the page that owned them is gone.
@@ -342,13 +355,14 @@ pub(crate) async fn plugin_activation_begin(
     id: String,
     revision: String,
 ) -> Result<u64, String> {
+    let page = processes.page();
     let checked_id = id.clone();
     let checked_revision = revision.clone();
     with_manager(manager, move |manager| {
         manager.host_grants(&checked_id, &checked_revision)
     })
     .await?;
-    processes.begin(id, revision)
+    processes.begin(page, id, revision)
 }
 #[tauri::command]
 pub(crate) async fn plugin_activation_retire(

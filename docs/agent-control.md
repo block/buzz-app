@@ -477,7 +477,10 @@ provider, model, effort and environment variables.
 - Provider, model and effort are **looked up at each start** for fields an agent
   leaves blank, only when the agent uses the default harness; per-agent values
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
-  per-agent field: an imported agent's `effort_level` stays its override.
+  per-agent field: effort carried by a portable agent or team import is saved as
+  the agent's own effort and overrides the default, as does an older imported
+  agent's `effort_level`. Effort chosen through `BUZZ_ACP_EFFORT_LEVEL` is never
+  shown or exported; agents and teams relying on it are refused for export.
 - Permitted environment variables merge **per key**; the agent's key wins.
   `BUZZ_ACP_MODEL` inherits only within the default harness, while shared controls
   such as worker count and system prompt can inherit across Pi and Goose.

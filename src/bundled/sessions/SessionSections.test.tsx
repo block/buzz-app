@@ -69,6 +69,7 @@ function fixture() {
       undefined,
       undefined,
       remove,
+      true, // Groups-only sessions have no Messages sort coordinate.
     );
   const onNew = vi.fn();
   const channels = { status: "ready", channels: [] };

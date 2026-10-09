@@ -18,6 +18,8 @@ export function useSidebarPreferences(
     status: snapshot.status === "idle" ? ("loading" as const) : snapshot.status,
     writable: queries.writable,
     assign: queries.assign,
+    removeSection: queries.removeSection,
+    removeSectionWritable: queries.removeSectionWritable,
     createAndAssign: queries.createAndAssign,
     retryMove: queries.retryMove,
     dismissMoveError: queries.dismissMoveError,

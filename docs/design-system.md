@@ -50,9 +50,13 @@ appearance service, storage and startup ownership.
 | Affordance | `--affordance-prominent`, `--affordance-subtle`, `--affordance-danger` | Controls and actions |
 
 Shared components consume these roles; features consume shared components.
-Base UI owns focus, keyboard interaction, selection, portals and dismissal.
+Base UI owns focus, keyboard interaction, selection, portals and dismissal
+for its controls. Toast uses Sonner through the shared `ToastProvider`,
+`ToastNotice`, and notification hooks: one bottom-right stack with Buzz styling,
+persistent recovery actions, and the host theme. See the
+[toast contract](../src/shared/design-system/DESIGN.md#controls).
 Buzz owns visual styles and product behavior. Build missing shared components
-from Base UI rather than copying private components or wrapping another library.
+from Base UI, with Sonner as the explicit toast owner, rather than copying private components.
 
 Use complete type roles with Inter and JetBrains Mono. Do not import proprietary
 fonts, private packages or internal business examples. Default, hover, pressed,

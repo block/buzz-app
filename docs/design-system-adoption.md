@@ -18,7 +18,7 @@ Use this map to find the shared owner before changing a product surface.
 | Tabs | Tabs | Emoji/GIF connects tabs to panels with Base UI keyboard activation. Workflow mode keeps its feature-owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community setup, and workflow confirmations. Pending work prevents dismissal; focus restoration follows the shared contract. |
 | Panels and headers | Panel and PanelHeader | Settings, channels, and companion cards share appearance. Features own grids, scrolling, docks, and subscriptions. |
-| Feedback | Toast | Agent-start, live-update, sidebar preferences, and Settings recovery use a source-owned stack. Form errors, blocked pages, and lasting paused-state context stay inline. |
+| Feedback | Toast (Sonner) | Agent-start, live-update, sidebar preferences, and Settings recovery use the shared bottom-right Sonner stack with source-owned recovery. Completed-action feedback can outlive its row. Form errors, blocked pages, and lasting paused-state context stay inline. |
 | Hints | Tooltip | Control hints and agent activity support keyboard access and dismissal. Controls keep their own accessible names. |
 | Sessions and activity | NavigationItem, Button, IconButton, Panel, PanelHeader | Session history, agent choice, child-channel navigation, and activity actions retain unread, admission, draft, and focus behavior. Base UI owns their menus. |
 | Media stages | `surface-inverse` and `text-inverse` | Preserve the stage’s existing values and measure text pairings. Renderers own image and video pixels. |

@@ -263,6 +263,13 @@ test("Inbox Dev shares host state across two revisions and rejects mismatched ho
     await expect(hostEditor).toContainText("Edited in Inbox Dev");
     await expect(page.getByText("notes.txt", { exact: true })).toBeVisible();
   } finally {
-    await rm(temp, { recursive: true, force: true });
+    // Catalog polling invokes the native bridge and can recreate its profile.
+    // The IPC producer must be closed before removing its filesystem state.
+    try {
+      await page.close();
+      expect(page.isClosed()).toBe(true);
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
   }
 });

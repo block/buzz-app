@@ -439,6 +439,10 @@ export function InboxView({
       (!unreadOnly || hasUnread(item) || item.id === selectedId),
   );
   const visible = matching.slice(0, limit);
+  const archiveView = useRef({ show, visible, selected });
+  useLayoutEffect(() => {
+    archiveView.current = { show, visible, selected };
+  });
   const profileKey = [
     ...new Set([
       ...authorIds,
@@ -566,19 +570,31 @@ export function InboxView({
           )
       );
     };
-    // Only header actions advance the reader; row actions keep its visit and draft.
-    const leaves = show === "inbox" ? value : show === "archived" && !value;
-    const index = visible.findIndex((row) => row.id === item.id);
-    const next = leaves
-      ? (visible[index + 1] ?? visible[index - 1])
-      : undefined;
-    const open = item.id === selectedId;
     let advanced: InboxItem | undefined;
     void run(
       async () => {
+        // Retry retains the cutoff, but navigation follows the currently rendered view.
+        const current = archiveView.current;
+        const leaves =
+          current.show === "inbox"
+            ? value
+            : current.show === "archived" && !value;
+        const index = current.visible.findIndex(
+          (row) =>
+            row.channelId === item.channelId &&
+            row.messageIds.includes(item.messageId),
+        );
+        const next =
+          leaves && index >= 0
+            ? (current.visible[index + 1] ?? current.visible[index - 1])
+            : undefined;
+        const open =
+          current.selected?.channelId === item.channelId &&
+          current.selected.messageIds.includes(item.messageId);
         updateArchive(archiveScope, item, value, at);
         setMenu(undefined);
         if (!leaves) return;
+        // Only header actions advance the reader; row actions keep its visit and draft.
         if (navigate && open && next) {
           advanced = next;
           setSelectedTarget(targetOf(next));

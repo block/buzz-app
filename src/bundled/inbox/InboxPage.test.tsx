@@ -703,6 +703,78 @@ it("archive Retry advances detail and saves the next conversation's read frontie
 });
 
 it.each([false, true])(
+  "header Archive Retry uses the current Threads list (visible successor: %s)",
+  async (withSuccessor) => {
+    const h = fixture();
+    const root = message(h.viewer, "room", "Another discussion", 17);
+    const reply = message(h.alice, "room", "Another thread update", 18, [
+      ["e", root.id, "", "reply"],
+    ]);
+    if (withSuccessor) {
+      h.addEvent(root);
+      h.addEvent(reply);
+      act(() => h.emit([root, reply]));
+    }
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(withSuccessor ? 3 : 2));
+    const thread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    if (!thread) throw new Error("Missing fixture thread row");
+    fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Archive conversation" }),
+      ).toBeEnabled(),
+    );
+    const save = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key.includes("inbox:archives")) throw new Error("disk full");
+        save.call(this, key, value);
+      });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Archive conversation" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not save the Inbox archive",
+    );
+    storage.mockRestore();
+    await chooseFilter("Threads");
+    await waitFor(() => expect(rows()).toHaveLength(withSuccessor ? 2 : 1));
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    await waitFor(() => expect(rows()).toHaveLength(withSuccessor ? 1 : 0));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+    if (withSuccessor) {
+      expect(rows()[0]).toHaveTextContent("Another thread update");
+      expect(rows()[0]).toHaveAttribute("data-selected");
+      await waitFor(() =>
+        expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBe(18),
+      );
+    } else {
+      expect(
+        screen.queryByRole("region", { name: "Inbox detail" }),
+      ).not.toBeInTheDocument();
+    }
+    await chooseFilter("All activity");
+    const mention = rows().find((row) =>
+      row.textContent?.includes("Please review"),
+    );
+    if (!mention) throw new Error("Missing unread mention row");
+    expect(
+      within(mention).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument();
+    expect(mention).not.toHaveAttribute("data-selected");
+  },
+);
+
+it.each([false, true])(
   "sending leaves the conversation in Inbox (DM: %s)",
   async (dm) => {
     const h = fixture({ withWriter: true, withDm: dm });

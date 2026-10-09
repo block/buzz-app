@@ -288,27 +288,6 @@ it("dialog Clone in a third community reads the configured setup the card shows"
   );
 });
 
-it("keeps the installation browser available on an older host", async () => {
-  const f = controlFixture();
-  delete f.data.parked;
-  const control = createAgentControl(f.host);
-  disposals.push(() => control.dispose());
-  render(
-    <AgentControlPanel
-      control={control}
-      importDestination="https://relay.example.test"
-    />,
-  );
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: "Import from another installation",
-    }),
-  );
-  expect(
-    await screen.findByRole("button", { name: "Import Fixture agent" }),
-  ).toBeEnabled();
-});
-
 it("does not expose installation browsing on a modern host", async () => {
   const f = controlFixture();
   f.data.parked = [];

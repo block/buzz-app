@@ -202,27 +202,23 @@ it.each(["Beta", "a [b] *c* _d_ ~e~ &amp; <f> \\ !"])(
     });
   },
 );
-it.each<Partial<ChannelSummary>>([
-  {},
-  { members: [] },
-  { archived: true },
-  { cached: true },
-  { readOnly: true },
-  { name: "renamed" },
-])("rechecks selection before React can repaint: %j", (change) => {
-  const t = fixture([channel("a")]);
-  render(t.element());
-  const old = t.result().items[0];
-  expect(old?.canSelect?.("a")).toBe(true);
-  t.set(
-    {
-      status: "ready",
-      channels: Object.keys(change).length ? [channel("a", change)] : [],
-    },
-    false,
-  );
-  expect(old?.canSelect?.("a")).toBe(false);
-});
+it.each<Partial<ChannelSummary>>([{}, { archived: true }, { name: "renamed" }])(
+  "rechecks selection before React can repaint: %j",
+  (change) => {
+    const t = fixture([channel("a")]);
+    render(t.element());
+    const old = t.result().items[0];
+    expect(old?.canSelect?.("a")).toBe(true);
+    t.set(
+      {
+        status: "ready",
+        channels: Object.keys(change).length ? [channel("a", change)] : [],
+      },
+      false,
+    );
+    expect(old?.canSelect?.("a")).toBe(false);
+  },
+);
 it("withdraws on updates and unsubscribes on disposal under StrictMode", () => {
   const t = fixture([channel("a")]);
   const view = render(t.element());

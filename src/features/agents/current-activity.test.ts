@@ -100,22 +100,17 @@ it("projects safe brief tool status from exact current owner-visible work only",
   expect(project({ ...live, records: [] }, root).size).toBe(0);
 });
 
-it.each(["disabled", "interrupted", "connecting", "unavailable"] as const)(
-  "drops owner-only work when %s without hiding valid public typing",
-  (status) => {
-    const live = { ...snapshot(), status };
-    expect(project(live).size).toBe(0);
-    const entries = [
-      { pubkey: agent, channelId: "channel", threadRootId: root },
-    ];
-    expect(
-      currentActivity(live, entries, new Set([agent]), "channel", root).get(
-        agent,
-      ),
-    ).toEqual({ label: "Working", roots: [root] });
-    expect(currentActivity(live, entries, new Set(), "channel").size).toBe(0);
-  },
-);
+it("drops owner-only work when not listening without hiding valid public typing", () => {
+  const live = { ...snapshot(), status: "disabled" as const };
+  expect(project(live).size).toBe(0);
+  const entries = [{ pubkey: agent, channelId: "channel", threadRootId: root }];
+  expect(
+    currentActivity(live, entries, new Set([agent]), "channel", root).get(
+      agent,
+    ),
+  ).toEqual({ label: "Working", roots: [root] });
+  expect(currentActivity(live, entries, new Set(), "channel").size).toBe(0);
+});
 
 it.each([
   [

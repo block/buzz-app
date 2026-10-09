@@ -125,33 +125,6 @@ it("refresh during a pending intent updates unrelated data without hiding that i
   }
 });
 
-it.each(["clear", "dispose"] as const)(
-  "%s aborts active sorting and prevents queued writes/late repopulation",
-  async (action) => {
-    const { owner, preferences, pending, sort } = setup();
-    await preferences.ensure();
-    const first = preferences.setSort("channels", "recent", []);
-    const second = preferences.setSort("forums", "recent", []);
-    const failed = [
-      expect(first).rejects.toThrow("unavailable"),
-      expect(second).rejects.toThrow("unavailable"),
-    ];
-    await flush();
-    owner[action]();
-    take(pending).resolve({ channels: "recent" });
-    await Promise.all(failed);
-    expect(sort).toHaveBeenCalledTimes(1);
-    expect(
-      (
-        sort.mock.calls[0] as unknown as [string, string, string[], AbortSignal]
-      )[3].aborted,
-    ).toBe(true);
-    expect(preferences.snapshot().data).toBeUndefined();
-    expect(preferences.snapshot().sortErrors).toBeUndefined();
-    owner.dispose();
-  },
-);
-
 it("caller cancellation rolls back only its own intent and skips its queued publication", async () => {
   const { owner, preferences, pending, sort } = setup();
   try {

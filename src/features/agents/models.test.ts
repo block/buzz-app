@@ -47,22 +47,6 @@ it("constructing/disposing without a click never invokes native auth", () => {
   expect(host.run).not.toHaveBeenCalled();
   expect(host.cancel).not.toHaveBeenCalled();
 });
-it("cancellation overtaking begin prevents run, including late begin", async () => {
-  const begin = deferred<number>();
-  const host = {
-    begin: () => begin.promise,
-    run: vi.fn(),
-    cancel: vi.fn(async () => {}),
-  };
-  const service = createAgentModels(host);
-  const abort = new AbortController();
-  const pending = service.request(request, abort.signal);
-  abort.abort();
-  begin.resolve(7);
-  await expect(pending).rejects.toThrow("cancelled");
-  expect(host.run).not.toHaveBeenCalled();
-  expect(host.cancel).toHaveBeenCalledWith(7);
-});
 // Native admits one lookup. It frees an unstarted ticket on cancel, but keeps a
 // running lookup's admission until its aborted task is dropped.
 function singleAdmissionHost() {

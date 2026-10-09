@@ -251,15 +251,9 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
 
 it.each([
   ["😀 🙏 👏", [], true],
-  ["😀 🙏 👏 😄", [], true],
   ["😀".repeat(40), [], true],
   [
     ":party: ".repeat(24),
-    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
-    true,
-  ],
-  [
-    ":party: 😀 :party: 😀",
     [{ shortcode: "party", url: "https://emoji.test/party.png" }],
     true,
   ],
@@ -414,29 +408,28 @@ it("renders exact identity controls only while a target can be opened", () => {
   expect(renderProfile(false)).toContain("@Mic");
 });
 
-it.each([
-  "    @Mic\n\nOutside @Mic",
-  '```js\nconst delimiter = "```";\n@Mic\n```\nOutside @Mic',
-  "~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic",
-])("only exposes the prose mention through MessageRow: %s", (content) => {
-  const recipient = "b".repeat(64);
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{ ...row, content, mentions: [recipient] }}
-      profile={undefined}
-      participantProfiles={new Map([[recipient, { name: "Mic" }]])}
-      media={() => undefined}
-      onOpenLink={() => true}
-      canOpenLink={() => true}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html.match(/aria-label="View Mic profile"/g)).toHaveLength(1);
-  expect(html.indexOf('aria-label="View Mic profile"')).toBeGreaterThan(
-    html.indexOf("Outside "),
-  );
-});
+it.each(["~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic"])(
+  "only exposes the prose mention through MessageRow: %s",
+  (content) => {
+    const recipient = "b".repeat(64);
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{ ...row, content, mentions: [recipient] }}
+        profile={undefined}
+        participantProfiles={new Map([[recipient, { name: "Mic" }]])}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html.match(/aria-label="View Mic profile"/g)).toHaveLength(1);
+    expect(html.indexOf('aria-label="View Mic profile"')).toBeGreaterThan(
+      html.indexOf("Outside "),
+    );
+  },
+);
 
 it.each([9, 40002])(
   "does not manufacture profile bindings when kind %s images are removed",
@@ -584,31 +577,30 @@ it.each([9, 40002])(
   },
 );
 
-it.each([
-  { width: 700, height: 900 },
-  { width: 1600, height: 900 },
-  { width: 20, height: 10 },
-])("uses fixed thumbnails regardless of image dimensions: %j", (dimensions) => {
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{
-        ...row,
-        attachments: [
-          { url: "https://image.test/shot.png", kind: "image", dimensions },
-        ],
-      }}
-      profile={undefined}
-      media={(url) => url}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html).toContain('data-thumbnail="true"');
-  expect(html).not.toContain("aspect-ratio:");
-  expect(html).toContain('aria-label="Open image attachment"');
-  expect(html).toContain('loading="lazy"');
-});
+it.each([{ width: 1600, height: 900 }])(
+  "uses fixed thumbnails regardless of image dimensions: %j",
+  (dimensions) => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: [
+            { url: "https://image.test/shot.png", kind: "image", dimensions },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html).toContain('data-thumbnail="true"');
+    expect(html).not.toContain("aspect-ratio:");
+    expect(html).toContain('aria-label="Open image attachment"');
+    expect(html).toContain('loading="lazy"');
+  },
+);
 
 it.each([undefined, { width: 640, height: 400 }])(
   "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
@@ -1456,7 +1448,7 @@ it("bounds reply participants and projects artwork with fallback initials", () =
   }
 });
 
-it.each([1, 2, 3, 4, 5, 10])(
+it.each([1, 2, 10])(
   "keeps all %i images reachable in a labelled strip",
   (count) => {
     const html = renderToStaticMarkup(

@@ -210,6 +210,14 @@ cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
 The fixture uses per-test isolated synthetic identities/servers, preserving the
 base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
 
+The counts above are historical PR-head counts. A later test prune removed two
+mounted cases whose assertions stronger cases already make: `InboxPage.test.tsx`
+"Retry repeats a rejected mark-unread mutation, not just evidence refresh"
+(kept by the failed mark-unread Retry cases) and `DraftsView.test.tsx` "a
+selected draft edits through the shared scoped composer without navigating or
+sending" (kept by the same-window editor, 128 KiB rich-editor and emptied-editor
+cases). `InboxPage.test.tsx` now collects 61 cases and `DraftsView.test.tsx` 29.
+
 ## Verification status
 
 `inbox-feed.test.ts` exercises the real session reader/visibility/unread owners

@@ -44,7 +44,7 @@ index 3f74500..d15ff26 100644
      async fn observer_channel_controls_reject_sibling_sessions_without_signalling() {
          let mut pool = AgentPool::from_slots(vec![]);
 diff --git a/crates/buzz-acp/src/pool.rs b/crates/buzz-acp/src/pool.rs
-index 1278c17..40fe5e5 100644
+index 1278c17..919646c 100644
 --- a/crates/buzz-acp/src/pool.rs
 +++ b/crates/buzz-acp/src/pool.rs
 @@ -131,6 +131,10 @@ pub struct ChannelDeliveryState {
@@ -148,15 +148,36 @@ index 1278c17..40fe5e5 100644
      ) -> Result<Option<PromptChannelInfo>, ProjectLookupError> {
          let cached = self
              .cache
-@@ -835,6 +884,7 @@ impl ChannelInfoResolver {
+@@ -835,10 +884,24 @@ impl ChannelInfoResolver {
                  }
                  fresh
              }
-+            None if require_fresh => return Ok(None),
-             None => match cached {
-                 Some(cached) => cached,
-                 None => return Ok(None),
-@@ -887,6 +937,8 @@ impl ChannelInfoResolver {
+-            None => match cached {
+-                Some(cached) => cached,
+-                None => return Ok(None),
+-            },
++            None => {
++                // Unconfirmed visibility prevents sharing, not independent project resolution.
++                let mut fallback = match cached {
++                    Some(cached) => cached,
++                    None if require_fresh => PromptChannelInfo {
++                        explicitly_public: false,
++                        name: UNKNOWN_CHANNEL_NAME.into(),
++                        channel_type: "unknown".into(),
++                        description: None,
++                        project: None,
++                    },
++                    None => return Ok(None),
++                };
++                if require_fresh {
++                    fallback.explicitly_public = false;
++                }
++                fallback
++            }
+         };
+         info.project = self.lookup_project(channel_id).await?;
+         Ok(Some(info))
+@@ -887,6 +950,8 @@ impl ChannelInfoResolver {
  }
 
  pub struct PromptContext {
@@ -165,7 +186,7 @@ index 1278c17..40fe5e5 100644
      pub mcp_servers: Vec<McpServer>,
      pub initial_message: Option<String>,
      pub idle_timeout: Duration,
-@@ -2507,7 +2559,14 @@ pub async fn run_prompt_task(
+@@ -2507,7 +2572,14 @@ pub async fn run_prompt_task(
      // outcome: fail closed and preserve the batch without poisoning the healthy
      // ACP process.
      let resolved_channel_info = match &source {
@@ -181,7 +202,7 @@ index 1278c17..40fe5e5 100644
              Ok(info) => info,
              Err(error) => {
                  tracing::warn!(
-@@ -2529,6 +2588,15 @@ pub async fn run_prompt_task(
+@@ -2529,6 +2601,15 @@ pub async fn run_prompt_task(
          PromptSource::Heartbeat => None,
      };
 
@@ -197,7 +218,7 @@ index 1278c17..40fe5e5 100644
      //
      // Core memory is delivered inside the system prompt the harness already
      // builds (system role for protocol >= 2, the `<agent-instructions>` user-message
-@@ -2621,7 +2689,7 @@ pub async fn run_prompt_task(
+@@ -2621,7 +2702,7 @@ pub async fn run_prompt_task(
          let is_new_channel_session = !agent.state.sessions.contains_key(scope);
          let needs_canvas =
              is_new_channel_session && !agent.state.canvas_sections.contains_key(scope);
@@ -206,7 +227,7 @@ index 1278c17..40fe5e5 100644
              let (is_dm, resolved_channel, resolved_channel_type) =
                  resolve_new_session_channel_context(resolved_channel_info.as_ref()).await;
              title_channel = resolved_channel;
-@@ -2631,7 +2699,7 @@ pub async fn run_prompt_task(
+@@ -2631,7 +2712,7 @@ pub async fn run_prompt_task(
              }
              // A confirmed DM never receives a canvas section; an undeterminable
              // channel type fails closed as a DM for the same reason.
@@ -215,7 +236,7 @@ index 1278c17..40fe5e5 100644
                  if let Some(section) = fetch_canvas_section(cid, &ctx.rest_client).await {
                      pending_canvas = Some((scope.clone(), section));
                  }
-@@ -2672,8 +2740,16 @@ pub async fn run_prompt_task(
+@@ -2672,8 +2753,16 @@ pub async fn run_prompt_task(
                      &ctx,
                      agent_core.as_deref(),
                      NewSessionChannelContext {
@@ -234,7 +255,7 @@ index 1278c17..40fe5e5 100644
                          name: title_channel.as_deref(),
                          scope: Some(scope),
                          channel_type: origin_channel_type.as_deref(),
-@@ -2688,6 +2764,9 @@ pub async fn run_prompt_task(
+@@ -2688,6 +2777,9 @@ pub async fn run_prompt_task(
                              scope.telemetry_label()
                          );
                          agent.state.sessions.insert(scope.clone(), sid.clone());
@@ -244,7 +265,7 @@ index 1278c17..40fe5e5 100644
                          agent
                              .state
                              .deliveries
-@@ -2696,7 +2775,7 @@ pub async fn run_prompt_task(
+@@ -2696,7 +2788,7 @@ pub async fn run_prompt_task(
                          // so prior usage is zero by definition — first turn is reliable.
                          agent.acp.notify_session_spawned(&sid);
                          // Commit canvas only after session creation succeeds (I3).
@@ -253,7 +274,7 @@ index 1278c17..40fe5e5 100644
                              agent.state.canvas_sections.insert(pending_scope, section);
                          }
                          (sid, true)
-@@ -2814,8 +2893,16 @@ pub async fn run_prompt_task(
+@@ -2814,8 +2906,16 @@ pub async fn run_prompt_task(
          system_prompt: ctx.system_prompt.as_deref(),
          team_instructions: ctx.team_instructions.as_deref(),
          agent_core: agent_core.as_deref(),
@@ -272,7 +293,7 @@ index 1278c17..40fe5e5 100644
      };
      // Delivery state is committed only after ACP confirms success. Existing
      // sessions created before this field existed fail safe by behaving as
-@@ -3153,6 +3240,16 @@ pub async fn run_prompt_task(
+@@ -3153,6 +3253,16 @@ pub async fn run_prompt_task(
      // own block. Per-section blocks let the observer size trimmer elide a
      // section body in place while every `[Header]` line survives at the head
      // of its own leaf — so the "Prompt context" panel counts every section.
@@ -289,7 +310,7 @@ index 1278c17..40fe5e5 100644
      let prompt_blocks: Vec<&str> = match slash_command {
          Some(ref cmd) => std::iter::once(cmd.as_str())
              .chain(prompt_sections.iter().map(String::as_str))
-@@ -3645,6 +3742,37 @@ pub(crate) async fn fetch_channel_info(
+@@ -3645,6 +3755,37 @@ pub(crate) async fn fetch_channel_info(
      fetch_with_retry(|| fetch_channel_info_once(channel_id, rest)).await
  }
 
@@ -327,7 +348,7 @@ index 1278c17..40fe5e5 100644
  /// Fetch the current kind-39000 metadata with one bounded request.
  ///
  /// Used by prompt-turn refreshes when cached metadata is already available as
-@@ -3687,6 +3815,7 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
+@@ -3687,6 +3828,7 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
                  .filter(|s| !s.is_empty())
                  .map(str::to_string);
              Some(PromptChannelInfo {
@@ -335,7 +356,7 @@ index 1278c17..40fe5e5 100644
                  name: name.unwrap_or(UNKNOWN_CHANNEL_NAME).to_string(),
                  channel_type,
                  description,
-@@ -7175,6 +7304,357 @@ mod tests {
+@@ -7175,6 +7317,357 @@ mod tests {
          }
      }
 
@@ -693,7 +714,7 @@ index 1278c17..40fe5e5 100644
      #[tokio::test]
      async fn run_prompt_task_commits_standing_context_only_after_acp_success() {
          let capture = std::env::temp_dir().join(format!(
-@@ -10420,6 +10900,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+@@ -10420,6 +10913,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
      ) -> PromptContext {
          use crate::relay::RestClient;
          PromptContext {
@@ -701,6 +722,130 @@ index 1278c17..40fe5e5 100644
              mcp_servers: vec![],
              initial_message: None,
              idle_timeout: Duration::from_secs(60),
+@@ -10948,6 +11442,16 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+
+     #[tokio::test]
+     async fn failed_refresh_rejects_expired_absence_but_retains_expired_project() {
++        for (require_fresh, cached_metadata) in [(false, true), (true, true), (true, false)] {
++            failed_visibility_refresh_preserves_project_authority(require_fresh, cached_metadata)
++                .await;
++        }
++    }
++
++    async fn failed_visibility_refresh_preserves_project_authority(
++        require_fresh: bool,
++        cached_metadata: bool,
++    ) {
+         use std::sync::atomic::Ordering;
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+@@ -10986,6 +11490,18 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+
++        if cached_metadata {
++            resolver
++                .cache
++                .write()
++                .unwrap()
++                .get_mut(&id)
++                .unwrap()
++                .explicitly_public = true;
++        } else {
++            resolver.cache.write().unwrap().clear();
++        }
++
+         resolver.projects.write().unwrap().insert(
+             id,
+             CachedProjectInfo {
+@@ -10994,7 +11510,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+         assert!(
+-            resolver.resolve(id).await.is_err(),
++            resolver.resolve_for_turn(id, require_fresh).await.is_err(),
+             "an expired absence plus failed refresh must remain indeterminate"
+         );
+         assert!(
+@@ -11025,21 +11541,43 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+         let resolved = resolver
+-            .resolve(id)
++            .resolve_for_turn(id, require_fresh)
+             .await
+             .expect("project lookup succeeds")
+             .expect("stale project is retained");
+         assert_eq!(resolved.project, Some(stale_project));
++        assert_eq!(resolved.explicitly_public, !require_fresh);
++        assert_eq!(
++            resolved.name,
++            if cached_metadata {
++                "ordinary-looking"
++            } else {
++                UNKNOWN_CHANNEL_NAME
++            }
++        );
+         assert_eq!(
+             requests.load(Ordering::SeqCst),
+-            6,
+-            "each resolve makes one metadata refresh and retries project refresh once"
++            if cached_metadata { 6 } else { 8 },
++            "metadata discovery and project authority retain their independent retry contracts"
+         );
+         server.abort();
+     }
+
+     #[tokio::test]
+     async fn indeterminate_project_context_never_reaches_acp_prompt_boundary() {
++        for (policy, cached_metadata) in [
++            (crate::scope::SessionPolicy::Thread, true),
++            (crate::scope::SessionPolicy::Community, true),
++            (crate::scope::SessionPolicy::Community, false),
++        ] {
++            indeterminate_project_context_at_prompt_boundary(policy, cached_metadata).await;
++        }
++    }
++
++    async fn indeterminate_project_context_at_prompt_boundary(
++        policy: crate::scope::SessionPolicy,
++        cached_metadata: bool,
++    ) {
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+         let channel_id = Uuid::new_v4();
+@@ -11105,18 +11643,23 @@ done"#
+         };
+
+         let mut ctx = make_prompt_context_no_owner();
++        ctx.session_policy = policy;
+         ctx.dedup_mode = DedupMode::Queue;
+         ctx.initial_message = Some("inspect this project before the triggering turn".into());
+         ctx.rest_client.base_url = base_url.clone();
+         ctx.channel_info = ChannelInfoResolver::new(
+-            HashMap::from([(
+-                channel_id,
+-                crate::relay::ChannelInfo {
+-                    name: "ordinary-looking".into(),
+-                    channel_type: "stream".into(),
+-                    description: None,
+-                },
+-            )]),
++            if cached_metadata {
++                HashMap::from([(
++                    channel_id,
++                    crate::relay::ChannelInfo {
++                        name: "ordinary-looking".into(),
++                        channel_type: "stream".into(),
++                        description: None,
++                    },
++                )])
++            } else {
++                HashMap::new()
++            },
+             RestClient {
+                 http: reqwest::Client::new(),
+                 base_url,
 diff --git a/crates/buzz-acp/src/queue.rs b/crates/buzz-acp/src/queue.rs
 index e82a62a..0d7447b 100644
 --- a/crates/buzz-acp/src/queue.rs

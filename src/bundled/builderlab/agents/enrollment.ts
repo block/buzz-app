@@ -4,8 +4,8 @@ import type { EventData } from "../../../features/relay/events";
 import type { Outbox } from "../../../features/relay/outbox";
 import type { RelayData } from "../../../features/relay/service";
 import { relayPartition } from "../../../features/relay/partition";
-import { oauthTarget } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import { oauthTarget, type Credential } from "../oauth/browser";
+import type { OAuthSession } from "../../../shared/oauth/session";
 import type { AgentClient, RemoteAgent } from "./client";
 
 const PREFIX = "buzz.builderlab.enrollment.v1:";
@@ -15,7 +15,7 @@ const DELETION_PREFIX = "buzz.builderlab.deletion.v1:";
 export function createEnrollment(
   relay: RelayData,
   community: CommunityReader,
-  login: OAuthSession,
+  login: OAuthSession<Credential>,
 ) {
   function deletionKey(pubkey: string) {
     return (

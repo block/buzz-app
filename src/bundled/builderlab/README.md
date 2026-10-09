@@ -2,12 +2,11 @@
 
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
 
-- `oauth/` owns browser handoff, code exchange, account verification, and the
-  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
-  `session.credential()` provides access to it. The session handles cancellation,
-  sign-out, and disposal.
-- `login/` owns the login experience: pending state, cancellation, retry, email
-  display, and sign-out.
+- `oauth/` owns Builderlab's code exchange and account verification.
+  `browserCredential()` returns a verified `Credential`. The browser handoff,
+  PKCE pair, plugin-lifetime session (`session.credential()`, cancellation,
+  sign-out, disposal) and the login card come from `src/shared/oauth/`, which the
+  bundled Links plugin's Google sign-in shares.
 - `agents/` lists the signed-in account's remote agents beneath login. Requests
   reuse the OAuth credential through native host HTTP; sign-out and navigation
   discard late results. Existing catalog agents are not automatically registered

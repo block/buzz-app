@@ -1,12 +1,12 @@
 import { communityDestination } from "../../features/communities/destination";
 import type { PluginModule } from "../../plugins/api";
-import { Login } from "./login/Login";
+import { Login } from "../../shared/oauth/Login";
 import {
   browserCredential,
   browserLoginAvailable,
   oauthTarget,
 } from "./oauth/browser";
-import { createOAuthSession } from "./oauth/session";
+import { createOAuthSession } from "../../shared/oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
@@ -22,7 +22,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  const session = createOAuthSession((signal) =>
+  const session = createOAuthSession("Builderlab", (signal) =>
     browserCredential(ctx.host, signal),
   );
   ctx.effect(() => () => session.dispose());
@@ -40,6 +40,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: ({ active }) => (
       <>
         <Login
+          provider="Builderlab"
+          description="Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz."
           session={session}
           available={browserLoginAvailable() && !unavailable}
           unavailableReason={

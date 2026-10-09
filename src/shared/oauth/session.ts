@@ -1,15 +1,15 @@
-import type { Credential } from "./browser";
+export type OAuthAccount = Readonly<{ subject: string; email: string }>;
 
 export type LoginSnapshot = Readonly<{
   status: "signed-out" | "pending" | "signed-in";
-  account?: Credential["account"];
+  account?: OAuthAccount;
   error?: string;
 }>;
 
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
-export function createOAuthSession(
-  acquire: (signal: AbortSignal) => Promise<Credential>,
-) {
+export function createOAuthSession<
+  Credential extends { account: OAuthAccount },
+>(provider: string, acquire: (signal: AbortSignal) => Promise<Credential>) {
   let credential: Credential | undefined;
   let attempt: AbortController | undefined;
   let disposed = false;
@@ -34,7 +34,7 @@ export function createOAuthSession(
       };
     },
     credential() {
-      if (!credential) throw new Error("Sign in to Builderlab first.");
+      if (!credential) throw new Error(`Sign in to ${provider} first.`);
       return credential;
     },
     cancel: reset,
@@ -71,4 +71,6 @@ export function createOAuthSession(
     },
   };
 }
-export type OAuthSession = ReturnType<typeof createOAuthSession>;
+export type OAuthSession<
+  Credential extends { account: OAuthAccount } = { account: OAuthAccount },
+> = ReturnType<typeof createOAuthSession<Credential>>;

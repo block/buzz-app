@@ -106,6 +106,14 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
               assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
             }
+            // The Google OAuth client follows the same loading rules and is frontend-only.
+            writeFileSync('.env.local', 'BUZZ_GOOGLE_OAUTH_CLIENT_ID=local.apps.googleusercontent.com');
+            delete process.env.BUZZ_GOOGLE_OAUTH_CLIENT_ID;
+            process.env.BUZZ_GOOGLE_OAUTH_CLIENT_SECRET = 'from-process';
+            const google = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
+            assert.equal(google.config.define['import.meta.env.VITE_BUZZ_GOOGLE_OAUTH_CLIENT_ID'], JSON.stringify('local.apps.googleusercontent.com'));
+            assert.equal(google.config.define['import.meta.env.VITE_BUZZ_GOOGLE_OAUTH_CLIENT_SECRET'], JSON.stringify('from-process'));
+            delete process.env.BUZZ_GOOGLE_OAUTH_CLIENT_SECRET;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';

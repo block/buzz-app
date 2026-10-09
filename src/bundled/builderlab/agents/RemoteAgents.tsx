@@ -10,7 +10,11 @@ import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import { AlertDialog } from "../../../shared/design-system/ui/AlertDialog";
-import type { LoginSnapshot, OAuthSession } from "../oauth/session";
+import type {
+  LoginSnapshot,
+  OAuthSession,
+} from "../../../shared/oauth/session";
+import type { Credential } from "../oauth/browser";
 import {
   MAX_INSTRUCTIONS_LENGTH,
   type AgentClient,
@@ -26,7 +30,7 @@ export function RemoteAgents({
   enrollment,
 }: {
   client: AgentClient;
-  session: OAuthSession;
+  session: OAuthSession<Credential>;
   active(): boolean;
   enrollment: AgentEnrollment;
 }) {

@@ -12,6 +12,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_GOOGLE_OAUTH_CLIENT_ID`, `BUZZ_GOOGLE_OAUTH_CLIENT_SECRET` | Frontend build: the public Google OAuth desktop client the bundled Links plugin uses for Google Drive link names. The Google origins are fixed in its manifest. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -68,6 +69,23 @@ grant rebuild together; browser-only development needs a Vite restart. Productio
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Google OAuth client build inputs
+
+The bundled Links plugin shows the names of Google Docs, Sheets, Slides and Drive
+links for a Google account the user signs into under Settings → Integrations →
+Google. Sign-in needs an OAuth client of type **Desktop app** from a Google Cloud
+project whose consent screen lists the `drive.metadata.readonly` scope. Set
+`BUZZ_GOOGLE_OAUTH_CLIENT_ID` and, when Google issued one, `BUZZ_GOOGLE_OAUTH_CLIENT_SECRET`
+with the same `.env.local` or build-process rules as `BUZZ_BUILDERLAB_URL`. Only
+Vite reads them; the plugin's manifest already grants `https://oauth2.googleapis.com`
+and `https://www.googleapis.com`, so no native rebuild is needed to change the client.
+
+Google documents that installed-application client secrets are not confidential:
+the flow still requires the user's browser consent and PKCE, and the loopback
+redirect stays on the user's machine. Tokens live in memory until sign-out or
+app exit. When the inputs are unset, the Google card reports that sign-in is not
+configured and links keep their ordinary labels.
 
 ## Whole-video limit
 

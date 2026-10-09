@@ -11,8 +11,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
-import { deferred } from "../test-helpers";
+import { createOAuthSession } from "../../../shared/oauth/session";
+import { deferred } from "../../../shared/test-helpers";
 import { createAgentClient } from "./client";
 import { RemoteAgents } from "./RemoteAgents";
 import { enrollmentFixture } from "./enrollment-testing";
@@ -56,7 +56,7 @@ async function fixture(
   kinds?: readonly number[],
 ) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-  const session = createOAuthSession(async () => ({
+  const session = createOAuthSession("Builderlab", async () => ({
     value: "secret",
     account: { subject: "user", email: "a@example.com" },
   }));

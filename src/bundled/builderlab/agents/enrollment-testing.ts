@@ -8,13 +8,14 @@ import { relayPartition } from "../../../features/relay/partition";
 import type { RelaySnapshot } from "../../../features/relay/service";
 import type { ClientSnapshot } from "../../../features/communities/service";
 import type { OutgoingEvent } from "../../../features/relay/outbox";
-import type { OAuthSession } from "../oauth/session";
+import type { OAuthSession } from "../../../shared/oauth/session";
+import type { Credential } from "../oauth/browser";
 import { createEnrollment } from "./enrollment";
-import { deferred } from "../test-helpers";
+import { deferred } from "../../../shared/test-helpers";
 
 /** Real session/outbox/inventory; only the relay wire and device storage are controlled. */
 export function enrollmentFixture(
-  login: OAuthSession,
+  login: OAuthSession<Credential>,
   selected: string | null = "https://community.example",
   kinds: readonly number[] = [30177, 5],
 ) {

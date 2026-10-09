@@ -10,7 +10,9 @@ Hover backgrounds have 4px corners. GitHub, Google Drive, Figma, Notion, Slack,
 Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams use their service icons.
 Google Docs, Sheets and Slides use document, spreadsheet and presentation icons.
 Other websites use a globe. Icons use the same blue foreground and do not fetch
-favicons, titles or remote metadata.
+favicons, titles or remote metadata. The bundled plugin's optional Google sign-in
+(desktop only) is the one source of fetched names, for Google Drive files; the lab
+never signs in and always shows the raw destination.
 
 Recognition uses host boundaries and known short-link domains. OneDrive also
 recognizes Microsoft's documented

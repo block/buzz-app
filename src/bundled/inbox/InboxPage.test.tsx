@@ -13,6 +13,8 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
+import { archiveKey, readArchives } from "./archive";
+import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
@@ -130,6 +132,89 @@ it.each(["reply", "message", "message after reply"])(
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
     expect(rows()[0]).toHaveTextContent("A direct reply");
+  },
+);
+
+it.each([
+  ["button", 0],
+  ["menu", 0],
+  ["button", 1],
+  ["menu", 1],
+] as const)(
+  "Mentions row Archive via %s retains already-observed replies at cutoff + %s",
+  async (action, offset) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    const h = fixture();
+    if (!h.root) throw new Error("Missing fixture root");
+    const now = Math.floor(Date.now() / 1000);
+    const mention = message(
+      h.alice,
+      "room",
+      "Matching thread mention",
+      now - 1,
+      [
+        ["e", h.root.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ],
+    );
+    const reply = message(
+      h.alice,
+      "room",
+      "Already observed progress",
+      now + offset,
+      [["e", h.root.id, "", "reply"]],
+    );
+    h.addEvent(mention);
+    h.addEvent(reply);
+    act(() => h.emit([mention, reply]));
+    const view = render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    await chooseFilter("Mentions");
+    const thread = rows().find((row) =>
+      row.textContent?.includes("Matching thread mention"),
+    );
+    if (!thread) throw new Error("Missing matching-mention row");
+    if (action === "menu") {
+      fireEvent.contextMenu(
+        within(thread).getByRole("button", { name: /^Open / }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    } else {
+      fireEvent.click(
+        within(thread).getByRole("button", { name: /^Archive / }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(readArchives(viewRevision(h.session.scope, archiveKey))).toEqual([
+      expect.objectContaining({
+        id: `room:${h.root.id}`,
+        through: now + offset,
+        messageIds: expect.arrayContaining([mention.id, reply.id]),
+      }),
+    ]);
+    await chooseFilter("All activity");
+    expect(rows()).toHaveLength(1);
+    await chooseFilter("Archived", "Show");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", `room:${h.root.id}`);
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", `room:${h.root.id}`);
+    await chooseFilter("Mentions");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Matching thread mention");
   },
 );
 

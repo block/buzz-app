@@ -553,6 +553,15 @@ export function InboxView({
     });
   }
   function archive(item: InboxItem, value: boolean, navigate = value) {
+    // Archive captures the conversation, not just the activity-filter projection.
+    const conversation = session.unread
+      .inbox()
+      .items.find(
+        (current) =>
+          current.channelId === item.channelId &&
+          current.messageIds.includes(item.messageId),
+      );
+    if (!conversation) return;
     cancelRetry();
     // Retry repeats this click's cutoff, not a later clock or newly arrived mention.
     const at = Math.floor(Date.now() / 1000);
@@ -599,7 +608,7 @@ export function InboxView({
         const open =
           current.selected?.channelId === item.channelId &&
           current.selected.messageIds.includes(item.messageId);
-        updateArchive(archiveScope, item, value, at);
+        updateArchive(archiveScope, conversation, value, at);
         setMenu(undefined);
         if (!leaves) return;
         // Archiving the selected row advances; unselected actions leave the reader alone.

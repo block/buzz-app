@@ -4,7 +4,7 @@ import type { RelayEvent } from "../relay/events";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { AgentIdentity, AgentsNative } from "./native";
+import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import { Agents2Service, type AgentType, type Delivery } from "./service";
 import { memoryStorage } from "./test-fakes";
 
@@ -112,6 +112,7 @@ function fakeRelay() {
 
 function fakeNative(identities: AgentIdentity[] = []) {
   let published = 0;
+  let typed = 0;
   const keys = [bot, sibling];
   const at = (pubkey: string) =>
     identities.findIndex((identity) => identity.pubkey === pubkey);
@@ -145,8 +146,11 @@ function fakeNative(identities: AgentIdentity[] = []) {
       steps.push("forget");
       identities.splice(at(pubkey), 1);
     }),
-    publish: vi.fn(async (pubkey: string, template: { kind: number }) =>
-      event(`p${++published}`, { pubkey, kind: template.kind }),
+    publish: vi.fn(async (pubkey: string, template: AgentEventTemplate) =>
+      event(template.kind === 20002 ? `t${++typed}` : `p${++published}`, {
+        pubkey,
+        kind: template.kind,
+      }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
     query: vi.fn(async () => []),
@@ -929,4 +933,153 @@ it("keeps an Interest while a watch still uses it", async () => {
     attention: { "watch/channel": null, "interest/default": null },
   });
   expect(service.find(bot)?.attention).toEqual({});
+});
+
+const typingCalls = (native: ReturnType<typeof fakeNative>) =>
+  native.publish.mock.calls.filter(([, template]) => template.kind === 20002);
+
+it("shows a mention run as typing in its thread until the run and its handed-off work end", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, native, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const root = "a1".padEnd(64, "0");
+  const mention = event("m", {
+    tags: [
+      ["h", channel],
+      ["e", root, "", "root"],
+      ["e", root, "", "reply"],
+      ["p", bot],
+    ],
+  });
+  let finish: () => void = () => {};
+  const work = new Promise<void>((resolve) => (finish = resolve));
+  let release: () => void = () => {};
+  run.mockImplementationOnce(
+    ({ workingUntil }) =>
+      new Promise<void>((resolve) => {
+        workingUntil(work);
+        release = resolve;
+      }),
+  );
+  emit({ events: [mention], channelId: channel });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(typingCalls(native)).toEqual([
+    [
+      bot,
+      {
+        kind: 20002,
+        content: "",
+        tags: [
+          ["h", channel],
+          ["e", root, "", "root"],
+          ["e", mention.id, "", "reply"],
+        ],
+      },
+    ],
+  ]);
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(typingCalls(native)).toHaveLength(2);
+  // `run` returning does not end typing while the handed-off work goes on.
+  release();
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(typingCalls(native)).toHaveLength(3);
+  finish();
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(typingCalls(native)).toHaveLength(3);
+  // A top-level mention is the root of the thread the reply starts.
+  emit({
+    events: [
+      event("b2", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(typingCalls(native)[3]?.[1].tags).toEqual([
+    ["h", channel],
+    ["e", "b2".padEnd(64, "0"), "", "reply"],
+  ]);
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(typingCalls(native)).toHaveLength(4);
+});
+
+it("sends no typing for watch runs, and stops a run's typing when a pulse fails or the agent goes", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, native, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  // Every run hands off work that never ends.
+  run.mockImplementation(({ workingUntil }) => {
+    workingUntil(new Promise(() => {}));
+  });
+  emit({ events: [event("w", { content: "deploy" })], channelId: channel });
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(typingCalls(native)).toHaveLength(0);
+  // A relay that refuses typing is asked once a run.
+  native.publish.mockRejectedValueOnce(new Error("unknown event kind"));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(typingCalls(native)).toHaveLength(1);
+  emit({
+    events: [
+      event("n", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(typingCalls(native)).toHaveLength(3);
+  await service.remove(bot);
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(typingCalls(native)).toHaveLength(3);
+});
+
+it("does not count its own typing pulses as something it wrote", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const pulse = event("own", { pubkey: bot, kind: 20002 });
+  emit({ events: [pulse] });
+  emit({ events: [event("r", { tags: [["e", pulse.id]] })] });
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("stops typing for handed-off work after the longest run allowed", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, native, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementation(({ workingUntil }) => {
+    workingUntil(new Promise(() => {}));
+  });
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.advanceTimersByTimeAsync(30 * 60_000 - 1);
+  const sent = typingCalls(native).length;
+  expect(sent).toBe(600);
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(typingCalls(native)).toHaveLength(sent);
 });

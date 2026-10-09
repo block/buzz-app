@@ -85,6 +85,8 @@ function fixture(
   let rosterGate: Promise<void> | undefined;
   let rosterStarted = false;
   let evidenceReads = 0;
+  let unreadGate: Promise<void> | undefined;
+  let unreadStarted = false;
   const historyRequests: string[] = [];
   const threadRequests: string[] = [];
   const exactRequests: string[] = [];
@@ -238,6 +240,15 @@ function fixture(
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
       query: async (filters) => {
+        if (
+          filters.some(
+            (filter) =>
+              filter.include_aux && !!filter["#h"] && filter.kinds?.includes(9),
+          )
+        ) {
+          unreadStarted = true;
+          await unreadGate;
+        }
         if (
           filters.some((filter) => !!filter["#p"] && filter.kinds?.includes(9))
         )
@@ -413,6 +424,18 @@ function fixture(
     readSteps,
     evidenceReads: () => evidenceReads,
     historyRequests,
+    unreadStarted: () => unreadStarted,
+    holdUnread() {
+      unreadStarted = false;
+      let release = () => {};
+      unreadGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => {
+        unreadGate = undefined;
+        release();
+      };
+    },
     holdAddressed() {
       addressedGate = new Promise<void>((resolve) => {
         releaseAddressed = resolve;
@@ -706,6 +729,116 @@ it.each(["Please review", "A thread update"])(
     expect(h.journal()).toEqual(journal);
   },
 );
+
+it.each([false, true])(
+  "retires selected visits only on explicit archive during a held unread refresh (archive=%s)",
+  async (archive) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await waitFor(() =>
+      expect(h.owner.session.unread.inbox().status).toBe("ready"),
+    );
+    await chooseFilter("Mentions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await within(
+      screen.getByRole("region", { name: "Inbox detail" }),
+    ).findByText(/Please review/);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("img", { name: "Unread" }),
+      ).not.toBeInTheDocument(),
+    );
+    const journal = h.journal();
+    const release = h.holdUnread();
+    let refresh: Promise<void> | undefined;
+    try {
+      act(() => {
+        refresh = h.owner.session.unread.refresh();
+      });
+      await waitFor(() => expect(h.unreadStarted()).toBe(true));
+      expect(h.owner.session.unread.inbox().status).toBe("loading");
+      expect(
+        screen.getByRole("region", { name: "Inbox detail" }),
+      ).toBeInTheDocument();
+      if (archive) {
+        act(() => h.archiveRoom(true, 100));
+        await waitFor(() => expect(rows()).toHaveLength(0));
+        expect(
+          screen.queryByRole("region", { name: "Inbox detail" }),
+        ).not.toBeInTheDocument();
+        act(() => h.archiveRoom(false, 101));
+        await waitFor(() => expect(rows()).toHaveLength(1));
+        expect(h.owner.session.unread.inbox().status).toBe("loading");
+        expect(
+          screen.queryByRole("region", { name: "Inbox detail" }),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("combobox", { name: "Activity type" }),
+        ).toHaveFocus();
+        expect(h.journal()).toEqual(journal);
+      }
+    } finally {
+      await act(async () => {
+        release();
+        await refresh;
+      });
+    }
+    await waitFor(() =>
+      expect(h.owner.session.unread.inbox().status).toBe("ready"),
+    );
+    expect(!!screen.queryByRole("region", { name: "Inbox detail" })).toBe(
+      !archive,
+    );
+    expect(h.journal()).toEqual(journal);
+  },
+);
+
+it("retires a failed captured read on archive during a held unread refresh", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(h.owner.session.unread.inbox().status).toBe("ready"),
+  );
+  await chooseFilter("Mentions");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  const release = h.holdUnread();
+  let refresh: Promise<void> | undefined;
+  try {
+    act(() => {
+      refresh = h.owner.session.unread.refresh();
+    });
+    await waitFor(() => expect(h.unreadStarted()).toBe(true));
+    act(() => h.archiveRoom(true, 100));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    act(() => h.archiveRoom(false, 101));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(h.owner.session.unread.inbox().status).toBe("loading");
+    expect(
+      screen.queryByRole("button", { name: "Retry inbox" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      release();
+      await refresh;
+    });
+  }
+  await waitFor(() =>
+    expect(h.owner.session.unread.inbox().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+});
 
 it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
   const h = fixture();

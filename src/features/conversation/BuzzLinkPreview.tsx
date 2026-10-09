@@ -6,7 +6,7 @@ import {
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelReference } from "../relay/contracts";
 import {
   LightningIcon,
   LockIcon,
@@ -174,22 +174,21 @@ function PreviewContent({
   );
 }
 
-/** Hover card for a channel-only link. Discovery supplies the summary; a
- * nonmember sees an open channel's public metadata and never its roster. */
+/** Hover card for a channel-only link. The store supplies what the reader
+ * may see; a nonmember sees an open channel's public metadata, never its
+ * roster. */
 export function ChannelLinkPreview({
   channel,
 }: {
-  channel: Pick<
-    ChannelSummary,
-    "name" | "description" | "private" | "readOnly" | "members"
-  >;
+  channel: Extract<ChannelReference, { state: "found" }>;
 }) {
-  const Icon = channelIcon(channel);
+  const Icon = channelIcon(channel.private ? { private: true } : undefined);
   const details = [
     channel.private ? "Private channel" : "Public channel",
-    channel.readOnly ? "Not joined" : "Joined",
-    channel.members?.length
-      ? `${channel.members.length} ${channel.members.length === 1 ? "member" : "members"}`
+    channel.archived ? "Archived" : "",
+    channel.joined ? "Joined" : "Not joined",
+    channel.members
+      ? `${channel.members} ${channel.members === 1 ? "member" : "members"}`
       : "",
   ].filter(Boolean);
   return (

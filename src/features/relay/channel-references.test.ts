@@ -1,0 +1,208 @@
+import { afterEach, expect, it, vi } from "vitest";
+import type { RelayEvent } from "./events";
+import { createRelaySession } from "./session";
+import { keypair, metadata, roster, scriptedTransport } from "./testing";
+
+const relay = keypair(),
+  viewer = keypair();
+const owners: ReturnType<typeof createRelaySession>[] = [];
+afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
+});
+const MINE = "20000000-0000-4000-8000-000000000001";
+const OPEN = "20000000-0000-4000-8000-000000000002";
+const SECRET = "20000000-0000-4000-8000-000000000003";
+const open = (id: string, name: string, extra: string[][] = []) =>
+  metadata(relay, id, name, 1_700_000_000, [
+    ["public"],
+    ["t", "stream"],
+    ["about", `About ${name}`],
+    ...extra,
+  ]);
+
+/** A real session whose list is ready with one joined public channel. */
+async function setup() {
+  let clock = 1_000_000;
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let receive!: (events: readonly RelayEvent[]) => void;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        receive = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { now: () => clock },
+  );
+  owners.push(owner);
+  const channels = owner.session.channels;
+  const next = async (kind: number) => {
+    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+    const request = wire.next();
+    expect(request.filters[0]?.kinds).toEqual([kind]);
+    return request;
+  };
+  channels.ensureList();
+  (await next(39002)).respond([roster(relay, MINE, [viewer.pubkey])]);
+  (await next(39000)).respond([open(MINE, "mine")]);
+  await vi.waitFor(() => expect(channels.list().status).toBe("ready"));
+  await vi.waitFor(() =>
+    expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+  );
+  wire.pending.splice(0);
+  return {
+    ...wire,
+    channels,
+    owner,
+    next,
+    emit: (events: readonly RelayEvent[]) => receive(events),
+    tick: (ms: number) => {
+      clock += ms;
+    },
+    /** One coalesced exact lookup, answered with `events`. */
+    async lookup(ids: string[], events: RelayEvent[] | Error) {
+      const request = await next(39000);
+      expect(request.filters.map((filter) => filter["#d"])).toEqual([ids, ids]);
+      if (events instanceof Error) request.fail(events);
+      else request.respond(events);
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  };
+}
+
+it("describes a joined channel locally and never reads for it", async () => {
+  const h = await setup();
+  h.channels.refer?.(MINE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+  expect(h.channels.describe?.(MINE)).toMatchObject({
+    state: "found",
+    name: "mine",
+    joined: true,
+    members: 1,
+  });
+});
+
+it("coalesces lookups, describes an open channel and withholds a private one", async () => {
+  const h = await setup();
+  const notified = vi.fn();
+  h.channels.subscribeList(notified);
+  h.channels.refer?.(OPEN);
+  h.channels.refer?.(SECRET);
+  h.channels.refer?.(OPEN);
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "unknown" });
+  await h.lookup([OPEN, SECRET], [open(OPEN, "crew")]);
+  expect(h.channels.describe?.(OPEN)).toEqual({
+    state: "found",
+    name: "crew",
+    description: "About crew",
+    channelType: "stream",
+    private: false,
+    hidden: false,
+    archived: false,
+    joined: false,
+  });
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "withheld" });
+  expect(notified).toHaveBeenCalled();
+});
+
+it("keeps a withheld answer for five minutes, then rechecks it while still showing it", async () => {
+  const h = await setup();
+  h.channels.refer?.(SECRET);
+  await h.lookup([SECRET], []);
+  h.tick(5 * 60_000 - 1);
+  h.channels.refer?.(SECRET);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+  h.tick(1);
+  h.channels.refer?.(SECRET);
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "withheld" });
+  // The channel has since become public.
+  await h.lookup([SECRET], [open(SECRET, "launch")]);
+  expect(h.channels.describe?.(SECRET)).toMatchObject({
+    state: "found",
+    name: "launch",
+  });
+});
+
+it("never reports a failed lookup as withheld, and backs off before retrying", async () => {
+  const h = await setup();
+  h.channels.refer?.(SECRET);
+  await h.lookup([SECRET], new Error("503"));
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "unknown" });
+  h.tick(29_999);
+  h.channels.refer?.(SECRET);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+  h.tick(1);
+  h.channels.refer?.(SECRET);
+  await h.lookup([SECRET], []);
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "withheld" });
+});
+
+it("describes a public channel the viewer left as public and not joined", async () => {
+  const h = await setup();
+  h.emit([roster(relay, MINE, [], 1_700_000_001)]);
+  await vi.waitFor(() => expect(h.channels.get?.(MINE)).toBeUndefined());
+  expect(h.channels.describe?.(MINE)).toMatchObject({
+    state: "found",
+    name: "mine",
+    private: false,
+    joined: false,
+  });
+  h.channels.refer?.(MINE);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+});
+
+it("forgets withheld answers when the session cache is cleared", async () => {
+  const h = await setup();
+  h.channels.refer?.(SECRET);
+  await h.lookup([SECRET], []);
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "withheld" });
+  await h.owner.clearCache();
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "unknown" });
+});
+
+it("describes a joined channel restored from cache as joined", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    },
+    {
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: [roster(relay, MINE, [viewer.pubkey]), open(MINE, "mine")],
+          },
+        }),
+        writeStartup: async () => {},
+        read: async () => [],
+        write: async () => {},
+        retain: async () => {},
+        remove: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  owners.push(owner);
+  await owner.restore();
+  const channels = owner.session.channels;
+  channels.ensureList();
+  // The relay hasn't reconfirmed it yet: the store marks it read-only.
+  await vi.waitFor(() => expect(channels.get?.(MINE)?.cached).toBe(true));
+  expect(channels.get?.(MINE)?.readOnly).toBe(true);
+  expect(channels.describe?.(MINE)).toMatchObject({
+    state: "found",
+    joined: true,
+    members: 1,
+  });
+});

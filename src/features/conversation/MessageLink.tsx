@@ -90,26 +90,33 @@ export function MessageLink({
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
-  // Channel-only links name a channel the reader may not have joined.
+  // Channel-only links name a channel the reader may not have joined. A
+  // composer decoration is the writer's own draft: it never looks one up.
   const reference = useChannelReference(
     session?.channels,
-    destination && !destination.messageId && !destination.threadRootId
+    interactive &&
+      destination &&
+      !destination.messageId &&
+      !destination.threadRootId
       ? destination.channelId
       : undefined,
   );
   // DMs and sessions keep their existing presentation.
   const named =
-    reference.channel &&
-    !reference.channel.hidden &&
-    reference.channel.channelType !== "dm" &&
-    reference.channel.channelType !== "session"
-      ? reference.channel
+    reference.state === "found" &&
+    !reference.hidden &&
+    reference.channelType !== "dm" &&
+    reference.channelType !== "session"
+      ? reference
       : undefined;
-  const withheld = reference.unavailable;
-  const shown = withheld ? "Private channel" : children;
-  const display = withheld
-    ? "Private channel"
-    : (label ?? directoryLabel ?? (named ? `#${named.name}` : undefined));
+  const withheld = reference.state === "withheld";
+  // The authored label is message text, so it stays; the lock marks it. A raw
+  // destination has no name to show.
+  const shown = withheld && label === undefined ? "Private channel" : children;
+  const display =
+    label ??
+    directoryLabel ??
+    (named ? `#${named.name}` : withheld ? "Private channel" : undefined);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -293,21 +300,28 @@ export function MessageLink({
         </ContextMenuRoot>
       );
     }
-    if (active && interactive && named && session)
-      return (
-        <PreviewCard
-          trigger={element}
-          link={<a href={url} {...navigation} />}
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-          side="top"
-          className={styles.popup ?? ""}
-          aria-label="Channel preview"
-        >
-          <ChannelLinkPreview channel={named} />
-        </PreviewCard>
-      );
-    return active && interactive && preview && session ? (
+    const card =
+      !active || !interactive || !session
+        ? undefined
+        : preview
+          ? {
+              label: "Message preview",
+              body: previewOpen && (
+                <BuzzLinkPreview
+                  key={messageViewKey(session, scope, url)}
+                  session={session}
+                  channelId={preview.channelId}
+                  messageId={preview.messageId}
+                />
+              ),
+            }
+          : named
+            ? {
+                label: "Channel preview",
+                body: <ChannelLinkPreview channel={named} />,
+              }
+            : undefined;
+    return card ? (
       <PreviewCard
         trigger={element}
         link={<a href={url} {...navigation} />}
@@ -315,16 +329,9 @@ export function MessageLink({
         onOpenChange={setPreviewOpen}
         side="top"
         className={styles.popup ?? ""}
-        aria-label="Message preview"
+        aria-label={card.label}
       >
-        {previewOpen && (
-          <BuzzLinkPreview
-            key={messageViewKey(session, scope, url)}
-            session={session}
-            channelId={preview.channelId}
-            messageId={preview.messageId}
-          />
-        )}
+        {card.body}
       </PreviewCard>
     ) : (
       element

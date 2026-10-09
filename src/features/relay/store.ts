@@ -4,6 +4,7 @@ import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { ReadError, readErrorKind } from "./errors";
 import type {
+  ChannelReference,
   ChannelList,
   ChannelReadOptions,
   ChannelMessage,
@@ -82,6 +83,10 @@ const PUBLIC_CHANNEL_PAGE = 500;
 /** How long name search reuses one page of public channel metadata. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
+/** How long a channel link keeps a `withheld` answer before rechecking it. */
+const REFERENCE_TTL = 5 * 60_000;
+/** The least wait before a failed channel-link lookup is tried again. */
+const REFERENCE_RETRY = 30_000;
 /** Exact omission confirmations use the relay's explicit channel-ID cap. */
 const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
@@ -1696,6 +1701,116 @@ export function createChannelStore(
       warming = false;
     }
   }
+  /** Channel-link lookups. `withheld` answers are kept for a while (and
+   * shown while rechecked); failures back off. Both reset with the epoch. */
+  const references = {
+    generation: -1,
+    withheld: new Map<string, number>(),
+    retryAt: new Map<string, number>(),
+    queue: new Set<string>(),
+    pending: new Set<string>(),
+    scheduled: false,
+  };
+  function currentReferences() {
+    if (references.generation !== epoch) {
+      references.generation = epoch;
+      references.withheld.clear();
+      references.retryAt.clear();
+      references.queue.clear();
+      references.pending.clear();
+    }
+    return references;
+  }
+  function describeReference(id: string): ChannelReference {
+    const channel = discovery?.get(id);
+    if (channel) {
+      const joined = !!discovery && channel.members?.includes(discovery.viewer);
+      return {
+        state: "found",
+        name: channel.name,
+        ...(channel.description ? { description: channel.description } : {}),
+        ...(channel.channelType ? { channelType: channel.channelType } : {}),
+        private: !!channel.private,
+        hidden: !!channel.hidden,
+        archived: !!channel.archived,
+        joined: !!joined,
+        ...(channel.members?.length ? { members: channel.members.length } : {}),
+      };
+    }
+    // A public channel the viewer has left: its signed open metadata stays
+    // public even while discovery denies reading it as a member.
+    const event = discovery?.metadataVersion(id);
+    const name = event && openMetadata(event) && metadataName(event);
+    if (event && name) {
+      const type = tag(event, "t");
+      const about = tag(event, "about");
+      return {
+        state: "found",
+        name,
+        ...(about ? { description: about } : {}),
+        ...(type === "stream" || type === "forum" ? { channelType: type } : {}),
+        private: false,
+        hidden: false,
+        archived: hasTag(event, "archived", "true"),
+        joined: false,
+      };
+    }
+    return currentReferences().withheld.has(id)
+      ? { state: "withheld" }
+      : { state: "unknown" };
+  }
+  function referChannel(id: string) {
+    if (disposed || !transport || !discovery || options.cachedOnly) return;
+    if (list.status !== "ready" || describeReference(id).state === "found")
+      return;
+    const state = currentReferences();
+    const checked = state.withheld.get(id);
+    if (
+      state.queue.has(id) ||
+      state.pending.has(id) ||
+      (checked !== undefined && now() - checked < REFERENCE_TTL) ||
+      now() < (state.retryAt.get(id) ?? 0)
+    )
+      return;
+    state.queue.add(id);
+    if (state.scheduled) return;
+    state.scheduled = true;
+    queueMicrotask(() => {
+      state.scheduled = false;
+      if (state.generation !== epoch) return;
+      const ids = [...state.queue];
+      state.queue.clear();
+      // `resolve` bounds one exact read to 128 channels.
+      for (let start = 0; start < ids.length; start += 128) {
+        const batch = ids.slice(start, start + 128);
+        for (const id of batch) state.pending.add(id);
+        resolve(batch, { priority: "background" }).then(
+          () => {
+            if (state.generation !== epoch) return;
+            for (const id of batch) {
+              state.pending.delete(id);
+              state.retryAt.delete(id);
+              if (describeReference(id).state === "found")
+                state.withheld.delete(id);
+              else state.withheld.set(id, now());
+            }
+            setList(list, true);
+          },
+          (error: unknown) => {
+            if (state.generation !== epoch) return;
+            const wait = Math.max(
+              REFERENCE_RETRY,
+              error instanceof ReadError ? (error.retryAfterMs ?? 0) : 0,
+            );
+            for (const id of batch) {
+              state.pending.delete(id);
+              state.retryAt.set(id, now() + wait);
+            }
+          },
+        );
+      }
+    });
+  }
   function restore() {
     if (!prepared || !persistence?.readStartup) return Promise.resolve();
     startup ??= restoreStartup();
@@ -1707,6 +1822,8 @@ export function createChannelStore(
     resolve,
     searchPublic,
     matchPublic,
+    describe: describeReference,
+    refer: referChannel,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

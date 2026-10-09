@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MessageLink } from "./MessageLink";
-import type { ChannelList, ChannelSummary } from "../relay/contracts";
+import type { ChannelList, ChannelReference } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 
 afterEach(() => {
@@ -17,28 +17,23 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
 });
 
-/** A store whose discovery admits public previews only through resolve. */
+/** Presentation only: the store's lookup rules are tested against the real
+ * store in relay/channel-references.test.ts. */
 function fixture(status: ChannelList["status"] = "ready") {
   let list: ChannelList = { status, channels: [] };
-  const known = new Map<string, ChannelSummary>();
-  const relay = new Map<string, ChannelSummary>();
+  const answers = new Map<string, ChannelReference>();
   const listeners = new Set<() => void>();
   const notify = () => {
     list = { ...list };
     for (const listener of listeners) listener();
   };
-  const resolve = vi.fn(async (ids: readonly string[]) => {
-    for (const id of ids) {
-      const channel = relay.get(id);
-      if (channel) known.set(id, channel);
-    }
-    notify();
-  });
+  const refer = vi.fn();
   const session = {
     channels: {
       list: () => list,
-      get: (id: string) => known.get(id),
-      resolve,
+      get: () => undefined,
+      describe: (id: string) => answers.get(id) ?? { state: "unknown" },
+      refer,
       subscribeList(listener: () => void) {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -47,9 +42,11 @@ function fixture(status: ChannelList["status"] = "ready") {
   } as unknown as RelaySession;
   return {
     session,
-    resolve,
-    relay,
-    known,
+    refer,
+    answer(id: string, reference: ChannelReference) {
+      answers.set(id, reference);
+      act(notify);
+    },
     ready() {
       list = { status: "ready", channels: [] };
       act(notify);
@@ -57,45 +54,51 @@ function fixture(status: ChannelList["status"] = "ready") {
   };
 }
 
-const link = (session: RelaySession, id: string, label = "#authored") => (
+const link = (
+  session: RelaySession,
+  id: string,
+  label: string | null = "#authored",
+  interactive = true,
+) => (
   <MessageLink
-    key={id}
+    key={`${id}:${label}`}
     url={`buzz://channel/${id}`}
     registry={undefined}
     onOpenLink={() => true}
     session={session}
+    interactive={interactive}
+    label={label ?? undefined}
   >
-    {label}
+    {label ?? undefined}
   </MessageLink>
 );
 
-it("looks up an unjoined channel once per id and shows its hover card", async () => {
+const crew: ChannelReference = {
+  state: "found",
+  name: "crew-open",
+  description: "Where the crew meets.",
+  channelType: "stream",
+  private: false,
+  hidden: false,
+  archived: true,
+  joined: false,
+};
+
+it("names an open channel and shows its hover card", async () => {
   vi.useFakeTimers();
   HTMLElement.prototype.showPopover = function () {
     this.style.display = "block";
   };
   const t = fixture();
-  t.relay.set("open", {
-    id: "open",
-    name: "crew-open",
-    description: "Where the crew meets.",
-    channelType: "stream",
-    readOnly: true,
-  });
   render(
     <>
       {link(t.session, "open")}
-      <MessageLink
-        url="buzz://channel/open"
-        registry={undefined}
-        onOpenLink={() => true}
-        session={t.session}
-      />
+      {link(t.session, "open", null)}
     </>,
   );
   await act(async () => {});
-  expect(t.resolve).toHaveBeenCalledTimes(1);
-  expect(t.resolve).toHaveBeenCalledWith(["open"]);
+  expect(t.refer).toHaveBeenCalledWith("open");
+  t.answer("open", crew);
   // The authored label stays; a raw link takes the channel's name.
   const [authored, raw] = screen.getAllByRole("link");
   expect(authored?.textContent).toBe("#authored");
@@ -104,50 +107,67 @@ it("looks up an unjoined channel once per id and shows its hover card", async ()
   await act(() => vi.advanceTimersByTimeAsync(250));
   const card = screen.getByLabelText("Channel preview");
   expect(card.textContent).toContain("crew-open");
-  expect(card.textContent).toContain("Public channel · Not joined");
+  expect(card.textContent).toContain("Public channel · Archived · Not joined");
   expect(card.textContent).toContain("Where the crew meets.");
 });
 
-it("shows a private channel when the relay withholds its metadata", async () => {
+it("says Joined from membership, with the member count", async () => {
+  vi.useFakeTimers();
+  HTMLElement.prototype.showPopover = function () {
+    this.style.display = "block";
+  };
   const t = fixture();
-  render(link(t.session, "secret"));
-  await act(async () => {});
-  expect(t.resolve).toHaveBeenCalledWith(["secret"]);
-  const anchor = screen.getByRole("link", { name: "Private channel" });
-  expect(anchor.textContent).toBe("Private channel");
-  expect(anchor.getAttribute("href")).toBe("buzz://channel/secret");
-  expect(anchor.getAttribute("title")).toContain("aren’t a member");
+  render(link(t.session, "mine", null));
+  t.answer("mine", { ...crew, archived: false, joined: true, members: 3 });
+  fireEvent.mouseEnter(screen.getByRole("link"));
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(screen.getByLabelText("Channel preview").textContent).toContain(
+    "Public channel · Joined · 3 members",
+  );
 });
 
-it("keeps the authored label while the lookup is pending or after it fails", async () => {
+it("marks a withheld channel private and keeps an authored label beside the lock", async () => {
   const t = fixture();
-  let release!: () => void;
-  t.resolve.mockImplementationOnce(async () => {
-    await new Promise<void>((resolve) => (release = resolve));
-    throw new Error("offline");
-  });
+  render(
+    <>
+      {link(t.session, "secret", null)}
+      {link(t.session, "secret")}
+    </>,
+  );
+  t.answer("secret", { state: "withheld" });
+  const [raw, authored] = screen.getAllByRole("link");
+  expect(raw?.textContent).toBe("Private channel");
+  expect(raw?.getAttribute("aria-label")).toBe("Private channel");
+  expect(raw?.getAttribute("href")).toBe("buzz://channel/secret");
+  expect(raw?.getAttribute("title")).toContain("aren’t a member");
+  // Copy returns the authored text, so the link shows it too.
+  expect(authored?.textContent).toBe("#authored");
+  expect(authored?.getAttribute("title")).toContain("aren’t a member");
+});
+
+it("keeps the authored label while the answer is unknown", async () => {
+  const t = fixture();
   render(link(t.session, "flaky"));
   await act(async () => {});
-  expect(t.resolve).toHaveBeenCalledWith(["flaky"]);
-  expect(screen.getByRole("link").textContent).toBe("#authored");
-  await act(async () => release());
   expect(screen.getByRole("link").textContent).toBe("#authored");
   expect(screen.queryByText("Private channel")).toBeNull();
 });
 
-it("waits for the channel list before reading and skips joined channels", async () => {
+it("asks only once the list is ready, and never from a composer decoration", async () => {
   const t = fixture("loading");
-  t.known.set("mine", { id: "mine", name: "mine", channelType: "stream" });
   render(
     <>
-      {link(t.session, "mine")}
       {link(t.session, "later")}
+      {link(t.session, "draft", "#draft", false)}
     </>,
   );
   await act(async () => {});
-  expect(t.resolve).not.toHaveBeenCalled();
+  expect(t.refer).not.toHaveBeenCalled();
   t.ready();
   await act(async () => {});
-  expect(t.resolve).toHaveBeenCalledTimes(1);
-  expect(t.resolve).toHaveBeenCalledWith(["later"]);
+  expect(t.refer.mock.calls).toEqual([["later"]]);
+  // Even a withheld answer leaves the writer's own draft text alone.
+  t.answer("draft", { state: "withheld" });
+  expect(screen.getByText("#draft")).toBeTruthy();
+  expect(screen.queryByText("Private channel")).toBeNull();
 });

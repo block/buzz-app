@@ -165,6 +165,25 @@ export type PublicChannelSearch = Readonly<{
   /** The relay returned a full metadata page, so some channels were not checked. */
   partial: boolean;
 }>;
+/** What a channel-only link may show about a channel the reader may not have
+ * joined. `withheld` means a completed lookup found nothing it may show: the
+ * relay withholds a private channel's metadata from non-members, so private,
+ * deleted and never-valid channels look the same. */
+export type ChannelReference =
+  | Readonly<{ state: "unknown" }>
+  | Readonly<{ state: "withheld" }>
+  | Readonly<{
+      state: "found";
+      name: string;
+      description?: string;
+      channelType?: ChannelSummary["channelType"];
+      private: boolean;
+      hidden: boolean;
+      archived: boolean;
+      joined: boolean;
+      /** Only when the viewer may see the roster. */
+      members?: number;
+    }>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
@@ -188,6 +207,12 @@ export interface ChannelQueries {
     query: string,
     options?: { exact?: boolean },
   ): readonly ChannelSummary[];
+  /** Current reference state from local evidence; never reads. */
+  describe?(channelId: string): ChannelReference;
+  /** Request a background lookup for a reference that isn't `found`. The store
+   * coalesces requests into bounded reads, keeps a `withheld` answer for a few
+   * minutes, backs off after failures, and notifies list subscribers. */
+  refer?(channelId: string): void;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery.

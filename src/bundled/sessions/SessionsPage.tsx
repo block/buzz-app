@@ -1,3 +1,5 @@
+import { SessionShare } from "./SessionShare";
+import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
@@ -17,9 +19,12 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { useCallback, useState, useSyncExternalStore } from "react";
+import type { PageNavigation } from "../../features/navigation/service";
+import { useMePlacement } from "../../features/sessions/personal";
+import { meSelection, meSection, meTarget } from "../me/routes";
+import { subscribeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { SessionShare } from "./SessionShare";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
@@ -39,24 +44,23 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
-import { readView, writeView, subscribeView } from "../../shared/view-state";
-import { SessionsWorkspace } from "./SessionsWorkspace";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
-import { UnreadBadge } from "../channels/UnreadBadge";
 
 export function SessionsPage({
   relay,
   extensions,
   navigator,
+  navigation,
 }: {
   relay: RelayData;
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
+  navigation?: PageNavigation | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
@@ -66,11 +70,12 @@ export function SessionsPage({
       scope={connection.scope ?? ""}
       extensions={extensions}
       navigator={navigator}
+      navigation={navigation?.forSession(relay, connection)}
     />
   ) : (
-    <section className={styles.empty} aria-label="Sessions">
+    <section className={styles.empty} aria-label="Me">
       <ChatCircleIcon size={28} />
-      <h1>Sessions</h1>
+      <h1>Me</h1>
       <p>
         {connection.status === "connecting"
           ? "Connecting to your community…"
@@ -93,125 +98,116 @@ function LiveSessions({
   scope,
   extensions,
   navigator,
+  navigation,
 }: {
   session: RelaySession;
   scope: string;
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
+  navigation?: PageNavigation | undefined;
 }) {
   const list = useChannelList(session.channels);
-  const [selected, setSelected] = useState(() => {
-    const saved = readView<unknown>(scope, "sessions:selected", "");
-    return typeof saved === "string" ? saved : "";
-  });
-  const [focusRequest, setFocusRequest] = useState(0);
-  const [newSection, setNewSection] = useState<string>();
+  const placement = useMePlacement(session);
+  const selected = meSelection(navigation?.target);
+  const newSection = meSection(navigation?.target);
   const pendingDraft = useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
-    () => (selected ? pendingSessionDraft(scope, selected) : undefined),
+    () =>
+      selected !== "new" ? pendingSessionDraft(scope, selected) : undefined,
   );
-  const selectedSession = list.channels.find(
-    (item) =>
-      item.id === selected &&
-      item.channelType === "session" &&
-      !item.parentChannelId,
-  );
-  const sessions = list.channels
-    .filter(
-      (item) =>
-        item.channelType === "session" &&
-        !item.archived &&
-        !item.parentChannelId,
-    )
-    .sort(
-      (a, b) =>
-        (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
-    );
+  const selectedSession = list.channels.find((item) => item.id === selected);
   const select = (id: string) => {
-    setSelected(id);
-    writeView(scope, "sessions:selected", id);
+    void navigator?.open(meTarget(scope, id));
   };
+  if (selected === "new" || pendingDraft)
+    return (
+      <NewSessionComposer
+        personal={
+          !pendingDraft ||
+          pendingDraft === "me" ||
+          pendingDraft.startsWith("me:")
+        }
+        standalone
+        focusRequest={1}
+        key={pendingDraft ?? newSection ?? "unfiled"}
+        resumeDraftKey={pendingDraft}
+        sectionId={
+          pendingDraft?.includes(":section:")
+            ? pendingDraft.split(":section:")[1]
+            : newSection
+        }
+        extensions={extensions}
+        session={session}
+        scope={scope}
+        onStarted={(id) => {
+          if (navigation?.signal.aborted) return;
+          if (!session.mePlacement.has(id)) {
+            const target = meTarget(scope);
+            if (target.kind === "page" && target.scope)
+              void navigator?.open({
+                version: 1,
+                kind: "conversation",
+                scope: target.scope,
+                channelId: id,
+              });
+          } else select(id);
+        }}
+      />
+    );
+  if (selectedSession)
+    return (
+      <SessionWork
+        key={`${selectedSession.id}:${navigation?.entryId ?? ""}`}
+        session={session}
+        scope={scope}
+        channel={selectedSession}
+        navigation={navigation}
+        extensions={extensions}
+        navigator={navigator}
+      />
+    );
   return (
-    <SessionsWorkspace
-      session={session}
-      scope={scope}
-      sessions={sessions.map((item) => {
-        const parent = list.channels.find(
-          (candidate) => candidate.id === item.parentChannelId,
-        );
-        return {
-          id: item.id,
-          title: item.name,
-          content: (
-            <UnreadBadge
-              session={session}
-              channelId={item.id}
-              label={item.name}
-            />
-          ),
-          ...(item.parentChannelId
-            ? {
-                parentName: parent?.name ?? "Channel session",
-                ...(parent?.private ? { parentPrivate: true as const } : {}),
-              }
-            : {}),
-        };
-      })}
-      selected={selected}
-      onSelect={select}
-      onNew={(sectionId) => {
-        setFocusRequest((value) => value + 1);
-        setNewSection(sectionId);
-        select("");
-      }}
-      listStatus={
-        list.status === "loading" && !sessions.length ? (
-          <p role="status">Loading sessions…</p>
-        ) : list.status === "error" ? (
-          <div role="alert">
-            <p>{list.error ?? "Sessions couldn’t load."}</p>
-            <Button
-              type="button"
-              onClick={() => session.channels.refreshList?.()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : undefined
-      }
-    >
-      {selectedSession && !pendingDraft ? (
-        <SessionWork
-          key={selectedSession.id}
-          session={session}
-          scope={scope}
-          channel={selectedSession}
-          extensions={extensions}
-          navigator={navigator}
-          parentName={
-            list.channels.find(
-              (item) => item.id === selectedSession.parentChannelId,
-            )?.name
-          }
-        />
+    <section className={styles.empty}>
+      {placement.status !== "ready" ? (
+        <div role="status">
+          <p>{placement.error ?? "Loading Me placement…"}</p>
+          <Button onClick={() => void session.mePlacement.refresh()}>
+            Retry Me
+          </Button>
+        </div>
+      ) : list.status === "loading" ? (
+        <p role="status">Loading your conversation…</p>
       ) : (
-        <NewSessionComposer
-          standalone
-          focusRequest={focusRequest}
-          key={pendingDraft ?? newSection ?? "unfiled"}
-          resumeDraftKey={pendingDraft}
-          sectionId={
-            pendingDraft?.startsWith("sessions:section:")
-              ? pendingDraft.slice("sessions:section:".length)
-              : newSection
-          }
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          onStarted={select}
-        />
+        <>
+          <p>
+            This conversation isn’t in your Me workspace. Open it in Messages.
+          </p>
+          {selectedSession && (
+            <Button
+              onClick={() => {
+                const target = meTarget(scope);
+                if (target.kind === "page" && target.scope)
+                  void navigator?.open({
+                    version: 1,
+                    kind: "conversation",
+                    scope: target.scope,
+                    channelId: selected,
+                  });
+              }}
+            >
+              Open in Messages
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              session.channels.refreshList?.();
+            }}
+          >
+            Retry
+          </Button>
+        </>
       )}
-    </SessionsWorkspace>
+    </section>
   );
 }
 
@@ -222,18 +218,44 @@ function SessionWork({
   extensions,
   parentName,
   navigator,
+  navigation,
 }: {
   session: RelaySession;
   scope: string;
   channel: ChannelSummary;
   extensions: ConversationExtensions;
   parentName?: string | undefined;
+  navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const placement = useMePlacement(session);
+  const inMe = placement.ids.includes(channel.id);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState("");
+  const move = async () => {
+    if (moving || navigation?.signal.aborted) return;
+    setMoving(true);
+    setMoveError("");
+    try {
+      await session.mePlacement.set(channel.id, false);
+      if (navigation?.signal.aborted) return;
+      const target = sessionLinkTarget(
+        `buzz://channel/${channel.id}`,
+        scope,
+        session.viewer,
+      );
+      if (target) await navigator?.open(target);
+    } catch (error) {
+      if (!navigation?.signal.aborted)
+        setMoveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (!navigation?.signal.aborted) setMoving(false);
+    }
+  };
   const targetForLink = useCallback(
     (url: string) => sessionLinkTarget(url, scope, session.viewer),
     [scope, session.viewer],
@@ -260,7 +282,22 @@ function SessionWork({
       onDrop={rejectUnhandledFileDrop}
     >
       <SessionHeading channel={channel} parentName={parentName}>
-        <SessionShare session={session} channel={channel} />
+        <ChannelMembersButton session={session} channelId={channel.id} />
+        <SessionShare
+          session={session}
+          channel={channel}
+          direct
+          signal={navigation?.signal}
+          onShared={() => {
+            if (navigation?.signal.aborted) return;
+            const target = sessionLinkTarget(
+              `buzz://channel/${channel.id}`,
+              scope,
+              session.viewer,
+            );
+            if (target) void navigator?.open(target);
+          }}
+        />
         <MenuRoot>
           <MenuTrigger
             render={(props) => (
@@ -274,6 +311,12 @@ function SessionWork({
             )}
           />
           <MenuPopup aria-label="Session actions" align="end">
+            <MenuItem
+              disabled={moving || placement.status !== "ready"}
+              onClick={() => void move()}
+            >
+              {inMe ? "Move to Messages" : "Open in Messages"}
+            </MenuItem>
             <MenuItem
               disabled={
                 !!channel.readOnly || !session.channelDetails?.available
@@ -315,6 +358,18 @@ function SessionWork({
           close={() => setSettingsOpen(false)}
         />
       )}
+      {placement.status !== "ready" && (
+        <div role="status">
+          <p>{placement.error ?? "Loading Me placement…"}</p>
+          <Button onClick={() => void session.mePlacement.refresh()}>
+            Retry Me
+          </Button>
+        </div>
+      )}
+      {moveError && <p role="alert">{moveError}</p>}
+      {!inMe && placement.status === "ready" && (
+        <p role="status">This conversation is in Messages.</p>
+      )}
       <SessionColumn>
         <MessageManagementStatus />
         <div className={styles.timeline}>
@@ -348,14 +403,19 @@ function SessionWork({
         </div>
         <MessageComposer
           sessionConversation
+          personalConversation={placement.status !== "ready" || inMe}
           onSend={setSent}
           extensions={extensions}
           session={session}
           scope={scope}
           channelId={channel.id}
           channelName={channel.name}
-          label="Message this session"
-          disabled={!!channel.archived || window.status !== "ready"}
+          label="Message your agents"
+          disabled={
+            !!channel.archived ||
+            window.status !== "ready" ||
+            placement.status !== "ready"
+          }
           onOpenLink={openLink}
           canOpenLink={canOpenLink}
         />

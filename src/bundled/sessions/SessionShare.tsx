@@ -45,10 +45,24 @@ type Person = { pubkey: string; name: string; isAgent?: true };
 export function SessionShare({
   session,
   channel,
+  direct = false,
+  onShared,
+  signal,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
+  direct?: boolean;
+  onShared?: () => void;
+  signal?: AbortSignal | undefined;
 }) {
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const visible = () => mounted.current && !signal?.aborted;
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -73,7 +87,9 @@ export function SessionShare({
   const [destination, setDestination] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrivate, setNewPrivate] = useState(false);
-  const [audience, setAudience] = useState<"selected" | "everyone">("everyone");
+  const [audience, setAudience] = useState<"selected" | "everyone">(
+    direct ? "selected" : "everyone",
+  );
   const [people, setPeople] = useState<Person[]>([]);
   const [channelPeople, setChannelPeople] = useState<Person[]>([]);
   const [query, setQuery] = useState("");
@@ -101,6 +117,7 @@ export function SessionShare({
   );
   // A mounted page may remain while another entry point resumes this session's attempt.
   const saved = frozen ?? sessionShareAttempt(session, channel.id);
+  const directShare = saved ? saved.intent.destination === channel.id : direct;
   const source = list.channels.find((item) => item.id === channel.id);
   const eligible = canShareSession(session, source);
   const destinations = list.channels.filter(
@@ -152,7 +169,7 @@ export function SessionShare({
     setDestination("");
     setNewName("");
     setNewPrivate(false);
-    setAudience("everyone");
+    setAudience(direct ? "selected" : "everyone");
     setPeople([]);
     setChannelPeople([]);
     setQuery("");
@@ -329,7 +346,14 @@ export function SessionShare({
     </div>
   );
   const submit = async () => {
-    if (!eligible || busy || (!newChannel && !chosen)) return;
+    if (
+      !visible() ||
+      !eligible ||
+      busy ||
+      (!directShare && !newChannel && !chosen) ||
+      (directShare && !(saved?.intent.sessionPeople.length ?? people.length))
+    )
+      return;
     if (
       newChannel &&
       !saved &&
@@ -364,8 +388,8 @@ export function SessionShare({
       return;
     }
     const exact = beginSessionShare(session, channel.id, {
-      destination: newChannel ? "new" : destination,
-      audience,
+      destination: directShare ? channel.id : newChannel ? "new" : destination,
+      audience: directShare ? "selected" : audience,
       ...(newChannel
         ? {
             name: canonicalDetailsName(newName),
@@ -386,6 +410,10 @@ export function SessionShare({
     setError("");
     const controller = new AbortController();
     const confirmed: string[] = [];
+    // Submitted work belongs to the session, not to this page visit.
+    const progress = (text: string) => {
+      if (visible()) setProgress(text);
+    };
     exact.running = true;
     try {
       if (
@@ -402,10 +430,16 @@ export function SessionShare({
           "Add agents from their own channel or session controls instead.",
         );
       let target = exact.intent.destination;
+      if (target === channel.id) {
+        progress("Moving to Messages…");
+        await session.mePlacement.set(channel.id, false, {
+          signal: controller.signal,
+        });
+      }
       if (target === "new") {
         if (!exact.intent.name || !exact.intent.visibility)
           throw new Error("Enter a channel name.");
-        setProgress("Creating channel…");
+        progress("Creating channel…");
         target =
           exact.created ??
           (await session.channelCreation.create({
@@ -421,21 +455,21 @@ export function SessionShare({
             session.profiles.snapshot().get(key)?.isAgent
           )
             throw new Error("Add agents separately.");
-          setProgress(`Adding ${names(key)} to the new channel…`);
+          progress(`Adding ${names(key)} to the new channel…`);
           await session.memberAdditions.add(target, key, undefined, {
             startAgent: false,
           });
         }
       }
       if (exact.intent.audience === "everyone" && !exact.audienceKeys) {
-        setProgress("Checking channel members…");
+        progress("Checking channel members…");
         exact.audienceKeys = await destinationShareAudience(
           session,
           target,
           controller.signal,
         );
       }
-      setProgress("Confirming session access…");
+      progress("Confirming session access…");
       await grantSessionAccess(
         session,
         channel.id,
@@ -447,31 +481,37 @@ export function SessionShare({
         (key) => confirmed.push(key),
         exact.intent.audience === "everyone",
       );
-      setProgress("Posting session link…");
-      await publishSessionLink(
-        session,
-        channel.id,
-        target,
-        exact.messageId,
-        controller.signal,
-        (id) => {
-          exact.messageId = id;
-        },
-      );
+      if (target !== channel.id) {
+        progress("Posting session link…");
+        await publishSessionLink(
+          session,
+          channel.id,
+          target,
+          exact.messageId,
+          controller.signal,
+          (id) => {
+            exact.messageId = id;
+          },
+        );
+      }
       finishSessionShare(session, channel.id);
-      reset();
+      if (visible()) {
+        reset();
+        onShared?.();
+      }
     } catch (reason) {
+      if (!visible()) return;
       const message =
         reason instanceof Error
           ? reason.message
           : "Couldn’t share this session.";
-      setProgress("");
+      progress("");
       setError(
-        `${message}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
+        `${message}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Messages; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
       );
     } finally {
       delete exact.running;
-      setBusy(false);
+      if (visible()) setBusy(false);
     }
   };
   const popupResults = (
@@ -619,7 +659,7 @@ export function SessionShare({
           setResultsOpen(false);
           return true;
         }}
-        title="Share session"
+        title={directShare ? "Share conversation" : "Share session"}
         preventClose={busy}
         headerGap="compact"
         leadingActions={
@@ -633,7 +673,9 @@ export function SessionShare({
             disabled={
               busy ||
               !eligible ||
-              (!newChannel && !chosen) ||
+              (!directShare && !newChannel && !chosen) ||
+              (directShare &&
+                !(saved?.intent.sessionPeople.length ?? people.length)) ||
               (newChannel &&
                 !saved &&
                 (!canonicalDetailsName(newName) ||
@@ -646,30 +688,38 @@ export function SessionShare({
         }
       >
         <div className={styles.form}>
-          <Select
-            label="Share to"
-            placeholder="Choose a channel"
-            variant="field"
-            value={saved?.intent.destination ?? destination}
-            disabled={busy || !!saved}
-            groups={[
-              {
-                label: "Channels",
-                options: destinations.map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                })),
-              },
-              {
-                label: "",
-                options: [{ value: "new", label: "Create new channel…" }],
-              },
-            ]}
-            onValueChange={(value) => {
-              setDestination(value);
-              setError("");
-            }}
-          />
+          {directShare && (
+            <p>
+              This moves the same conversation to Messages. Selected people can
+              read its full history and participate.
+            </p>
+          )}
+          {!directShare && (
+            <Select
+              label="Share to"
+              placeholder="Choose a channel"
+              variant="field"
+              value={saved?.intent.destination ?? destination}
+              disabled={busy || !!saved}
+              groups={[
+                {
+                  label: "Channels",
+                  options: destinations.map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                  })),
+                },
+                {
+                  label: "",
+                  options: [{ value: "new", label: "Create new channel…" }],
+                },
+              ]}
+              onValueChange={(value) => {
+                setDestination(value);
+                setError("");
+              }}
+            />
+          )}
           {newChannel && (
             <div className={styles.newChannel}>
               <ChannelTextField
@@ -696,16 +746,18 @@ export function SessionShare({
               {searchControl("channel", "Find people to add to new channel")}
             </div>
           )}
-          <Field label="Who has session access">
-            <RadioGroup
-              value={saved?.intent.audience ?? audience}
-              disabled={busy || !!saved}
-              onValueChange={setAudience}
-            >
-              <Radio value="everyone" label="Everyone in this channel" />
-              <Radio value="selected" label="Selected people" />
-            </RadioGroup>
-          </Field>
+          {!directShare && (
+            <Field label="Who has session access">
+              <RadioGroup
+                value={saved?.intent.audience ?? audience}
+                disabled={busy || !!saved}
+                onValueChange={setAudience}
+              >
+                <Radio value="everyone" label="Everyone in this channel" />
+                <Radio value="selected" label="Selected people" />
+              </RadioGroup>
+            </Field>
+          )}
           <div className={styles.audienceRow}>
             {chosenAudience === "everyone" ? (
               <p className={`${styles.selection} text-body-sm text-subtle`}>

@@ -11,6 +11,8 @@ import {
 
 /** Private, community-scoped recipes. Never an OG channel-sections writer. */
 export const KIT_TAG = "buzz-channel-kit-v1";
+/** Separate discovery prevents older clients from rejecting the whole catalog. */
+export const ME_KIT_TAG = "buzz-me-kit-v1";
 export const KIT_RECORD_BYTES = 16 * 1024;
 export const CANVAS_BYTES = 24 * 1024;
 export type Lineup = { teamIds: string[]; agents: string[]; canvas: string };
@@ -30,9 +32,11 @@ export type Template = Lineup & {
 export type Group = { id: string; name: string; defaultTemplateId: string };
 export type Groups = {
   type: "groups";
-  id: "personal";
+  id: "personal" | "me";
   groups: Group[];
   assignments: Record<string, string>;
+  /** Me placement is independent of group membership. Never used by Messages groups. */
+  channels?: string[];
 };
 export type KitValue = Team | Template | Groups;
 export type PayloadRecord = {
@@ -130,7 +134,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       description: text(v.description, 1000),
       ...parseLineup(v),
     };
-  else if (v.type === "groups" && v.id === "personal") {
+  else if (v.type === "groups" && (v.id === "personal" || v.id === "me")) {
     if (!Array.isArray(v.groups) || v.groups.length > 100)
       throw new Error("Too many personal groups");
     const groups = v.groups.map((raw) => {
@@ -154,11 +158,22 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       )
     )
       throw new Error("Invalid personal group placement");
+    if (v.id === "personal" && v.channels !== undefined)
+      throw new Error("Messages groups cannot contain Me placement");
     value = {
       type: "groups",
-      id: "personal",
+      id: v.id,
       groups,
       assignments: Object.fromEntries(assignments) as Record<string, string>,
+      ...(v.id === "me"
+        ? {
+            channels: keys(
+              v.channels ?? [],
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+              1000,
+            ),
+          }
+        : {}),
     };
   } else throw new Error("Unsupported channel recipe type");
   if (
@@ -183,6 +198,12 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
   return result;
 }
 export function kitTag(record: KitRecord) {
+  if (
+    (record.value.type === "groups" && record.value.id === "me") ||
+    (record.value.type === "template" &&
+      record.value.id.startsWith("me-section-"))
+  )
+    return ME_KIT_TAG;
   return record.version === 2 ? TEAM_MANIFEST_TAG : KIT_TAG;
 }
 export function coordinate(record: KitRecord) {

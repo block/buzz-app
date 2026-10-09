@@ -1,5 +1,11 @@
 # Sharing a live session — engineering handoff
 
+**Takeover direction:** [Me and Messages: channel spaces](spaces.md) defines the
+new target. The destination-link sharing described below is historical implemented
+behavior, not same-channel promotion between spaces. Integration notes that say
+#754 is unmerged describe the original branch; the takeover worktree now includes
+that main-line work. No new validation is implied by that integration.
+
 **Status:** Implemented on `tulsi/sessionsharing`, ready for human product feedback; not a claim of native, live-relay or packaged acceptance. This is an ordinary private session channel shared into an existing or newly created destination channel. It is **the same live transcript and composer**, not a snapshot, copy, parent assignment or new protocol.
 
 ## Current behavior

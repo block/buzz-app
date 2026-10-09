@@ -1,3 +1,5 @@
+import { pendingSessionDraft } from "../../features/sessions/pending-start";
+import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import type { AgentControl } from "../../features/agents/control";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -89,7 +91,7 @@ import {
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -452,6 +454,10 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  const pendingStart = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => (currentId ? pendingSessionDraft(scope, currentId) : undefined),
+  );
   const canvasOpen =
     !!canvasOrigin &&
     canvasOrigin.channelId === currentId &&
@@ -1512,9 +1518,25 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : pendingStart && currentId ? (
+            <NewSessionComposer
+              key={pendingStart}
+              personal={pendingStart === "me" || pendingStart.startsWith("me:")}
+              standalone
+              resumeDraftKey={pendingStart}
+              sectionId={
+                pendingStart.includes(":section:")
+                  ? pendingStart.split(":section:")[1]
+                  : undefined
+              }
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onStarted={select}
+            />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new sessions from Sessions. Channel-nested sessions are no
+              Start new conversations from Me. Channel-nested sessions are no
               longer available.
             </p>
           ) : (

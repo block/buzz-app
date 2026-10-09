@@ -486,3 +486,53 @@ it("creates one channel, separately adds its chosen people, grants the session a
   expect(t.published.map((item) => item.kind)).toEqual([9007, 9000, 9000, 9]);
   expect(t.published.filter((item) => item.kind === 9007)).toHaveLength(1);
 });
+
+it.each(["abort", "unmount"] as const)(
+  "keeps submitted sharing durable without stale completion after %s",
+  async (leave) => {
+    const t = fixture();
+    await t.ready();
+    const user = userEvent.setup();
+    const signal = new AbortController();
+    const shared = vi.fn();
+    const initial = t.channel();
+    if (!initial) throw new Error("Missing channel");
+    const view = render(
+      <SessionShare
+        session={t.session}
+        channel={initial}
+        signal={signal.signal}
+        onShared={shared}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = screen.getByRole("dialog", { name: "Share session" });
+    await chooseDestination(user, dialog);
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    const held = { promise, resolve, reject };
+    t.holdLink(held.promise);
+    try {
+      await user.click(within(dialog).getByRole("button", { name: "Share" }));
+      await waitFor(() =>
+        expect(t.publish.mock.calls.some(([event]) => event.kind === 9)).toBe(
+          true,
+        ),
+      );
+      if (leave === "abort") signal.abort();
+      else view.unmount();
+      held.resolve();
+      await waitFor(() =>
+        expect(sessionShareAttempt(t.session, source)).toBeUndefined(),
+      );
+      expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
+      expect(shared).not.toHaveBeenCalled();
+    } finally {
+      held.resolve();
+    }
+  },
+);

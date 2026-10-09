@@ -10,6 +10,8 @@ struct Source {
     revision: String,
     tools: Vec<String>,
     goose: GooseSource,
+    #[serde(rename = "gooseDevProfile")]
+    goose_dev_profile: String,
 }
 #[derive(Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -61,10 +63,17 @@ impl RuntimeBundle {
         let source: Source =
             serde_json::from_str(include_str!("../../../runtime/agent-runtime.json"))
                 .map_err(|_| "Runtime source specification is invalid")?;
+        // `just desktop` stages Goose's fast dev profile; packaging stages the pin's.
+        let goose = manifest.goose == source.goose
+            || manifest.goose
+                == GooseSource {
+                    profile: source.goose_dev_profile,
+                    ..source.goose
+                };
         if manifest.version != 3
             || manifest.patch_sha256 != community_patch_sha256()
             || manifest.revision != source.revision
-            || manifest.goose != source.goose
+            || !goose
             || manifest.target != env!("BUZZ_RUNTIME_TARGET")
             || manifest.files.len() != source.tools.len()
         {

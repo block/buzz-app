@@ -94,6 +94,28 @@ impl Secret {
             ],
         )
     }
+    /// A plain signed event; callers bound the kind and size. A channel event
+    /// (one with an `h` tag) gets the `ms` tag the app's own outbox adds, read
+    /// from the same clock as `created_at`, so the timeline orders it by
+    /// millisecond instead of placing it at the start of its second.
+    pub(crate) fn signed(
+        &self,
+        kind: u16,
+        content: String,
+        mut tags: Vec<Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?;
+        tags.retain(|tag| tag.first().map(String::as_str) != Some("ms"));
+        if tags
+            .iter()
+            .any(|tag| tag.first().map(String::as_str) == Some("h"))
+        {
+            tags.push(vec!["ms".into(), now.subsec_millis().to_string()]);
+        }
+        self.sign_event_at(kind, content, tags, now.as_secs())
+    }
     fn sign_event(
         &self,
         kind: u16,
@@ -102,7 +124,7 @@ impl Secret {
     ) -> Result<serde_json::Value> {
         self.sign_event_after(kind, content, tags, None)
     }
-    fn sign_event_after(
+    pub(crate) fn sign_event_after(
         &self,
         kind: u16,
         content: String,

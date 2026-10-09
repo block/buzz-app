@@ -67,6 +67,7 @@ import {
   signReadState,
   READ_STATE_DECODE_BYTES,
 } from "./read-state.mjs";
+import { READ_STATE_TIMESTAMP_REFUSAL } from "../src/features/relay/read-state-host.ts";
 import { READ_STATE_EVENT_BYTES } from "../src/features/relay/read-state-model.ts";
 import {
   isReadSnapshotFilter,
@@ -80,6 +81,8 @@ import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
+  assertSidebarSectionRemovalIntent,
+  mutateSidebarSectionRemoval,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_HEAD_BYTES,
@@ -1097,6 +1100,7 @@ export function relayBrokerPlugin({
           if (
             [
               "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-mute",
@@ -1104,6 +1108,11 @@ export function relayBrokerPlugin({
             req.method === "POST"
           ) {
             const [coordinate, assertIntent, mutate] = {
+              "/api/relay/sidebar-section-removal": [
+                "channel-sections",
+                assertSidebarSectionRemovalIntent,
+                mutateSidebarSectionRemoval,
+              ],
               "/api/relay/sidebar-assignment": [
                 "channel-sections",
                 assertSidebarAssignmentIntent,
@@ -1369,6 +1378,7 @@ export function relayBrokerPlugin({
               channelKit: true,
               readState: true,
               sidebarPreferenceWrites: true,
+              sidebarSectionRemoval: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,
@@ -2601,7 +2611,9 @@ export function relayBrokerPlugin({
               return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&
-                  failure.refusal?.startsWith("rate-limited:")
+                  (failure.refusal?.startsWith("rate-limited:") ||
+                    (readPublishing &&
+                      failure.refusal === READ_STATE_TIMESTAMP_REFUSAL))
                     ? failure.refusal
                     : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent

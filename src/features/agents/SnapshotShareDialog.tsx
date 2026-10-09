@@ -355,6 +355,7 @@ function ShareContents({
           <div className="min-w-0 flex-1">
             <RecipientPicker
               session={session}
+              scope={session.scope}
               selected={recipients}
               initiallyOpen={false}
               disabled={locked || send.phase === "done"}

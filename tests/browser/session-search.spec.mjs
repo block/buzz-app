@@ -9,7 +9,7 @@ test.use({
 });
 
 // Native details toggle events and hidden descendants need real browser coverage.
-test("global search opens a child session without changing collapsed sidebar levels", async ({
+test("global search opens a legacy session without restoring nested sidebar rows", async ({
   page,
   app,
 }) => {
@@ -23,10 +23,6 @@ test("global search opens a child session without changing collapsed sidebar lev
     .filter({ has: parentRow });
   const disclosure = section.locator("details");
   await expect(child).toBeVisible();
-  await sidebar
-    .getByRole("button", { name: `Collapse sessions in ${parent}` })
-    .click();
-  await expect(child).toBeHidden();
   await section.locator("summary").click();
   await expect(disclosure).not.toHaveAttribute("open");
 
@@ -59,9 +55,9 @@ test("global search opens a child session without changing collapsed sidebar lev
   await section.locator("summary").focus();
   await page.keyboard.press("Enter");
   await expect(
-    sidebar.getByRole("button", { name: `Expand sessions in ${parent}` }),
-  ).toBeVisible();
-  await expect(child).toBeHidden();
+    sidebar.getByRole("button", { name: /sessions in/ }),
+  ).toHaveCount(0);
+  await expect(child).toBeVisible();
   await page.keyboard.press("Space");
   await expect(disclosure).not.toHaveAttribute("open");
 });

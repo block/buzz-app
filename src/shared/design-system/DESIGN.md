@@ -631,7 +631,10 @@ Sonner is the toast behavior owner; other matching controls use Base UI. ToastNo
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline.
+blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
+keep it in the conversation flow immediately above the composer, with bounded
+overflow, so Send and companion-panel controls remain usable. Its retry policy
+and diagnostics belong to Channels; it does not enter the floating toast stack.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite

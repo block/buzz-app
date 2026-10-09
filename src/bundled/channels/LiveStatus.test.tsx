@@ -1,18 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
-  act,
   cleanup,
   fireEvent,
   render as mount,
   screen,
 } from "@testing-library/react";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
-beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
 });
 import { renderToStaticMarkup } from "react-dom/server";
 import type { RelaySession } from "../../features/relay/session";
@@ -31,7 +27,7 @@ const base: Snapshot = {
   roster: { state: "verified" },
   heads: [],
 };
-async function render(
+function render(
   patch: Partial<Snapshot> = {},
   partialRoster = false,
   diagnostics = false,
@@ -52,9 +48,8 @@ async function render(
   );
   if (diagnostics) return renderToStaticMarkup(component);
   cleanup();
-  mount(component, { wrapper: ToastProvider });
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  return document.querySelector(".buzz-toast")?.textContent ?? "";
+  mount(component);
+  return screen.queryByRole("status")?.textContent ?? "";
 }
 it.each<Partial<Snapshot>>([
   {},
@@ -229,7 +224,7 @@ it("diagnostics does not duplicate notices; changing the selected channel/sessio
     channelId: string,
     visible = true,
   ) => (
-    <ToastProvider>
+    <>
       {visible && (
         <>
           <LiveStatus
@@ -245,18 +240,15 @@ it("diagnostics does not duplicate notices; changing the selected channel/sessio
           />
         </>
       )}
-    </ToastProvider>
+    </>
   );
   const view = mount(content(oldSession, "a"));
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(screen.getAllByRole("status")).toHaveLength(1);
   view.rerender(content(newSession, "b"));
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(screen.getAllByRole("status")).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry live updates" }));
   expect(retry).toHaveBeenCalledOnce();
   expect(oldRetry).not.toHaveBeenCalled();
   view.rerender(content(newSession, "b", false));
-  await act(() => vi.runOnlyPendingTimersAsync());
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

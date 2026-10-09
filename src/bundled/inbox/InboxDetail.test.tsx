@@ -858,3 +858,26 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([false, true])(
+  "preserves channel forced-unread intent across Inbox open and close (left channel: %s)",
+  async (leftChannel) => {
+    const h = await fixture(true);
+    if (!h.reply) throw new Error("Missing owned reply");
+    await h.session.unread.enterChannel("room");
+    await h.session.unread.markMessageUnread("room", h.reply.id);
+    if (leftChannel) h.session.unread.leaveChannel("room");
+    const force = h.journal()?.localUnread["message-force:room"];
+    expect(force).toBeDefined();
+    const { editor } = await opened(h);
+    act(() => screen.getByRole("combobox", { name: "Sender" }).focus());
+    expect(h.journal()?.localUnread["message-force:room"]).toBe(force);
+    fireEvent.keyDown(screen.getByRole("region", { name: "Inbox detail" }), {
+      key: "Escape",
+    });
+    expect(editor).not.toBeInTheDocument();
+    expect(h.journal()?.localUnread["message-force:room"]).toBe(force);
+    if (!leftChannel)
+      expect(h.session.unread.attention("room", h.reply.id).forced).toBe(true);
+  },
+);

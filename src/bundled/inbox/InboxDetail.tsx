@@ -249,7 +249,11 @@ export function InboxDetail({
               // The flex class must not override native hidden presentation.
               style={previewIncomplete ? { display: "none" } : undefined}
             >
-              <MessageManagement session={session} channelId={item.channelId}>
+              <MessageManagement
+                session={session}
+                channelId={item.channelId}
+                active={false}
+              >
                 <MessageManagementStatus />
                 {item.target.kind === "channel" ? (
                   <ChannelPreview

@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "plugin:codex": "vite build --config vite.codex.config.ts",
     "dev": "vite",
     "dev:desktop": "vite --strictPort",
     "build": "pnpm typecheck && vite build",

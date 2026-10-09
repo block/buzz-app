@@ -1,7 +1,7 @@
 // Claude Code agents: an Agents2 type whose agents are Claude Code sessions on
 // this computer. Each conversation the agent is in is one continuing session;
-// Claude answers with the bundled `buzz` CLI, as a harness agent does. Built as
-// an installable plugin with `pnpm plugin:claude-code`.
+// Claude answers with the in-process Buzz tools. Built as an installable plugin
+// with `pnpm plugin:claude-code`.
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";

@@ -32,7 +32,7 @@ export function systemPrompt(
     input.memory === null
       ? section(
           "core-memory",
-          'No core memory found. Use `buzz mem set core "…"` to create one (it will hold your identity, rules, and goals across sessions). Ask your user about yourself.',
+          "No core memory found. Use `mem_set` with slug `core` to create one (it will hold your identity, rules, and goals across sessions). Ask your user about yourself.",
         )
       : input.memory?.trim()
         ? section("core-memory", input.memory)
@@ -77,12 +77,22 @@ export function turnPrompt(input: TurnInput) {
   const channelLabel = channel.name
     ? `${channel.name} (#${channel.id})`
     : channel.id;
-  const reply = thread
-    ? `IMPORTANT: For ordinary replies in this turn, use \`--reply-to ${event.id}\` on \`buzz messages send\` so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, send that message without \`--reply-to\`. If the requested destination is ambiguous, ask before sending.`
-    : `IMPORTANT: This is a new top-level message. For ordinary replies in this turn, use \`--reply-to ${event.id}\` on \`buzz messages send\` — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, send that message without \`--reply-to\`.`;
-  const fetch = thread
-    ? "Use `buzz messages thread --channel <UUID> --event <ID>` for full history if truncated."
-    : "Use `buzz messages get --channel <UUID>` for recent messages if needed.";
+  // A session shared by a channel's threads (or a DM's) cannot tell which
+  // thread a reply is for, so it names the thread itself.
+  const root = thread?.rootId ?? event.id;
+  const shared = channel.dm || input.scope === "channel";
+  const reply = shared
+    ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, leave out \`reply\`.`
+    : thread
+      ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
+      : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
+  const fetch = shared
+    ? thread
+      ? `Use \`read\` with \`thread: "${root}"\` for full history if truncated.`
+      : "Use `read` for recent messages if needed."
+    : thread
+      ? "Use `read` for full history if truncated."
+      : "Use `read` with `channel` for recent messages if needed.";
   const context = input.context.slice(-CONTEXT_LIMIT);
   const hint = context.length
     ? `Thread context included below. ${fetch}`

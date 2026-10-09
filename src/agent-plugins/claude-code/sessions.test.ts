@@ -37,7 +37,6 @@ function sessions(
     spawn: fake.spawn,
     store,
     launch: async () => ({
-      agent: "a".repeat(64),
       cwd: "/work",
       systemPrompt: "prompt",
       model,

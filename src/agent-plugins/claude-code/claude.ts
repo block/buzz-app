@@ -1,7 +1,9 @@
 // One `claude` process driven over its stream-json protocol: the protocol the
 // Claude Agent SDK speaks to the same binary, so no Node runtime is needed. The
 // process stays alive between turns; messages sent while it works are folded
-// into the running turn at its next tool call.
+// into the running turn at its next tool call. Buzz tools are served over the
+// same pipe, as the SDK serves an in-process MCP server, so the process holds
+// no Buzz key.
 import type {
   HostProcess,
   HostProcessOptions,
@@ -13,8 +15,6 @@ export type Spawn = (
 ) => Promise<HostProcess>;
 
 export type ClaudeLaunch = Readonly<{
-  /** Agent pubkey the process acts as. */
-  agent: string;
   cwd: string;
   /** Appended to Claude Code's own system prompt. */
   systemPrompt: string;
@@ -23,7 +23,19 @@ export type ClaudeLaunch = Readonly<{
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
   sessionId?: string;
+  /** The in-process MCP server's tools. */
+  tools?: ToolServer;
 }>;
+
+/** Answers the in-process server's JSON-RPC for the conversation a process
+ * serves. A call of `send` with `final: true` ends the turn when it succeeds. */
+export type ToolServer = (
+  conversation: string | undefined,
+  message: unknown,
+) => Promise<unknown>;
+/** Its tools are `mcp__buzz__<name>`. */
+export const TOOL_SERVER = "buzz";
+const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
@@ -58,6 +70,8 @@ export const ENV: Readonly<Record<string, string | null>> = {
 export class ClaudeProcess {
   /** Its session, known once the first turn starts (or at once when resuming). */
   sessionId: string | undefined;
+  /** The conversation it serves, set when a spare is put to use. */
+  conversation: string | undefined;
   /** Messages sent and not yet answered. */
   private pending = 0;
   /** It has begun a turn, so its session loaded. */
@@ -75,6 +89,7 @@ export class ClaudeProcess {
   private constructor(
     private readonly process: HostProcess,
     resume: string | undefined,
+    private readonly tools: ToolServer | undefined,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
@@ -106,21 +121,49 @@ export class ClaudeProcess {
         ...(!launch.resume && launch.sessionId
           ? ["--session-id", launch.sessionId]
           : []),
+        ...(launch.tools
+          ? [
+              "--mcp-config",
+              JSON.stringify({
+                mcpServers: {
+                  // Listed up front, so Claude need not search for them first.
+                  [TOOL_SERVER]: {
+                    type: "sdk",
+                    name: TOOL_SERVER,
+                    alwaysLoad: true,
+                  },
+                },
+              }),
+            ]
+          : []),
       ],
       cwd: launch.cwd,
-      agent: launch.agent,
       env: ENV,
       onStdout: (data) => (claude ? claude.read(data) : early.push(data)),
       onStderr: (data) =>
         claude ? claude.readError(data) : earlyErrors.push(data),
     });
-    claude = new ClaudeProcess(process, launch.resume ?? launch.sessionId);
+    claude = new ClaudeProcess(
+      process,
+      launch.resume ?? launch.sessionId,
+      launch.tools,
+    );
     for (const data of earlyErrors) claude.readError(data);
     for (const data of early) claude.read(data);
     // Loads settings, tools and MCP servers now rather than on the first message.
     await claude.request({
       subtype: "initialize",
       appendSystemPrompt: launch.systemPrompt,
+      ...(launch.tools
+        ? {
+            sdkMcpServers: [TOOL_SERVER],
+            hooks: {
+              PostToolUse: [
+                { matcher: FINAL_TOOL, hookCallbackIds: ["final"] },
+              ],
+            },
+          }
+        : {}),
     });
     return claude;
   }
@@ -231,27 +274,55 @@ export class ClaudeProcess {
     const error = this.lastError;
     this.settle(error ? { ok: false, error } : { ok: true });
   }
-  /** Answers what Claude Code asks its host. Permissions are bypassed, so this
-   * only keeps an unexpected request from stalling the turn. */
-  private answer(message: Message) {
+  /** Answers what Claude Code asks its host: calls to the Buzz tools, the
+   * hook after `send`, and, since permissions are bypassed, anything else only
+   * so an unexpected request does not stall the turn. */
+  private async answer(message: Message) {
     const id = message.request_id;
     const request = (message.request ?? {}) as Message;
-    const response =
-      request.subtype === "can_use_tool"
-        ? {
-            subtype: "success",
-            request_id: id,
-            response: { behavior: "allow", updatedInput: request.input ?? {} },
-          }
-        : request.subtype === "hook_callback"
-          ? { subtype: "success", request_id: id, response: {} }
-          : {
-              subtype: "error",
-              request_id: id,
-              error: `Buzz does not handle ${String(request.subtype)}`,
-            };
+    const success = (response: unknown) => ({
+      subtype: "success",
+      request_id: id,
+      response,
+    });
+    let response: Message;
+    if (request.subtype === "mcp_message" && this.tools)
+      response = success({
+        mcp_response: await this.tools(
+          this.conversation,
+          request.message,
+        ).catch((error) => ({
+          jsonrpc: "2.0",
+          id: (request.message as Message | undefined)?.id ?? 0,
+          error: { code: -32603, message: String(error?.message ?? error) },
+        })),
+      });
+    else if (request.subtype === "can_use_tool")
+      response = success({
+        behavior: "allow",
+        updatedInput: request.input ?? {},
+      });
+    else if (request.subtype === "hook_callback")
+      response = success(this.final(request.input) ? { continue: false } : {});
+    else
+      response = {
+        subtype: "error",
+        request_id: id,
+        error: `Buzz does not handle ${String(request.subtype)}`,
+      };
     return this.write({ type: "control_response", response }).catch(
       () => undefined,
+    );
+  }
+  /** A `send` marked final succeeded (a failed call runs no PostToolUse
+   * hook), so the turn can end without a closing model call. Not when another
+   * message came in meanwhile: that one still needs an answer. */
+  private final(input: unknown) {
+    const { tool_name, tool_input } = (input ?? {}) as Message;
+    return (
+      tool_name === FINAL_TOOL &&
+      (tool_input as Message | undefined)?.final === true &&
+      this.pending === 1
     );
   }
 }

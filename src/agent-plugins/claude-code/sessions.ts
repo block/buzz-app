@@ -194,6 +194,7 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     this.evict();
+    live.process.conversation = key;
     this.live.set(key, live);
     this.touch(key, live, seen);
     this.options.onChange?.();

@@ -10,7 +10,7 @@
         "program": "bash",
         "args": ["-c", "curl -fsSL https://claude.ai/install.sh | bash"]
       },
-      { "id": "buzz", "program": "buzz" }
+      { "id": "read", "program": "base64", "args": ["-i"] }
     ]
   }
 }

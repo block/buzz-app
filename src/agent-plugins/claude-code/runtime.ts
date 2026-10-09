@@ -1,9 +1,11 @@
 // Turns Agents2 deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation. The run returns once the turn is handed over,
-// so one agent works in several conversations at once. Claude answers with the
-// `buzz` CLI, as a harness agent does; the runtime only marks the message 👀
-// while it works and reports a turn that fails.
+// so one agent works in several conversations at once. Claude acts in Buzz with
+// the in-process Buzz tools, signed by the agent's native-held key; the runtime
+// only reports a turn that fails.
+import type { Context, Memory } from "../../buzz-mcp/client";
+import { respond } from "../../buzz-mcp/rpc";
 import type {
   Agent,
   AgentHandle,
@@ -13,7 +15,8 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Spawn } from "./claude";
+import type { Spawn, ToolServer } from "./claude";
+import { appClient } from "./client";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -58,10 +61,15 @@ type Entry = {
   sessions: AgentSessions;
   config: Config;
   memory?: { value: string | null | undefined; at: number };
+  /** The agent's handle from its latest delivery, for the tools to act with. */
+  handle?: AgentHandle;
+  /** Where each conversation's tools default to: its latest turn's thread. */
+  contexts: Map<string, Context>;
 };
 
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
+  private readonly reading = new Map<string, Promise<readonly Memory[]>>();
   private readonly listeners = new Set<() => void>();
   /** Each agent's last session list, kept until something changes so a view
    * reading it gets the same array back. */
@@ -140,6 +148,7 @@ export class ClaudeRuntime {
     )
       return;
     const entry = this.entry(agent.pubkey, settings);
+    entry.handle = agent;
     if (trigger.type === "timer") {
       const done = entry.sessions.deliver(
         `timer/${trigger.slug}`,
@@ -173,35 +182,20 @@ export class ClaudeRuntime {
       };
     };
     const { key, text } = await prompt(false);
-    const reaction = agent
-      .publish({
-        kind: 7,
-        content: "👀",
-        tags: [
-          ["h", channel],
-          ["e", event.id],
-        ],
-      })
-      .catch(() => undefined);
+    // A conversation's tools default to its thread; a session shared by
+    // several threads is told which to reply in instead.
+    entry.contexts.set(
+      key,
+      key === channel
+        ? { channel }
+        : { channel, root: threadReference(event)?.rootId ?? event.id },
+    );
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
     });
     this.notify();
     this.watch(done, async (error) => {
-      const marked = await reaction;
-      if (marked)
-        await agent
-          .publish({
-            kind: 5,
-            content: "",
-            tags: [
-              ["h", channel],
-              ["e", marked.id],
-              ["k", "7"],
-            ],
-          })
-          .catch(() => undefined);
       if (error) await this.report(agent, channel, event, error);
     });
   }
@@ -327,6 +321,25 @@ export class ClaudeRuntime {
     const entry: Entry = {
       config: initial,
       sessions: undefined as unknown as AgentSessions,
+      contexts: new Map(),
+    };
+    const tools: ToolServer = async (conversation, message) => {
+      // A spare starts before any delivery: it can list the tools, and has a
+      // handle to call them with by the time it is given a turn.
+      const handle = entry.handle;
+      const client = handle && {
+        ...appClient(handle, {
+          spawn: this.spawn,
+          cwd: entry.config.workspace,
+          memories: () => this.memories(pubkey),
+        }),
+        remember: async (slug: string, body: string, after: number) => {
+          await handle.remember(slug, body, after);
+          if (slug === "core") delete entry.memory;
+        },
+      };
+      const context = (conversation && entry.contexts.get(conversation)) || {};
+      return respond(client, context, message);
     };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -343,8 +356,8 @@ export class ClaudeRuntime {
         const { model, workspace, instructions, scope } = entry.config;
         const memory = await this.memory(pubkey, entry);
         return {
-          agent: pubkey,
           cwd: workspace,
+          tools,
           ...(model.trim() ? { model: model.trim() } : {}),
           systemPrompt: systemPrompt({
             scope,
@@ -364,29 +377,57 @@ export class ClaudeRuntime {
   private async memory(pubkey: string, entry: Entry) {
     if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
       return entry.memory.value;
-    let stdout = "";
-    let stderr = "";
     let value: string | null | undefined;
     try {
-      const process = await this.spawn("buzz", {
-        args: ["mem", "get", "core"],
-        agent: pubkey,
-        onStdout: (data) => {
-          stdout += data;
-        },
-        onStderr: (data) => {
-          stderr += data;
-        },
-      });
-      const timer = setTimeout(() => void process.kill(), MEMORY_TIMEOUT_MS);
-      const code = await process.exited;
-      clearTimeout(timer);
-      value =
-        code === 0 ? stdout : /not found/i.test(stderr) ? null : undefined;
+      const memories = await this.memories(pubkey);
+      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
     } catch (error) {
       console.warn("Claude Code could not read the agent's memory", error);
     }
     entry.memory = { value, at: Date.now() };
     return value;
+  }
+
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private memories(pubkey: string): Promise<readonly Memory[]> {
+    // The owner's session holds few memory views at once, so calls share one.
+    let reading = this.reading.get(pubkey);
+    if (!reading) {
+      reading = this.readMemories(pubkey).finally(() =>
+        this.reading.delete(pubkey),
+      );
+      this.reading.set(pubkey, reading);
+    }
+    return reading;
+  }
+  private async readMemories(pubkey: string): Promise<readonly Memory[]> {
+    const snapshot = this.relay.snapshot();
+    if (snapshot.status !== "ready") throw new Error("Buzz is not connected");
+    const view = snapshot.session.agentMemories.open(pubkey);
+    try {
+      const done = new Promise<void>((resolve) => {
+        const settled = () =>
+          !["idle", "loading"].includes(view.snapshot().status) && resolve();
+        view.subscribe(settled);
+        settled();
+      });
+      void view.refresh();
+      await Promise.race([
+        done,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Memory read timed out")),
+            MEMORY_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      const { status, listing } = view.snapshot();
+      if (status !== "ready" || !listing)
+        throw new Error(`Memory unavailable (${status})`);
+      return listing.entries;
+    } finally {
+      view.dispose();
+    }
   }
 }

@@ -1,9 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { ClaudeProcess } from "./claude";
 import { fakeSpawn, flush } from "./claude-testing";
 
 const launch = {
-  agent: "a".repeat(64),
   cwd: "~/.buzz",
   systemPrompt: "<base>be useful</base>",
 };
@@ -31,7 +30,6 @@ it("starts Claude Code as the SDK does and initializes it with the system prompt
   ]);
   expect(fake?.options).toMatchObject({
     cwd: "~/.buzz",
-    agent: launch.agent,
     env: {
       CLAUDECODE: null,
       CLAUDE_CODE_SESSION_ID: null,
@@ -168,6 +166,85 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
       subtype: "error",
       request_id: "r3",
       error: "Buzz does not handle mcp_message",
+    },
+  ]);
+});
+
+it("serves the Buzz tools over the pipe and ends a turn on a final send", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const tools = vi.fn(async (_conversation: unknown, message: unknown) => ({
+    jsonrpc: "2.0",
+    id: (message as { id: number }).id,
+    result: { content: [{ type: "text", text: "sent" }] },
+  }));
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    tools,
+  });
+  claude.conversation = "chan/root";
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  const config =
+    fake.options.args?.[fake.options.args.indexOf("--mcp-config") + 1];
+  expect(JSON.parse(config ?? "{}")).toEqual({
+    mcpServers: { buzz: { type: "sdk", name: "buzz", alwaysLoad: true } },
+  });
+  expect(fake.received[0]).toMatchObject({
+    request: {
+      sdkMcpServers: ["buzz"],
+      hooks: {
+        PostToolUse: [
+          { matcher: "mcp__buzz__send", hookCallbackIds: ["final"] },
+        ],
+      },
+    },
+  });
+  fake.hold = true;
+  void claude.send("hi");
+  const call = { jsonrpc: "2.0", id: 3, method: "tools/call" };
+  fake.emit({
+    type: "control_request",
+    request_id: "r1",
+    request: { subtype: "mcp_message", server_name: "buzz", message: call },
+  });
+  const hook = (final: boolean) => ({
+    type: "control_request",
+    request_id: `final-${final}`,
+    request: {
+      subtype: "hook_callback",
+      callback_id: "final",
+      input: {
+        tool_name: "mcp__buzz__send",
+        tool_input: { text: "done", final },
+        tool_response: [{ type: "text", text: "sent" }],
+      },
+    },
+  });
+  fake.emit(hook(false));
+  fake.emit(hook(true));
+  await flush();
+  expect(tools).toHaveBeenCalledWith("chan/root", call);
+  const responses = fake.received
+    .filter((message) => message.type === "control_response")
+    .map((message) => message.response);
+  expect(responses).toEqual([
+    { subtype: "success", request_id: "final-false", response: {} },
+    {
+      subtype: "success",
+      request_id: "final-true",
+      response: { continue: false },
+    },
+    {
+      subtype: "success",
+      request_id: "r1",
+      response: {
+        mcp_response: {
+          jsonrpc: "2.0",
+          id: 3,
+          result: { content: [{ type: "text", text: "sent" }] },
+        },
+      },
     },
   ]);
 });

@@ -67,20 +67,30 @@ function setup(thread: readonly EventData[] = []) {
       ...template,
     };
   });
+  const query = vi.fn(async () => [] as RelayEvent[]);
+  const agent = {
+    pubkey: self,
+    name: "Claude",
+    owner: alice,
+    publish,
+    query,
+    upload: vi.fn(),
+    remember: vi.fn(),
+  };
   const deliver = (trigger: Delivery["trigger"]) =>
     runtime.run({
       trigger,
       channelId: channel,
-      agent: { pubkey: self, name: "Claude", owner: alice, publish },
+      agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
     } as Delivery);
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
-  return { runtime, deliver, published, claudes, fake, read, data };
+  return { runtime, deliver, published, claudes, fake, read, data, agent };
 }
 
-it("hands a mention to its thread's session, marked 👀 until Claude has answered", async () => {
+it("hands a mention to its thread's session", async () => {
   const root = message("1", "Build is red");
   const mention = message("2", "@Claude can you look?", {
     created_at: 110,
@@ -101,23 +111,60 @@ it("hands a mention to its thread's session, marked 👀 until Claude has answer
     `Alice (${alice}) (1970-01-01T00:01:40.000Z): Build is red`,
   );
   expect(prompt).toContain("Content: @Claude can you look?");
-  expect(claude?.options.agent).toBe(self);
+  // The process holds no key: it acts through the tools.
+  expect(claude?.options).not.toHaveProperty("agent");
+  expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
-  expect(published[0]).toEqual({
-    kind: 7,
-    content: "👀",
+  expect(published).toEqual([]);
+});
+
+it("answers Claude's tool calls as the agent, in the thread it is working in", async () => {
+  const root = message("1", "Build is red");
+  const mention = message("2", "@Claude can you look?", {
+    created_at: 110,
     tags: [
       ["h", channel],
-      ["e", mention.id],
+      ["e", root.id, "", "reply"],
+      ["p", self],
     ],
   });
-  expect(published[1]).toMatchObject({
-    kind: 5,
-    tags: [
-      ["h", channel],
-      ["e", expect.any(String)],
-      ["k", "7"],
-    ],
+  const { deliver, published, claudes } = setup([root, mention]);
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  claude?.emit({
+    type: "control_request",
+    request_id: "call-1",
+    request: {
+      subtype: "mcp_message",
+      server_name: "buzz",
+      message: {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "send", arguments: { text: "Looking now" } },
+      },
+    },
+  });
+  await flush(10);
+  expect(published).toEqual([
+    {
+      kind: 9,
+      content: "Looking now",
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    },
+  ]);
+  const answer = claude?.received.find(
+    (message) =>
+      message.type === "control_response" &&
+      (message.response as { request_id?: string }).request_id === "call-1",
+  );
+  expect(answer?.response).toMatchObject({
+    subtype: "success",
+    response: { mcp_response: { jsonrpc: "2.0", id: 7, result: {} } },
   });
 });
 
@@ -219,7 +266,7 @@ it("acts only on its owner's messages unless told to answer anyone", async () =>
       ["p", self],
     ],
   });
-  const { deliver, published, claudes, runtime } = setup();
+  const { deliver, published, claudes, runtime, agent } = setup();
   await deliver({ type: "mention", event: stranger });
   await flush(10);
   expect(published).toEqual([]);
@@ -228,14 +275,12 @@ it("acts only on its owner's messages unless told to answer anyone", async () =>
     trigger: { type: "mention", event: stranger },
     channelId: channel,
     agent: {
-      pubkey: self,
-      name: "Claude",
-      owner: alice,
-      publish: async (template) => ({ ...stranger, ...template }),
+      ...agent,
+      publish: async (template: object) => ({ ...stranger, ...template }),
     },
     config: { ...DEFAULT_CONFIG, respondTo: "anyone" },
     signal: new AbortController().signal,
-  } as Delivery);
+  } as unknown as Delivery);
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
 });

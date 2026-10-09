@@ -72,7 +72,7 @@ it("frames a new top-level mention as the root of its thread", () => {
   );
   expect(prompt).toContain(`Thread root: ${mention.id}`);
   expect(prompt).toContain(
-    `This is a new top-level message. For ordinary replies in this turn, use \`--reply-to ${mention.id}\``,
+    "This is a new top-level message. `send` replies in its thread by default",
   );
   expect(prompt).not.toContain("<thread-context");
   expect(prompt).toContain('<buzz-event type="@mention">');
@@ -110,7 +110,7 @@ it("includes the thread messages the session has not seen", () => {
   });
   expect(prompt).toContain(`Thread root: ${root.id}\nParent: ${earlier.id}`);
   expect(prompt).toContain(
-    `use \`--reply-to ${reply.id}\` on \`buzz messages send\` so the conversation stays threaded`,
+    "`send` replies in this thread by default, so the conversation stays threaded",
   );
   expect(prompt).toContain(
     '<thread-context included="2" total="3" truncated="false">',
@@ -138,6 +138,10 @@ it("says earlier context is already in the session when none is new", () => {
   expect(prompt).toContain("Scope: dm\nSession scope: dm conversation");
   expect(prompt).toContain(
     "Earlier context is already available in this session.",
+  );
+  // A DM's session spans its threads, so it names the one to reply in.
+  expect(prompt).toContain(
+    `pass \`reply: "${event("3", "").id}"\` to \`send\``,
   );
 });
 

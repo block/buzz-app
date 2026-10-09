@@ -1437,9 +1437,7 @@ it.each(["Please review", "A thread update"])(
     expect(
       screen.queryByRole("region", { name: "Inbox detail" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Activity type" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Show" })).toHaveFocus();
     expect(h.journal()).toEqual(journal);
     act(() => h.archiveRoom(false, 101));
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -1500,9 +1498,7 @@ it.each([false, true])(
         expect(
           screen.queryByRole("region", { name: "Inbox detail" }),
         ).not.toBeInTheDocument();
-        expect(
-          screen.getByRole("combobox", { name: "Activity type" }),
-        ).toHaveFocus();
+        expect(screen.getByRole("combobox", { name: "Show" })).toHaveFocus();
         expect(h.journal()).toEqual(journal);
       }
     } finally {

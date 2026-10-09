@@ -310,10 +310,13 @@ still requires fresh signed membership, not metadata, to reverse it.
 ### Public channel name search and Join
 
 The relay has no text search for channel metadata. For a typed, unscoped palette
-query, `channels.searchPublic(query)` reads one page (500) of relay-authored
-`39000` metadata without applying it, matches names locally and keeps only
-explicit active public channels the viewer has not joined. It then resolves at
-most eight matches through the same exact `resolve` path as message hits, so
+or `#` completion query, `channels.searchPublic(query)` reads one page (500) of
+relay-authored `39000` metadata without applying it, matches names locally and
+keeps only explicit active public channels the viewer has not joined. Later
+queries in the same session epoch reuse that page for 30 seconds, so typing
+reads it once. Matches are ranked exact, prefix, word start, then substring,
+and the best eight are resolved through the same exact `resolve` path as
+message hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
 joined-only. A full page reports partial coverage; read failures show a retry.
 The search waits for a ready channel list.

@@ -17,6 +17,7 @@ import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   ArchiveIcon,
   ArchiveOffIcon,
+  ArrowsClockwiseIcon,
   CopyIcon,
   DotsThreeIcon,
   PencilSimpleIcon,
@@ -157,6 +158,19 @@ export function AgentCard({
         ? "Custom model"
         : managed.harness.model || "Default model"))
     : undefined;
+  const restartRequired = editable.some(
+    (agent) => (agent.restartDiff?.length ?? 0) > 0,
+  );
+  const restartBadge = restartRequired ? (
+    <span
+      role="status"
+      aria-label="Restart required"
+      className="inline-flex max-w-full items-center gap-1 rounded-full border border-warning-border bg-warning-surface px-2 text-caption text-warning"
+    >
+      <ArrowsClockwiseIcon size={14} aria-hidden="true" />
+      <span className="truncate">Restart required</span>
+    </span>
+  ) : null;
   const portrait = (
     <div className={tile ? styles.portrait : "shrink-0"}>
       <AgentAvatar
@@ -181,6 +195,9 @@ export function AgentCard({
       >
         {name}
       </Heading>
+      {restartBadge && (
+        <div className="mt-1 min-w-0 max-w-full">{restartBadge}</div>
+      )}
       {archived && (
         <span className="inline-block max-w-full rounded-full border border-primary px-2 text-caption text-secondary">
           Archived

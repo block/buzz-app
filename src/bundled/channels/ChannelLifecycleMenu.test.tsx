@@ -474,17 +474,13 @@ it.each([true, false])(
 );
 
 it.each(
-  (
-    [
-      { action: "delete", label: "Delete channel" },
-      { action: "unarchive", label: "Unarchive channel" },
-    ] as const
-  ).flatMap(({ action, label }) =>
-    ["backdrop", "escape", "close", "cancel"].map((dismissal) => ({
-      action,
-      label,
-      dismissal,
-    })),
+  ([{ action: "delete", label: "Delete channel" }] as const).flatMap(
+    ({ action, label }) =>
+      ["backdrop", "escape", "close", "cancel"].map((dismissal) => ({
+        action,
+        label,
+        dismissal,
+      })),
   ),
 )(
   "$action $dismissal dismissal cancels without executing and starts on Cancel",

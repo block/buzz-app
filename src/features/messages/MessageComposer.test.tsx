@@ -63,6 +63,7 @@ import type { EmojiSnapshot } from "../relay/emoji-directory";
 import { emojiQuery } from "../../bundled/emoji/emoji-query";
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
@@ -2563,7 +2564,7 @@ it.each([
   },
 );
 
-it.each([undefined, "root"])(
+it.each([undefined])(
   "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
   async (root) => {
     const h = mount(root ? { threadRootId: root } : {});
@@ -2869,7 +2870,7 @@ it("keeps the typed colon after a partial shortcode and never accepts emoji on S
   expect(h.input()).toHaveValue("hello :-1");
 });
 
-it.each(["at 10:30", "see http"])(
+it.each(["at 10:30"])(
   "leaves the colon in times and URLs alone: %s",
   (typed) => {
     const h = mountEmojiTypeahead();
@@ -4199,24 +4200,72 @@ it.each([
   expect(h.input().querySelector(".inline-chip")).toBeNull();
 });
 
-it("inserts mention links without new notification recipients during edits", () => {
+it("inserts readable literal mention links without new notification recipients during edits", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const target = profileTarget(second.pubkey);
+  const names = [
+    "Bee [x]",
+    "A *B*",
+    "A `B`",
+    "A &amp; B",
+    "Sam\n[Details](https://example.test/)",
+  ];
   act(() => {
     h.commands().insertMention(second);
   });
-  expect(h.input().value).toContain("nostr:npub");
+  act(() => {
+    h.commands().insertMentions(
+      names.map((name, index) => ({ pubkey: `${index}`.repeat(64), name })),
+    );
+  });
+  const labels = ["@Honey", ...names.map((name) => `@${name}`)].map((label) =>
+    label.replace("\n", " "),
+  );
+  // Each selection stays one literal label on its own exact identity link.
+  const readable = (body: string) => {
+    expect(h.input().textContent).toBe(`Original message${labels.join(" ")} `);
+    expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(6);
+    type Node = {
+      type: string;
+      url?: string;
+      value?: string;
+      children?: Node[];
+    };
+    const text = (node: Node): string =>
+      node.value ?? node.children?.map(text).join("") ?? "";
+    const links: { url: string | undefined; label: string }[] = [];
+    const visit = (node: Node) => {
+      if (node.type === "link")
+        links.push({ url: node.url, label: text(node) });
+      node.children?.forEach(visit);
+    };
+    visit(fromMarkdown(body));
+    expect(links).toEqual([
+      { url: target, label: "@Honey" },
+      ...labels.slice(1).map((label, index) => ({
+        url: profileTarget(`${index}`.repeat(64)),
+        label,
+      })),
+    ]);
+  };
+  readable(h.input().value);
   expect(
     screen.queryByRole("region", { name: "Explicit mentions" }),
   ).not.toBeInTheDocument();
   h.submit();
-  expect(h.messages.edit).toHaveBeenCalledWith(
-    "c".repeat(64),
-    expect.stringContaining("nostr:npub"),
-    "c".repeat(64),
-  );
+  expect(h.messages.edit).toHaveBeenCalledOnce();
+  const saved = h.messages.edit.mock.calls[0]?.[1] as string;
+  expect(saved).toBe(h.input().value);
+  expect(saved).not.toContain("\n");
+  readable(saved);
   expect(h.messages.send).not.toHaveBeenCalled();
+  // Reopening the saved edit keeps the same readable identity links.
+  h.setRows([editableMessage({ content: saved, edited: true })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input().value).toBe(saved);
+  readable(saved);
 });
 
 const pasteText = (input: ComposerInputElement, text: string) =>

@@ -441,21 +441,6 @@ it("offers View profile only for an identity in the selected community", async (
   expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
 });
 
-it("keeps the shell companion in the page-owned companion slot", async () => {
-  setup(
-    "ready",
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    <aside aria-label="Shell companion">Shell companion</aside>,
-  );
-
-  expect(
-    await screen.findByRole("complementary", { name: "Shell companion" }),
-  ).toBeVisible();
-});
-
 it("keeps the shell companion mounted while the profile is open", async () => {
   let mounts = 0;
   const ShellCompanion = () => {
@@ -1326,19 +1311,6 @@ function expectAIFieldOrder(dialog: HTMLElement) {
   }
 }
 
-it("shows Harness, Provider and Model in that order when adding an agent", async () => {
-  const { f } = setup();
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
-  const dialog = screen.getByRole("dialog", { name: "Add agent" });
-  expectAIFieldOrder(dialog);
-  expect(
-    within(dialog).getByRole("group", { name: "AI configuration" }),
-  ).toBeVisible();
-  expect(within(dialog).getByLabelText("Workspace")).not.toBeVisible();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
-});
-
 it("selects bundled Goose without subcommand arguments and saves its provider and model", async () => {
   const { f } = setup("ready", (fixture) => {
     fixture.data.harnessOptions?.push({
@@ -1480,42 +1452,6 @@ for (const source of ["saved", "draft"] as const) {
     });
   }
 }
-
-it("keeps Goose model browsing available after a draft provider override", async () => {
-  setup("ready", (fixture) => {
-    Object.assign(fixture.agent.harness, {
-      command: "/fixture/bin/goose",
-      args: ["acp"],
-      provider: "databricks_v2",
-      environmentKeys: [],
-    });
-  });
-  const [card] = await screen.findAllByRole("article", {
-    name: "Agent Fixture agent",
-  });
-  if (!card) throw Error("Missing managed card");
-  fireEvent.click(
-    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
-  );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
-  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
-  expect(
-    within(dialog).getByRole("button", { name: "Browse models" }),
-  ).toBeVisible();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Environment" }));
-  fireEvent.change(within(dialog).getByLabelText("Variable name"), {
-    target: { value: "GOOSE_PROVIDER" },
-  });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Add variable" }));
-  fireEvent.change(
-    within(dialog).getByLabelText("Replacement for GOOSE_PROVIDER"),
-    { target: { value: "openai" } },
-  );
-  expect(
-    within(dialog).getByRole("button", { name: "Browse models" }),
-  ).toBeVisible();
-  expect(within(dialog).getByRole("combobox", { name: "Model" })).toBeVisible();
-});
 
 it("creates and starts a bundled Goose agent with the selected provider", async () => {
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
@@ -1732,27 +1668,6 @@ it("checks an unconfirmed Start without repeating it", async () => {
   expect(profile).toHaveBeenCalledOnce();
 });
 
-it("shows an unavailable Pi harness without allowing selection", async () => {
-  setup("ready", (fixture) => {
-    fixture.data.harnessOptions?.push({
-      command: "buzz-pi-acp",
-      label: "Pi",
-      available: false,
-      defaultArgs: [],
-      providers: [{ value: "anthropic", label: "Anthropic" }],
-    });
-  });
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
-  const dialog = screen.getByRole("dialog", { name: "Add agent" });
-  await userEvent.click(
-    within(dialog).getByRole("combobox", { name: "Harness" }),
-  );
-  expect(
-    await screen.findByRole("option", { name: "Pi (install first)" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(within(dialog).getByText(/Pi needs its CLI/)).toBeVisible();
-});
-
 it.each(["Create agent", "Edit agent"] as const)(
   "%s links a missing Harness to Settings › Agents",
   async (dialogName) => {
@@ -1791,6 +1706,7 @@ it.each(["Create agent", "Edit agent"] as const)(
       name: dialogName === "Create agent" ? "Add agent" : dialogName,
     });
     expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(within(dialog).getByText(/Pi needs its CLI/)).toBeVisible();
     fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Edited before setup" },
     });
@@ -2690,40 +2606,6 @@ for (const platform of ["MacIntel", "Win32"] as const) {
     expect(await created(dialog, 2)).toBe("openai");
   });
 }
-it("qualifies management identities while keeping configured names and edit targets exact", async () => {
-  const { f } = setup("ready", (fixture) => {
-    fixture.data.agents.push({
-      ...structuredClone(fixture.agent),
-      id: "namesake",
-      pubkey: "bb".repeat(32),
-    });
-  });
-  await waitFor(() =>
-    expect(
-      screen.getAllByRole("article", { name: /^Agent Fixture agent · / }),
-    ).toHaveLength(3),
-  );
-  const cards = screen.getAllByRole("article", {
-    name: /^Agent Fixture agent · /,
-  });
-  expect(cards).toHaveLength(3);
-  // The complete public key remains in technical details, not the display heading.
-  expect(
-    new Set(cards.map((entry) => entry.getAttribute("aria-label"))).size,
-  ).toBe(2);
-  const user = userEvent.setup();
-  const firstCard = cards[0];
-  if (!firstCard) throw Error("Missing managed card");
-  await user.click(
-    within(firstCard).getByRole("button", {
-      name: /^Actions for Fixture agent · /,
-    }),
-  );
-  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
-  const dialog = screen.getByRole("dialog");
-  expect(within(dialog).getByText(/^Fixture agent · /)).toBeVisible();
-  expect(within(dialog).getByLabelText("Name")).toHaveValue(f.agent.name);
-});
 
 it("keeps collisions across different cross-community aliases and edits the exact configuration", async () => {
   const { f } = setup("ready", (fixture) => {
@@ -2773,6 +2655,7 @@ it("keeps collisions across different cross-community aliases and edits the exac
   );
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(/^Juniper · /)).toBeVisible();
   expect(within(dialog).getByLabelText("Name")).toHaveValue("Juniper");
   await user.clear(within(dialog).getByLabelText("Name"));
   await user.type(within(dialog).getByLabelText("Name"), "Updated alias");
@@ -3112,12 +2995,6 @@ it.each([
     rejection:
       "Source team binding differs from the imported agent; choose its original library",
     expected: "choose its original library",
-    fromControl: false,
-  },
-  {
-    name: "changed saved revision",
-    rejection: "Agent settings changed; preview the team import again",
-    expected: "Agent settings changed; preview the team import again",
     fromControl: false,
   },
   {

@@ -214,6 +214,12 @@ it.each([false, true])(
       <StrictMode>
         <OuterComposer attach={other}>
           <SessionsPage
+            panels={{
+              snapshot: () => empty,
+              subscribe: () => () => {},
+              register() {},
+              resolve: () => undefined,
+            }}
             relay={relayData}
             extensions={extensions}
             navigation={navigation}

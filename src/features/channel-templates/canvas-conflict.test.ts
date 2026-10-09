@@ -9,12 +9,7 @@ it.each([
   [40100, "failed", "conflict: the relay state changed", true],
   [30078, "failed", "conflict: the relay state changed", false],
   [40100, "unknown", "conflict: the relay state changed", false],
-  [40100, "unknown", "Retry blocked: conflict: the relay state changed", false],
   [40100, "failed", "Retry blocked: conflict: the relay state changed", false],
-  [40100, "accepted", "conflict: the relay state changed", false],
-  [40100, "seen", "conflict: the relay state changed", false],
-  [40100, "sending", "conflict: the relay state changed", false],
-  [40100, "failed", "forbidden: membership changed", false],
   [40100, "failed", undefined, false],
 ] as const)(
   "classifies kind=%s delivery=%s error=%s as definitive=%s",

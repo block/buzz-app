@@ -3,12 +3,10 @@
 //! arrive. A process belongs to the plugin that started it and to the page that
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. It runs with the user's own access: there is no sandbox.
-use crate::app_agents::AppAgentHost;
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::ffi::OsString;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
@@ -265,24 +263,18 @@ enum Stream {
 
 /// Starts the declared process `process_id` with `args` after its declared
 /// arguments. `env` adds variables (`null` removes one) to the app's own
-/// environment, less any Buzz identity. With `agent`, the process runs as that
-/// agent of this plugin's own type: its key, community and owner attestation
-/// are in its environment, and the app's bundled tools (the `buzz` CLI) are on
-/// its PATH.
+/// environment, less any Buzz identity: an agent's key never leaves the app.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub(crate) async fn plugin_host_process_spawn(
     manager: tauri::State<'_, PluginManager>,
     processes: tauri::State<'_, HostProcesses>,
-    agents: tauri::State<'_, AppAgentHost>,
     id: String,
     revision: String,
     process_id: String,
     args: Vec<String>,
     cwd: Option<String>,
     env: Option<HashMap<String, Option<String>>>,
-    agent: Option<String>,
     on_event: Channel<ProcessEvent>,
 ) -> Result<u64, String> {
     let page = processes.page();
@@ -299,14 +291,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
         return Err("Invalid process arguments".into());
     }
-    let mut path = effective_path();
-    let mut identity = vec![];
-    if let Some(pubkey) = agent {
-        identity = agents.process_identity(pubkey, &plugin).await?;
-        if let Ok(tools) = tauri::Manager::path(&app).resource_dir() {
-            path = prepend(tools.join("agent-runtime"), &path)?;
-        }
-    }
+    let path = effective_path();
     let mut command = Command::new(resolve_program(&declared.program, &path));
     command
         .args(&declared.args)
@@ -331,9 +316,6 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             Some(value) => command.env(name, value),
             None => command.env_remove(name),
         };
-    }
-    for (name, value) in &identity {
-        command.env(name, &**value);
     }
     if let Some(cwd) = cwd {
         let directory = expand_home(&cwd)?;
@@ -422,11 +404,6 @@ fn take_text(pending: &mut Vec<u8>) -> String {
     let text = String::from_utf8_lossy(pending).into_owned();
     *pending = rest;
     text
-}
-
-fn prepend(directory: PathBuf, path: &OsString) -> Result<OsString, String> {
-    std::env::join_paths(std::iter::once(directory).chain(std::env::split_paths(path)))
-        .map_err(|_| "Invalid tools path".into())
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.

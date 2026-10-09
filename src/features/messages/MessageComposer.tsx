@@ -21,7 +21,7 @@ import {
   markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
-import { npubEncode } from "nostr-tools/nip19";
+import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -193,6 +193,7 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
+  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
@@ -293,6 +294,7 @@ function Composer({
   submission,
   sessionConversation,
   personalConversation = false,
+  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -779,7 +781,7 @@ function Composer({
       return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
-      text = `nostr:${npubEncode(recipient.pubkey)} `;
+      text = editMentionText(recipient);
       recipient = undefined;
     }
     if (
@@ -855,11 +857,7 @@ function Composer({
       return false;
     // Message edits only add references, never new notification intent.
     if (editing.target)
-      return insert(
-        unique.map((person) => `nostr:${npubEncode(person.pubkey)} `).join(""),
-        undefined,
-        range,
-      );
+      return insert(unique.map(editMentionText).join(""), undefined, range);
     const admits = mentionAdmission(
       session,
       channelId,
@@ -1268,6 +1266,7 @@ function Composer({
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
+          clickOpensPanel={activityClickOpensPanel}
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}

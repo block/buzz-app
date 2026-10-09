@@ -181,6 +181,13 @@ export interface ChannelQueries {
     query: string,
     options?: ReadOptions & { limit?: number; exact?: boolean },
   ): Promise<PublicChannelSearch>;
+  /** Synchronous: the last `searchPublic` answer's channels that still match
+   * `query` and are still open previews. Keeps rows while the next search
+   * runs, even across a remount. */
+  matchPublic?(
+    query: string,
+    options?: { exact?: boolean },
+  ): readonly ChannelSummary[];
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery.

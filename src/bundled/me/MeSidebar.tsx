@@ -1,3 +1,4 @@
+import { sessionLinkTarget } from "../sessions/SessionsPage";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -65,12 +66,21 @@ function PersonalHistory({
     >
       <SessionSections
         personal
+        visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,
         }))}
+        onShared={(id) => {
+          const destination = sessionLinkTarget(
+            `buzz://channel/${id}`,
+            scope,
+            session.viewer,
+          );
+          if (destination) void navigator.open(destination);
+        }}
         onNew={(sectionId) =>
           void navigator.open(meTarget(scope, "new", sectionId))
         }

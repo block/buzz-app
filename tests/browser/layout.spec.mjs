@@ -473,6 +473,38 @@ test("narrow link panels begin after the rendered sidebar", async ({
   await expect(panel(page)).toHaveCount(0);
 });
 
+test("composer stays docked while a cold channel loads", async ({
+  page,
+  app,
+}) => {
+  // Hold Beta's head read so its loading placeholder stays rendered.
+  const beta = Promise.withResolvers();
+  await page.route("**/query", async (route) => {
+    const filters = route.request().postDataJSON() ?? [];
+    if (filters.some((filter) => filter["#h"]?.includes("beta")))
+      await beta.promise;
+    await route.fallback();
+  });
+  const composer = (name) =>
+    page.getByRole("textbox", { name: `Message #${name}`, exact: true });
+  let docked;
+  try {
+    await open(page, app);
+    docked = await box(composer("Alpha"));
+    await button(page, "Beta").click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Loading messages…" }),
+    ).toBeVisible();
+    near((await box(composer("Beta"))).y, docked.y);
+  } finally {
+    beta.resolve();
+  }
+  await expect(
+    page.locator('[data-channel-timeline="beta"] [data-message-id]').first(),
+  ).toBeVisible();
+  near((await box(composer("Beta"))).y, docked.y);
+});
+
 // Virtua expires an imperative scroll 150ms after its last size update and
 // restores the list's pointer events 150ms after the last scroll event. That
 // observable state plus settled geometry replaces a fake clock, which would

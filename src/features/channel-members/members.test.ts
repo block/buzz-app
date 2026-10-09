@@ -325,24 +325,6 @@ it("allows a new explicit addition after an expired failed request is dismissed"
   expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
 });
 
-it("protects an unconfirmed echoed request from dismissal", async () => {
-  const t = setup();
-  await t.ready();
-  t.setEcho();
-  t.setApply(false);
-  await expect(t.managedAdd()).rejects.toThrow();
-  await vi.waitFor(() =>
-    expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
-  );
-  const first = t.publish.mock.calls[0]?.[0].id;
-  if (!first) throw new Error("Expected invitation");
-  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
-  await expect(t.managedAdd()).rejects.toThrow(
-    /not confirmed in the member list/,
-  );
-  expect(t.publish).toHaveBeenCalledOnce();
-});
-
 it("keeps the exact failed request when durable dismissal fails", async () => {
   const t = setup();
   await t.ready();

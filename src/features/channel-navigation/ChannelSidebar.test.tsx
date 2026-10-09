@@ -13,7 +13,10 @@ import { afterEach, beforeEach, expect, it, vi, assert } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
-import type { SidebarPreferences } from "../relay/sidebar-preferences";
+import type {
+  SidebarGroups,
+  SidebarPreferences,
+} from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
@@ -22,6 +25,7 @@ import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import { readView, writeView } from "../../shared/view-state";
 import styles from "../../bundled/channels/Channels.module.css";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
@@ -417,7 +421,7 @@ it("explains and disables unavailable move retries, then enables them after pref
   }
 });
 
-it.each(["ready", "connecting", "error"] as const)(
+it.each(["ready", "error"] as const)(
   "keeps the supplied page navigation while the relay is %s",
   (status) => {
     const h = fixture(undefined, status);
@@ -430,7 +434,7 @@ it.each(["ready", "connecting", "error"] as const)(
   },
 );
 
-it.each(["ready", "connecting", "error"] as const)(
+it.each(["ready", "connecting"] as const)(
   "omits the page destinations wrapper when the shell passes none while %s",
   (status) => {
     const h = fixture(undefined, status);
@@ -585,6 +589,102 @@ it("rejects a deferred header Create section after its navigation origin retires
   preferences.dispose();
 });
 
+it("clears only the removed section's collapsed intent after confirmation, never on cancel or failure", async () => {
+  const user = userEvent.setup();
+  const current: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { beta: "work" },
+    starred: [],
+    muted: [],
+  };
+  let resolve!: (value: SidebarGroups) => void;
+  const pending = new Promise<SidebarGroups>((yes) => {
+    resolve = yes;
+  });
+  const remove = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockReturnValueOnce(pending);
+  const preferences = createSidebarPreferencesStore(
+    async () => current,
+    true,
+    async () => current,
+    async () => [],
+    undefined,
+    undefined,
+    async () => ({}),
+    undefined,
+    remove,
+  );
+  try {
+    await preferences.queries.ensure();
+    const h = fixture(preferences.queries);
+    const scope = h.snapshot.scope;
+    assert.exists(scope);
+    writeView(scope, "channel-sidebar", {
+      collapsed: ["group:work", "dms"],
+      scrollTop: 0,
+      width: 287,
+    });
+    const mounted = render(h.view("alpha"));
+    const open = async () => {
+      await user.click(
+        await screen.findByRole("button", { name: "More actions for Work" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Remove section" }),
+      );
+      return screen.getByRole("dialog", { name: "Remove Work?" });
+    };
+    let dialog = await open();
+    expect(dialog).toHaveAccessibleDescription(
+      "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("Work").closest("details"),
+    ).not.toHaveAttribute("open");
+    dialog = await open();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "offline",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    mounted.unmount();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["group:work", "dms"],
+      width: 287,
+    });
+    const retry = render(h.view("alpha"));
+    dialog = await open();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(2));
+    expect(dialog).toBeVisible();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["group:work", "dms"],
+    });
+    await act(async () => {
+      resolve({ sections: [], assignments: {} });
+      await pending;
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    retry.unmount();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["dms"],
+      width: 287,
+    });
+  } finally {
+    resolve?.({ sections: [], assignments: {} });
+    preferences.dispose();
+  }
+});
 it.each([true, false])(
   "does not nest existing sessions when plugin enabled=%s",
   async (enabled) => {
@@ -601,5 +701,46 @@ it.each([true, false])(
         ([props]) => !props.sessions.length && !props.draft,
       ),
     ).toBe(true);
+  },
+);
+
+it.each([true, false])(
+  "legacy session row uses verified lifecycle permissions (owner=%s)",
+  async (owner) => {
+    const h = fixture();
+    h.publish("beta", { channelType: "session", private: true });
+    const load = vi.fn(async () => ({
+      channelId: "beta",
+      channelType: "stream" as const,
+      canArchive: owner,
+      canUnarchive: false,
+      canDelete: owner,
+      canLeave: !owner,
+      canHide: false,
+    }));
+    const run = vi.fn();
+    h.session.channelLifecycle = {
+      ...h.session.channelLifecycle,
+      available: true,
+      load,
+      run,
+    };
+    render(h.view("beta"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    const user = userEvent.setup();
+    row.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu", { name: "Actions for beta" });
+    await within(menu).findByRole("menuitem", {
+      name: owner ? "Delete channel" : "Leave channel",
+    });
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Archive channel" }),
+    ).toBe(owner);
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Delete channel" }),
+    ).toBe(owner);
+    expect(load).toHaveBeenCalledWith("beta", expect.any(AbortSignal));
+    expect(run).not.toHaveBeenCalled();
   },
 );

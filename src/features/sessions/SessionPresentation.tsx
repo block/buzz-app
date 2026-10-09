@@ -35,7 +35,11 @@ export function NewSessionView({
         {actions}
       </SessionHeading>
       <div className={styles.start}>
-        <div className={styles.startContent}>{children}</div>
+        <div
+          className={`${styles.startContent} ${personal ? styles.personalStart : ""}`}
+        >
+          {children}
+        </div>
       </div>
     </section>
   );
@@ -61,18 +65,31 @@ export function SessionColumn({
 export function SessionHeading({
   channel,
   children,
+  actions,
 }: {
+  /** Management actions remain available when the conversation is archived. */
+  actions?: ReactNode;
   channel: Pick<ChannelSummary, "name" | "archived" | "private">;
   parentName?: string | undefined;
   children?: ReactNode;
 }) {
   const Icon = channelIcon(channel);
+  const status = channel.archived ? <span>Archived</span> : children;
   return (
     <PanelHeader
       title={
         <PanelHeaderLabel title={channel.name} icon={<Icon size="1rem" />} />
       }
-      actions={channel.archived ? <span>Archived</span> : children}
+      actions={
+        actions ? (
+          <>
+            {status}
+            {actions}
+          </>
+        ) : (
+          status
+        )
+      }
     />
   );
 }

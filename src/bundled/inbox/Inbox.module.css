@@ -6,6 +6,26 @@
   min-height: 0;
 }
 
+.headerTitle {
+  display: flex;
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.headerTitle > :first-child {
+  flex-shrink: 0;
+}
+
+.refreshStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);

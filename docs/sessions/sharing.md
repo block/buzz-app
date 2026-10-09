@@ -2,12 +2,38 @@
 
 The baseline uses ordinary channel membership and private client-side Me
 organization; see [Me and sessions](README.md). This document describes the
-destination-link flow in Messages. Me uses direct selected-person sharing and
-Move to Messages instead. Both grant access to existing history, not a snapshot.
+destination-link flow in Messages and unified Me sharing. Both grant access to
+existing history, not a snapshot.
+
+## Me: share in place
+
+Me uses the existing channel-details controls: editable current name, Private/Open
+and Ongoing/Temporary, plus optional people. Existing agents remain members without
+being re-added or woken. Copy link and cancelling do not mutate access or placement.
+
+Submission freezes the settings/base and people, confirms grants while the channel
+is still private, saves the settings with signed fresh authority/readback, then
+removes Me placement and opens Messages. The standalone session marker becomes an
+empty description so normal Messages behavior applies. A default Share therefore
+writes metadata once; unchanged visibility and TTL are omitted. Public sharing
+requires a second confirmation of history exposure. The Temporary control explains
+that expiry automatically archives the conversation; it does not delete history.
+
+A settings or placement failure retains confirmed work and frozen Retry intent.
+Confirmed grants are skipped; an uncertain details save is checked, never blindly
+republished. A confirmed TTL is not resent, avoiding a reset of the cleanup deadline.
+Conflicting metadata stops the attempt. **Check channel settings status** remains
+available for an uncertain save, including after Start over. Closing/navigating does
+not cancel submitted work; completion cannot navigate a superseding visit.
+
+This is not an atomic grant/settings/placement transaction. There is no separate
+placement-only Move fallback: Share requires verified owner/admin details authority
+and the connection’s existing details writer. Destination-link behavior below is
+unchanged.
 
 ## Current behavior
 
-- **Share** in a session heading opens a compact dialog. **Everyone in this channel** (default) means all *current* destination-channel roster keys, **including agents**. After optional invitations separately chosen for a new destination are confirmed, a strong fresh kind-39002 destination roster read freezes its exact non-viewer keys for this submitted attempt and retries. Missing/malformed/ineligible membership, archived identities, invalid keys or >100 recipients fail visibly; no namesake join or silent agent/archived filtering. Later destination joiners do not acquire session access. Known agents get the ordinary `role=bot` membership invitation but sharing does not notify, wake, start, configure or own a runner.
+- **Share** in a Messages session heading opens a compact dialog. **Everyone in this channel** (default) means all *current* destination-channel roster keys, **including agents**. After optional invitations separately chosen for a new destination are confirmed, a strong fresh kind-39002 destination roster read freezes its exact non-viewer keys for this submitted attempt and retries. Missing/malformed/ineligible membership, archived identities, invalid keys or >100 recipients fail visibly; no namesake join or silent agent/archived filtering. Later destination joiners do not acquire session access. Known agents get the ordinary `role=bot` membership invitation but sharing does not notify, wake, start, configure or own a runner.
 - **Selected people** is deliberate human selection by exact public key. The human picker hides identities *known* to be agents by existing profile/agent-choice evidence (unknown classification is not proof of humanity); submit rechecks known-agent and archive admission. Picking a person does not automatically include their agents. Already-access people can be shown as unavailable. In a new destination, **people to add to that channel** and **people to grant session access** are independent selections. With Everyone, confirmed new-destination invitees enter the fresh destination roster before the session audience is frozen. No general member-add behavior is widened.
 - All grants target the private session's own signed membership roster. They grant normal **read and participate** access, not read-only access. No parent/destination inheritance, future-member synchronization, or revocation on leaving the destination. The existing composer, notification/mention rules and agent recipient routing remain in charge of deliberate sends. Detailed owner-private ACP activity is not shared.
 - **Copy link** copies `buzz://channel/<session-id>` only: no grant, saved selection, post, channel creation, invitation or permission mutation. A recipient needs independent session access. Sharing posts one ordinary kind-9 destination message with the neutral `Session · short ID` link chip. An authorized click opens the existing live session transcript/composer in that destination's side panel while preserving the destination and the Sessions entry; unauthorized access does not expose transcript content. The link is bound to the selected community rather than portable across communities.

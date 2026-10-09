@@ -18,6 +18,7 @@ const nonIconDependencies = new Set([
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",
   "@tailwindcss/postcss",

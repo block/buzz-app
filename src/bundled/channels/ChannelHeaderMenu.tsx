@@ -185,8 +185,7 @@ export function ChannelHeaderMenu({
       handoff &&
       !channel.readOnly &&
       !channel.cached &&
-      !channel.archived &&
-      channel.channelType !== "session" ? (
+      !channel.archived ? (
         <ChannelLifecycleMenu
           channelId={channel.id}
           lifecycle={session.channelLifecycle}

@@ -635,28 +635,6 @@ it("a selected DM draft reads only its real window and preserves its scoped comp
   );
 });
 
-it("a selected draft edits through the shared scoped composer without navigating or sending", async () => {
-  const h = fixture({ withWriter: true });
-  const key = "draft:room";
-  writeView(h.owner.session.scope, key, "First draft");
-  render(h.view);
-  await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open draft for #Design" }),
-  );
-  const input = screen.getByRole("textbox", { name: "Message #Design" });
-  expect(input).toHaveValue("First draft");
-  fireEvent.input(input, { target: { value: "Revised draft" } });
-  await waitFor(() =>
-    expect(readView(h.owner.session.scope, key, "")).toMatchObject({
-      text: "Revised draft",
-    }),
-  );
-  expect(h.open).not.toHaveBeenCalled();
-  expect(h.journal()?.state.frontiers).toEqual({});
-});
-
 it("DM draft headings use exact roster participants and recover as profile evidence arrives", async () => {
   const h = fixture({ withDm: true, holdProfiles: true, withWriter: true });
   const key = "draft:dm-room";

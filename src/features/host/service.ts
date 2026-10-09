@@ -28,9 +28,6 @@ export type HostProcessOptions = Readonly<{
   cwd?: string;
   /** Added to the app's environment; `null` removes a variable. */
   env?: Readonly<Record<string, string | null>>;
-  /** Runs as this agent of the plugin's own type: its key, community and owner
-   * attestation are in the environment and the bundled `buzz` CLI is on PATH. */
-  agent?: string;
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
@@ -173,7 +170,6 @@ export class HostService extends Service implements Host {
       args: options.args ?? [],
       cwd: options.cwd ?? null,
       env: options.env ?? null,
-      agent: options.agent ?? null,
       onEvent,
     });
     const write = (data: string, close: boolean) =>

@@ -69,6 +69,7 @@ function fixture() {
       undefined,
       undefined,
       remove,
+      true, // Groups-only sessions have no Messages sort coordinate.
     );
   const onNew = vi.fn();
   const channels = { status: "ready", channels: [] };
@@ -81,6 +82,7 @@ function fixture() {
       session={
         {
           sidebarPreferences: preferences,
+          canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
       }
@@ -112,6 +114,9 @@ it("creates and moves through the relay service, then restores in a fresh store"
   await user.click(
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
+  expect(
+    screen.queryByRole("menuitem", { name: "Session settings…" }),
+  ).toBeNull();
   (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(

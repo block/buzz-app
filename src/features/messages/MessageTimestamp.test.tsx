@@ -14,35 +14,25 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
-it.each([
-  [new Date(2026, 8, 24, 9, 5), "9:05 AM"],
-  [new Date(2026, 8, 23, 9, 5), "Yesterday at 9:05 AM"],
-  [new Date(2026, 8, 21, 9, 5), "Monday at 9:05 AM"],
-  [new Date(2026, 8, 17, 9, 5), "Thu, Sep 17 at 9:05 AM"],
-  [new Date(2025, 8, 17, 9, 5), "Sep 17, 2025 at 9:05 AM"],
-])(
-  "names the day outside today for %s while retaining the full accessible date",
-  (date, label) => {
-    const { container } = render(
-      <MessageTimestamp createdAt={date.getTime() / 1000} />,
-    );
-    expect(container.querySelector("time")).toHaveAttribute(
-      "datetime",
-      date.toISOString(),
-    );
-    expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
-      new RegExp(`^${label}$`),
-    );
-    expect(
-      screen.getByText(
-        date.toLocaleString(undefined, {
-          dateStyle: "full",
-          timeStyle: "long",
-        }),
-      ),
-    ).toHaveClass("sr-only");
-  },
-);
+// The label ladder itself belongs to formatItemTimestamp in datetime.test.ts.
+it("names the day outside today while retaining the full accessible date", () => {
+  const date = new Date(2026, 8, 23, 9, 5);
+  const { container } = render(
+    <MessageTimestamp createdAt={date.getTime() / 1000} />,
+  );
+  expect(container.querySelector("time")).toHaveAttribute(
+    "datetime",
+    date.toISOString(),
+  );
+  expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
+    /^Yesterday at 9:05 AM$/,
+  );
+  expect(
+    screen.getByText(
+      date.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" }),
+    ),
+  ).toHaveClass("sr-only");
+});
 it("keeps the continuation clock compact without dropping its accessible date", () => {
   const date = new Date(2026, 8, 24, 9, 5);
   const { container } = render(
@@ -120,12 +110,11 @@ it("updates the visible clock, accessible date and datetime when a mounted row c
       .trim(),
   );
 });
+// Either side of local midnight; formatDayGroupLabel's ladder is tested in
+// datetime.test.ts.
 it.each([
   [new Date(2026, 8, 24, 0, 1), "2026-09-24", "Today"],
   [new Date(2026, 8, 23, 23, 59), "2026-09-23", "Yesterday"],
-  [new Date(2026, 8, 21, 9, 5), "2026-09-21", "Monday"],
-  [new Date(2026, 8, 17, 9, 5), "2026-09-17", "Thursday, September 17"],
-  [new Date(2025, 8, 17, 9, 5), "2025-09-17", "September 17, 2025"],
 ])(
   "the day divider for %s names its local day like plugins' dayGroupLabel",
   (date, day, label) => {

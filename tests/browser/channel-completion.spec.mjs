@@ -219,6 +219,28 @@ test("channel completion finds an open channel the viewer has not joined", async
       "value",
       "[\\#Gemstones](buzz://channel/open) ",
     );
+    // Each edit remounts the completion. While the next lookup is held, the
+    // still-matching open row stays, so Enter completes instead of sending.
+    await input.press("ControlOrMeta+a");
+    await input.press("Backspace");
+    await input.pressSequentially("#Gem");
+    await expect(options).toHaveCount(1);
+    await expect(options.nth(0)).toContainText("Gemstones");
+    await page.evaluate(() => window.mentionFixture.holdChannelReads());
+    await input.pressSequentially("s");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Searching open channels…" }),
+    ).toBeVisible();
+    await expect(options).toHaveCount(1);
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      "[\\#Gemstones](buzz://channel/open) ",
+    );
+    expect(
+      await page.evaluate(() => window.mentionFixture.publications),
+    ).toEqual([]);
+    await page.evaluate(() => window.mentionFixture.releaseChannelReads());
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();

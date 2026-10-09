@@ -713,6 +713,12 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(first.ids).toContain(id(8));
   expect(first.ids).not.toContain(id(7));
   expect(first.result.channels[0]?.name).toBe("ops");
+  // A remounted caller reads the last answer back while the next search runs.
+  expect(
+    h.channels.matchPublic?.("ops").map((channel) => channel.name),
+  ).toEqual(["ops", ...Array.from({ length: 7 }, (_, n) => `aa-ops-${n}`)]);
+  expect(h.channels.matchPublic?.("ops", { exact: true })).toHaveLength(1);
+  expect(h.channels.matchPublic?.("zzz")).toEqual([]);
   // The next keystroke filters the same page instead of reading it again.
   clock += 29_999;
   const second = await search("ops", false);
@@ -722,4 +728,7 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   clock += 1;
   await search("ops", true);
   expect(h.pending).toHaveLength(0);
+  // Clearing the cache forgets the last answer.
+  await h.clearCache();
+  expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });

@@ -444,14 +444,19 @@ function searching(
       .flatMap((value) => (Array.isArray(value) ? value : []))
       .map((entry) => [entry.id, entry]),
   );
+  // The store's last answer, as `matchPublic` keeps it across remounts.
+  let last: readonly ChannelSummary[] = [];
   const searchPublic = vi.fn(async (query: string) => {
     const value = results[query] ?? [];
     if (value === "pending") return new Promise<never>(() => {});
     if (value instanceof Error) throw value;
+    last = value;
     return { channels: value, partial: !!extra.partial };
   });
   Object.assign(t.session.channels, {
     searchPublic,
+    matchPublic: (query: string) =>
+      last.filter((entry) => entry.name.includes(query)),
     get: (id: string) => all.get(id),
   });
   return searchPublic;
@@ -560,7 +565,9 @@ it("keeps still-matching open rows while the next keystroke's search runs", asyn
     const view = render(t.element("op"));
     await act(async () => vi.advanceTimersByTime(180));
     expect(t.result().items.map((item) => item.id)).toEqual(["opal", "ops"]);
-    view.rerender(t.element("ops"));
+    // The composer remounts its completion on every edit.
+    view.unmount();
+    render(t.element("ops"));
     expect(t.result().items.map((item) => item.id)).toEqual(["ops"]);
     expect(t.result().status).toBe("Searching open channels…");
   } finally {

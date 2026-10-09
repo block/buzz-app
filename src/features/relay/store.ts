@@ -8,6 +8,7 @@ import type {
   ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
+  ChannelSummary,
   PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
@@ -1489,15 +1490,43 @@ export function createChannelStore(
         candidates.map(({ id }) => id),
         settings,
       );
-    return {
-      channels: candidates.flatMap(({ id }) => {
-        const channel = discovery.get(id);
-        return channel?.readOnly && !channel.archived && !channel.cached
-          ? [channel]
+    const channels = candidates.flatMap(({ id }) => {
+      const channel = previewable(id);
+      return channel ? [channel] : [];
+    });
+    if (generation === epoch)
+      recentPublic = { generation, ids: channels.map(({ id }) => id) };
+    return { channels, partial: metadata.length >= PUBLIC_CHANNEL_PAGE };
+  }
+  /** An open channel's current read-only preview, as name search admits it. */
+  function previewable(id: string) {
+    const channel = discovery?.get(id);
+    return channel?.readOnly && !channel.archived && !channel.cached
+      ? channel
+      : undefined;
+  }
+  /** The last search's channels that still match `query`, in search order.
+   * Callers remount per keystroke, so the store, not a component, keeps the
+   * previous answer while the next `searchPublic` runs. */
+  let recentPublic: { generation: number; ids: readonly string[] } | undefined;
+  function matchPublic(
+    query: string,
+    settings?: { exact?: boolean },
+  ): readonly ChannelSummary[] {
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle || disposed || recentPublic?.generation !== epoch) return [];
+    return recentPublic.ids
+      .flatMap((id) => {
+        const channel = previewable(id);
+        const name = channel?.name.toLowerCase();
+        return channel &&
+          name &&
+          (settings?.exact ? name === needle : name.includes(needle))
+          ? [{ channel, rank: matchRank(channel.name, needle) ?? 3 }]
           : [];
-      }),
-      partial: metadata.length >= PUBLIC_CHANNEL_PAGE,
-    };
+      })
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ channel }) => channel);
   }
   /** Re-read one authorized channel's relay-signed roster and merge it into the
    * ready list: one exact `#d` read of a single 39002, instead of the full
@@ -1677,6 +1706,7 @@ export function createChannelStore(
     get: (id: string) => discovery?.get(id),
     resolve,
     searchPublic,
+    matchPublic,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

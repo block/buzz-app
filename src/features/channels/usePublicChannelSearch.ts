@@ -60,19 +60,16 @@ export function usePublicChannelSearch(
   }, [query, ready, search, exact, owner]);
   const current = result?.owner === owner ? result : undefined;
   const loading = !!query && ready && !!search && !current;
-  // While the next lookup runs, keep the last one's rows that still match,
-  // so open channels don't vanish and return on every keystroke.
+  // While the next lookup runs, keep the last answer's rows that still
+  // match, so open channels don't vanish and return on every keystroke. The
+  // store keeps that answer: the composer remounts this hook per edit.
+  const match = session.channels.matchPublic;
   const found = useMemo(() => {
     if (current) return current.channels;
-    if (!loading || !result || result.owner.session !== session) return none;
-    // The store's own name rule.
-    const needle = query.trim().toLowerCase().replace(/^#/, "");
-    const kept = result.channels.filter((channel) => {
-      const name = channel.name.toLowerCase();
-      return exact ? name === needle : name.includes(needle);
-    });
+    if (!loading || !match) return none;
+    const kept = match(query, { exact });
     return kept.length ? kept : none;
-  }, [current, loading, result, session, query, exact]);
+  }, [current, loading, match, query, exact]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   return {
     loading,

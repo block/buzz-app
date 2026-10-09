@@ -84,6 +84,9 @@ const searches: string[] = [];
 const heldSearches: string[] = [];
 let searchGate: Promise<void> | undefined;
 let releaseSearch = () => {};
+// Exact channel resolves (39000 by `#d`), held to observe a pending lookup.
+let channelGate: Promise<void> | undefined;
+let releaseChannels = () => {};
 // Optional visual preview: real GIF search, with messages still local to this fixture.
 const gifRelay = new URLSearchParams(location.search).get("gif-community");
 const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
@@ -139,6 +142,13 @@ const owner = createRelaySession(
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           await profileGate;
+        if (
+          channelGate &&
+          filters.some(
+            (filter) => filter.kinds?.includes(39000) && filter["#d"],
+          )
+        )
+          await channelGate;
         const search = filters.find((filter) => filter.search)?.search;
         if (search !== undefined) {
           searches.push(search);
@@ -368,6 +378,15 @@ Object.assign(window, {
     releaseSearches() {
       searchGate = undefined;
       releaseSearch();
+    },
+    holdChannelReads() {
+      channelGate = new Promise((resolve) => {
+        releaseChannels = resolve;
+      });
+    },
+    releaseChannelReads() {
+      channelGate = undefined;
+      releaseChannels();
     },
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;

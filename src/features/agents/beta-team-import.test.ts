@@ -216,3 +216,34 @@ it("refuses before any write when a member would get two team texts", async () =
   expect(f.raw.save).not.toHaveBeenCalled();
   expect(f.finishBetaTeam).not.toHaveBeenCalled();
 });
+
+it("writes only the roster it checked when the target's text changes mid-step", async () => {
+  // Both teams agree on OTHER, so adding b to the target passes the check.
+  // Another window then changes only the target's text: any later reread
+  // would see EDITED and a roster saved from it would carry a clash.
+  const f = fixture({
+    teams: [
+      { type: "team", id, name: "Reviewers", agents: [a] },
+      { type: "team", id: "other", name: "Writers", agents: [b] },
+    ],
+    heads: { [id]: "OTHER", other: "OTHER" },
+  });
+  const seen: string[] = [];
+  f.raw.readText.mockImplementation(async (team: string) => {
+    const text = f.text.get(team) ?? "";
+    if (team === id) {
+      seen.push(text);
+      if (seen.length === 2) f.text.set(id, "EDITED");
+    }
+    return { text, head: "text-head" };
+  });
+  let readBeforeSave: string[] = [];
+  f.raw.save.mockImplementationOnce(async (value: Team) => {
+    readBeforeSave = [...seen];
+    expect(value.agents).toEqual([a, b]);
+    return "head-9";
+  });
+  await run(f, pending([b])).catch(() => {});
+  expect(f.raw.save).toHaveBeenCalledOnce();
+  expect(readBeforeSave).toEqual(["OTHER", "OTHER"]);
+});

@@ -54,6 +54,22 @@ async function plan(
   };
 }
 
+/** Plans against a fresh catalog and validates that exact plan, so the
+ * caller writes only what was checked. */
+async function checkedPlan(
+  kit: ChannelKit,
+  control: AgentControl,
+  team: PendingBetaTeam,
+  text: string,
+) {
+  const others = await readTeamTexts(kit, control);
+  const next = await plan(kit, control, team, text);
+  const conflict = next.deleted
+    ? undefined
+    : teamTextConflict(others, next.roster, next.text);
+  return { next, conflict };
+}
+
 /** A save the step would refuse because a member would get two different
  * team texts. Reads a fresh catalog. */
 export async function betaTeamConflict(
@@ -62,11 +78,7 @@ export async function betaTeamConflict(
   team: PendingBetaTeam,
   text: string,
 ) {
-  const others = await readTeamTexts(kit, control);
-  const next = await plan(kit, control, team, text);
-  return next.deleted
-    ? undefined
-    : teamTextConflict(others, next.roster, next.text);
+  return (await checkedPlan(kit, control, team, text)).conflict;
 }
 
 /** Brings one team from old Buzz into the current catalog and finishes its
@@ -85,11 +97,16 @@ export async function runBetaTeamStep(
   const finish = control.finishBetaTeam;
   if (!finish) throw new Error("Teams from old Buzz are unavailable.");
   const check = async () => {
-    const conflict = await betaTeamConflict(kit, control, team, choice.text);
+    const { next, conflict } = await checkedPlan(
+      kit,
+      control,
+      team,
+      choice.text,
+    );
     if (conflict) throw new Error(conflict);
+    return next;
   };
-  await check();
-  const next = await plan(kit, control, team, choice.text);
+  const next = await check();
   if (!next.deleted) {
     let head = next.head;
     if (next.rosterChanged) head = await kit.save(next.roster, next.head);

@@ -290,6 +290,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     "company.tools": { enabled: false, command: "secret-tool" },
   });
   expect(started.config).toMatchObject({
+    web_search: "disabled",
     mcp_servers: { "company.tools": { enabled: false } },
     "features.apps": false,
     "features.plugins": false,
@@ -646,4 +647,73 @@ it("starts fresh instead of restoring an earlier plugin's conversation", async (
   );
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+
+it("leaves a failed first startup unbound so the next mention can start fresh", async () => {
+  const f = fixture();
+  const reading = deferred<void>();
+  const gate = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    reading.resolve();
+    await gate.promise;
+    throw new Error("Relay history unavailable");
+  });
+  await f.runtime.run(f.delivery("first"));
+  await reading.promise;
+  try {
+    expect(f.storage.size).toBe(0);
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    gate.resolve();
+  }
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("Relay history unavailable"),
+  });
+  await f.runtime.run(f.delivery("retry"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    2,
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    0,
+  );
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
+    [JSON.stringify(["channel", root])]: { threadId: "thread-2" },
+  });
+});
+
+it.each([
+  ["no rollout found for thread id thread-1", true],
+  ["Permission denied reading saved thread", false],
+])("recovers only a missing saved thread: %s", async (error, recover) => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "thread/resume" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    f.emit({ id: wire.id, error: { code: -32600, message: error } });
+  });
+  await f.runtime.run(f.delivery("follow-up"));
+  if (recover) {
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-2" });
+    f.complete();
+  }
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+    content: recover ? "DONE" : expect.stringContaining(error),
+  });
+  expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
+    [JSON.stringify(["channel", root])]: {
+      threadId: recover ? "thread-2" : "thread-1",
+    },
+  });
 });

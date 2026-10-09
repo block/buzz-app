@@ -48,6 +48,7 @@ Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
 Bindings persist locally under the community and agent identity. Switching
 communities, removing an agent, or disabling the plugin ends its server.
+If a saved Codex thread no longer exists, the next mention starts a fresh one.
 
 ## Checks
 
@@ -60,7 +61,7 @@ The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell
 and file tools, the native coding prompt, conversation context, default steering,
 idle follow-ups, process shutdown, saved-thread reuse, changed and cleared
-instructions, and disabled inherited MCP tools. Set
+instructions, missing-thread recovery, and disabled inherited MCP tools. Set
 `BUZZ_CODEX_TEST_MODEL` to another available model if needed. It prints only
 sanitized outcomes; it does not save raw protocol or session logs.
 
@@ -79,8 +80,8 @@ and cleanup.
   publish through the Buzz CLI. Short Buzz guidance and custom instructions are
   supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex uses workspace-write with no network access and approval policy `never`.
-  Inherited MCP servers, Apps, and plugins are disabled. The declared native
-  process grant itself has full user access; the Codex sandbox governs its tools.
+  Web search, inherited MCP servers, Apps, and plugins are disabled. The declared
+  native process grant itself has full user access; the Codex sandbox governs its tools.
 - Shared Agent Activity integration is deferred because this Agents2 delivery
   contract has no live-activity API. The Codex tab shows conversation status and
   the latest command/output. Responses are published once, without text streaming.

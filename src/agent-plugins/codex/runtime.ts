@@ -470,26 +470,35 @@ export class CodexRuntime {
         sandbox: "workspace-write",
         config: {
           "sandbox_workspace_write.network_access": false,
+          web_search: "disabled",
           mcp_servers: mcp,
           "features.plugins": false,
           "features.apps": false,
         },
       };
       const resuming = existing?.workspace === workspace;
-      const started = await rpc.request<{
-        thread: { id: string; cwd: string };
-      }>(resuming ? "thread/resume" : "thread/start", {
-        ...params,
-        ...(resuming
-          ? { threadId: existing?.threadId, excludeTurns: true }
-          : {}),
-      });
+      let started: { thread: { id: string; cwd: string } };
+      try {
+        started = await rpc.request<typeof started>(
+          resuming ? "thread/resume" : "thread/start",
+          {
+            ...params,
+            ...(resuming
+              ? { threadId: existing?.threadId, excludeTurns: true }
+              : {}),
+          },
+        );
+      } catch (error) {
+        if (
+          !resuming ||
+          message(error) !==
+            `no rollout found for thread id ${existing?.threadId}`
+        )
+          throw error;
+        started = await rpc.request<typeof started>("thread/start", params);
+      }
       active.threadId = started.thread.id;
       signal.throwIfAborted();
-      this.save(request, entry, key, {
-        threadId: started.thread.id,
-        workspace,
-      });
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
@@ -512,6 +521,11 @@ export class CodexRuntime {
         },
       });
       active.turnId = turn.turn.id;
+      // Empty threads have no resumable rollout until a user turn is accepted.
+      this.save(request, entry, key, {
+        threadId: started.thread.id,
+        workspace,
+      });
       ready();
       this.status(agent.pubkey, key, "Working");
       const status = await completed;

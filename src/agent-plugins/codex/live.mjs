@@ -30,6 +30,8 @@ const nativeSpawn = async (_id, options = {}) => {
       "-c",
       "include_collaboration_mode_instructions=false",
       "-c",
+      'web_search="live"',
+      "-c",
       `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
     ],
     {
@@ -299,6 +301,46 @@ try {
   assert.equal(binding().threadId, saved.threadId);
   console.log(
     "PASS process shutdown cleans shells and permits saved-session recovery",
+  );
+  runtime.dispose();
+  await condition(() => children.size === 0, "recovered server shutdown");
+  inspect = await new AppServer().open(nativeSpawn);
+  const empty = await inspect.request("thread/start", {
+    cwd: workspace,
+    model: delivery("").config.model,
+    approvalPolicy: "never",
+    sandbox: "workspace-write",
+    config: {
+      web_search: "disabled",
+      mcp_servers: { "fixture.tools": { command: "sh", enabled: false } },
+    },
+  });
+  await assert.rejects(
+    inspect.request("thread/resume", {
+      threadId: empty.thread.id,
+      excludeTurns: true,
+    }),
+    { message: `no rollout found for thread id ${empty.thread.id}` },
+  );
+  await inspect.close();
+  inspect = undefined;
+  const [storageKey, bindings] = [...storage][0];
+  const bindingKey = Object.keys(JSON.parse(bindings))[0];
+  storage.set(
+    storageKey,
+    JSON.stringify({ [bindingKey]: { ...saved, threadId: empty.thread.id } }),
+  );
+  await runtime.run(
+    delivery("Reply exactly MISSING_THREAD_RECOVERED. No tools."),
+  );
+  await condition(
+    () => published.length === 6,
+    "missing-thread recovery reply",
+  );
+  assert.match(published.at(-1).content, /MISSING_THREAD_RECOVERED/);
+  assert.notEqual(binding().threadId, empty.thread.id);
+  console.log(
+    "PASS missing saved thread recovers on the next ordinary mention",
   );
 } finally {
   await inspect?.close();

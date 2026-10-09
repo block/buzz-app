@@ -997,8 +997,12 @@ function Composer({
           );
           return;
         }
-        if (requestDeletion && session.outbox?.supports(5))
-          requestDeletion(editing.target, editing.close);
+        if (requestDeletion && session.outbox?.supports(5)) {
+          const checkpoint = beforeEdit.current;
+          requestDeletion(editing.target, () => {
+            if (beforeEdit.current === checkpoint) editing.close();
+          });
+        }
         return;
       }
       editing.save(

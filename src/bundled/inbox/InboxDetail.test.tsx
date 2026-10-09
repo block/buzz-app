@@ -114,7 +114,7 @@ async function frame() {
     for (const callback of pending) callback(performance.now());
   });
 }
-async function fixture(ownReply = false) {
+async function fixture(ownReply = false, anotherReply = false) {
   const viewer = keypair(),
     alice = keypair(),
     relay = keypair();
@@ -134,6 +134,11 @@ async function fixture(ownReply = false) {
         ["e", root.id, "", "reply"],
       ])
     : undefined;
+  const nextReply = anotherReply
+    ? message(viewer, "room", "Another Inbox reply", 22, [
+        ["e", root.id, "", "reply"],
+      ])
+    : undefined;
   const publications: RelayEvent[] = [];
   let publicationGate: ReturnType<typeof deferred> | undefined;
   const events = [
@@ -141,6 +146,7 @@ async function fixture(ownReply = false) {
     metadata(relay, "room", "Room", 10),
     root,
     ...(reply ? [reply] : []),
+    ...(nextReply ? [nextReply] : []),
   ];
   let journal: ReadJournal | undefined;
   let live!: LiveCallbacks;
@@ -222,6 +228,7 @@ async function fixture(ownReply = false) {
     live,
     root,
     reply,
+    nextReply,
     publications,
     item,
     journal: () => journal,
@@ -959,3 +966,69 @@ it.each([false, true])(
     }
   },
 );
+
+it("does not let a withheld deletion completion cancel a replacement edit", async () => {
+  const h = await fixture(true, true);
+  const { reader, editor } = await opened(h);
+  act(() => {
+    editor.value = "Reply draft";
+  });
+  fireEvent.input(editor);
+  const editRow = async (id: string | undefined, value: string) => {
+    const row = reader.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit message" }),
+    );
+    await waitFor(() => expect(editor).toHaveValue(value));
+    return row;
+  };
+  const original = await editRow(h.reply?.id, "My Inbox reply");
+  act(() => {
+    editor.value = "";
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit composer form");
+  fireEvent.submit(form);
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  const publication = h.holdPublication();
+  const gate = h.hold();
+  let refresh!: Promise<void>;
+  try {
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () => {
+      refresh = h.session.inboxFeed.refresh();
+      await gate.started.promise;
+    });
+    expect(dialog).not.toBeInTheDocument();
+    await act(async () => {
+      gate.gate.resolve();
+      await refresh;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(editor).toHaveValue("Reply draft");
+    await editRow(h.nextReply?.id, "Another Inbox reply");
+    act(() => {
+      editor.value = "Keep this newer correction";
+    });
+    fireEvent.input(editor);
+    await act(async () => publication.resolve());
+    await waitFor(() => expect(original).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+    expect(editor).toHaveValue("Keep this newer correction");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(editor).toHaveValue("Reply draft");
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    publication.resolve();
+    gate.gate.resolve();
+  }
+});

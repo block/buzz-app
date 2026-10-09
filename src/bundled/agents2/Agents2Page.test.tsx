@@ -50,7 +50,11 @@ const agent = (name: string, n: number): Agent => ({
 });
 
 function setup(agents: Agent[], { shown = true } = {}) {
-  let snapshot: AgentsSnapshot = { status: "ready", agents };
+  let snapshot: AgentsSnapshot = {
+    status: "ready",
+    classifier: "unavailable",
+    agents,
+  };
   const listeners = new Set<() => void>();
   const type = {
     key: "test/echo",
@@ -85,6 +89,8 @@ function setup(agents: Agent[], { shown = true } = {}) {
     save: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     classifier: () => "unavailable",
+    setClassifierKey: vi.fn(async () => {}),
+    clearClassifierKey: vi.fn(async () => {}),
   } satisfies Agents2;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

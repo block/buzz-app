@@ -1,7 +1,13 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
-import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
+import {
+  steerPrompt,
+  systemPrompt,
+  timerPrompt,
+  turnPrompt,
+  watchPrompt,
+} from "./prompt";
 
 const alice = "a".repeat(64);
 const bob = "b".repeat(64);
@@ -187,4 +193,32 @@ it("adds attention guidance only for a session with attention tools", () => {
   expect(systemPrompt({ scope: "thread", cwd: "/w" })).not.toContain(
     "## Attention",
   );
+});
+
+it("tells a watch's turn what Jev answered, or why it did not answer", () => {
+  const base = { id: "asks", interest: "ops", event: event("1", "help?") };
+  const passed = watchPrompt({
+    ...base,
+    classifier: {
+      outcome: "passed",
+      model: "jev-1.13.0",
+      answers: {
+        help: { probability: 0.91, threshold: 0.5, pass: true },
+        "<urgent>": { probability: 0.2, threshold: 0.7, pass: false },
+      },
+      policy: "help || <urgent>",
+    },
+  });
+  expect(passed).toContain(
+    "- help: yes, p=0.91 (threshold 0.5)\n- &lt;urgent&gt;: no, p=0.20 (threshold 0.7)\nPass rule: help || &lt;urgent&gt;",
+  );
+  expect(
+    watchPrompt({
+      ...base,
+      classifier: { outcome: "failed", reason: "timeout" },
+    }),
+  ).toContain(
+    "Jev did not answer (timeout), so the event passed without a check.",
+  );
+  expect(watchPrompt(base)).not.toContain("<watch-classifier>");
 });

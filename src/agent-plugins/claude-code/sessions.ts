@@ -77,7 +77,7 @@ export class AgentSessions {
 
   /** Starts a spare process unless one exists or the agent is at its limit. */
   warm() {
-    if (this.disposed || this.spare || this.live.size >= MAX_LIVE) return;
+    if (this.disposed || this.spare || this.count() >= MAX_LIVE) return;
     const spare = this.start(undefined).catch((error) => {
       console.warn("Claude Code could not start a spare session", error);
       return undefined;
@@ -122,6 +122,13 @@ export class AgentSessions {
       return this.answer(key, live, live.process.busy ? steer : text);
     }
     const saved = this.options.store.get(key);
+    // A new conversation takes the spare's place; any other start needs room,
+    // reserved here, before anything is awaited.
+    if ((saved || !this.spare) && !this.room())
+      return {
+        ok: false,
+        error: `Claude Code is already working in ${MAX_LIVE} conversations; try again when one finishes`,
+      };
     const starting = (async () =>
       saved
         ? this.start(saved.id)
@@ -133,8 +140,8 @@ export class AgentSessions {
     );
     this.opening.set(key, starting);
     live = await starting;
-    if (live && !this.disposed) this.adopt(key, live, seen);
     if (this.opening.get(key) === starting) this.opening.delete(key);
+    if (live && !this.disposed) this.adopt(key, live, seen);
     if (!live) return { ok: false, error: "Claude Code could not start" };
     if (this.disposed) {
       void live.process.kill();
@@ -171,14 +178,19 @@ export class AgentSessions {
     this.spare = undefined;
   }
 
-  private async start(resume: string | undefined): Promise<Live | undefined> {
-    const launch = await this.options.launch();
+  private async start(resume: string | undefined): Promise<Live> {
+    // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
+    const launch = await this.options.launch();
     const process = await ClaudeProcess.start(this.options.spawn, {
       ...launch,
       ...(resume ? { resume } : { sessionId: this.newId() }),
     });
-    return { process, fingerprint, used: this.now() };
+    if (fingerprint === this.options.fingerprint() || this.disposed)
+      return { process, fingerprint, used: this.now() };
+    // Settings saved while it started: it would work with the old ones.
+    void process.kill();
+    return this.start(resume);
   }
   private async claimSpare() {
     const spare = this.spare;
@@ -193,7 +205,6 @@ export class AgentSessions {
     return undefined;
   }
   private adopt(key: string, live: Live, seen: number) {
-    this.evict();
     live.process.conversation = key;
     this.live.set(key, live);
     this.touch(key, live, seen);
@@ -229,16 +240,24 @@ export class AgentSessions {
       at: live.used,
     });
   }
-  /** Makes room for one more process by stopping the longest-idle one. */
-  private evict() {
-    const reserved = this.spare ? 1 : 0;
-    while (this.live.size + reserved >= MAX_LIVE) {
+  /** Processes running or starting, the spare included. */
+  private count() {
+    return this.live.size + this.opening.size + (this.spare ? 1 : 0);
+  }
+  /** Makes room for one more process by stopping the longest-idle
+   * conversation, else the spare. False when every process is working. */
+  private room() {
+    while (this.count() >= MAX_LIVE) {
       const idle = [...this.live]
         .filter(([, live]) => !live.process.busy)
         .sort(([, a], [, b]) => a.used - b.used)[0];
-      if (!idle) return;
-      this.drop(...idle);
+      if (idle) this.drop(...idle);
+      else if (this.spare) {
+        void this.spare.then((live) => live?.process.kill());
+        this.spare = undefined;
+      } else return false;
     }
+    return true;
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);

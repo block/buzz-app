@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import type { HostProcessOptions } from "../../features/host/service";
+import type {
+  HostProcess,
+  HostProcessOptions,
+} from "../../features/host/service";
 import { checkClaude, ClaudeSetup } from "./setup";
 
 /** A spawn whose processes print `output[args]` and exit with its code. */
@@ -76,6 +79,41 @@ it("runs sign-in, shows its output, and checks again after", async () => {
     "--version",
     "auth status --json",
   ]);
+});
+
+it("stops a step cancelled before its process was returned", async () => {
+  const { spawn: check } = scripted({});
+  let resolveSpawn!: (process: HostProcess) => void;
+  let resolveExit!: (code: number | null) => void;
+  const process: HostProcess & { killed?: boolean } = {
+    write: async () => undefined,
+    end: async () => undefined,
+    kill: async () => {
+      process.killed = true;
+      resolveExit(null);
+    },
+    exited: new Promise((resolve) => {
+      resolveExit = resolve;
+    }),
+  };
+  const setup = new ClaudeSetup((id, options) =>
+    id === "install"
+      ? new Promise((resolve) => {
+          resolveSpawn = resolve;
+        })
+      : check(id, options),
+  );
+  const run = setup.run("install");
+  expect(setup.snapshot().running).toBe("install");
+  await setup.cancel();
+  resolveSpawn(process);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(process.killed).toBe(true);
+  await run;
+  expect(setup.snapshot()).toMatchObject({
+    running: undefined,
+    output: "\nInstall ended (stopped).",
+  });
 });
 
 it("explains that it needs the desktop app", async () => {

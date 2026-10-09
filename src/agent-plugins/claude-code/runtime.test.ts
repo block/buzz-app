@@ -168,6 +168,48 @@ it("answers Claude's tool calls as the agent, in the thread it is working in", a
   });
 });
 
+it("reads a busy turn's files from the workspace it started in", async () => {
+  const mention = message("2", "@Claude write a report", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, deliver, claudes, fake } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  spare.hold = true;
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  // Saved mid-turn: the busy process keeps working where it started.
+  runtime.sync([
+    { pubkey: self, config: { ...DEFAULT_CONFIG, workspace: "/new" } } as Agent,
+  ]);
+  await flush(10);
+  expect(spare.killed).toBe(false);
+  spare.emit({
+    type: "control_request",
+    request_id: "call-1",
+    request: {
+      subtype: "mcp_message",
+      server_name: "buzz",
+      message: {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "send", arguments: { path: "report.md" } },
+      },
+    },
+  });
+  await flush(10);
+  const reads = fake.processes.filter((process) => process.id === "read");
+  expect(reads.map((read) => [read.options.args, read.options.cwd])).toEqual([
+    [["report.md"], DEFAULT_CONFIG.workspace],
+  ]);
+});
+
 it("shows a thread's later turns only what the session has not seen", async () => {
   const root = message("1", "first", {
     tags: [

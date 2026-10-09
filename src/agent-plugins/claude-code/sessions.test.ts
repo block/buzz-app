@@ -27,6 +27,10 @@ function sessions(
   options: Partial<{
     known: Set<string>;
     store: ReturnType<typeof memoryStore>;
+    /** Every process keeps its turns open until finished. */
+    hold: boolean;
+    /** Holds each launch after it reads the settings, as a memory read does. */
+    launched: Promise<void>;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
@@ -34,13 +38,19 @@ function sessions(
   let model = "opus";
   let ids = 0;
   const pool = new AgentSessions({
-    spawn: fake.spawn,
+    spawn: (id, spawnOptions) => {
+      // The fake records each process as the call begins.
+      const process = fake.spawn(id, spawnOptions);
+      const started = fake.processes.at(-1);
+      if (options.hold && started) started.hold = true;
+      return process;
+    },
     store,
-    launch: async () => ({
-      cwd: "/work",
-      systemPrompt: "prompt",
-      model,
-    }),
+    launch: async () => {
+      const current = model;
+      await options.launched;
+      return { cwd: "/work", systemPrompt: "prompt", model: current };
+    },
     fingerprint: () => model,
     newId: () => `new-${++ids}`,
   });
@@ -153,6 +163,58 @@ it("stops the longest-idle conversation to stay within its process limit", async
   const keys = pool.snapshot().map((session) => session.key);
   expect(keys).not.toContain("c/0");
   expect(keys).toContain(`c/${MAX_LIVE + 1}`);
+});
+
+it("says it is busy rather than start a process past its limit", async () => {
+  const { pool, live } = sessions({ hold: true });
+  pool.warm();
+  for (let index = 0; index < MAX_LIVE; index++)
+    void pool.deliver(`c/${index}`, "hi", index);
+  await flush();
+  expect(live()).toHaveLength(MAX_LIVE);
+  await expect(pool.deliver("c/extra", "hi", 9)).resolves.toEqual({
+    ok: false,
+    error: `Claude Code is already working in ${MAX_LIVE} conversations; try again when one finishes`,
+  });
+  expect(live()).toHaveLength(MAX_LIVE);
+  expect(pool.snapshot().map((session) => session.key)).not.toContain(
+    "c/extra",
+  );
+});
+
+it("counts conversations still starting toward its limit", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, live } = sessions({ hold: true, launched });
+  const results = Array.from({ length: MAX_LIVE + 1 }, (_, index) =>
+    pool.deliver(`c/${index}`, "hi", index),
+  );
+  await expect(results[MAX_LIVE]).resolves.toMatchObject({ ok: false });
+  release();
+  await flush();
+  expect(live()).toHaveLength(MAX_LIVE);
+});
+
+it("starts again with settings saved while a conversation's process started", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes, setModel } = sessions({ launched });
+  const done = pool.deliver("c/root", "hi", 1);
+  await flush();
+  setModel("sonnet");
+  pool.reconfigure();
+  release();
+  await expect(done).resolves.toEqual({ ok: true });
+  const [old] = claudes();
+  expect(old?.options.args).toContain("opus");
+  expect(old?.killed).toBe(true);
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  expect(used[0]?.options.args).toContain("sonnet");
 });
 
 it("restarts idle processes and the spare when settings change", async () => {

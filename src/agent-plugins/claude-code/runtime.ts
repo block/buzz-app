@@ -323,24 +323,28 @@ export class ClaudeRuntime {
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
-    const tools: ToolServer = async (conversation, message) => {
-      // A spare starts before any delivery: it can list the tools, and has a
-      // handle to call them with by the time it is given a turn.
-      const handle = entry.handle;
-      const client = handle && {
-        ...appClient(handle, {
-          spawn: this.spawn,
-          cwd: entry.config.workspace,
-          memories: () => this.memories(pubkey),
-        }),
-        remember: async (slug: string, body: string, after: number) => {
-          await handle.remember(slug, body, after);
-          if (slug === "core") delete entry.memory;
-        },
+    // Each process reads files where it was started, until it is replaced.
+    const tools =
+      (cwd: string): ToolServer =>
+      async (conversation, message) => {
+        // A spare starts before any delivery: it can list the tools, and has a
+        // handle to call them with by the time it is given a turn.
+        const handle = entry.handle;
+        const client = handle && {
+          ...appClient(handle, {
+            spawn: this.spawn,
+            cwd,
+            memories: () => this.memories(pubkey),
+          }),
+          remember: async (slug: string, body: string, after: number) => {
+            await handle.remember(slug, body, after);
+            if (slug === "core") delete entry.memory;
+          },
+        };
+        const context =
+          (conversation && entry.contexts.get(conversation)) || {};
+        return respond(client, context, message);
       };
-      const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message);
-    };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       store: localSessions(this.storage, pubkey),
@@ -357,7 +361,7 @@ export class ClaudeRuntime {
         const memory = await this.memory(pubkey, entry);
         return {
           cwd: workspace,
-          tools,
+          tools: tools(workspace),
           ...(model.trim() ? { model: model.trim() } : {}),
           systemPrompt: systemPrompt({
             scope,

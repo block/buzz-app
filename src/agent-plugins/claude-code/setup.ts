@@ -100,6 +100,8 @@ export class ClaudeSetup {
   };
   private readonly listeners = new Set<() => void>();
   private process: HostProcess | undefined;
+  /** Cancel was asked for before the running step's process was returned. */
+  private cancelled = false;
 
   constructor(private readonly spawn: Spawn | undefined) {}
 
@@ -134,11 +136,13 @@ export class ClaudeSetup {
   /** Runs the installer or sign-in, then checks again. */
   async run(step: "install" | "login") {
     if (!this.spawn || this.state.running) return;
+    this.cancelled = false;
     this.set({ running: step, output: "" });
     try {
       this.process = await runStep(this.spawn, step, (text) =>
         this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) }),
       );
+      if (this.cancelled) void this.process.kill();
       const code = await this.process.exited;
       if (code !== 0)
         this.set({
@@ -160,9 +164,10 @@ export class ClaudeSetup {
     return this.process?.write(`${text}\n`);
   }
   cancel() {
+    this.cancelled = true;
     return this.process?.kill();
   }
   dispose() {
-    void this.process?.kill();
+    void this.cancel();
   }
 }

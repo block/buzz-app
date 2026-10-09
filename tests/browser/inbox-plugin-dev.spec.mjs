@@ -126,6 +126,12 @@ test("same-ID Inbox and Links development share host state across revisions and 
       .click();
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    const openDrafts = async () => {
+      await button(inbox, "Inbox filters").click();
+      await page
+        .getByRole("menuitemradio", { name: "Drafts", exact: true })
+        .click();
+    };
     await expect(
       inbox.getByText("Unread reply 1", { exact: true }),
     ).toBeVisible();
@@ -135,7 +141,7 @@ test("same-ID Inbox and Links development share host state across revisions and 
     // The draft created by the host composer must be usable in the plugin.
     // Use the actual host composer to prove same-window draft notifications;
     // do not expose additional host exports just for the test.
-    await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
+    await openDrafts();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
@@ -148,7 +154,7 @@ test("same-ID Inbox and Links development share host state across revisions and 
     await button(inbox, "Open in origin").click();
     await expect(hostEditor).toContainText("Edited in local Inbox");
     await openPage(page, "Inbox");
-    await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
+    await openDrafts();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
@@ -247,7 +253,7 @@ test("same-ID Inbox and Links development share host state across revisions and 
       "word-spacing",
       "3.7px",
     );
-    await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
+    await openDrafts();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
@@ -296,7 +302,7 @@ test("same-ID Inbox and Links development share host state across revisions and 
       .getByRole("button", { name: "Back", exact: true })
       .click();
     await openPage(page, "Inbox");
-    await inbox.getByRole("button", { name: "Drafts", exact: true }).click();
+    await openDrafts();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();

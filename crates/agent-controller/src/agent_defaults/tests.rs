@@ -89,6 +89,84 @@ fn blank_fields_inherit_for_the_same_harness_and_agent_values_win() {
 }
 
 #[test]
+fn imported_portable_effort_is_saved_and_wins_over_older_sources() {
+    let mut agent = fixture();
+    agent.imported = serde_json::json!({"record":{"effort_level":"low"}});
+    let edit = |effort: &str| crate::config::AgentEdit {
+        effort: Some(effort.into()),
+        name: agent.name.clone(),
+        picture: None,
+        system_prompt: agent.system_prompt.clone(),
+        session_policy: None,
+        workspace: agent.workspace.clone(),
+        harness: agent.harness.clone(),
+        environment: BTreeMap::new(),
+    };
+    for invalid in ["", "high\n", "high\u{200b}low", "\u{d15}\u{d4d}\u{200d}$"] {
+        assert!(agent.clone().apply(edit(invalid)).is_err());
+    }
+    let next = edit("high");
+    agent.apply(next).unwrap();
+    let out = effective(&agent, &defaults("buzz-agent"));
+    assert_eq!(effort(&out), Some("high"));
+    assert_eq!(
+        out.view(&defaults("buzz-agent")).launch_effort.as_deref(),
+        Some("high")
+    );
+}
+
+#[test]
+fn harness_change_without_effort_drops_the_agents_own_effort() {
+    for imported_only in [false, true] {
+        let mut agent = fixture();
+        agent.harness.command = "buzz-pi-acp".into();
+        agent.imported = serde_json::json!({"record":{"effort_level":"xhigh"}});
+        if !imported_only {
+            agent.extra.insert("effort".into(), "xhigh".into());
+        }
+        let edit = |agent: &Agent, command: &str| crate::config::AgentEdit {
+            effort: None,
+            name: agent.name.clone(),
+            picture: None,
+            system_prompt: agent.system_prompt.clone(),
+            session_policy: None,
+            workspace: agent.workspace.clone(),
+            harness: crate::config::HarnessEdit {
+                command: command.into(),
+                ..agent.harness.clone()
+            },
+            environment: BTreeMap::new(),
+        };
+        // Same harness keeps it; switching to Goose drops it.
+        agent.apply(edit(&agent, "buzz-pi-acp")).unwrap();
+        assert_eq!(effort(&agent), Some("xhigh"));
+        agent.apply(edit(&agent, "goose")).unwrap();
+        assert_eq!(effort(&agent), None);
+        let out = effective(&agent, &defaults("goose"));
+        assert_eq!(effort(&out), Some("high"), "goose default applies");
+    }
+}
+
+#[test]
+fn lowercase_effort_override_matches_launch_name_semantics() {
+    let mut agent = fixture();
+    agent.harness.command = "pi".into();
+    agent
+        .extra
+        .insert(crate::config::OWN_EFFORT.into(), "high".into());
+    for value in ["low", ""] {
+        agent.environment = BTreeMap::from([("buzz_acp_effort_level".into(), value.into())]);
+        // Windows process environment names are case-insensitive, so the
+        // lowercase name replaces the saved effort at launch there only.
+        assert_eq!(effort_from_env(&agent), cfg!(windows));
+        assert_eq!(
+            launch_effort(&agent),
+            if cfg!(windows) { None } else { Some("high") }
+        );
+    }
+}
+
+#[test]
 fn selectors_do_not_cross_harnesses_but_environment_does() {
     let mut agent = fixture();
     agent.harness.command = "/opt/tools/goose".into();
@@ -457,7 +535,6 @@ fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_reco
         serde_json::json!({"teamInstructions":"legacy team rules"}),
         serde_json::json!({"record":{"idle_timeout_seconds":30}}),
         serde_json::json!({"record":{"max_turn_duration_seconds":60}}),
-        serde_json::json!({"record":{"effort_level":"high"}}),
     ] {
         agent.imported = imported;
         let view = serde_json::to_value(agent.view(&AgentDefaults::default())).unwrap();
@@ -472,7 +549,7 @@ fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_reco
         agent
             .view(&defaults("buzz-agent"))
             .snapshot_export_limitations,
-        vec!["effort level"]
+        Vec::<&str>::new()
     );
 }
 

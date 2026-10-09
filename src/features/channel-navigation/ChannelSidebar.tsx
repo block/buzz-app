@@ -47,6 +47,7 @@ import {
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import {
@@ -70,6 +71,7 @@ import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import {
   sidebarSections,
   isChannelSectionKey,
+  isChannelDropSectionKey,
 } from "../../bundled/channels/sidebar-sections";
 import {
   CreateChannelDialog,
@@ -756,6 +758,9 @@ function ReadySidebar({
           }
         />,
       );
+    actions.push(
+      <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
+    );
     if (!surface && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
@@ -1042,12 +1047,14 @@ function ReadySidebar({
             <ChannelSidebarDnd
               writable={placementWritable}
               onMove={(channelId, sectionKey) =>
-                assignGroup(
-                  channelId,
-                  sectionKey.startsWith("group:")
-                    ? sectionKey.slice("group:".length)
-                    : undefined,
-                )
+                sectionKey === "starred"
+                  ? setChannelStar(channelId, true)
+                  : assignGroup(
+                      channelId,
+                      sectionKey.startsWith("group:")
+                        ? sectionKey.slice("group:".length)
+                        : undefined,
+                    )
               }
               overlay={(channelId) => {
                 const channel = sidebarChannels.find(
@@ -1067,7 +1074,7 @@ function ReadySidebar({
                 <DroppableSidebarSection
                   key={section.key}
                   disabled={
-                    !placementWritable || !isChannelSectionKey(section.key)
+                    !placementWritable || !isChannelDropSectionKey(section.key)
                   }
                   sectionKey={section.key}
                   title={section.title}
@@ -1179,7 +1186,7 @@ function ReadySidebar({
                         sectionKey={section.key}
                         selectFrame={
                           channel.channelType !== "dm" &&
-                          isChannelSectionKey(section.key)
+                          isChannelDropSectionKey(section.key)
                             ? DraggableChannel
                             : undefined
                         }

@@ -204,14 +204,41 @@ pub(crate) fn effective(agent: &Agent, defaults: &AgentDefaults) -> Agent {
     out
 }
 
-/// The agent's imported effort wins over an inherited default.
+/// The agent's own effort (from a portable import, else an old Buzz import)
+/// wins over an inherited default. A saved null (cleared by a harness change)
+/// hides the old Buzz value too.
 pub(crate) fn effort(agent: &Agent) -> Option<&str> {
     if agent.harness.integration == Some(crate::HarnessIntegration::Codex) {
         return agent.harness.codex_effort();
     }
-    agent.imported["record"]["effort_level"]
-        .as_str()
-        .or_else(|| agent.extra.get(INHERITED_EFFORT)?.as_str())
+    match agent.extra.get(crate::config::OWN_EFFORT) {
+        Some(own) => own.as_str(),
+        None => agent.imported["record"]["effort_level"].as_str(),
+    }
+    .or_else(|| agent.extra.get(INHERITED_EFFORT)?.as_str())
+}
+
+/// Whether a Pi or Goose behavior override picks effort at launch; an empty
+/// value still replaces the saved effort. Its value never leaves native.
+/// Matches names as the launched process does: case-insensitively on Windows.
+pub(crate) fn effort_from_env(agent: &Agent) -> bool {
+    matches!(harness_kind(&agent.harness.command), Some("pi" | "goose"))
+        && agent.environment.keys().any(|key| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case("BUZZ_ACP_EFFORT_LEVEL")
+            } else {
+                key == "BUZZ_ACP_EFFORT_LEVEL"
+            }
+        })
+}
+
+/// Effort the next start applies on an effective clone, unless an
+/// environment override decides it.
+pub(crate) fn launch_effort(agent: &Agent) -> Option<&str> {
+    if effort_from_env(agent) {
+        return None;
+    }
+    effort(agent).filter(|effort| !effort.is_empty())
 }
 
 #[cfg(test)]

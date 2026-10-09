@@ -87,6 +87,8 @@ export interface AgentView {
   launchProvider: string | null;
   /** Next-start listener workers, including native defaults/overrides; never a raw env value. */
   launchParallelism?: number | null;
+  /** Effort level the next start applies; null when the harness decides. */
+  launchEffort?: string | null;
   /** Environment key deciding that selector; its value stays native. */
   launchModelEnv: string | null;
   launchProviderEnv: string | null;
@@ -197,11 +199,16 @@ export interface AgentEdit {
   harness: Omit<AgentView["harness"], "environmentKeys">;
   /** Missing preserves the native value; null removes it; string replaces it. */
   environment: Record<string, string | null>;
+  /** Missing preserves the saved effort level; a value replaces it. */
+  effort?: string;
 }
 export interface AgentImportPreview {
   token: string;
   sourcePath: string;
-  candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
+  candidates: (Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name"> & {
+    /** The imported prompt drops a team section old Buzz baked into it. */
+    stripsTeamInstructions?: boolean;
+  })[];
   warnings: string[];
 }
 export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {

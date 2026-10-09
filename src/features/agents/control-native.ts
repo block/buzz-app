@@ -20,14 +20,6 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         community,
         memoryLevel,
       }),
-    applyTeamInstructions: (id, revision, instructions, team, community) =>
-      invoke("agent_control_team_instructions", {
-        id,
-        revision,
-        instructions,
-        team,
-        community,
-      }),
     syncTeamInstructions: (community, teams) =>
       invoke("agent_control_team_sync", { community, teams }),
     previewTeam: (content) => invoke("agent_control_team_preview", { content }),

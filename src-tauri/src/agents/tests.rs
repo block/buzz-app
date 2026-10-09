@@ -868,36 +868,41 @@ async fn pi_model_probe_leaves_stop_usable_and_cancel_retires_its_group() {
     .expect("Cancelled probe still running");
 }
 
-// Unix-only: the synthetic bundle relies on executable-mode scripts.
+// Verified manifest over inert files. Credential or owner refusal precedes any spawn.
+fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
+    use sha2::{Digest, Sha256};
+    std::fs::create_dir_all(directory).unwrap();
+    let source: Value =
+        serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
+    let mut files = BTreeMap::new();
+    for tool in source["tools"].as_array().unwrap() {
+        let tool = tool.as_str().unwrap();
+        let name = if cfg!(windows) {
+            format!("{tool}.exe")
+        } else {
+            tool.to_owned()
+        };
+        let path = directory.join(&name);
+        crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
+        let digest = Sha256::digest(std::fs::read(&path).unwrap());
+        files.insert(name, format!("{digest:x}"));
+    }
+    let manifest = json!({"version":2, "goose":source["goose"], "revision":source["revision"],
+        "target":env!("TAURI_ENV_TARGET_TRIPLE"), "files":files});
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    RuntimeBundle::new(directory.into()).unwrap()
+}
+
+// Unix-only: the overlapping process fixtures use executable-mode scripts.
 #[cfg(unix)]
 mod overlap {
     use super::*;
 
     const REFUSAL: &str = "Synthetic credential refusal";
-
-    // Verified manifest over inert scripts. Credential refusal precedes any spawn.
-    pub(super) fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
-        use sha2::{Digest, Sha256};
-        std::fs::create_dir_all(directory).unwrap();
-        let source: Value =
-            serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
-        let mut files = BTreeMap::new();
-        for tool in source["tools"].as_array().unwrap() {
-            let name = tool.as_str().unwrap();
-            let path = directory.join(name);
-            crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
-            let digest = Sha256::digest(std::fs::read(&path).unwrap());
-            files.insert(name.to_owned(), format!("{digest:x}"));
-        }
-        let manifest = json!({"version":2, "goose":source["goose"], "revision":source["revision"],
-            "target":env!("TAURI_ENV_TARGET_TRIPLE"), "files":files});
-        std::fs::write(
-            directory.join("manifest.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        RuntimeBundle::new(directory.into()).unwrap()
-    }
 
     // Each credential read reports entry, then blocks until the test releases that
     // exact credential id; an unplanned read fails fast instead of hanging.
@@ -1787,7 +1792,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -1856,7 +1861,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -3081,7 +3086,7 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 Arc::new(RejectingCredentials),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.legacy_check = || Ok(());
@@ -3178,7 +3183,7 @@ fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
         h.controller = Controller::new(
             Store::open(dir.path().join("store"))?,
             credentials,
-            Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+            Ok(synthetic_bundle(&dir.path().join("tools"))),
             dir.path().join("ownership"),
         );
         h.legacy_check = || Ok(());

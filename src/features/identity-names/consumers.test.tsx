@@ -24,12 +24,13 @@ import { createAgentDirectory, defaultNamingPolicy } from "./testing";
 import type { RelaySession } from "../relay/session";
 import type { PresenceStatus } from "../presence/presence";
 import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
-import { ActivityAccessory } from "../../bundled/agent-activity/ActivityAccessory";
 import { SearchResults } from "../../app/shell/SearchResults";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { AgentChoice } from "../sessions/AgentChoice";
 import { MessageRow } from "../messages/MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
+import { TypingIndicator } from "../messages/TypingIndicator";
+
 const a = "a".repeat(64),
   b = "b".repeat(64);
 const stops: (() => void)[] = [];
@@ -79,11 +80,12 @@ function fixture() {
     replies: [],
     canLoadMore: false,
   };
+  const publicTyping = [{ pubkey: a, channelId: "c" }];
   const activity = {
-    status: "ready",
+    status: "listening",
     records: [],
     turns: [],
-    typing: [{ channelId: "c", agent: a }],
+    typing: [{ channelId: "c", agent: a, working: true }],
     trimmed: 0,
   };
   const subscribe = (listener: () => void) => {
@@ -101,6 +103,9 @@ function fixture() {
     profiles: { snapshot: () => profiles, subscribe, ensure: async () => {} },
     channels: {
       list: () => list,
+      window: () => ({ rows }),
+      subscribeWindow: (_id: string, listener: () => void) =>
+        subscribe(listener),
       subscribeList: subscribe,
       ensureList() {},
       get: () => channel,
@@ -119,6 +124,7 @@ function fixture() {
       refresh: async () => {},
     },
     agentActivity: { snapshot: () => activity, subscribe },
+    typing: { snapshot: () => publicTyping, subscribe },
     thread: () => ({
       snapshot: () => thread,
       subscribe,
@@ -377,29 +383,28 @@ it("uses channel scope in link previews and activity, and participant scope in s
     <>
       <Sidebar />
       <BuzzLinkPreview session={f.session} channelId="c" messageId="m" />
-      <ActivityAccessory
+      <TypingIndicator
         session={f.session}
-        scope="test"
         channelId="c"
-        canOpen={() => true}
-        open={() => true}
+        canOpenActivity={() => true}
+        openActivity={() => true}
       />
     </>,
   );
   await userEvent
     .setup()
-    .click(screen.getByText("Channel-wide activity · 1 agent"));
+    .click(screen.getByRole("button", { name: "Activity: Larry working" }));
   expect(view.container.querySelector("strong")).toHaveTextContent("Larry");
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}`,
+      name: "View Larry activity",
     }),
   ).toBeVisible();
   act(() => f.setPresence("away"));
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry ${a.slice(0, 12)}, Presence: away`,
+      name: "View Larry activity",
     }),
   ).toBeVisible();
   act(() => f.join());
@@ -411,7 +416,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
   );
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry · rcaj ${a.slice(0, 12)}, Presence: away`,
+      name: "View Larry · rcaj activity",
     }),
   ).toBeVisible();
 });
@@ -448,6 +453,6 @@ it("keeps a unique selectable agent plain despite a cached namesake", async () =
   render(<AgentChoice session={f.session} value={a} onChange={change} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Change agent: Larry" }));
-  await user.click(await screen.findByRole("menuitemradio", { name: "Larry" }));
-  expect(change).toHaveBeenCalledWith(a, expect.anything());
+  await user.click(await screen.findByRole("button", { name: "Larry" }));
+  expect(change).toHaveBeenCalledWith(a);
 });

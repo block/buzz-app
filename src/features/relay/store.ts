@@ -8,6 +8,7 @@ import type {
   ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
+  ChannelSummary,
   PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
@@ -25,6 +26,7 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
+import { matchRank } from "../search/match";
 
 type Listener = () => void;
 type WindowState = {
@@ -77,6 +79,9 @@ const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 const DISCOVERY_LIMIT = 500;
 // One page of public channel metadata for name search; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** How long name search reuses one page of public channel metadata. Typing
+ * reads it once; a channel created meanwhile shows up after this. */
+const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
 /** Exact omission confirmations use the relay's explicit channel-ID cap. */
 const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
@@ -144,6 +149,9 @@ export function createChannelStore(
     epoch = 0,
     listBusy = false;
   let listAgain = false;
+  // Epoch of the latest access revocation. When that revocation is what made a
+  // full read stale, it interrupted rather than failed it: a pass is still owed.
+  let revokedEpoch = 0;
   let strongListAgain = false;
   let listRetryAt = 0;
   type RosterRefresh = Readonly<{
@@ -1243,7 +1251,11 @@ export function createChannelStore(
         rosterRefresh = Object.freeze(outcome);
         // Stale work cannot consume a newer hint or certify freshness. A failed
         // read waits for deliberate retry/a later hint instead of draining work.
-        if (listAgain && outcome.state !== "error") void discover(true);
+        if (
+          (listAgain || (generation !== epoch && revokedEpoch === epoch)) &&
+          outcome.state !== "error"
+        )
+          void discover(true);
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
@@ -1398,9 +1410,13 @@ export function createChannelStore(
   }
   /** Find active public channels the viewer has not joined, by name.
    * The relay has no metadata text search, so this reads one bounded page of
-   * relay-signed 39000 metadata without applying it, matches names locally,
-   * and admits only the matches through `resolve`. Matches become readable
+   * relay-signed 39000 metadata without applying it (reused for typing, see
+   * PUBLIC_CHANNEL_PAGE_TTL), ranks name matches locally, and admits only
+   * the best matches through `resolve`. Matches become readable
    * previews through `get`; they never enter `list()`. */
+  let publicPage:
+    | { generation: number; at: number; events: readonly RelayEvent[] }
+    | undefined;
   async function searchPublic(
     query: string,
     settings?: ReadOptions & { limit?: number; exact?: boolean },
@@ -1412,22 +1428,33 @@ export function createChannelStore(
     if (list.status !== "ready")
       throw new Error("Channel list is not ready for channel search");
     const generation = epoch;
-    const events = await transport.read(
-      [
-        {
-          kinds: [39000],
-          authors: [transport.relayAuthor],
-          limit: PUBLIC_CHANNEL_PAGE,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
-    settings?.signal?.throwIfAborted();
-    if (disposed || generation !== epoch)
-      throw new DOMException("Stale channel search", "AbortError");
-    const metadata = events.filter(
-      (event) => event.kind === 39000 && event.pubkey === transport.relayAuthor,
-    );
+    // Candidates only: `resolve` below re-reads each match, so a reused page
+    // never grants access by itself.
+    let metadata =
+      publicPage?.generation === generation &&
+      now() - publicPage.at < PUBLIC_CHANNEL_PAGE_TTL
+        ? publicPage.events
+        : undefined;
+    if (!metadata) {
+      const events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            authors: [transport.relayAuthor],
+            limit: PUBLIC_CHANNEL_PAGE,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+      settings?.signal?.throwIfAborted();
+      if (disposed || generation !== epoch)
+        throw new DOMException("Stale channel search", "AbortError");
+      metadata = events.filter(
+        (event) =>
+          event.kind === 39000 && event.pubkey === transport.relayAuthor,
+      );
+      publicPage = { generation, at: now(), events: metadata };
+    }
     const latest = new Map<string, RelayEvent>();
     for (const event of metadata) {
       const id = tag(event, "d");
@@ -1445,10 +1472,16 @@ export function createChannelStore(
           (settings?.exact
             ? name.toLowerCase() === needle
             : name.toLowerCase().includes(needle))
-          ? [{ id, name }]
+          ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
           : [];
       })
-      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      // Best match first before the cut, so an exact name is never dropped.
+      .sort(
+        (a, b) =>
+          a.rank - b.rank ||
+          a.name.localeCompare(b.name) ||
+          a.id.localeCompare(b.id),
+      )
       .slice(0, settings?.limit ?? 8);
     // Exact resolution, not this page, owns access: it re-reads the signed
     // metadata and the viewer roster for each match before granting a preview.
@@ -1457,15 +1490,43 @@ export function createChannelStore(
         candidates.map(({ id }) => id),
         settings,
       );
-    return {
-      channels: candidates.flatMap(({ id }) => {
-        const channel = discovery.get(id);
-        return channel?.readOnly && !channel.archived && !channel.cached
-          ? [channel]
+    const channels = candidates.flatMap(({ id }) => {
+      const channel = previewable(id);
+      return channel ? [channel] : [];
+    });
+    if (generation === epoch)
+      recentPublic = { generation, ids: channels.map(({ id }) => id) };
+    return { channels, partial: metadata.length >= PUBLIC_CHANNEL_PAGE };
+  }
+  /** An open channel's current read-only preview, as name search admits it. */
+  function previewable(id: string) {
+    const channel = discovery?.get(id);
+    return channel?.readOnly && !channel.archived && !channel.cached
+      ? channel
+      : undefined;
+  }
+  /** The last search's channels that still match `query`, in search order.
+   * Callers remount per keystroke, so the store, not a component, keeps the
+   * previous answer while the next `searchPublic` runs. */
+  let recentPublic: { generation: number; ids: readonly string[] } | undefined;
+  function matchPublic(
+    query: string,
+    settings?: { exact?: boolean },
+  ): readonly ChannelSummary[] {
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle || disposed || recentPublic?.generation !== epoch) return [];
+    return recentPublic.ids
+      .flatMap((id) => {
+        const channel = previewable(id);
+        const name = channel?.name.toLowerCase();
+        return channel &&
+          name &&
+          (settings?.exact ? name === needle : name.includes(needle))
+          ? [{ channel, rank: matchRank(channel.name, needle) ?? 3 }]
           : [];
-      }),
-      partial: metadata.length >= PUBLIC_CHANNEL_PAGE,
-    };
+      })
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ channel }) => channel);
   }
   /** Re-read one authorized channel's relay-signed roster and merge it into the
    * ready list: one exact `#d` read of a single 39002, instead of the full
@@ -1645,6 +1706,7 @@ export function createChannelStore(
     get: (id: string) => discovery?.get(id),
     resolve,
     searchPublic,
+    matchPublic,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
@@ -2011,6 +2073,7 @@ export function createChannelStore(
   ) {
     const hadHydration = hydration !== undefined;
     epoch++;
+    revokedEpoch = epoch;
     hydration = undefined;
     revealHydration?.();
     initialHydration = new Promise<void>((resolve) => {

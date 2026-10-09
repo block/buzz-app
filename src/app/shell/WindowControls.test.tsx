@@ -12,6 +12,7 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it.each([
@@ -65,5 +66,49 @@ it.each(["Linux x86_64", "Win32"])(
     expect(minimize).toHaveBeenCalledTimes(2);
     expect(toggleMaximize).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+  },
+);
+
+// Exercise the policy in the real component, including keyboard Close and retry.
+it.each([
+  [false, false],
+  [false, true],
+  [true, true],
+])(
+  "respects native policy minimize=%s maximize=%s",
+  async (minimize, maximize) => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    vi.stubGlobal("__BUZZ_WINDOW_CONTROLS__", { minimize, maximize });
+    const close = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValue(undefined);
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      close,
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+    const user = userEvent.setup();
+    render(<WindowControls />);
+    expect(
+      screen.queryByRole("button", { name: "Minimize window" }) !== null,
+    ).toBe(minimize);
+    expect(
+      screen.queryByRole("button", { name: "Maximize or restore window" }) !==
+        null,
+    ).toBe(maximize);
+    for (
+      let index = 0;
+      index < 1 + Number(minimize) + Number(maximize);
+      index++
+    )
+      await user.tab();
+    expect(screen.getByRole("button", { name: "Close window" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Window action failed",
+    );
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(close).toHaveBeenCalledTimes(2);
   },
 );

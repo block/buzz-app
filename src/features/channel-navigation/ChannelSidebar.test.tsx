@@ -13,7 +13,10 @@ import { afterEach, beforeEach, expect, it, vi, assert } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
-import type { SidebarPreferences } from "../relay/sidebar-preferences";
+import type {
+  SidebarGroups,
+  SidebarPreferences,
+} from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
@@ -22,6 +25,7 @@ import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import { readView, writeView } from "../../shared/view-state";
 import styles from "../../bundled/channels/Channels.module.css";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
@@ -90,15 +94,19 @@ function fixture(
     typeof createSidebarPreferencesStore
   >["queries"],
   status: RelaySnapshot["status"] = "ready",
+  initialChannels: ChannelList["channels"] = [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "beta", name: "beta", channelType: "stream" },
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ],
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
   let list: ChannelList = {
     status: "ready",
-    channels: ["alpha", "beta", "gamma"].map((id) => ({
-      id,
-      name: id,
-      channelType: "stream",
+    channels: initialChannels.map((channel) => ({
+      space: "collaborative",
+      ...channel,
     })),
   };
   const listeners = new Set<() => void>();
@@ -181,56 +189,7 @@ function fixture(
   return { view, navigator, snapshot, list, session, publish };
 }
 
-it("hides session disclosure and children while the Sessions plugin is disabled", async () => {
-  const h = fixture();
-  const channels: ChannelList["channels"] = [
-    ...h.list.channels,
-    {
-      id: "child",
-      name: "Plan",
-      channelType: "session",
-      parentChannelId: "alpha",
-    },
-  ];
-  vi.spyOn(h.session.channels, "list").mockReturnValue({ ...h.list, channels });
-  const mounted = render(h.view("alpha", false));
-  await screen.findByRole("button", { name: "alpha" });
-  expect(
-    screen.queryByRole("button", { name: /sessions in alpha/ }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeNull();
-
-  mounted.rerender(h.view("alpha", true));
-  expect(
-    screen.getByRole("button", { name: /sessions in alpha/ }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeInTheDocument();
-
-  mounted.rerender(h.view("alpha", false));
-  expect(
-    screen.queryByRole("button", { name: /sessions in alpha/ }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "alpha" }));
-  expect(h.navigator.open).toHaveBeenCalled();
-});
-
-it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
+it("does not rebuild unchanged rows on channel switches or plugin toggles", async () => {
   const h = fixture();
   const mounted = render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
@@ -260,14 +219,10 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
     ([props]) => props.channel.id === "alpha",
   )?.[0];
   expect(alpha).toBeDefined();
-  // Disable session creation without changing selection: the callback must update.
+  // Plugin toggles cannot restore nested-session creation.
   rowRender.mockClear();
   mounted.rerender(h.view("beta", false));
-  const disabled = rowRender.mock.calls.find(
-    ([props]) => props.channel.id === "alpha",
-  )?.[0];
-  expect(disabled.onNewSession).not.toBe(alpha.onNewSession);
-  disabled.onNewSession("alpha");
+  alpha.onNewSession("alpha");
   expect(h.navigator.open).not.toHaveBeenCalled();
   // Ordinary selection still uses the current session and navigator.
   fireEvent.click(screen.getByRole("button", { name: "gamma" }));
@@ -276,7 +231,7 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   );
 });
 
-it("rebuilds only the changed row on a list publish and keeps session actions current", async () => {
+it("rebuilds only the changed row on a list publish and never starts nested sessions", async () => {
   const h = fixture();
   render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
@@ -293,12 +248,97 @@ it("rebuilds only the changed row on a list publish and keeps session actions cu
   alpha.onNewSession("gamma");
   expect(h.navigator.open).not.toHaveBeenCalled();
   alpha.onNewSession("beta");
-  expect(h.navigator.open).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: "page",
-      route: { version: 1, params: { kind: "new-session", parentId: "beta" } },
-    }),
+  expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
+it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
+  const saved: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    starred: [],
+    muted: [],
+  };
+  let assignments: Record<string, string> = {};
+  const read = vi.fn(async () => ({ ...saved, assignments }));
+  const write = vi.fn(
+    async (intent: { channelId: string; sectionId?: string }) => {
+      const changedAssignments = intent.sectionId
+        ? { ...assignments, [intent.channelId]: intent.sectionId }
+        : Object.fromEntries(
+            Object.entries(assignments).filter(
+              ([id]) => id !== intent.channelId,
+            ),
+          );
+      assignments = changedAssignments;
+      return { sections: saved.sections, assignments };
+    },
   );
+  const star = vi.fn(async () => []);
+  const preferences = createSidebarPreferencesStore(read, true, write, star);
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "dm", name: "Alice", channelType: "dm" },
+  ]);
+  const user = userEvent.setup();
+  try {
+    render(h.view("alpha"));
+    await screen.findByRole("button", { name: "Alice" });
+    const row = screen.getByRole("button", { name: "Alice" });
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move conversation" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Direct messages" }),
+    ).toBeChecked();
+    await screen.findByRole("menuitemradio", { name: "Work" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(
+        { channelId: "dm", sectionId: "work" },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-sidebar-section="group:work"]'),
+      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+      expect(
+        document.querySelector('[data-sidebar-section="dms"]'),
+      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
+    });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
+      key: "ContextMenu",
+    });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move conversation" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Work" }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: "Direct messages" }),
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-sidebar-section="dms"]'),
+      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+      expect(
+        document.querySelector('[data-sidebar-section="group:work"]'),
+      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
+    });
+    expect(write).toHaveBeenLastCalledWith(
+      { channelId: "dm" },
+      expect.any(AbortSignal),
+    );
+    expect(star).toHaveBeenLastCalledWith(
+      { channelId: "dm", starred: false },
+      expect.any(AbortSignal),
+    );
+  } finally {
+    preferences.dispose();
+  }
 });
 
 async function failedMoveFixture(groupSource?: "personal") {
@@ -548,3 +588,159 @@ it("rejects a deferred header Create section after its navigation origin retires
   expect(preferences.queries.snapshot().data?.sections).toEqual([]);
   preferences.dispose();
 });
+
+it("clears only the removed section's collapsed intent after confirmation, never on cancel or failure", async () => {
+  const user = userEvent.setup();
+  const current: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { beta: "work" },
+    starred: [],
+    muted: [],
+  };
+  let resolve!: (value: SidebarGroups) => void;
+  const pending = new Promise<SidebarGroups>((yes) => {
+    resolve = yes;
+  });
+  const remove = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockReturnValueOnce(pending);
+  const preferences = createSidebarPreferencesStore(
+    async () => current,
+    true,
+    async () => current,
+    async () => [],
+    undefined,
+    undefined,
+    async () => ({}),
+    undefined,
+    remove,
+  );
+  try {
+    await preferences.queries.ensure();
+    const h = fixture(preferences.queries);
+    const scope = h.snapshot.scope;
+    assert.exists(scope);
+    writeView(scope, "channel-sidebar", {
+      collapsed: ["group:work", "dms"],
+      scrollTop: 0,
+      width: 287,
+    });
+    const mounted = render(h.view("alpha"));
+    const open = async () => {
+      await user.click(
+        await screen.findByRole("button", { name: "More actions for Work" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Remove section" }),
+      );
+      return screen.getByRole("dialog", { name: "Remove Work?" });
+    };
+    let dialog = await open();
+    expect(dialog).toHaveAccessibleDescription(
+      "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("Work").closest("details"),
+    ).not.toHaveAttribute("open");
+    dialog = await open();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "offline",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    mounted.unmount();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["group:work", "dms"],
+      width: 287,
+    });
+    const retry = render(h.view("alpha"));
+    dialog = await open();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(2));
+    expect(dialog).toBeVisible();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["group:work", "dms"],
+    });
+    await act(async () => {
+      resolve({ sections: [], assignments: {} });
+      await pending;
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    retry.unmount();
+    expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+      collapsed: ["dms"],
+      width: 287,
+    });
+  } finally {
+    resolve?.({ sections: [], assignments: {} });
+    preferences.dispose();
+  }
+});
+it.each([true, false])(
+  "does not nest existing sessions when plugin enabled=%s",
+  async (enabled) => {
+    const h = fixture();
+    h.publish("beta", { channelType: "session", parentChannelId: "alpha" });
+    render(h.view("alpha", enabled));
+    await screen.findByRole("button", { name: "gamma" });
+    expect(
+      screen.queryByRole("button", { name: /sessions in alpha/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /beta, session/ })).toBeNull();
+    expect(
+      rowRender.mock.calls.every(
+        ([props]) => !props.sessions.length && !props.draft,
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each([true, false])(
+  "legacy session row uses verified lifecycle permissions (owner=%s)",
+  async (owner) => {
+    const h = fixture();
+    h.publish("beta", { channelType: "session", private: true });
+    const load = vi.fn(async () => ({
+      channelId: "beta",
+      channelType: "stream" as const,
+      canArchive: owner,
+      canUnarchive: false,
+      canDelete: owner,
+      canLeave: !owner,
+      canHide: false,
+    }));
+    const run = vi.fn();
+    h.session.channelLifecycle = {
+      ...h.session.channelLifecycle,
+      available: true,
+      load,
+      run,
+    };
+    render(h.view("beta"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    const user = userEvent.setup();
+    row.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu", { name: "Actions for beta" });
+    await within(menu).findByRole("menuitem", {
+      name: owner ? "Delete channel" : "Leave channel",
+    });
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Archive channel" }),
+    ).toBe(owner);
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Delete channel" }),
+    ).toBe(owner);
+    expect(load).toHaveBeenCalledWith("beta", expect.any(AbortSignal));
+    expect(run).not.toHaveBeenCalled();
+  },
+);

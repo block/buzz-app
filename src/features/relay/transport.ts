@@ -1,3 +1,4 @@
+import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
 import {
@@ -9,7 +10,7 @@ import { publicationRefusal } from "../developer/traffic";
 import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
-import type { KitRecord } from "../channel-templates/model";
+import type { KitRecord, PayloadRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import {
   communityGitRepository,
@@ -18,7 +19,13 @@ import {
 } from "../projects/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
-import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
+import {
+  ReadStateTimestampRejected,
+  readStateRefusal,
+  READ_STATE_TIMESTAMP_REFUSAL,
+  type ReadStateHost,
+  type ReadStateSigning,
+} from "./read-state-host";
 import {
   parseReadSnapshot,
   readSnapshotFilter,
@@ -28,6 +35,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
+  type SidebarSectionRemovalWriter,
   type SidebarStarMutator,
   type SidebarSortMutator,
   type SidebarDecoder,
@@ -110,6 +118,8 @@ export interface ReadTransport {
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly readState?: ReadStateHost;
+  /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
+  readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
@@ -133,6 +143,7 @@ export interface ReadTransport {
   readonly writeSidebarMute?: SidebarMuteMutator;
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly removeSidebarSection?: SidebarSectionRemovalWriter;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -400,6 +411,7 @@ export async function connectBrokerTransport(
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     sidebarPreferenceWrites?: boolean;
+    sidebarSectionRemoval?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -715,7 +727,10 @@ export async function connectBrokerTransport(
     ...(session.channelKit
       ? {
           channelKit: {
-            async prepare(record: KitRecord, signal: AbortSignal) {
+            async prepare(
+              record: KitRecord | PayloadRecord,
+              signal: AbortSignal,
+            ) {
               const response = await fetch(`${endpoint}/channel-kit-prepare`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -730,7 +745,7 @@ export async function connectBrokerTransport(
               const result = await response.json();
               if (
                 typeof result.content !== "string" ||
-                result.content.length > 24 * 1024
+                result.content.length > 64 * 1024
               )
                 throw new Error("Invalid encrypted recipe");
               return result.content as string;
@@ -792,7 +807,7 @@ export async function connectBrokerTransport(
                 body: JSON.stringify(event),
                 signal,
               });
-              await acceptPublish(response, event.id);
+              await acceptReadStatePublish(response, event.id);
             },
           },
         }
@@ -893,6 +908,34 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.identityArchives === true
       ? { identityArchive: routeWriter("identity-archive") }
+      : {}),
+    ...(session.sidebarSectionRemoval
+      ? {
+          async removeSidebarSection(sectionId: string, signal: AbortSignal) {
+            const response = await fetch(
+              `${endpoint}/sidebar-section-removal`,
+              {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sectionId }),
+                signal,
+              },
+            );
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
       : {}),
     ...(session.sidebarPreferenceWrites
       ? {
@@ -1061,12 +1104,14 @@ export const admitSignedRequest = (
   request: () => Promise<Response>,
   signal?: AbortSignal,
   priority: "foreground" | "background" = "foreground",
+  reason?: (body: unknown) => string | undefined,
 ) =>
   admittedApiRequest(
     signedAdmissions(relayOrigin(origin), viewer).api,
     request,
     signal,
     priority,
+    reason,
   );
 /** NIP-98 signed reads and writes through a host that owns the signer and authenticates each HTTP request. Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
@@ -1241,6 +1286,29 @@ async function signedPost(
     });
   });
 }
+export async function acceptReadStatePublish(response: Response, id: string) {
+  if (!response.ok) {
+    const failure = await readApiFailure(response, (body) => {
+      if (readStateRefusal(body)) return READ_STATE_TIMESTAMP_REFUSAL;
+      const value = body as { sent?: unknown; error?: unknown } | null;
+      if (
+        value?.sent === false &&
+        typeof value.error === "string" &&
+        value.error.startsWith("rate-limited:")
+      )
+        return publicationRefusal(value.error);
+    });
+    if (
+      (response.status === 400 ||
+        (response.status === 503 && failure.sent === false)) &&
+      failure.error === READ_STATE_TIMESTAMP_REFUSAL
+    )
+      throw new ReadStateTimestampRejected();
+    response = Response.json(failure, { status: response.status });
+  }
+  return acceptPublish(response, id);
+}
+
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
 export async function acceptPublish(response: Response, id: string) {
   if (!response.ok) {

@@ -26,6 +26,7 @@ export function controlFixture() {
     startOnAppLaunch: true,
     respondTo: "owner-only",
     backend: null,
+    snapshotExportLimitations: [],
     acpCommand: "/fixture/bin/buzz-acp",
     mcpCommand: "/fixture/bin/buzz-dev-mcp",
     launchModel: "fixture-model",
@@ -45,6 +46,17 @@ export function controlFixture() {
         command: "buzz-agent",
         label: "Buzz Agent",
         providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+        configurationPolicy: {
+          authentication: "provider",
+          provider: "selector",
+          supportedModes: [],
+          model: "optional",
+          effortDiscovery: "unknown",
+          selectorEnvironment: {
+            model: "BUZZ_AGENT_MODEL",
+            provider: "BUZZ_AGENT_PROVIDER",
+          },
+        },
       },
     ],
   };

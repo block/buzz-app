@@ -681,6 +681,31 @@ it.each([
   },
 );
 
+it("uses the native selector keys for defaults warnings instead of inferring them from the harness", async () => {
+  const { control } = setup(0, 0, (f) => {
+    const policy = f.data.harnessOptions?.[0]?.configurationPolicy;
+    if (!policy || !f.data.defaultSettings)
+      throw Error("Missing policy fixture");
+    // A native contract change must take effect without a second UI mapping.
+    policy.selectorEnvironment = {
+      model: "NATIVE_MODEL",
+      provider: "NATIVE_PROVIDER",
+    };
+    f.data.defaultSettings.environmentKeys = [
+      "NATIVE_MODEL",
+      "NATIVE_PROVIDER",
+    ];
+  });
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  expect(
+    within(card).getByText(/NATIVE_MODEL overrides this model selection/),
+  ).toBeVisible();
+  expect(
+    within(card).getByText(/NATIVE_PROVIDER overrides this provider selection/),
+  ).toBeVisible();
+});
+
 it("waits for a hidden Goose provider override to be removed before offering its key", async () => {
   const user = userEvent.setup();
   const { control } = setup(0, 0, (f) => {

@@ -123,6 +123,30 @@ function RetryPage() {
 export const fixturePlugins: readonly BundledPlugin[] = [
   {
     manifest: {
+      id: "fixture.page-placement",
+      name: "Page placement fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["pages"],
+      apply(ctx) {
+        for (const [id, title, placement] of [
+          ["wide", "A deliberately long topbar destination", "topbar"],
+          ["tool", "Toolbar destination", "toolbar"],
+        ] as const)
+          ctx.pages.register({
+            id,
+            title,
+            placement,
+            primary: true,
+            component: () => <h1>{title}</h1>,
+          });
+      },
+    },
+  },
+  {
+    manifest: {
       id: "fixture.notifications",
       name: "Notification fixture",
       apiVersion: 1,
@@ -276,11 +300,12 @@ export const fixturePlugins: readonly BundledPlugin[] = [
     module: {
       inject: ["panels", "pages"],
       apply(ctx) {
-        // Registered first on purpose: a global resolve(target) launcher bug must hit this instead.
+        // Order -10 on purpose: a global resolve(target) launcher bug must hit this instead.
         ctx.panels.register({
           id: "catch-all",
           title: "Wrong panel",
           matches: () => true,
+          order: -10,
           component: DrillInFixture,
         });
         ctx.panels.register({

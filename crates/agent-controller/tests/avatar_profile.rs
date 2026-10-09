@@ -14,6 +14,7 @@ fn profile(picture: Option<&str>) -> CreationProfile {
         name: "New name".into(),
         picture: picture.map(str::to_owned),
         name_pending: false,
+        about: None,
         revision: 2,
     }
 }

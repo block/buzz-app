@@ -1,4 +1,5 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
@@ -39,6 +40,7 @@ import {
   readRelayLibrary,
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
+import { createCommunityCatalog } from "../agents/catalog";
 import { archiveHides, createIdentityArchives } from "./identity-archives";
 import {
   createReadState,
@@ -53,7 +55,11 @@ import { createTyping } from "./typing";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
-import type { IncomingListener, IncomingMessage } from "./incoming";
+import type {
+  IncomingListener,
+  IncomingMessage,
+  LiveListener,
+} from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
@@ -62,6 +68,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import {
   activeSidebarAssignment,
+  activeSidebarSectionRemoval,
   readActiveSidebarGroups,
 } from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -99,6 +106,7 @@ import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
+import { createReminders } from "./reminders";
 import {
   retainEvents,
   matchesEvent,
@@ -244,6 +252,7 @@ export function createRelaySession(
   );
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
+  const liveEventListeners = new Set<LiveListener>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
@@ -646,6 +655,14 @@ export function createRelaySession(
       : undefined,
     notify,
   );
+  const communityCatalog = createCommunityCatalog({
+    // Verified reads reconcile fetched heads with the outbox journal.
+    reader: transport && !options.cachedOnly ? verified : undefined,
+    viewer: transport?.viewer ?? "",
+    outbox: writes?.outbox,
+    local: writes?.local,
+    notify,
+  });
   const archives = createIdentityArchives(
     requests.reader,
     transport?.archiveAuthority,
@@ -839,6 +856,9 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     workflowAuthority: transport?.archiveAuthority,
+    ...(transport?.archiveAuthority
+      ? { signingAuthority: transport.archiveAuthority }
+      : {}),
     notify,
     follows: browserThreadFollows(readScope),
   });
@@ -1149,6 +1169,20 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const mePreferences = createMePreferences(
+    channelKit.capability,
+    lifetime.signal,
+  );
+  const reminders =
+    transport?.reminders && writer
+      ? createReminders({
+          viewer: transport.viewer,
+          host: transport.reminders,
+          query: (filters, signal) => transport.query(filters, signal),
+          publish: (event, signal) => writer.publish(event, signal),
+          signal: lifetime.signal,
+        })
+      : undefined;
   const sidebarPreferences = createSidebarPreferencesStore(
     async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -1231,15 +1265,39 @@ export function createRelaySession(
         : undefined;
     })(),
     options.persistence,
+    (() => {
+      const write = transport?.removeSidebarSection;
+      return write
+        ? activeSidebarSectionRemoval(
+            channelKit.capability,
+            (sectionId, signal) =>
+              write(
+                sectionId,
+                AbortSignal.any([
+                  lifetime.signal,
+                  AbortSignal.timeout(20_000),
+                  signal,
+                ]),
+              ),
+          )
+        : undefined;
+    })(),
   );
   let groupHead: string | undefined;
+  let meHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
     const head = personalGroups(state.entries)?.eventId;
-    if (head === groupHead) return;
-    groupHead = head;
-    void sidebarPreferences.queries.refresh();
+    if (head !== groupHead) {
+      groupHead = head;
+      void sidebarPreferences.queries.refresh();
+    }
+    const nextMe = meGroups(state.entries)?.eventId;
+    if (nextMe !== meHead) {
+      meHead = nextMe;
+      void mePreferences.queries.refresh();
+    }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
   let setupNotices: readonly SetupNotice[] = [];
@@ -1552,6 +1610,16 @@ export function createRelaySession(
         incomingListeners.delete(listener);
       };
     },
+    /** Verified, access-filtered live-phase events of any kind, after reconciliation.
+     * Never replay, finite reads or local intent. Includes the viewer's own echoes.
+     * Overlapping routes can deliver one event more than once; listeners dedupe by id. */
+    subscribeLive(listener: LiveListener) {
+      if (closed) return () => {};
+      liveEventListeners.add(listener);
+      return () => {
+        liveEventListeners.delete(listener);
+      };
+    },
     typing: typing.capability,
     channelCreation,
     channelKit: channelKit.capability,
@@ -1601,6 +1669,9 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    mePreferences: mePreferences.queries,
+    mePlacement: mePreferences.placement,
+    reminders: reminders?.capability,
     live,
     profiling,
     attachments:
@@ -1628,6 +1699,27 @@ export function createRelaySession(
             },
           })
         : undefined,
+    // Snapshot links are community media, not channel messages or catalog publications.
+    snapshotUpload: uploadAttachment
+      ? Object.freeze({
+          async upload(
+            file: File,
+            signal: AbortSignal,
+          ): Promise<UploadedAttachment> {
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            const result = await uploadAttachment(file, combined);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            return result;
+          },
+        })
+      : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain
     // ordinary community-media access, matching Desktop's attachment path.
     feedbackUpload:
@@ -1771,6 +1863,7 @@ export function createRelaySession(
     emoji: emoji.queries,
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
+    communityCatalog: communityCatalog.queries,
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
@@ -2228,6 +2321,7 @@ export function createRelaySession(
     captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
+      reminders?.receive(events);
       const candidates = new Set(
         provenance?.phase === "live" && provenance.channelId
           ? events
@@ -2294,6 +2388,27 @@ export function createRelaySession(
       )
         channelActivity.accept(visible);
       if (
+        provenance?.phase === "live" &&
+        liveEventListeners.size &&
+        visible.length &&
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration
+      ) {
+        const batch = Object.freeze({
+          events: Object.freeze([...visible]),
+          ...(provenance?.channelId ? { channelId: provenance.channelId } : {}),
+        });
+        for (const listener of liveEventListeners) {
+          if (closed || epoch !== accessEpoch) break;
+          try {
+            listener(batch);
+          } catch (error) {
+            console.error("Live listener failed", error);
+          }
+        }
+      }
+      if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
@@ -2341,6 +2456,8 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       ) {
         liveGeneration++;
+        // Reminder catch-up waits for the recovery read after re-establishment.
+        reminders?.stale();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();
@@ -2348,6 +2465,7 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         agentLibrary.clear();
+        communityCatalog.clear();
         archives.clear();
         workflows.interrupt();
         channels.staleHeads();
@@ -2391,17 +2509,22 @@ export function createRelaySession(
         if (refreshedGeneration !== liveGeneration) {
           refreshedGeneration = liveGeneration;
           refreshRoster();
+          const generation = liveGeneration;
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
               void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
+              communityCatalog.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
               inboxFeed.reconnect();
+              // Only while this same connection is still up.
+              if (generation === liveGeneration && memoryConnected)
+                void reminders?.recover();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -2493,6 +2616,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
+        mePreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2534,6 +2658,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
+      mePreferences.dispose();
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();
@@ -2543,6 +2668,7 @@ export function createRelaySession(
       traffic?.dispose();
       liveListeners.clear();
       incomingListeners.clear();
+      liveEventListeners.clear();
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
@@ -2557,6 +2683,7 @@ export function createRelaySession(
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();
+      communityCatalog.dispose();
       archives.dispose();
     },
     retainedChannels: channels.retainedChannels,

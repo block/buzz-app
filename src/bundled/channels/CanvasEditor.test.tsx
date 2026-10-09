@@ -48,17 +48,15 @@ function fixture(
     save: vi.fn(async () => head),
   };
   configure?.(canvas);
-  const close = vi.fn();
   render(
     <CanvasEditor
       canvas={canvas}
       profiles={profiles}
       scope={scope}
       channelId={channelId}
-      onClose={close}
     />,
   );
-  return { canvas, close };
+  return { canvas };
 }
 beforeEach(() => localStorage.clear());
 afterEach(() => {
@@ -66,9 +64,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("keeps the editor open after saving and uses the saved revision for the next edit", async () => {
+it("keeps editing after a save and uses the saved revision for the next edit", async () => {
   const user = userEvent.setup();
-  const { canvas, close } = fixture();
+  const { canvas } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
   expect(screen.queryByText("Current saved document")).not.toBeInTheDocument();
@@ -84,7 +82,6 @@ it("keeps the editor open after saving and uses the saved revision for the next 
   await waitFor(() =>
     expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
   );
-  expect(close).not.toHaveBeenCalled();
   expect(text).toBeEnabled();
   expect(text).toHaveValue("Edited");
   expect(canvas.save).toHaveBeenCalledWith(channelId, "Edited", head.id);
@@ -190,7 +187,6 @@ it("retries a failed initial read without discarding the restored draft", async 
       profiles={profiles}
       scope={scope}
       channelId={channelId}
-      onClose={() => {}}
     />,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
@@ -219,7 +215,6 @@ it("ignores the stale StrictMode read after the current read enables typing and 
     read: vi.fn().mockReturnValueOnce(stale).mockResolvedValue(head),
     save: vi.fn(async () => ({ ...head, id: "b".repeat(64) })),
   };
-  const close = vi.fn();
   render(
     <StrictMode>
       <CanvasEditor
@@ -227,7 +222,6 @@ it("ignores the stale StrictMode read after the current read enables typing and 
         profiles={profiles}
         scope={scope}
         channelId={channelId}
-        onClose={close}
       />
     </StrictMode>,
   );
@@ -245,7 +239,6 @@ it("ignores the stale StrictMode read after the current read enables typing and 
     await waitFor(() =>
       expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
     );
-    expect(close).not.toHaveBeenCalled();
     expect(canvas.save).toHaveBeenCalledWith(channelId, "New work", head.id);
   } finally {
     release(head);
@@ -254,7 +247,7 @@ it("ignores the stale StrictMode read after the current read enables typing and 
 
 it("retains the draft after a failed save and keeps editing after a successful retry", async () => {
   const user = userEvent.setup();
-  const { canvas, close } = fixture();
+  const { canvas } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
   fireEvent.change(text, { target: { value: "Local draft" } });
@@ -268,12 +261,10 @@ it("retains the draft after a failed save and keeps editing after a successful r
     content: "Local draft",
     base: head.id,
   });
-  expect(close).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save Canvas" }));
   await waitFor(() =>
     expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
   );
-  expect(close).not.toHaveBeenCalled();
   expect(canvas.save).toHaveBeenLastCalledWith(
     channelId,
     "Local draft",
@@ -358,7 +349,7 @@ it.each([false, true])(
   "restores as a new revision and preserves dirty drafts (dirty=%s)",
   async (dirty) => {
     const user = userEvent.setup();
-    const { canvas, close } = historyFixture();
+    const { canvas } = historyFixture();
     const editor = screen.getByRole("textbox", { name: "Canvas Markdown" });
     await waitFor(() => expect(editor).toHaveValue(head.content));
     if (dirty) fireEvent.change(editor, { target: { value: "Local edits" } });
@@ -373,7 +364,6 @@ it.each([false, true])(
       ).not.toBeInTheDocument(),
     );
     expect(canvas.save).toHaveBeenCalledWith(channelId, old.content, head.id);
-    expect(close).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Edit" }));
     expect(editor).toHaveValue(dirty ? "Local edits" : old.content);
     expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
@@ -544,7 +534,7 @@ it("keeps the real same-second refusal on Edit without telling an unchanged draf
 });
 it("prevents all dismissal during restore and ignores a history response from an unmounted panel", async () => {
   const user = userEvent.setup();
-  const { canvas, close } = historyFixture();
+  const { canvas } = historyFixture();
   await openHistory(user);
   let release!: (event: typeof head) => void;
   const pending = new Promise<typeof head>((resolve) => {
@@ -562,7 +552,6 @@ it("prevents all dismissal during restore and ignores a history response from an
       screen.getByRole("dialog", { name: "Restore this version?" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(close).not.toHaveBeenCalled();
   } finally {
     await act(async () => {
       release(restored);

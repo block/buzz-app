@@ -1140,26 +1140,6 @@ function ChannelWorkspace({
   const canvasPanel = available.find(
     (panel) => panel.pluginId === "buzz.canvas" && panel.id === "canvas",
   );
-  const openCanvas = (trigger: HTMLElement | null) => {
-    if (
-      !canvasPanel ||
-      !drawerContext ||
-      current?.archived ||
-      navigation?.signal.aborted
-    )
-      return;
-    drawer.close();
-    panelTrigger.current = trigger;
-    open(
-      {
-        panel: canvasPanel,
-        target: drawerContext.channelId,
-        channelId: drawerContext.channelId,
-        channelContext: drawerContext,
-      },
-      true,
-    );
-  };
   const drawer = useChannelPanels(
     panels,
     drawerContext,
@@ -1172,7 +1152,8 @@ function ChannelWorkspace({
         (entry) => entry.panel === panel && entry.channelContext,
       );
       if (panel === canvasPanel) {
-        openCanvas(
+        openTool(
+          panel,
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null,
@@ -1191,7 +1172,7 @@ function ChannelWorkspace({
     drawerContext && !current?.archived
       ? available.filter(isChannelTabTool)
       : [];
-  const chooseTool = (id: string, panel: RegisteredPanel) => {
+  const openTool = (panel: RegisteredPanel, trigger: HTMLElement | null) => {
     const connection = relay.snapshot();
     if (
       connection.status !== "ready" ||
@@ -1200,11 +1181,10 @@ function ChannelWorkspace({
       !tabTools.includes(panel) ||
       !panels.snapshot().includes(panel)
     )
-      return;
+      return false;
     // A terminal's screen/session has one presentation owner at a time.
     drawer.close();
-    panelTrigger.current = splitTrigger.current;
-    tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
+    panelTrigger.current = trigger;
     open(
       {
         panel,
@@ -1214,6 +1194,11 @@ function ChannelWorkspace({
       },
       true,
     );
+    return true;
+  };
+  const chooseTool = (id: string, panel: RegisteredPanel) => {
+    if (openTool(panel, splitTrigger.current))
+      tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
   };
   const tabDestinations = channels.filter(
     (item) =>
@@ -1632,7 +1617,10 @@ function ChannelWorkspace({
                           requestSettingsFocus((value) => value + 1);
                           setSettings({ channelId: currentId });
                         }}
-                        openCanvas={canvasPanel ? openCanvas : undefined}
+                        openCanvas={
+                          canvasPanel &&
+                          ((trigger) => openTool(canvasPanel, trigger))
+                        }
                         menuPanels={
                           current && !cached
                             ? available.filter((panel) =>

@@ -35,7 +35,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       />
     );
   }
-  function Panel({ channelContext, close }: PanelProps) {
+  function Panel({ channelContext }: PanelProps) {
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
     if (
       !channelContext ||
@@ -50,7 +50,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         profiles={state.session.profiles}
         scope={state.scope}
         channelId={channelContext.channelId}
-        onClose={close}
       />
     );
   }

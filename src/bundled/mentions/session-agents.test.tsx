@@ -428,10 +428,8 @@ it("does not keyboard-select disabled members", async () => {
     />,
   );
   await user.click(screen.getByRole("button", { name: "Mention a member" }));
-  const search = screen.getByRole("searchbox");
-  await waitFor(() => expect(search).toHaveFocus());
   await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
-  expect(search).toHaveFocus();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(select).not.toHaveBeenCalled();
   test.library.dispose();
 });

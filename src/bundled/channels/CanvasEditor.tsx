@@ -10,10 +10,6 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
 import panelStyles from "../canvas/Canvas.module.css";
-import { usePanelTabHost } from "../../features/panels/PanelWorkspace";
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { XIcon } from "../../shared/design-system/icons";
 
 type Draft = { content: string; base: string | null };
 export function CanvasEditor({
@@ -21,15 +17,12 @@ export function CanvasEditor({
   profiles,
   scope,
   channelId,
-  onClose,
 }: {
   canvas: ChannelCanvas;
   profiles: ProfileQueries;
   scope: string;
   channelId: string;
-  onClose(): void;
 }) {
-  const tabbed = !!usePanelTabHost();
   const panelId = useId();
   const [tab, setTab] = useState<"edit" | "history">("edit");
   const key = `canvas-draft-v1:${channelId}`;
@@ -275,19 +268,6 @@ export function CanvasEditor({
         if (event.key === "Escape" && busy) event.stopPropagation();
       }}
     >
-      {!tabbed && (
-        <PanelHeader
-          title="Canvas"
-          actions={
-            <IconButton
-              icon={<XIcon />}
-              aria-label="Close Canvas"
-              disabled={busy}
-              onClick={() => onClose()}
-            />
-          }
-        />
-      )}
       <div className={panelStyles.scroll}>{body}</div>
       {actions && <footer className={panelStyles.footer}>{actions}</footer>}
     </section>

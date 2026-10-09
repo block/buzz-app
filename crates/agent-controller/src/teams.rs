@@ -225,6 +225,9 @@ pub struct TeamCatalogEntry {
     pub created_at: u64,
     pub event_id: String,
     pub members: Vec<String>,
+    /// The head is a tombstone. Absent in heads saved before it was recorded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 impl Controller {
     pub fn reconcile_team_bindings(

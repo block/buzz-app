@@ -406,7 +406,7 @@ async fn decode_team_members(
     if events.len() >= 500 {
         return Err("Team catalog reached its read limit".into());
     }
-    let mut heads: std::collections::BTreeMap<String, (bool, u64, String, Vec<String>)> =
+    let mut heads: std::collections::BTreeMap<String, (bool, u64, String, Vec<String>, bool)> =
         std::collections::BTreeMap::new();
     for event in events {
         let signed: nostr::event::Event =
@@ -449,7 +449,8 @@ async fn decode_team_members(
             .as_str()
             .ok_or("Invalid team catalog")?
             .to_owned();
-        let members = if raw["deleted"] == true {
+        let deleted = raw["deleted"] == true;
+        let members = if deleted {
             vec![]
         } else {
             serde_json::from_value(raw["value"]["agents"].clone())
@@ -458,11 +459,14 @@ async fn decode_team_members(
         // A portable record supersedes the ordinary record it replaced, even
         // though retiring the ordinary record is the later write.
         let portable = coordinate.starts_with(&format!("{MANIFEST_TAG}:"));
-        if heads.get(&id).map_or(true, |(old_portable, time, old, _)| {
-            (portable, timestamp) > (*old_portable, *time)
-                || (portable == *old_portable && timestamp == *time && event_id < *old)
-        }) {
-            heads.insert(id, (portable, timestamp, event_id, members));
+        if heads
+            .get(&id)
+            .map_or(true, |(old_portable, time, old, _, _)| {
+                (portable, timestamp) > (*old_portable, *time)
+                    || (portable == *old_portable && timestamp == *time && event_id < *old)
+            })
+        {
+            heads.insert(id, (portable, timestamp, event_id, members, deleted));
         }
     }
     if host.viewer().await? != owner {
@@ -470,13 +474,14 @@ async fn decode_team_members(
     }
     Ok(heads
         .into_iter()
-        .map(|(id, (_, created_at, event_id, members))| {
+        .map(|(id, (_, created_at, event_id, members, deleted))| {
             (
                 id,
                 buzz_agent_controller::TeamCatalogEntry {
                     created_at,
                     event_id,
                     members,
+                    deleted,
                 },
             )
         })

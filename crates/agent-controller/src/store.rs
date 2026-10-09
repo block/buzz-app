@@ -614,9 +614,8 @@ impl Store {
         if beta.status != Pending {
             return Ok(());
         }
-        let listed = heads
-            .get(&beta.team_id)
-            .map(|head| head.members.contains(&agent.pubkey));
+        let head = heads.get(&beta.team_id);
+        let listed = head.map(|head| head.members.contains(&agent.pubkey));
         if !agent.imported.is_object() {
             agent.imported = json!({});
         }
@@ -639,7 +638,7 @@ impl Store {
                 agent.imported["teamBindings"] = json!(bindings);
             }
             Skipped => {
-                if listed != Some(false) {
+                if !head.is_some_and(|head| head.deleted) {
                     return Err("Only a deleted team can be skipped".into());
                 }
                 // Stop delivering the unbound beta copy of a team the user deleted.

@@ -70,7 +70,14 @@ pub(crate) fn team_name(raw: &str) -> String {
     if name.is_empty() {
         return FALLBACK_NAME.into();
     }
-    name.chars().take(NAME_LIMIT).collect()
+    // The app counts the limit in UTF-16 code units; never split a character.
+    let mut units = 0;
+    name.chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= NAME_LIMIT
+        })
+        .collect()
 }
 
 /// Pending agents of one team, read by the app's team step.

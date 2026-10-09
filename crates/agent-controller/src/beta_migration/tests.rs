@@ -57,10 +57,16 @@ fn heads(rosters: &[(&str, Vec<&Agent>)]) -> BTreeMap<String, TeamCatalogEntry> 
                 created_at: 1 + members.len() as u64,
                 event_id: format!("{:x}", Sha256::digest(format!("{team}{members:?}"))),
                 members,
+                deleted: false,
             };
             (team.to_string(), entry)
         })
         .collect()
+}
+fn tombstone(team: &str) -> BTreeMap<String, TeamCatalogEntry> {
+    let mut heads = heads(&[(team, vec![])]);
+    heads.get_mut(team).unwrap().deleted = true;
+    heads
 }
 fn texts(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
@@ -103,6 +109,11 @@ fn beta_team_ids_are_valid_distinct_one_point_oh_ids() {
     }
     assert_eq!(team_name("  "), FALLBACK_NAME);
     assert_eq!(team_name(&"é".repeat(130)).chars().count(), 120);
+    // A non-BMP character that would cross 120 UTF-16 units is dropped whole.
+    let name = format!("{}🐝", "a".repeat(119));
+    assert_eq!(team_name(&name), "a".repeat(119));
+    let fits = format!("{}🐝", "a".repeat(118));
+    assert_eq!(team_name(&fits), fits);
 }
 
 #[test]
@@ -162,15 +173,25 @@ fn removed_or_unreadable_member_stays_pending_without_a_write() {
         &texts(&[]),
     )
     .is_err());
-    // A live team that lists the agent is not a deleted team.
-    assert!(finish(
-        &mut control,
-        &me,
-        BetaTeamStatus::Skipped,
-        &heads(&[(&team, vec![&me])]),
-        &texts(&[(&team, "BETA")]),
-    )
-    .is_err());
+    // Only a tombstone is a deleted team: not a live team that lists the
+    // agent, a live team the agent was removed from (empty or not), or a
+    // team with no head at all.
+    let stranger = agent("ef", json!({}));
+    for roster in [
+        heads(&[(&team, vec![&me])]),
+        heads(&[(&team, vec![])]),
+        heads(&[(&team, vec![&stranger])]),
+        BTreeMap::new(),
+    ] {
+        let refused = finish(
+            &mut control,
+            &me,
+            BetaTeamStatus::Skipped,
+            &roster,
+            &texts(&[]),
+        );
+        assert!(refused.unwrap_err().contains("deleted team"));
+    }
     // Stale revision.
     assert!(control
         .finish_beta_team(
@@ -215,11 +236,15 @@ fn a_cleared_team_is_not_refilled_and_a_deleted_team_is_skipped() {
         &mut control,
         &deleted,
         BetaTeamStatus::Skipped,
-        &heads(&[(&team, vec![])]),
+        &tombstone(&team),
         &texts(&[(&team, "")]),
     )
     .unwrap();
     let skipped = saved(&control, &deleted.id);
+    // Heads saved before the deletion flag existed still read, as live heads.
+    let older_head: TeamCatalogEntry =
+        serde_json::from_value(json!({"createdAt": 1, "eventId": "e", "members": []})).unwrap();
+    assert!(!older_head.deleted);
     assert_eq!(skipped.imported[KEY]["status"], "skipped");
     assert_eq!(skipped.imported["teamBindings"], json!([]));
     assert_eq!(skipped.imported["teamInstructions"], "");
@@ -286,31 +311,47 @@ fn older(key: &str, text: &str) -> Agent {
 fn restore_starts_the_whole_group_then_each_member_finishes() {
     let root = tempfile::tempdir().unwrap();
     let first = older("ab", "BETA");
-    let second = older("cd", "BETA");
+    let second = older("cd", "OLD COPY");
+    let bee = format!("{}🐝", "a".repeat(119));
     legacy(
         root.path(),
         &[&first, &second],
-        json!([{"id": "crew", "name": "Crew", "instructions": "  BETA  "}]),
+        json!([{"id": "crew", "name": bee, "instructions": "  BETA  "}]),
     );
     let mut control = controller(root.path(), vec![first.clone(), second.clone()]);
     let mut imports = Imports::default();
     let ids = [first.id.clone(), second.id.clone()];
-    let preview = control
-        .restore_beta_teams_preview(
-            &mut imports,
-            LegacySource::Installed,
-            root.path().into(),
-            &ids,
-        )
-        .unwrap();
+    let mut preview_now = |control: &Controller, imports: &mut Imports| {
+        control
+            .restore_beta_teams_preview(imports, LegacySource::Installed, root.path().into(), &ids)
+            .unwrap()
+    };
+    let saved_file = root.path().join("store/agents.json");
+    // A member that changed after the preview refuses the whole group.
+    let stale = preview_now(&control, &mut imports);
+    let team = stale.groups[0].team_id.clone();
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&saved_file).unwrap()).unwrap();
+    for agent in doc["agents"].as_array_mut().unwrap() {
+        if agent["id"] == json!(second.id) {
+            agent["revision"] = json!(second.revision + 1);
+        }
+    }
+    std::fs::write(&saved_file, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let before = std::fs::read(&saved_file).unwrap();
+    assert!(control
+        .restore_beta_team(&imports, RELAY, &owner(), &stale.token, &team, "BETA")
+        .unwrap_err()
+        .contains("preview the restore again"));
+    assert_eq!(std::fs::read(&saved_file).unwrap(), before);
+
+    let preview = preview_now(&control, &mut imports);
     let [group] = preview.groups.as_slice() else {
         panic!("one group")
     };
     assert!(!group.inferred);
-    assert_eq!(group.name, "Crew");
+    assert_eq!(group.name, "a".repeat(119));
     assert_eq!(group.texts, vec!["BETA".to_owned()]);
     assert_eq!(group.team_id, beta_team_id("crew"));
-    let team = group.team_id.clone();
     let restore = |control: &mut Controller, text: &str| {
         control.restore_beta_team(&imports, RELAY, &owner(), &preview.token, &team, text)
     };
@@ -318,24 +359,38 @@ fn restore_starts_the_whole_group_then_each_member_finishes() {
     restore(&mut control, "BETA").unwrap();
     // Once started, the same restore can't initialize it again.
     assert!(restore(&mut control, "BETA").is_err());
-    // Every member then finishes as a pending agent, each after the other's
-    // finish re-resolved team text across the document.
+    // The owner has since changed the team text, so finishing the first
+    // member re-resolves the second's copy and raises its revision.
     let roster = heads(&[(&team, vec![&first, &second])]);
-    let current = texts(&[(&team, "BETA")]);
+    let current = texts(&[(&team, "NEW")]);
+    let waiting = saved(&control, &second.id).revision;
+    finish(
+        &mut control,
+        &first,
+        BetaTeamStatus::Completed,
+        &roster,
+        &current,
+    )
+    .unwrap();
+    let raised = saved(&control, &second.id);
+    assert!(raised.revision > waiting);
+    assert_eq!(raised.imported[KEY]["status"], "pending");
+    // The second finishes with its fresh revision (as `finish` reads it).
+    finish(
+        &mut control,
+        &second,
+        BetaTeamStatus::Completed,
+        &roster,
+        &current,
+    )
+    .unwrap();
     for member in [&first, &second] {
-        finish(
-            &mut control,
-            member,
-            BetaTeamStatus::Completed,
-            &roster,
-            &current,
-        )
-        .unwrap();
         let done = saved(&control, &member.id);
         assert_eq!(done.imported[KEY]["status"], "completed");
-        assert_eq!(done.imported[KEY]["existed"], true);
-        assert_eq!(done.imported[KEY]["source"], "installed");
+        assert_eq!(done.imported[KEY]["betaText"], "BETA");
+        assert_eq!(done.imported[KEY]["name"], "a".repeat(119));
         assert_eq!(done.imported["teamBindings"], json!([team]));
+        assert_eq!(done.imported["teamInstructions"], "NEW");
     }
 }
 

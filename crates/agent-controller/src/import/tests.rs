@@ -1214,4 +1214,17 @@ fn import_records_the_beta_team_once_and_skips_teams_old_buzz_deleted() {
         preview.candidates[0].team.as_ref().unwrap().status,
         crate::BetaTeamStatus::Skipped
     );
+    // A name that would cross the app's 120 UTF-16 unit limit drops the whole
+    // non-BMP character.
+    let bee = format!("{}🐝", "a".repeat(119));
+    fs::write(
+        &teams,
+        serde_json::to_vec(&json!([{"id": "crew", "name": bee}])).unwrap(),
+    )
+    .unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    assert_eq!(
+        preview.candidates[0].team.as_ref().unwrap().name,
+        "a".repeat(119)
+    );
 }

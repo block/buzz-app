@@ -3,6 +3,7 @@ import type { ChannelKit } from "../channel-templates/capability";
 import type { KitEntry, Team } from "../channel-templates/model";
 import type { AgentControl, PendingBetaTeam } from "./control";
 import { betaTeamConflict, runBetaTeamStep } from "./beta-team-import";
+import { teamTextConflict } from "./team-instructions";
 
 const a = "a".repeat(64);
 const b = "b".repeat(64);
@@ -237,19 +238,24 @@ it("documented limit: a text edit to an overlapping team during a held read is n
     if (team === id && ++targetReads === 2) await held;
     return { text, head: "text-head" };
   });
-  const step = run(f, pending([b])).catch(() => {});
+  // Like native finish, refuse when the texts it is given clash.
+  f.finishBetaTeam.mockImplementation(async (_c, texts, agent) => {
+    const teams = [...f.entries.values()].map((e) => e.record.value as Team);
+    const others = teams.map((team) => ({ team, text: texts[team.id] }));
+    const target = { id, agents: roster(f) ?? [] };
+    const conflict = teamTextConflict(others, target, texts[id] ?? "");
+    if (conflict) throw new Error(conflict);
+    f.finished[agent] = "completed";
+    return { agents: [] } as never;
+  });
+  const step = run(f, pending([b]));
   await vi.waitFor(() => expect(targetReads).toBe(2));
   f.text.set("other", "EDITED");
   release();
-  await step;
+  const outcome = await step;
   expect(f.raw.save).toHaveBeenCalledOnce();
   expect(roster(f)).toEqual([a, b]);
-  f.raw.readText.mockReset();
-  f.raw.readText.mockImplementation(async (team: string) => ({
-    text: f.text.get(team) ?? "",
-    head: "text-head",
-  }));
-  await expect(
-    betaTeamConflict(f.kit, f.control, pending([b]), "OTHER"),
-  ).resolves.toContain('"Writers"');
+  expect(outcome.finished).toEqual([]);
+  expect(outcome.failed).toEqual([expect.stringContaining('"Writers"')]);
+  expect(f.finished).not.toHaveProperty("agent-0");
 });

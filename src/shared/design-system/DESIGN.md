@@ -763,7 +763,7 @@ inside a group than between groups.
 - Distinct swatches, type samples, and avatars often need only space between them. Avoid adding a card or divider when the content already separates itself.
 - Show samples on the surface where they will be used. Glass needs a backdrop; a white swatch on white needs a quiet boundary.
 - Cards group widgets, gallery items, or settings. They sit on `bg-panel` with spacing or a hairline and have no default fill. Use `bg-hover` only for an interactive card’s hover state. There is no `bg-card` role; `bg-inset` is for recessed content such as inputs or code blocks.
-- Use native thin scrollbars: `scrollbar-width: thin` and `scrollbar-color: var(--scrollbar-thumb) transparent`. The thumb is gray in both modes. Load the shared recipe into vendor shadow roots and let the browser control scrolling and visibility.
+- Use native thin scrollbars: `scrollbar-width: thin` and `scrollbar-color: var(--scrollbar-thumb-quiet) transparent`. Use the sidebar’s subtle gray thumb in both modes. Load the shared recipe into vendor shadow roots and let the browser control scrolling and visibility.
 
 ## Motion
 
@@ -988,3 +988,12 @@ picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
 Mention choices use `NavigationItem variant="option"` with 8px padding and
 immediate hover/focus feedback. The picker owns arrow-key navigation and exact
 identity selection; rows retain ordinary button semantics.
+
+### Chrome route navigation
+
+For full-page destinations, compose native-button `NavigationItem variant="pill"`
+inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
+but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
+buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
+`aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

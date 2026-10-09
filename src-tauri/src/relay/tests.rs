@@ -331,6 +331,61 @@ fn managed_agent_deletion_is_owner_only_through_existing_ipc() {
     assert!(sign(event).is_err());
 }
 
+#[tokio::test]
+async fn catalog_signing_admits_maximum_escaped_content_through_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: &EventTemplate| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    // Each `"` is two content bytes (`\"`) and four serialized bytes (`\\\"`).
+    let agent = |size: usize| {
+        let room = size - r#"{"display_name":"Big","system_prompt":""}"#.len();
+        let pad = format!("{}{}", r#"\""#.repeat(room / 2), "a".repeat(room % 2));
+        let content = format!(r#"{{"display_name":"Big","system_prompt":"{pad}"}}"#);
+        assert_eq!(content.len(), size);
+        EventTemplate {
+            kind: 30175,
+            created_at: 123,
+            tags: vec![
+                vec!["d".into(), "big".into()],
+                vec!["shared".into(), "true".into()],
+                vec!["client-id".into(), "a".repeat(36)],
+            ],
+            content,
+        }
+    };
+    let largest = agent(65_535);
+    let signed = sign(&largest).unwrap();
+    verify(&signed);
+    assert_eq!(signed["content"], largest.content);
+    assert!(signed.to_string().len() > 128 * 1024);
+    // The ordinary bound would refuse it, so the catalog route is load-bearing.
+    assert!(IdentityHost::fixture().sign(largest).await.is_err());
+    assert!(sign(&agent(65_536)).is_err());
+}
+
 #[test]
 fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
     // The path resolver reads HOME at runtime. Isolate it in a child rather
@@ -3496,4 +3551,26 @@ fn upload_ingress_commands_validate_raw_chunks_and_finalize_owned_bytes() {
     assert_eq!(std::fs::read(spool.source()).unwrap(), b"abc");
     assert_eq!(spool.hash, format!("{:x}", Sha256::digest(b"abc")));
     app.state::<Uploads>().finish("valid");
+}
+
+#[tokio::test]
+async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() {
+    for (body, limit, expected) in [("safe", 4, Ok(())), ("large", 4, Err(413u16))] {
+        let (base, task) = fixture_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()
+        ));
+        let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
+        let response =
+            fetch_media_bounded(&IdentityHost::fixture(), url.clone(), None, limit).await;
+        assert_eq!(
+            response.as_ref().map(|_| ()).map_err(|status| *status),
+            expected
+        );
+        if let Ok(response) = response {
+            assert_eq!(response.body(), body.as_bytes());
+        }
+        let (headers, _) = task.join().unwrap();
+        let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+        assert_strict(&blossom_event(&headers), "get", server);
+    }
 }

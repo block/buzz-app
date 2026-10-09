@@ -1,4 +1,5 @@
 //! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
+pub(crate) mod owner;
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
     LegacySource, NewAgent, PlatformCredentials, ProcessStatus, RuntimeBundle, Store,
@@ -443,9 +444,9 @@ struct MentionReplay {
     floor: u64,
 }
 
-struct Host {
+pub(crate) struct Host {
     inventory_warnings: Vec<String>,
-    controller: Controller,
+    pub(crate) controller: Controller,
     imports: Imports,
     legacy_parent: PathBuf,
     workspace: PathBuf,
@@ -497,7 +498,7 @@ impl Host {
             store,
             credentials.clone(),
             bundle,
-            legacy_parent.join("dev.local.buzz.agent-ownership"),
+            legacy_parent.join(crate::sign_out::AGENT_OWNERSHIP),
         );
         controller.protect_control_paths(
             crate::Manager::from_env().map(|manager| vec![manager.storage_root().to_path_buf()]),
@@ -655,14 +656,17 @@ pub(crate) struct AgentHost(
     Arc<Mutex<Result<Host, String>>>,
     Arc<AtomicBool>,
     Arc<tokio::sync::Mutex<()>>,
+    /// Starts compare each agent's attested owner with the signed-in human.
+    owner::Owner,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
+        identity: owner::Owner,
     ) -> Self {
         buzz_agent_controller::warm_tools_path();
-        Self::initialize_with(move || {
+        Self::initialize_with(identity, move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
                 Host::open(
@@ -675,7 +679,10 @@ impl AgentHost {
             })
         })
     }
-    fn initialize_with(open: impl FnOnce() -> Result<Host, String> + Send + 'static) -> Self {
+    fn initialize_with(
+        identity: owner::Owner,
+        open: impl FnOnce() -> Result<Host, String> + Send + 'static,
+    ) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
         )));
@@ -687,7 +694,12 @@ impl AgentHost {
             .clone()
             .try_lock_owned()
             .expect("new admission mutex");
-        let owner = Self(state.clone(), closed.clone(), admission.clone());
+        let owner = Self(
+            state.clone(),
+            closed.clone(),
+            admission.clone(),
+            identity.clone(),
+        );
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(open)
                 .await
@@ -699,7 +711,7 @@ impl AgentHost {
                 *state = opened;
             }
             drop(initializing); // restore itself enters through native admission.
-            Self(state, closed, admission).restore().await;
+            Self(state, closed, admission, identity).restore().await;
         });
         owner
     }
@@ -887,6 +899,7 @@ impl AgentHost {
         })
         .await
     }
+    /// Sign out's "Also remove my agents"; runs before shutdown fences the host.
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
         let mut state = self
@@ -904,7 +917,7 @@ async fn prepare_tools_path() {
     // is held while this shared, bounded attempt runs.
     let _ = tauri::async_runtime::spawn_blocking(buzz_agent_controller::prepare_tools_path).await;
 }
-async fn run<T: Send + 'static>(
+pub(crate) async fn run<T: Send + 'static>(
     state: AgentHost,
     operation: impl FnOnce(&mut Host) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -1227,10 +1240,11 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        let attested = host.controller.attested_owner(&id)?;
+        Ok((request, ticket, host.credentials.clone(), attested))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested) = prepared;
     prepare_tools_path().await;
     let target = id.clone();
     let pi = run(owner.clone(), move |host| {
@@ -1262,7 +1276,25 @@ async fn start_guarded(
     }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    let acquired = if preflight.is_ok() {
+    // Kept agents answer to the owner who authorized them, not whoever signs in
+    // next: a mismatch is refused before the agent's key is read.
+    let ready = match owner.3.viewer().await {
+        Ok(signed_in) => buzz_agent_controller::check_owner(attested.as_deref(), Some(&signed_in)),
+        Err(error) => Err(error),
+    }
+    .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
+    let target = id.clone();
+    run(owner.clone(), move |host| {
+        host.starts
+            .get(&target)
+            .filter(|pending| pending.ticket == ticket)
+            .ok_or(START_CANCELLED)?;
+        Ok(())
+    })
+    .await?;
+    let acquired = if let Err(error) = ready {
+        Err(error)
+    } else {
         tauri::async_runtime::spawn_blocking(move || {
             if !restore && replay_floor.is_none() && guard.is_none() {
                 credentials.retry();
@@ -1273,8 +1305,6 @@ async fn start_guarded(
         .map_err(|_| "Native credential operation failed".to_owned())
         .and_then(|v| v)
         .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()))
-    } else {
-        Err(preflight.as_ref().err().unwrap().clone())
     };
     let target = id.clone();
     if acquired.is_ok() {
@@ -1408,6 +1438,12 @@ pub(crate) async fn agent_control_create_prepare(
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
         }
+        if let Some(agent) = host
+            .controller
+            .created_request(&request_id, &destination, &owner)?
+        {
+            return Ok(serde_json::json!({"id": agent.id, "pubkey": agent.pubkey, "saved": true}));
+        }
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             host.creating = Some((
                 request_id,
@@ -1451,7 +1487,11 @@ pub(crate) async fn agent_control_create_commit(
     request_id: String,
     edit: AgentEdit,
     auth: String,
+    bundle: Option<buzz_agent_controller::BundleMember>,
 ) -> Result<Snapshot, String> {
+    if let Some(bundle) = &bundle {
+        bundle.validate()?;
+    }
     let owner = state.inner().clone();
     let (prepared, credentials, request_id, edit, auth) = run(owner.clone(), move |host| {
         let (_, prepared) = host
@@ -1480,7 +1520,12 @@ pub(crate) async fn agent_control_create_commit(
         if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
         }
-        host.controller.create(&prepared, edit, &auth)?;
+        if let Some(bundle) = bundle {
+            host.controller
+                .create_bundle_member(&prepared, edit, &auth, &request_id, &bundle)?;
+        } else {
+            host.controller.create(&prepared, edit, &auth)?;
+        }
         host.snapshot()
     })
     .await
@@ -1544,7 +1589,20 @@ async fn publish_acquired(
     .await
 }
 
-mod profile_http;
+/// Restore only owner-addressed snapshot memory to this saved native identity.
+#[tauri::command]
+pub(crate) async fn agent_control_snapshot_memory_write(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    id: String,
+    entries: Vec<SnapshotMemoryEntry>,
+) -> Result<MemoryWriteResult, String> {
+    snapshot_memory::restore(state.inner().clone(), identity, id, entries).await
+}
+pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
+mod snapshot_memory;
+
+pub(crate) mod profile_http;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -1611,4 +1669,154 @@ pub(crate) async fn agent_security(
         });
     }
     Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn agent_control_team_instructions(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    id: String,
+    revision: u64,
+    instructions: String,
+    team: String,
+    community: String,
+) -> Result<ControlSnapshot, String> {
+    let (owner, teams) = crate::relay::current_team_members(identity.inner(), &community).await?;
+    run(state.inner().clone(), move |host| {
+        let agent = host
+            .controller
+            .snapshot()?
+            .agents
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if !teams
+            .get(&team)
+            .is_some_and(|head| head.members.contains(&agent.pubkey))
+        {
+            return Err("Team no longer contains this member; refresh before deploying".into());
+        }
+        host.controller
+            .reconcile_team_bindings(&community, &owner, &teams)?;
+        host.controller.apply_team_instructions(
+            &id,
+            revision,
+            &instructions,
+            &owner,
+            (&team, &community),
+        )?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_control_team_capture(
+    state: tauri::State<'_, AgentHost>,
+    team: buzz_agent_controller::TeamMeta,
+    members: Vec<String>,
+    community: String,
+) -> Result<buzz_agent_controller::TeamSnapshot, String> {
+    let relay = community
+        .trim_end_matches('/')
+        .replacen("https://", "wss://", 1);
+    run(state.inner().clone(), move |host| {
+        host.controller.export_team(team, &members, &relay)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_control_team_export(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    snapshot: buzz_agent_controller::TeamSnapshot,
+    members: Vec<String>,
+    community: String,
+    memory_level: Option<String>,
+) -> Result<buzz_agent_controller::TeamSnapshot, String> {
+    let level = memory_level.unwrap_or_else(|| "none".into());
+    if !matches!(level.as_str(), "none" | "core" | "everything") {
+        return Err("Invalid memory selection".into());
+    }
+    let viewer = if level == "none" {
+        None
+    } else {
+        Some(identity.with_key(|_, viewer| Ok(viewer.to_owned())).await?)
+    };
+    snapshot.validate()?;
+    if snapshot.members.len() != members.len() {
+        return Err("Portable team members do not match their definitions".into());
+    }
+    let relay = community
+        .trim_end_matches('/')
+        .replacen("https://", "wss://", 1);
+    let (mut snapshot, targets) = run(state.inner().clone(), move |host| {
+        let agents = host.snapshot()?.data.agents;
+        let targets = members
+            .iter()
+            .map(|pubkey| {
+                let agent = agents
+                    .iter()
+                    .find(|agent| &agent.pubkey == pubkey && agent.relay_url == relay)
+                    .ok_or("A team member is unavailable")?;
+                Ok((agent.pubkey.clone(), community.clone()))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        // Export the members' current saved settings; the portable team owns metadata.
+        let snapshot = host
+            .controller
+            .export_team(snapshot.team, &members, &relay)?;
+        Ok((snapshot, targets))
+    })
+    .await?;
+    if level != "none" {
+        for (member, (agent, community)) in snapshot.members.iter_mut().zip(targets) {
+            let listing =
+                crate::relay::agent::relay_agent_memories_read(identity.clone(), community, agent)
+                    .await?;
+            if listing["partial"].as_bool() != Some(false) {
+                return Err("Memory listing is incomplete; retry or export Team only".into());
+            }
+            let entries = listing["entries"]
+                .as_array()
+                .ok_or("Invalid memory listing")?;
+            member.memory.level = level.clone();
+            member.memory.entries = entries
+                .iter()
+                .filter(|entry| level == "everything" || entry["slug"].as_str() == Some("core"))
+                .map(|entry| {
+                    Ok(buzz_agent_controller::MemoryEntry {
+                        slug: entry["slug"]
+                            .as_str()
+                            .ok_or("Invalid memory listing")?
+                            .into(),
+                        body: entry["body"]
+                            .as_str()
+                            .ok_or("Invalid memory listing")?
+                            .into(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+        }
+    }
+    if let Some(expected) = viewer {
+        identity
+            .with_key(move |_, current| {
+                if expected != current {
+                    return Err("Identity changed during memory export".into());
+                }
+                Ok(())
+            })
+            .await?;
+    }
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) fn agent_control_team_preview(
+    content: String,
+) -> Result<buzz_agent_controller::TeamSnapshot, String> {
+    buzz_agent_controller::TeamSnapshot::decode(content.as_bytes())
 }

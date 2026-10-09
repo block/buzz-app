@@ -153,6 +153,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("valid bundled Profiles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/links/manifest.json"))
             .expect("links manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/voice-notes/manifest.json"
+        ))
+        .expect("voice notes manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
             .expect("mentions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
@@ -165,6 +169,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/me/manifest.json"))
+            .expect("Me manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
@@ -175,6 +181,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
+            .expect("agents2 manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -205,13 +213,16 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.profiles"
             | "buzz.links"
             | "buzz.mentions"
+            | "buzz.voice-notes"
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
+            | "buzz.me"
             | "buzz.inbox"
             | "buzz.reminders"
             | "buzz.projects"
             | "buzz.agents"
+            | "buzz.agents2"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"

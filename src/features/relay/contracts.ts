@@ -63,6 +63,8 @@ export type Attachment = Readonly<{
   name?: string;
   /** Sender/relay-claimed duration in seconds; display hint, corrected by the element. */
   duration?: number;
+  waveform?: readonly number[];
+  voiceNote?: true;
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;

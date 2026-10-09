@@ -1,6 +1,9 @@
 # Builderlab
 
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+It also registers `block.builderlab/builderlab` in Agents2's new-agent type picker.
+This type has empty configuration and no execution handler yet; existing remote
+agents remain in Settings until the later migration.
 
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;

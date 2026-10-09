@@ -11,8 +11,20 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
 
-export const inject = ["host", "settingsCards", "relay", "communityReader"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "relay",
+  "communityReader",
+  "agents2",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
+  ctx.agents2.register({
+    id: "builderlab",
+    title: "Builderlab",
+    description: "TBD",
+    defaults: () => ({ config: {} }),
+  });
   let unavailable = "";
   try {
     oauthTarget();

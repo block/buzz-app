@@ -6,6 +6,9 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
+import { Agents2Service } from "../../features/agents2/service";
+import type { RelayData } from "../../features/relay/service";
+import { Agents2Page } from "../agents2/Agents2Page";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
@@ -38,6 +41,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function provideAgents2(root: Context, relay: RelayData) {
+  return new Agents2Service(root, relay, {
+    list: async () => [],
+    create: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+    forget: vi.fn(),
+    publish: vi.fn(),
+    publishProfile: vi.fn(),
+  });
+}
+
 it("an unconfigured desktop build shows setup guidance and cannot start login", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
   const root = new Context();
@@ -52,6 +67,7 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
   );
   root.provide("relay", community.relay);
   root.provide("communityReader", community.reader);
+  const agents2 = provideAgents2(root, community.relay);
   try {
     runtime.reconcile([
       {
@@ -72,6 +88,21 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
     expect(screen.getByRole("status")).toHaveTextContent("not configured");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(native.invoke).not.toHaveBeenCalled();
+    expect(agents2.types()).toMatchObject([
+      { key: "block.builderlab/builderlab", title: "Builderlab" },
+    ]);
+    expect(agents2.types()[0]?.defaults()).toEqual({ config: {} });
+    cleanup();
+    render(<Agents2Page agents2={agents2} relay={community.relay} />);
+    const [newAgent] = await screen.findAllByRole("button", {
+      name: "New agent",
+    });
+    if (!newAgent) throw new Error("Missing New agent button");
+    await userEvent.setup().click(newAgent);
+    expect(
+      screen.getByRole("radio", { name: /Builderlab/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TBD")).toBeInTheDocument();
   } finally {
     cleanup();
     await runtime.dispose();
@@ -125,6 +156,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   );
   root.provide("relay", community.relay);
   root.provide("communityReader", community.reader);
+  const agents2 = provideAgents2(root, community.relay);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
     source: "bundled",
@@ -137,6 +169,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   try {
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents2.types()).toHaveLength(1);
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Integrations");
     if (!card) throw new Error("Missing Builderlab login card");
@@ -234,12 +267,16 @@ it("binds login, list and creation to the plugin host and clears the session on 
       runtime.reconcile([]);
     });
     expect(cards.snapshot()).toHaveLength(0);
+    expect(agents2.types()).toHaveLength(0);
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents2.types()).toMatchObject([
+      { key: "block.builderlab/builderlab", title: "Builderlab" },
+    ]);
     const fresh = cards.snapshot()[0];
     expect(fresh).not.toBe(card);
     if (!fresh) throw new Error("Missing reactivated Builderlab login card");

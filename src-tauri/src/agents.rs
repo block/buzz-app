@@ -1729,6 +1729,70 @@ pub(crate) async fn agent_control_team_sync(
     .await
 }
 
+/// Pending agents of teams from old Buzz in `community`, owned by this account.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_teams(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+) -> Result<Vec<buzz_agent_controller::PendingBetaTeam>, String> {
+    let owner = identity.inner().viewer().await?;
+    run(state.inner().clone(), move |host| {
+        host.controller.pending_beta_teams(&community, &owner)
+    })
+    .await
+}
+
+/// Read-only: group earlier imports by the team they had in old Buzz.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_team_restore_preview(
+    state: tauri::State<'_, AgentHost>,
+    source: LegacySource,
+    ids: Vec<String>,
+) -> Result<buzz_agent_controller::RestorePreview, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.restore_beta_teams_preview(
+            &mut host.imports,
+            source,
+            host.legacy_parent.clone(),
+            &ids,
+        )
+    })
+    .await
+}
+
+/// Finish one agent's team from old Buzz against the owner's current catalog.
+/// `teams` maps every readable team to its current text, as for team sync.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn agent_control_beta_team_finish(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+    teams: std::collections::BTreeMap<String, String>,
+    id: String,
+    revision: u64,
+    outcome: buzz_agent_controller::BetaTeamStatus,
+    restore: Option<buzz_agent_controller::RestoreChoice>,
+) -> Result<ControlSnapshot, String> {
+    let (owner, heads) = crate::relay::current_team_members(identity.inner(), &community).await?;
+    run(state.inner().clone(), move |host| {
+        host.controller.finish_beta_team(
+            &host.imports,
+            &id,
+            revision,
+            outcome,
+            &community,
+            &owner,
+            &heads,
+            &teams,
+            restore.as_ref(),
+        )?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn agent_control_team_export(
     state: tauri::State<'_, AgentHost>,

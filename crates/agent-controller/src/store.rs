@@ -548,87 +548,90 @@ impl Store {
         heads: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
         texts: &std::collections::BTreeMap<String, String>,
     ) -> Result<()> {
-        for raw in texts.values() {
-            crate::import::team_text(&json!(raw))?;
-        }
         let mut doc = self.read()?;
-        // Teams the app could not read keep their bindings and copied text.
-        let mut changed = reconcile_bindings(&mut doc, relay, owner, heads, |team| {
-            texts.contains_key(team)
-        })?;
-        for agent in &mut doc.agents {
-            let authorized = agent
-                .auth_tag
-                .as_deref()
-                .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
-                .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
-            if agent.relay_url != relay || !authorized {
-                continue;
-            }
-            let saved: Vec<String> = match agent.imported.get("teamBindings") {
-                Some(raw) => serde_json::from_value(raw.clone())
-                    .map_err(|_| "Invalid saved team bindings")?,
-                None => Vec::new(),
-            };
-            let current = crate::import::team_text(&agent.imported["teamInstructions"])?.to_owned();
-            let mut bindings: Vec<String> = saved
-                .iter()
-                .filter(|team| !texts.contains_key(*team) || !heads.contains_key(*team))
-                .cloned()
-                .collect();
-            let unknown = !bindings.is_empty();
-            let mut text: Option<(&str, &str)> = None;
-            for (team, raw) in texts {
-                let team_text = raw.trim();
-                if team_text.is_empty()
-                    || !heads
-                        .get(team)
-                        .is_some_and(|head| head.members.contains(&agent.pubkey))
-                {
-                    continue;
-                }
-                match text {
-                    Some((other, chosen)) if chosen != team_text => {
-                        return Err(format!(
-                            "{} is on teams \"{other}\" and \"{team}\", which have different instructions. Give both teams the same instructions or remove the agent from one",
-                            agent.name
-                        ));
-                    }
-                    _ => text = Some((team, team_text)),
-                }
-                bindings.push(team.clone());
-            }
-            // Text imported from old Buzz has no team binding. It stays until a
-            // team with text claims the agent; that team's text then replaces it.
-            let legacy = agent.imported.get("teamBindings").is_none();
-            let next = match text {
-                Some((_, chosen)) => chosen.to_owned(),
-                None if unknown || legacy => current.clone(),
-                None => String::new(),
-            };
-            if bindings.len() > 100 {
-                return Err("Too many team bindings for this agent".into());
-            }
-            if bindings == saved && next == current {
-                continue;
-            }
-            if agent.imported.is_null() {
-                agent.imported = json!({});
-            }
-            agent.imported["teamBindings"] = json!(bindings);
-            if next != current {
-                agent.imported["teamInstructions"] = json!(next);
-                agent.revision = agent
-                    .revision
-                    .checked_add(1)
-                    .ok_or("Agent revision exhausted")?;
-            }
-            changed = true;
-        }
-        if changed {
+        if sync_doc(&mut doc, relay, owner, heads, texts)? {
             self.write(&doc)?;
         }
         Ok(())
+    }
+    /// See `Controller::finish_beta_team`. `init` starts an earlier import's
+    /// migration from a restore preview; it is refused once one exists.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn finish_beta_team(
+        &mut self,
+        id: &str,
+        revision: u64,
+        outcome: crate::BetaTeamStatus,
+        (relay, owner): (&str, &str),
+        heads: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+        texts: &std::collections::BTreeMap<String, String>,
+        init: Option<crate::beta_migration::BetaTeam>,
+    ) -> Result<()> {
+        use crate::beta_migration::{BetaTeam, KEY};
+        use crate::BetaTeamStatus::{Completed, Pending, Skipped};
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent settings changed. Refresh before finishing team setup".into());
+        }
+        if agent.relay_url != relay {
+            return Err("Agent belongs to another community".into());
+        }
+        let mut beta = match (BetaTeam::read(agent)?, init) {
+            (Some(beta), None) => beta,
+            (None, Some(beta)) => beta,
+            (Some(_), Some(_)) => {
+                return Err("This agent's team from old Buzz is already set up".into())
+            }
+            (None, None) => return Err("This agent has no team from old Buzz".into()),
+        };
+        if beta.status != Pending {
+            return Ok(());
+        }
+        let listed = heads
+            .get(&beta.team_id)
+            .map(|head| head.members.contains(&agent.pubkey));
+        if !agent.imported.is_object() {
+            agent.imported = json!({});
+        }
+        match outcome {
+            Completed => {
+                if listed != Some(true) || !texts.contains_key(&beta.team_id) {
+                    return Err(format!(
+                        "Team \"{}\" doesn't list {} yet or couldn't be read. Finish team setup again",
+                        beta.name, agent.name
+                    ));
+                }
+                let mut bindings: Vec<String> = match agent.imported.get("teamBindings") {
+                    Some(raw) => serde_json::from_value(raw.clone())
+                        .map_err(|_| "Invalid saved team bindings")?,
+                    None => Vec::new(),
+                };
+                if !bindings.contains(&beta.team_id) {
+                    bindings.push(beta.team_id.clone());
+                }
+                agent.imported["teamBindings"] = json!(bindings);
+            }
+            Skipped => {
+                if listed != Some(false) {
+                    return Err("Only a deleted team can be skipped".into());
+                }
+                // Stop delivering the unbound beta copy of a team the user deleted.
+                if agent.imported.get("teamBindings").is_none() {
+                    agent.imported["teamBindings"] = json!([]);
+                }
+            }
+            Pending => return Err("Invalid team setup outcome".into()),
+        }
+        beta.status = outcome;
+        agent.imported[KEY] =
+            serde_json::to_value(&beta).map_err(|_| "Could not encode team from old Buzz")?;
+        sync_doc(&mut doc, relay, owner, heads, texts)?;
+        self.write(&doc)
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
@@ -928,6 +931,92 @@ fn reconcile_bindings(
             "teamCatalogHeads".into(),
             serde_json::to_value(catalogs).map_err(|_| "Invalid team catalog heads")?,
         );
+    }
+    Ok(changed)
+}
+/// The team text resolver on one in-memory document; see `sync_team_instructions`.
+fn sync_doc(
+    doc: &mut Document,
+    relay: &str,
+    owner: &str,
+    heads: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+    texts: &std::collections::BTreeMap<String, String>,
+) -> Result<bool> {
+    for raw in texts.values() {
+        crate::import::team_text(&json!(raw))?;
+    }
+    // Teams the app could not read keep their bindings and copied text.
+    let mut changed =
+        reconcile_bindings(doc, relay, owner, heads, |team| texts.contains_key(team))?;
+    for agent in &mut doc.agents {
+        let authorized = agent
+            .auth_tag
+            .as_deref()
+            .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
+            .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
+        if agent.relay_url != relay || !authorized {
+            continue;
+        }
+        let saved: Vec<String> = match agent.imported.get("teamBindings") {
+            Some(raw) => {
+                serde_json::from_value(raw.clone()).map_err(|_| "Invalid saved team bindings")?
+            }
+            None => Vec::new(),
+        };
+        let current = crate::import::team_text(&agent.imported["teamInstructions"])?.to_owned();
+        let mut bindings: Vec<String> = saved
+            .iter()
+            .filter(|team| !texts.contains_key(*team) || !heads.contains_key(*team))
+            .cloned()
+            .collect();
+        let unknown = !bindings.is_empty();
+        let mut text: Option<(&str, &str)> = None;
+        for (team, raw) in texts {
+            let team_text = raw.trim();
+            if team_text.is_empty()
+                || !heads
+                    .get(team)
+                    .is_some_and(|head| head.members.contains(&agent.pubkey))
+            {
+                continue;
+            }
+            match text {
+                Some((other, chosen)) if chosen != team_text => {
+                    return Err(format!(
+                            "{} is on teams \"{other}\" and \"{team}\", which have different instructions. Give both teams the same instructions or remove the agent from one",
+                            agent.name
+                        ));
+                }
+                _ => text = Some((team, team_text)),
+            }
+            bindings.push(team.clone());
+        }
+        // Text imported from old Buzz has no team binding. It stays until a
+        // team with text claims the agent; that team's text then replaces it.
+        let legacy = agent.imported.get("teamBindings").is_none();
+        let next = match text {
+            Some((_, chosen)) => chosen.to_owned(),
+            None if unknown || legacy => current.clone(),
+            None => String::new(),
+        };
+        if bindings.len() > 100 {
+            return Err("Too many team bindings for this agent".into());
+        }
+        if bindings == saved && next == current {
+            continue;
+        }
+        if agent.imported.is_null() {
+            agent.imported = json!({});
+        }
+        agent.imported["teamBindings"] = json!(bindings);
+        if next != current {
+            agent.imported["teamInstructions"] = json!(next);
+            agent.revision = agent
+                .revision
+                .checked_add(1)
+                .ok_or("Agent revision exhausted")?;
+        }
+        changed = true;
     }
     Ok(changed)
 }

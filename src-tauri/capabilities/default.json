@@ -89,6 +89,9 @@
     "allow-agent-control-team-export",
     "allow-agent-control-team-instructions",
     "allow-agent-control-team-sync",
+    "allow-agent-control-beta-teams",
+    "allow-agent-control-beta-team-restore-preview",
+    "allow-agent-control-beta-team-finish",
 
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",

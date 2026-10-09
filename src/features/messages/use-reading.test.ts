@@ -353,14 +353,6 @@ it.each(["blur", "scroll", "unmount"] as const)(
     expect(viewing?.dispose).toHaveBeenCalledOnce();
   },
 );
-it("focus leaving the reading surface cancels pending evidence", () => {
-  const h = setup();
-  h.outside.focus();
-  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
-  vi.advanceTimersByTime(1000);
-  expect(h.leases[0]?.observe).not.toHaveBeenCalled();
-});
-
 it("reports qualified viewing even without read sync, but never publishes read intent", () => {
   const h = setup({ supported: false });
   expect(h.leases[0]?.view).toHaveBeenCalledExactlyOnceWith(

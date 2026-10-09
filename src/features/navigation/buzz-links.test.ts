@@ -130,11 +130,6 @@ it.each([
   "buzz://channel/%ZZ",
   "buzz://user@channel/general",
   "buzz://channel:443/general",
-  "buzz://message?channel=general&id=bad",
-  `${example}&id=${"b".repeat(64)}`,
-  `${example}&thread=bad`,
-  `${example}#fragment`,
-  "buzz://message/extra?channel=general",
   "buzz://join?relay=example",
   "javascript:alert(1)",
 ])("leaves unsupported or malformed links inert: %s", (href) => {

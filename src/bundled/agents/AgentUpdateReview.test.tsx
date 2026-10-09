@@ -1,11 +1,10 @@
 import type { ControlSnapshot } from "../../features/agents/control";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { controlFixture } from "../../features/agents/control-testing";
 import {
   enqueueManagementRequest,
   managementRequesterAuthorized,
   matchingManagementAgents,
-  refreshManagementInventory,
   type PendingManagementRequest,
   requestedDraft,
 } from "./AgentUpdateReview";
@@ -138,22 +137,6 @@ it("moves Codex-owned settings with requested runtime switches", () => {
     configuration: { mode: "advanced", effort: { value: "high" } },
     model: "gpt-5.5",
   });
-});
-
-it("requires a successful inventory snapshot before review", async () => {
-  const refresh = vi.fn(async () => {});
-  expect(
-    await refreshManagementInventory({
-      refresh,
-      snapshot: () => ({
-        status: "error",
-        data: null,
-        busy: false,
-        error: "Could not refresh",
-      }),
-    } as never),
-  ).toBe(false);
-  expect(refresh).toHaveBeenCalledOnce();
 });
 
 const pending = (

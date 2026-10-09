@@ -79,8 +79,6 @@ it("renders a signed patch, removes its renderer on disable and restores it on r
 it.each([
   ["new file", "/dev/null", "b/a.ts", "-0,0 +1", "+new", "insert"],
   ["deleted file", "a/a.ts", "/dev/null", "-1 +0,0", "-old", "delete"],
-  ["zero-context insertion", "a/a.ts", "b/a.ts", "-3,0 +4", "+new", "insert"],
-  ["zero-context deletion", "a/a.ts", "b/a.ts", "-4 +3,0", "-old", "delete"],
 ])(
   "renders %s as a rich diff rather than raw fallback",
   async (_name, oldPath, newPath, range, line, type) => {

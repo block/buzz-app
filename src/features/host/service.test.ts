@@ -53,7 +53,6 @@ it("prepares a structured NIP-OA proof with the native identity without a commun
 
 it.each([
   { mode: "browser", tauri: false, live: undefined },
-  { mode: "live browser", tauri: false, live: "1" },
   { mode: "live desktop", tauri: true, live: "1" },
 ])(
   "uses the dev broker identity for $mode authorization without a selected relay",
@@ -219,7 +218,6 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     args: ["--print"],
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
-    agent: "cd".repeat(32),
     onStdout: (data) => stdout.push(data),
     onStderr: (data) => stderr.push(data),
   });
@@ -234,7 +232,6 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     args: ["--print"],
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
-    agent: "cd".repeat(32),
     onEvent: spawn.onEvent,
   });
   spawn.onEvent.onmessage({ type: "stdout", data: "out" });

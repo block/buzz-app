@@ -35,7 +35,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
-  type SidebarSectionRemover,
+  type SidebarSectionRemovalWriter,
   type SidebarStarMutator,
   type SidebarSortMutator,
   type SidebarDecoder,
@@ -143,7 +143,7 @@ export interface ReadTransport {
   readonly writeSidebarMute?: SidebarMuteMutator;
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
-  readonly removeSidebarSection?: SidebarSectionRemover;
+  readonly removeSidebarSection?: SidebarSectionRemovalWriter;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */

@@ -1,11 +1,10 @@
 import {
   editSidebarAssignment,
+  editSidebarSectionRemoval,
+  validSidebarSectionRemoval,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
-import {
-  editSidebarRecord,
-  projectSidebarRecord,
-} from "../src/features/relay/sidebar-registers.ts";
+import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -134,42 +133,49 @@ function parseSectionsEvent(events, secret) {
     key.fill(0);
   }
 }
+/** Narrow host command: mutate one assignment against the latest encrypted head. */
+export function prepareSidebarAssignment(
+  events,
+  intent,
+  secret,
+  now = Date.now(),
+) {
+  assertSidebarAssignmentIntent(intent);
+  return prepareSections(events, secret, now, (current) =>
+    editSidebarAssignment(current.blob, current.createdAt, intent, now),
+  );
+}
 export function assertSidebarSectionRemovalIntent(intent) {
   if (
     !intent ||
     typeof intent !== "object" ||
     Array.isArray(intent) ||
-    Object.keys(intent).length !== 1 ||
     typeof intent.sectionId !== "string" ||
-    !intent.sectionId.trim() ||
-    intent.sectionId.length > 256
+    !validSidebarSectionRemoval(intent.sectionId) ||
+    Object.keys(intent).some((key) => key !== "sectionId")
   )
-    throw new Error("Invalid section removal intent");
+    throw new Error("Invalid sidebar section removal intent");
 }
-
-/** Narrow host command: mutate one assignment against the latest encrypted head. */
-function prepareSidebarGroups(
+export function prepareSidebarSectionRemoval(
   events,
   intent,
   secret,
   now = Date.now(),
-  removing = false,
 ) {
-  if (removing) assertSidebarSectionRemovalIntent(intent);
-  else assertSidebarAssignmentIntent(intent);
+  assertSidebarSectionRemovalIntent(intent);
+  return prepareSections(events, secret, now, (current) =>
+    editSidebarSectionRemoval(
+      current.blob,
+      current.createdAt,
+      intent.sectionId,
+      now,
+    ),
+  );
+}
+function prepareSections(events, secret, now, edit) {
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
-  const blob = removing
-    ? editSidebarRecord(
-        SECTION_COORDINATE,
-        current.blob,
-        current.createdAt,
-        current.blob.sections.some(({ id }) => id === intent.sectionId)
-          ? [[["s", intent.sectionId, "live"], false]]
-          : [],
-        now,
-      )
-    : editSidebarAssignment(current.blob, current.createdAt, intent, now);
+  const blob = edit(current);
   const groups = projectSidebarPreferences(blob, undefined);
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
@@ -198,42 +204,6 @@ function prepareSidebarGroups(
   };
 }
 
-export function prepareSidebarAssignment(
-  events,
-  intent,
-  secret,
-  now = Date.now(),
-) {
-  return prepareSidebarGroups(events, intent, secret, now);
-}
-export async function mutateSidebarSectionRemoval(
-  intent,
-  secret,
-  readHead,
-  publish,
-) {
-  assertSidebarSectionRemovalIntent(intent);
-  const draft = prepareSidebarGroups(
-    await readHead(),
-    intent,
-    secret,
-    Date.now(),
-    true,
-  );
-  if (!draft.event) return draft.groups;
-  await publish(draft.event);
-  const confirmed = prepareSidebarGroups(
-    await readHead(),
-    intent,
-    secret,
-    Date.now(),
-    true,
-  );
-  if (confirmed.event)
-    throw new Error("Section changed on another device; refresh and try again");
-  return confirmed.groups;
-}
-
 /** Publish one assignment, then re-read the coordinate before reporting saved state. */
 export async function mutateSidebarAssignment(
   intent,
@@ -242,14 +212,34 @@ export async function mutateSidebarAssignment(
   publish,
 ) {
   assertSidebarAssignmentIntent(intent);
-  const draft = prepareSidebarAssignment(await readHead(), intent, secret);
-  if (!draft.event) return draft.groups;
-  await publish(draft.event);
-  const confirmation = prepareSidebarAssignment(
-    await readHead(),
+  return mutateSections(
+    prepareSidebarAssignment,
     intent,
     secret,
+    readHead,
+    publish,
   );
+}
+export async function mutateSidebarSectionRemoval(
+  intent,
+  secret,
+  readHead,
+  publish,
+) {
+  assertSidebarSectionRemovalIntent(intent);
+  return mutateSections(
+    prepareSidebarSectionRemoval,
+    intent,
+    secret,
+    readHead,
+    publish,
+  );
+}
+async function mutateSections(prepare, intent, secret, readHead, publish) {
+  const draft = prepare(await readHead(), intent, secret);
+  if (!draft.event) return draft.groups;
+  await publish(draft.event);
+  const confirmation = prepare(await readHead(), intent, secret);
   if (confirmation.event)
     throw new Error(
       "Sidebar groups changed on another device; reload and try again",

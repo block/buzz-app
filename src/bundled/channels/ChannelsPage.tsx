@@ -1087,7 +1087,7 @@ function ChannelWorkspace({
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
-      openMembers={openMembers}
+      {...(current?.channelType !== "session" ? { openMembers } : {})}
       key={settings?.id}
       setupTools={
         current && (
@@ -1144,19 +1144,16 @@ function ChannelWorkspace({
               />
             )}
             {kitError && <p role="alert">{kitError}</p>}
-            {handoff &&
-              !current.readOnly &&
-              current.channelType !== "dm" &&
-              current.channelType !== "session" && (
-                <ChannelLifecycleActions
-                  key={`${current.id}:${!!current.archived}`}
-                  channelId={current.id}
-                  lifecycle={queries.channelLifecycle}
-                  choose={(action, trigger) =>
-                    handoff.openLifecycle(current, action, trigger)
-                  }
-                />
-              )}
+            {handoff && !current.readOnly && current.channelType !== "dm" && (
+              <ChannelLifecycleActions
+                key={`${current.id}:${!!current.archived}`}
+                channelId={current.id}
+                lifecycle={queries.channelLifecycle}
+                choose={(action, trigger) =>
+                  handoff.openLifecycle(current, action, trigger)
+                }
+              />
+            )}
           </div>
         )
       }
@@ -1290,10 +1287,22 @@ function ChannelWorkspace({
               {current?.channelType === "session" ? (
                 <SessionHeading
                   channel={current}
-                  parentName={
-                    channels.find(
-                      (parent) => parent.id === current.parentChannelId,
-                    )?.name
+                  actions={
+                    <ChannelHeaderMenu
+                      key={`channel-actions:${current.id}`}
+                      channel={current}
+                      session={queries}
+                      origin={navigation?.signal}
+                      providers={providers}
+                      templateProvider={templateProvider}
+                      trigger={settingsTrigger}
+                      openDetails={() => {
+                        drawer.close();
+                        requestSettingsFocus((value) => value + 1);
+                        setSettings({ channelId: current.id });
+                      }}
+                      openCanvas={openCanvas}
+                    />
                   }
                 >
                   <SessionShare

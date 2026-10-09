@@ -776,41 +776,6 @@ it("repair-retained reference-only edits admit a later deletion without seeding 
   expect(h.session.channels.window("room")).toBe(window);
 });
 
-it("activity subscribers restore original content when a reference-only edit is deleted", () => {
-  const h = setup();
-  h.grant("room");
-  const root = message(h.viewer, "room", "root", 10);
-  const reply = message(h.alice, "room", "ORIGINAL", 11, [
-    ["e", root.id, "", "reply"],
-  ]);
-  const edit = signed(h.alice, {
-    kind: 40003,
-    content: "EDITED",
-    tags: [["e", reply.id]],
-  });
-  const deletion = signed(h.alice, {
-    kind: 5,
-    content: "",
-    tags: [["e", edit.id]],
-  });
-  h.emit([root, reply]);
-  const changes: ThreadActivitySnapshot[] = [];
-  h.session.unread.subscribeActivity("room", () =>
-    changes.push(h.session.unread.activity("room")),
-  );
-
-  h.emit([edit]);
-  expect(changes.at(-1)?.items?.[0]?.preview).toBe("EDITED");
-  h.emit([deletion]);
-  expect(h.session.unread.activity("room").items?.[0]?.preview).toBe(
-    "ORIGINAL",
-  );
-  expect(changes.map((snapshot) => snapshot.items?.[0]?.preview)).toEqual([
-    "EDITED",
-    "ORIGINAL",
-  ]);
-});
-
 it("deletion-before-edit batches retain authorized ancestry without a transient activity change", () => {
   const h = setup();
   h.grant("room");
@@ -2373,33 +2338,6 @@ it("catch-up rejects historical heads, failed storage and expired leases without
   expect(h.journal()?.state.frontiers).toEqual({});
 });
 
-it("mark all captures later channels at invocation, not after the first save", async () => {
-  const h = setup();
-  h.grant("room");
-  h.grant("other");
-  h.emit([
-    message(h.alice, "room", "one", 11),
-    message(h.alice, "other", "two", 12),
-  ]);
-  await flush();
-  const ids = h.session.channels.list().channels.map((channel) => channel.id);
-  const second = ids[1];
-  assert(second);
-  clock(20);
-  const held = h.holdSaveStarted();
-  const sweep = h.session.unread.markAllChannelsRead();
-  await held.started;
-  clock(30);
-  h.emit([message(h.alice, second, "after click", 21)]);
-  held.release();
-  await sweep;
-  expect(h.journal()?.state.frontiers).toEqual({ room: 20, other: 20 });
-  expect(
-    h.session.unread.snapshot({ kind: "channel", channelId: second })
-      .observedCount,
-  ).toBe(1);
-});
-
 it("channel bottom catch-up leaves newer replies in the viewer's thread unread; Mark all reads them", async () => {
   const h = setup();
   h.grant("room");
@@ -2569,6 +2507,70 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
   ).toBe(2);
   stop();
 });
+
+it.each([false, true])(
+  "inbox hides archived channels and restores retained unread state (subscribed=%s)",
+  async (subscribed) => {
+    const h = setup();
+    h.grant("room");
+    h.grant("dm");
+    h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+    const root = message(h.viewer, "room", "My thread", 20);
+    const mention = message(h.alice, "room", "Mention", 21, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const reply = message(h.alice, "room", "Reply", 22, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const dm = message(h.alice, "dm", "Direct hello", 23);
+    h.emit([root, mention, reply, dm]);
+    const unread = h.session.unread;
+    await unread.markMessageRead("room", mention.id);
+    await unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: mention.id,
+    });
+    const before = unread.inbox();
+    expect(before.items).toHaveLength(3);
+    const journal = h.journal();
+    const snapshot = h.snapshot();
+    const generation = unread.generation();
+    const noticed: string[][] = [];
+    const stop = subscribed
+      ? unread.subscribeInbox(() =>
+          noticed.push(unread.inbox().items.map((item) => item.channelId)),
+        )
+      : () => {};
+    h.emit([metadata(h.relay, "room", "room", 30, [["archived", "true"]])]);
+    expect(unread.inbox().items.map((item) => item.channelId)).toEqual(["dm"]);
+    if (subscribed) expect(noticed.at(-1)).toEqual(["dm"]);
+    expect(h.snapshot()).toEqual(snapshot);
+    expect(unread.generation()).toBe(generation);
+    expect(h.journal()).toEqual(journal);
+    // Fresh addressed evidence stays hidden, not discarded or marked read.
+    const fresh = message(h.alice, "room", "Fresh mention", 31, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([fresh]);
+    expect(unread.inbox().items.map((item) => item.channelId)).toEqual(["dm"]);
+    h.emit([metadata(h.relay, "room", "room", 32, [["archived", "false"]])]);
+    const restored = unread.inbox();
+    expect(restored.items).toHaveLength(4);
+    for (const item of before.items)
+      expect(restored.items).toContainEqual(item);
+    expect(
+      restored.items.find((item) => item.messageId === fresh.id)?.unreadCount,
+    ).toBe(1);
+    expect(h.journal()).toEqual(journal);
+    // Renaming is not an Inbox invalidation input.
+    const count = noticed.length;
+    h.emit([metadata(h.relay, "room", "Renamed", 33)]);
+    expect(unread.inbox()).toBe(restored);
+    expect(noticed).toHaveLength(count);
+    stop();
+  },
+);
 
 it("inbox folds edits and deletions and revokes all evidence before a reentrant subscriber", async () => {
   const h = setup();

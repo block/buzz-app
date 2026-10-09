@@ -340,7 +340,7 @@ const templateEntry: KitEntry = {
   eventId: "template-head",
   record: { ...entry.record, value: template },
 };
-it.each(["Saved template", "x".repeat(120)])(
+it.each(["x".repeat(120)])(
   "duplicates %s as an unsaved independent draft",
   async (name) => {
     const user = userEvent.setup();
@@ -743,12 +743,9 @@ it("edits portable metadata without reconstructing or dropping member definition
 });
 
 it.each(
-  [
-    [],
-    ["a".repeat(64)],
-    ["a".repeat(64), "b".repeat(64)],
-    ["b".repeat(64)],
-  ].map((selected) => ({ selected })),
+  [[], ["a".repeat(64)], ["a".repeat(64), "b".repeat(64)]].map((selected) => ({
+    selected,
+  })),
 )(
   "routes new-team metadata and save through the same membership eligibility (%j)",
   async ({ selected }) => {

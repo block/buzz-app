@@ -16,7 +16,7 @@ import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Spawn, ToolServer } from "./claude";
-import { appClient } from "./client";
+import { appClient } from "../../buzz-mcp/app-client";
 import {
   CONTEXT_LIMIT,
   type Scope,

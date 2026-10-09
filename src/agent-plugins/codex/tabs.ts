@@ -334,7 +334,7 @@ export function createTabs(
           onChange: (event: { target: { value: string } }) =>
             set({ workspace: event.target.value }),
         }),
-        "Codex can edit files here. Network access and inherited MCP/Apps/plugin tools are disabled.",
+        "Codex can edit files here. Buzz tools run inside the app. Network access and inherited MCP/Apps/plugin tools are disabled.",
       ),
       field(
         "codex-scope",

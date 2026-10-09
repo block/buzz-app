@@ -2,9 +2,10 @@
 // reads through its Agents2 handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memory } from "../../buzz-mcp/client";
-import type { AgentHandle } from "../../features/agents2/service";
-import type { Spawn } from "./claude";
+import type { BuzzClient, Memory } from "./client";
+import type { AgentHandle } from "../features/agents2/service";
+import type { HostProcess, HostProcessOptions } from "../features/host/service";
+type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
 /** The largest file a tool reads: the community's upload limit. */
 const READ_LIMIT = 50 * 1024 * 1024;
@@ -17,16 +18,39 @@ export function appClient(
     /** Where relative paths start: the agent's working directory. */
     cwd: string;
     memories(): Promise<readonly Memory[]>;
+    /** Reject operations after the owning turn or community has ended. */
+    check?(): void;
+    signal?: AbortSignal;
   }>,
 ): BuzzClient {
+  const check = () => {
+    options.signal?.throwIfAborted();
+    options.check?.();
+  };
   return {
     pubkey: agent.pubkey,
-    query: (filters) => agent.query(filters),
-    publish: (event) => agent.publish(event),
-    upload: (data, mime) => agent.upload(toBase64(data), mime),
-    read: (path) => readFile(options.spawn, options.cwd, path),
-    memories: options.memories,
+    query: (filters) => {
+      check();
+      return agent.query(filters);
+    },
+    publish: (event) => {
+      check();
+      return agent.publish(event);
+    },
+    upload: (data, mime) => {
+      check();
+      return agent.upload(toBase64(data), mime);
+    },
+    read: (path) => {
+      check();
+      return readFile(options.spawn, options.cwd, path, options.signal);
+    },
+    memories: () => {
+      check();
+      return options.memories();
+    },
     remember: async (slug, body, after) => {
+      check();
       await agent.remember(slug, body, after);
     },
   };
@@ -34,7 +58,12 @@ export function appClient(
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),
  * which passes binary files through intact. */
-async function readFile(spawn: Spawn, cwd: string, path: string) {
+async function readFile(
+  spawn: Spawn,
+  cwd: string,
+  path: string,
+  signal?: AbortSignal,
+) {
   // `-` would wait on stdin.
   if (path.trim() === "-" || !path.trim())
     throw new Error(`Cannot read ${path}`);
@@ -56,9 +85,18 @@ async function readFile(spawn: Spawn, cwd: string, path: string) {
       error += data;
     },
   });
+  const abort = () => void child?.kill();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (large || signal?.aborted) abort();
   const timer = setTimeout(() => void child?.kill(), READ_TIMEOUT_MS);
-  const code = await child.exited;
-  clearTimeout(timer);
+  let code: number | null;
+  try {
+    code = await child.exited;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+  signal?.throwIfAborted();
   if (large) throw new Error(`${path} is larger than 50 MB`);
   if (code !== 0) throw new Error(error.trim() || `Could not read ${path}`);
   return fromBase64(output.replace(/\s/g, ""));

@@ -5,6 +5,8 @@ import type {
 } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
+import { appClient } from "../../buzz-mcp/app-client";
+import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import { config, absoluteWorkspace, type Config } from "./config";
 import { conversationHistory } from "./history";
 import {
@@ -14,7 +16,13 @@ import {
   turnInput,
   type Conversation,
 } from "./prompt";
-import { AppServer, listModels, type Spawn } from "./rpc";
+import {
+  AppServer,
+  listModels,
+  type Spawn,
+  type ToolCall,
+  type ToolReply,
+} from "./rpc";
 
 type Request = {
   event: EventData;
@@ -31,6 +39,10 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  workspace: string;
+  signal: AbortSignal;
+  version: number;
+  sentVersion?: number;
 };
 type Lane = {
   tail: Promise<void>;
@@ -126,7 +138,7 @@ export class CodexRuntime {
     } catch {
       /* Start fresh after malformed local data. */
     }
-    const rpc = new AppServer();
+    const rpc = new AppServer((call) => this.tool(entry, call));
     const entry: Entry = {
       storageKey: this.storageKey(pubkey),
       abort: new AbortController(),
@@ -152,7 +164,8 @@ export class CodexRuntime {
     return entry;
   }
   private storageKey(pubkey: string) {
-    return `buzz.codex.sessions.v2:${this.scope}:${pubkey}`;
+    // Resume restores the persisted tool schema; pre-tools bindings start fresh.
+    return `buzz.codex.sessions.v3:${this.scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     entry.saved[key] = saved;
@@ -242,6 +255,7 @@ export class CodexRuntime {
             ),
           });
           active.reply = request;
+          active.version++;
         } catch (error) {
           if (entry.abort.signal.aborted) return;
           // A completion racing the request means this is the next ordinary turn.
@@ -307,6 +321,78 @@ export class CodexRuntime {
       ],
     });
   }
+  private async tool(entry: Entry, call: ToolCall): Promise<ToolReply> {
+    const active = [...entry.lanes.values()]
+      .map((lane) => lane.active)
+      .find(
+        (active) =>
+          active?.threadId === call?.threadId &&
+          active?.turnId === call?.turnId,
+      );
+    if (
+      !active ||
+      call.namespace !== "buzz" ||
+      !TOOLS.some((tool) => tool.name === call.tool)
+    )
+      throw new Error("No active Buzz tool for this thread and turn");
+    const check = () => {
+      active.signal.throwIfAborted();
+      if (active.finished) throw new Error("The Codex turn has ended");
+    };
+    check();
+    if (
+      !call.arguments ||
+      typeof call.arguments !== "object" ||
+      Array.isArray(call.arguments)
+    )
+      throw new Error("Buzz tool arguments must be an object");
+    const args = call.arguments as Record<string, unknown>;
+    const version = active.version;
+    const request = active.reply;
+    const client = appClient(request.agent, {
+      spawn: this.spawn,
+      cwd: active.workspace,
+      check,
+      signal: active.signal,
+      memories: async () => {
+        const snapshot = this.relay.snapshot();
+        if (snapshot.status !== "ready" || snapshot.scope !== this.scope)
+          throw new Error("Buzz is not connected to this community");
+        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
+        const abort = () => view.dispose();
+        active.signal.addEventListener("abort", abort, { once: true });
+        try {
+          await view.refresh();
+          check();
+          const { status, listing } = view.snapshot();
+          if (status !== "ready" || !listing)
+            throw new Error(`Memory unavailable (${status})`);
+          return listing.entries;
+        } finally {
+          active.signal.removeEventListener("abort", abort);
+          view.dispose();
+        }
+      },
+    });
+    const text = await callTool(
+      client,
+      {
+        channel: request.conversation.channelId,
+        root: rootOf(request.event),
+      },
+      call.tool,
+      call.tool === "send" &&
+        args.reply === undefined &&
+        args.channel === undefined
+        ? { ...args, reply: request.event.id }
+        : args,
+    );
+    const final = call.tool === "send" && args.final === true;
+    if (final) {
+      active.sentVersion = Math.max(active.sentVersion ?? -1, version);
+    }
+    return { success: true, contentItems: [{ type: "inputText", text }] };
+  }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
     try {
@@ -354,6 +440,12 @@ export class CodexRuntime {
   ) {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
+    const turnAbort = new AbortController();
+    const signal = AbortSignal.any([
+      entry.abort.signal,
+      turnAbort.signal,
+      AbortSignal.timeout(29 * 60_000),
+    ]);
     const active: Active = {
       ready: new Promise((resolve, reject) => {
         ready = resolve;
@@ -362,17 +454,15 @@ export class CodexRuntime {
       steering: Promise.resolve(),
       reply: request,
       finished: false,
+      workspace: request.settings.workspace,
+      signal,
+      version: 0,
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
     const { settings, agent } = request;
-    const signal = AbortSignal.any([
-      entry.abort.signal,
-      AbortSignal.timeout(29 * 60_000),
-    ]);
     let finish!: (status: string) => void;
     let fail!: (error: Error) => void;
-    const answers: string[] = [];
     const completed = new Promise<string>((resolve, reject) => {
       finish = resolve;
       fail = reject;
@@ -401,12 +491,6 @@ export class CodexRuntime {
       }
       if (!p || p.threadId !== active.threadId) return;
       if (wire.method === "turn/started" && p.turn) active.turnId = p.turn.id;
-      if (
-        wire.method === "item/completed" &&
-        p.item?.type === "agentMessage" &&
-        p.item.phase !== "commentary"
-      )
-        answers.push(p.item.text ?? "");
       if (wire.method === "item/started" && p.item?.command)
         this.status(agent.pubkey, key, "Working", p.item.command);
       if (
@@ -485,7 +569,9 @@ export class CodexRuntime {
             ...params,
             ...(resuming
               ? { threadId: existing?.threadId, excludeTurns: true }
-              : {}),
+              : {
+                  dynamicTools: DYNAMIC_TOOLS,
+                }),
           },
         );
       } catch (error) {
@@ -495,7 +581,10 @@ export class CodexRuntime {
             `no rollout found for thread id ${existing?.threadId}`
         )
           throw error;
-        started = await rpc.request<typeof started>("thread/start", params);
+        started = await rpc.request<typeof started>("thread/start", {
+          ...params,
+          dynamicTools: DYNAMIC_TOOLS,
+        });
       }
       active.threadId = started.thread.id;
       signal.throwIfAborted();
@@ -539,11 +628,11 @@ export class CodexRuntime {
         );
         this.status(agent.pubkey, key, "Interrupted");
       } else {
-        await this.publish(
-          active.reply,
-          answers.join("\n\n").trim() ||
-            "Codex ended this turn without a final reply. Send another mention to ask it to continue.",
-        );
+        if (active.sentVersion !== active.version)
+          await this.publish(
+            active.reply,
+            "Codex ended this turn without a final reply through buzz.send. Send another mention to ask it to continue.",
+          );
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
@@ -575,6 +664,7 @@ export class CodexRuntime {
       }
     } finally {
       signal.removeEventListener("abort", abort);
+      turnAbort.abort(new Error("The Codex turn has ended"));
       off();
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
@@ -586,4 +676,12 @@ export class CodexRuntime {
     }
   }
 }
+const DYNAMIC_TOOLS = [
+  {
+    type: "namespace",
+    name: "buzz",
+    description: "Read and act in Buzz as this agent.",
+    tools: TOOLS.map((tool) => ({ type: "function", ...tool })),
+  },
+];
 const EMPTY: readonly SessionView[] = Object.freeze([]);

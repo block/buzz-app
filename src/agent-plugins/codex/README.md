@@ -1,7 +1,7 @@
 # Codex for Agents2
 
 An installable desktop plugin using the native process host introduced in #731.
-Agents2 owns the identity, admission, configuration, and signed reply. This plugin
+Agents2 owns the identity, admission, configuration, and signed Buzz actions. This plugin
 owns Codex work after delivery handover. It starts one `codex app-server` per agent
 and uses independent Codex threads for Buzz conversations.
 
@@ -10,6 +10,7 @@ and uses independent Codex threads for Buzz conversations.
 From the feature worktree:
 
 ```sh
+source bin/activate-hermit
 bin/pnpm plugin:codex
 BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
 ```
@@ -37,7 +38,7 @@ While work is active, new mentions steer it, incorporating the follow-up into th
 ongoing task. Messages arriving during startup wait for the turn to start and
 then steer it; idle conversations continue the saved session. If a turn finishes
 while a follow-up is being delivered, the follow-up starts another turn.
-The final reply targets the latest accepted steering message.
+By default, Buzz tools reply to the latest accepted steering message. The agent can also choose another thread or channel with tool arguments.
 
 There are no special chat commands. Asking the agent to stop is a steering request
 that Codex interprets. Disabling the plugin ends its processes. For settings,
@@ -46,9 +47,22 @@ current turn finishes. Expect the marker.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
-Bindings persist locally under the community and agent identity. Switching
+Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities, removing an agent, or disabling the plugin ends its server.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
+
+The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
+`send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
+`mem_set`, and `canvas`. These run inside Buzz through the agent's native-backed
+handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
+workspace where the turn started, through the declared `base64` reader. Memory
+reads use the owner's encrypted-memory view; writes use the agent handle.
+
+To test these locally, ask the agent to read its thread, react to your message,
+remember a fact under `mem/test`, recall it in a follow-up, and send an image from
+the workspace. Expect agent-signed actions, correct thread routing, and one final
+reply. During a long task, send a new mention and confirm it incorporates the
+follow-up before its final reply.
 
 ## Checks
 
@@ -61,7 +75,9 @@ The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell
 and file tools, the native coding prompt, conversation context, default steering,
 idle follow-ups, process shutdown, saved-thread reuse, changed and cleared
-instructions, missing-thread recovery, and disabled inherited MCP tools. Set
+instructions, missing-thread recovery, and disabled inherited MCP tools. It also
+checks real dynamic Buzz callbacks, memory, workspace file uploads, and normal
+final sends without aborted-turn markers. Set
 `BUZZ_CODEX_TEST_MODEL` to another available model if needed. It prints only
 sanitized outcomes; it does not save raw protocol or session logs.
 
@@ -84,11 +100,11 @@ and cleanup.
   native process grant itself has full user access; the Codex sandbox governs its tools.
 - Shared Agent Activity integration is deferred because this Agents2 delivery
   contract has no live-activity API. The Codex tab shows conversation status and
-  the latest command/output. Responses are published once, without text streaming.
+  the latest command/output. Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.
-- Uses experimental app-server APIs for model discovery, application context, and terminal
-  cleanup. The live check was exercised with `codex-cli 0.153.0` on macOS.
+- Uses experimental app-server APIs for dynamic tools, model discovery, application context, and terminal
+  cleanup. The live check was exercised with `codex-cli 0.162.0` on macOS.
 - Linux and Windows native behavior, packaged app behavior, full relay signing,
   and human acceptance require separate validation. A forced native kill can
   depend on the platform's descendant-cleanup support; this plugin adds no host

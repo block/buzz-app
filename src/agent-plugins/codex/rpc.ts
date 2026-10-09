@@ -15,6 +15,19 @@ export type Wire = {
   error?: { code?: number; message: string };
 };
 
+export type ToolCall = {
+  threadId: string;
+  turnId: string;
+  callId: string;
+  namespace: string | null;
+  tool: string;
+  arguments: unknown;
+};
+export type ToolReply = {
+  success: boolean;
+  contentItems: { type: "inputText"; text: string }[];
+};
+
 /** One request owner for the JSONL app-server connection. No Node sidecar. */
 export class AppServer {
   private next = 0;
@@ -32,6 +45,10 @@ export class AppServer {
   private stderr = "";
   private listeners = new Set<(message: Wire) => void>();
   private closing?: Promise<void>;
+
+  constructor(
+    private readonly toolCall?: (call: ToolCall) => Promise<ToolReply>,
+  ) {}
 
   async open(spawn: Spawn, cwd?: string) {
     this.process = await spawn("app-server", {
@@ -101,6 +118,12 @@ export class AppServer {
           if (message.error) waiter.reject(new Error(message.error.message));
           else waiter.resolve(message.result);
         } else if (message.id != null && message.method) {
+          if (message.method === "item/tool/call" && this.toolCall) {
+            void this.replyTool(message, this.toolCall).catch((error) =>
+              this.fail(error),
+            );
+            continue;
+          }
           void this.send({
             id: message.id,
             error: {
@@ -117,6 +140,27 @@ export class AppServer {
       this.fail(error instanceof Error ? error : new Error(String(error)));
       void this.close();
     }
+  }
+  private async replyTool(
+    message: Wire,
+    handler: (call: ToolCall) => Promise<ToolReply>,
+  ) {
+    let reply: ToolReply;
+    try {
+      reply = await handler(message.params as ToolCall);
+    } catch (error) {
+      reply = {
+        success: false,
+        contentItems: [
+          {
+            type: "inputText",
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+      };
+    }
+    if (message.id == null) return;
+    await this.send({ id: message.id, result: reply });
   }
   private emit(message: Wire) {
     for (const listener of this.listeners) {

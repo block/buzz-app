@@ -38,12 +38,33 @@ function fixture(
   let thread = 0;
   let turn = 0;
   const sent: Wire[] = [];
+  const toolCalls = new Map<
+    number | string,
+    { threadId: string | undefined; turnId: string; callId: string }
+  >();
   const exits = deferred<number | null>();
   const storage = new Map<string, string>();
   const process = {
     write: async (data: string) => {
       const request: Wire = JSON.parse(data);
       sent.push(request);
+      if (request.id != null && !request.method) {
+        const call = toolCalls.get(request.id);
+        if (call)
+          emit({
+            method: "item/completed",
+            params: {
+              threadId: call.threadId,
+              turnId: call.turnId,
+              item: {
+                type: "dynamicToolCall",
+                id: call.callId,
+                success: (request.result as { success?: boolean })?.success,
+              },
+            },
+          });
+        return;
+      }
       if (request.id == null) return;
       const params = request.params as Record<string, unknown>;
       let result: unknown = {};
@@ -96,6 +117,7 @@ function fixture(
       emit({ id: request.id, result });
     },
     end: vi.fn(async () => {
+      closed = true;
       exits.resolve(0);
     }),
     kill: vi.fn(async () => {
@@ -103,7 +125,23 @@ function fixture(
     }),
     exited: exits.promise,
   };
+  let closed = false;
+  const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
+    if (_id === "read") {
+      fileReads.push({
+        ...(value?.cwd ? { cwd: value.cwd } : {}),
+        path: value?.args?.[0] ?? "",
+      });
+      value?.onStdout?.(
+        btoa(
+          value?.args?.[0] === "attachment.jpg"
+            ? "\xff\xd8\xff"
+            : "FILE CONTENT",
+        ),
+      );
+      return { ...process, exited: Promise.resolve(0) };
+    }
     options = value;
     return process;
   });
@@ -114,11 +152,19 @@ function fixture(
     id: "d".repeat(64),
   }));
   const read = vi.fn(async () => [] as EventData[]);
+  const memories: { slug: string; body: string; createdAt: number }[] = [];
+  const memoryView = {
+    refresh: vi.fn(async () => {}),
+    snapshot: () => ({ status: "ready", listing: { entries: memories } }),
+    dispose: vi.fn(),
+  };
+  const memoryOpen = vi.fn(() => memoryView);
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
     session: {
       read,
+      agentMemories: { open: memoryOpen },
       channels: {
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
@@ -135,34 +181,66 @@ function fixture(
   } as Storage;
   const runtime = new CodexRuntime(spawn, relay, store);
   runtimes.push(runtime);
-  const agent = { pubkey, owner, name: "Codex", publish };
+  const events: EventData[] = [];
+  const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
+    events.filter((event) =>
+      filters.some((filter) =>
+        (filter.ids as string[] | undefined)?.includes(event.id),
+      ),
+    ),
+  );
+  const remember = vi.fn(async (slug: string, body: string, after: number) => {
+    const index = memories.findIndex((memory) => memory.slug === slug);
+    if (index >= 0) memories.splice(index, 1);
+    memories.push({ slug, body, createdAt: after + 1 });
+  });
+  const upload = vi.fn(async (_data: string, mime: string) => ({
+    url: "https://files.test/file",
+    sha256: "e".repeat(64),
+    size: 12,
+    type: mime,
+  }));
+  const agent = {
+    pubkey,
+    owner,
+    name: "Codex",
+    publish,
+    query,
+    upload,
+    remember,
+  };
   runtime.sync([{ pubkey } as Agent], scope);
   let id = 0;
-  const delivery = (content: string, threadRoot = root): Delivery => ({
-    trigger: {
-      type: "mention",
-      event: {
-        id: (++id).toString(16).padStart(64, "0"),
-        pubkey: owner,
-        kind: 9,
-        content,
-        created_at: 10,
-        tags: [
-          ["h", "channel"],
-          ["e", threadRoot, "", "reply"],
-        ],
-      } as Extract<Delivery["trigger"], { type: "mention" }>["event"],
-    },
-    channelId: "channel",
-    agent: agent as unknown as Delivery["agent"],
-    config: {
-      workspace: "/tmp/codex-test",
-      model: "test-model",
-      effort: "low",
-      instructions: "TEST_INSTRUCTIONS",
-    },
-    signal: new AbortController().signal,
-  });
+  const delivery = (content: string, threadRoot = root): Delivery => {
+    const result: Delivery = {
+      trigger: {
+        type: "mention",
+        event: {
+          id: (++id).toString(16).padStart(64, "0"),
+          pubkey: owner,
+          kind: 9,
+          content,
+          created_at: 10,
+          tags: [
+            ["h", "channel"],
+            ["e", threadRoot, "", "reply"],
+          ],
+        } as Extract<Delivery["trigger"], { type: "mention" }>["event"],
+      },
+      channelId: "channel",
+      agent: agent as unknown as Delivery["agent"],
+      config: {
+        workspace: "/tmp/codex-test",
+        model: "test-model",
+        effort: "low",
+        instructions: "TEST_INSTRUCTIONS",
+      },
+      signal: new AbortController().signal,
+    };
+    if (result.trigger.type !== "timer")
+      events.push(result.trigger.event as EventData);
+    return result;
+  };
   const selection = { selected: "community", viewer: owner };
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
@@ -217,7 +295,38 @@ function fixture(
       },
     });
   };
-  const complete = (index = starts().length - 1, text = "DONE") => {
+  let toolId = 0;
+  const tool = async (
+    name: string,
+    args: unknown,
+    index = starts().length - 1,
+    overrides = {},
+  ) => {
+    const threadId = (
+      starts()[index]?.params as { threadId: string } | undefined
+    )?.threadId;
+    const id = `tool-${++toolId}`;
+    toolCalls.set(id, { threadId, turnId: `turn-${index + 1}`, callId: id });
+    emit({
+      id,
+      method: "item/tool/call",
+      params: {
+        threadId,
+        turnId: `turn-${index + 1}`,
+        namespace: "buzz",
+        callId: id,
+        tool: name,
+        arguments: args,
+        ...overrides,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(sent.some((wire) => wire.id === id && !wire.method)).toBe(true),
+    );
+    return sent.find((wire) => wire.id === id && !wire.method);
+  };
+  const complete = async (index = starts().length - 1, text = "DONE") => {
+    if (!closed && text) await tool("send", { text, final: true }, index);
     const params = starts()[index]?.params as { threadId: string };
     emit({
       method: "item/completed",
@@ -236,6 +345,13 @@ function fixture(
   };
   return {
     runtime,
+    tool,
+    query,
+    fileReads,
+    memoryOpen,
+    memoryView,
+    remember,
+    upload,
     selection,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
@@ -305,7 +421,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     ]),
   });
 });
-it("serializes steering history reads and waits for them before final publication", async () => {
+it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
@@ -509,26 +625,29 @@ it("publishes workspace errors without starting work", async () => {
   expect(f.spawn).not.toHaveBeenCalled();
 });
 
-it("publishes every answer part in order and excludes commentary", async () => {
+it("posts tool-sent parts and never duplicates native assistant text", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
-    ?.threadId;
-  for (const [phase, text] of [
-    ["commentary", "STATUS"],
-    ["partial_answer", "PART ONE"],
-    ["partial_answer", "PART TWO"],
-  ])
-    f.emit({
-      method: "item/completed",
-      params: { threadId, item: { type: "agentMessage", phase, text } },
-    });
-  f.complete(0, "FINAL");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: "PART ONE\n\nPART TWO\n\nFINAL",
-  });
+  await f.tool("send", { text: "PART ONE" });
+  await f.tool("send", { text: "PART TWO" });
+  await f.complete(0, "FINAL");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual(["PART ONE", "PART TWO", "FINAL"]);
+  const response = f.sent.findIndex(
+    (wire) => wire.id === "tool-3" && !wire.method,
+  );
+  const interrupt = f.sent.findIndex(
+    (wire) => wire.method === "turn/interrupt",
+  );
+  expect(response).toBeGreaterThan(-1);
+  expect(interrupt).toBe(-1);
 });
 it("delivers a plain follow-up after startup without waiting for the running turn", async () => {
   const f = fixture();
@@ -594,8 +713,7 @@ it("starts the next turn when completion races a plain follow-up's history read"
   await f.runtime.run(f.delivery("follow-up"));
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-    f.complete(0, "FIRST");
-    expect(f.publish).not.toHaveBeenCalled();
+    await f.complete(0, "FIRST");
   } finally {
     gate.resolve([]);
   }
@@ -632,7 +750,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
 it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
   const f = fixture();
   f.storage.set(
-    `buzz.codex.sessions.v1:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v2:${scope}:${pubkey}`,
     JSON.stringify({
       [JSON.stringify(["channel", root])]: {
         threadId: "legacy-thread",
@@ -717,3 +835,213 @@ it.each([
     },
   });
 });
+
+it("routes callbacks by thread and turn, rejecting stale, unknown and malformed tools without writes", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await f.runtime.run(f.delivery("other", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  for (const overrides of [
+    { turnId: "stale" },
+    { threadId: "missing" },
+    { namespace: "other" },
+    { tool: "unknown" },
+    { arguments: [] },
+  ]) {
+    expect(
+      (await f.tool("send", { text: "must not send" }, 0, overrides))?.result,
+    ).toMatchObject({
+      success: false,
+      contentItems: [{ type: "inputText", text: expect.any(String) }],
+    });
+  }
+  expect(f.publish).not.toHaveBeenCalled();
+  await f.complete(1, "OTHER");
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessions(pubkey).every((view) => view.status === "Idle"),
+    ).toBe(true),
+  );
+  expect(f.publish.mock.calls.map(([event]) => event)).toMatchObject([
+    {
+      content: "OTHER",
+      tags: expect.arrayContaining([["e", "e".repeat(64), "", "root"]]),
+    },
+    {
+      content: "FIRST",
+      tags: expect.arrayContaining([["e", root, "", "root"]]),
+    },
+  ]);
+  const count = f.publish.mock.calls.length;
+  expect((await f.tool("send", { text: "late" }, 0))?.result).toMatchObject({
+    success: false,
+  });
+  expect(f.publish).toHaveBeenCalledTimes(count);
+});
+
+it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("follow-up"),
+    config: { workspace: "/tmp/different" },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+  );
+  expect(
+    (await f.tool("mem_set", { slug: "mem/test", text: "remembered" }))?.result,
+  ).toMatchObject({ success: true });
+  expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
+    { success: true, contentItems: [{ text: "remembered" }] },
+  );
+  expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
+  expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
+  expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
+  expect(
+    (
+      await f.tool("send", {
+        path: "answer.txt",
+        files: ["attachment.jpg"],
+        final: true,
+      })
+    )?.result,
+  ).toMatchObject({ success: true });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "turn-1", status: "completed" },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.fileReads).toEqual([
+    { cwd: "/tmp/codex-test", path: "attachment.jpg" },
+    { cwd: "/tmp/codex-test", path: "answer.txt" },
+  ]);
+  expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("FILE CONTENT"),
+    tags: expect.arrayContaining([["e", "2".padStart(64, "0"), "", "reply"]]),
+  });
+});
+
+it("returns a failed send to Codex for correction without ending its turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.publish.mockRejectedValueOnce(new Error("Signing rejected"));
+  expect(
+    (await f.tool("send", { text: "answer", final: true }))?.result,
+  ).toMatchObject({
+    success: false,
+    contentItems: [{ type: "inputText", text: "Signing rejected" }],
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.publish).toHaveBeenCalledTimes(2);
+});
+
+it("delivers pending owner steering after a final send and posts its own answer", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const gate = deferred<EventData[]>();
+  f.read.mockImplementationOnce(() => gate.promise);
+  await f.runtime.run(f.delivery("new request"));
+  try {
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
+    await f.tool("send", { text: "prior answer", final: true });
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+  } finally {
+    gate.resolve([]);
+  }
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+  );
+  await f.complete(0, "NEW ANSWER");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual(["prior answer", "NEW ANSWER"]);
+});
+
+it("finishes final sends normally and preserves the agent's background terminals", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  await f.runtime.run(f.delivery("start server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const reply = await f.tool("send", {
+    text: "http://localhost:3000",
+    final: true,
+  });
+  expect(reply?.result).toMatchObject({ success: true });
+  expect(f.publish).toHaveBeenCalledTimes(1);
+  expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+  const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  f.emit({
+    method: "turn/completed",
+    params: { threadId, turn: { id: "turn-1", status: "completed" } },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+      true,
+    ),
+  );
+  expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
+  expect(
+    f.sent.some((wire) =>
+      wire.method?.startsWith("thread/backgroundTerminals/"),
+    ),
+  ).toBe(false);
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.publish).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])(
+  "stops an in-flight file reader at turn end, including late spawn: %s",
+  async (late) => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const exited = deferred<number | null>();
+    const started = deferred<void>();
+    const gate = deferred<Awaited<ReturnType<typeof f.spawn>>>();
+    const kill = vi.fn(async () => {
+      exited.resolve(null);
+    });
+    const child = { ...f.process, kill, exited: exited.promise };
+    f.spawn.mockImplementationOnce(async () => {
+      started.resolve();
+      return late ? gate.promise : child;
+    });
+    const reading = f.tool("send", { path: "answer.txt", final: true });
+    await started.promise;
+    f.interrupt();
+    try {
+      await vi.waitFor(() =>
+        expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+      );
+    } finally {
+      gate.resolve(child);
+    }
+    expect((await reading)?.result).toMatchObject({ success: false });
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: expect.stringContaining("turn was interrupted"),
+    });
+  },
+);

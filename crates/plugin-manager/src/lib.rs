@@ -155,6 +155,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ..HostGrants::default()
     });
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/canvas/manifest.json"))
+            .expect("canvas manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
@@ -230,7 +232,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
 fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
-        "buzz.channels"
+        "buzz.canvas"
+            | "buzz.channels"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.identity-naming"

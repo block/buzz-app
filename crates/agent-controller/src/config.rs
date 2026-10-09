@@ -82,6 +82,8 @@ pub struct AgentView {
     /// Effective listener worker count, including the Buzz Agent default of 1.
     /// Numeric projection only; other environment values never leave native.
     pub launch_parallelism: Option<u32>,
+    /// Effort level the next start applies; `None` when the harness decides.
+    pub launch_effort: Option<String>,
     /// Environment key deciding that selector. Its value never leaves native.
     pub launch_model_env: Option<&'static str>,
     pub launch_provider_env: Option<&'static str>,
@@ -125,6 +127,21 @@ pub struct AgentEdit {
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
+    /// Absence preserves; a value replaces. Set by portable imports.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+/// Saved key for an agent's own effort level.
+pub(crate) const OWN_EFFORT: &str = "effort";
+/// Effort levels are short harness names, as for agent defaults.
+pub(crate) fn validate_effort(effort: &str) -> Result<()> {
+    // Same rule as the app's snapshot parser (`EFFORT`), so an export never
+    // writes an effort that import would reject.
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if effort.is_empty() || effort.len() > 64 || !effort.chars().all(allowed) {
+        return Err("Effort level is empty, too long or invalid".into());
+    }
+    Ok(())
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -200,7 +217,8 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             configured: self.configured(),
-            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
+            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true))
+                || self.extra.get("profileNamePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
@@ -220,10 +238,6 @@ impl Agent {
                 }
                 if !record["max_turn_duration_seconds"].is_null() {
                     limits.push("turn timeout");
-                }
-                if crate::agent_defaults::effort(&effective).is_some_and(|value| !value.is_empty())
-                {
-                    limits.push("effort level");
                 }
                 if effective.environment.keys().any(|key| {
                     (key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
@@ -282,6 +296,7 @@ impl Agent {
                         == Some("buzz-agent"))
                     .then_some(1)
                 }),
+            launch_effort: crate::agent_defaults::launch_effort(&effective).map(str::to_owned),
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
@@ -355,6 +370,10 @@ impl Agent {
                     .insert("profilePending".into(), Value::Bool(true));
             }
         }
+        if self.name != edit.name {
+            self.extra
+                .insert("profileNamePending".into(), Value::Bool(true));
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
         if let Some(policy) = edit.session_policy {
@@ -362,7 +381,17 @@ impl Agent {
             self.session_policy_inherit = policy.is_none();
         }
         self.workspace = edit.workspace;
+        let harness_changed = crate::agent_defaults::harness_kind(&self.harness.command)
+            != crate::agent_defaults::harness_kind(&edit.harness.command);
         self.harness = edit.harness;
+        if let Some(effort) = edit.effort {
+            validate_effort(&effort)?;
+            self.extra.insert(OWN_EFFORT.into(), Value::String(effort));
+        } else if harness_changed {
+            // Effort names belong to one harness, as for agent defaults. Null
+            // also retires an old Buzz import's `effort_level`.
+            self.extra.insert(OWN_EFFORT.into(), Value::Null);
+        }
         for (key, value) in edit.environment {
             if let Some(value) = value {
                 validate_env_key(&key, &self.harness.command)?;

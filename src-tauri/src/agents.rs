@@ -480,7 +480,8 @@ impl Host {
             .ok_or("Invalid local agent storage")?
             .to_path_buf();
         let mut store = Store::open(root)?;
-        let inventory_warnings = store.migrate_legacy(&legacy_parent);
+        let mut inventory_warnings = store.migrate_legacy(&legacy_parent);
+        inventory_warnings.extend(store.clean_imported_prompts()?);
         let queued = store
             .snapshot()?
             .agents

@@ -34,6 +34,23 @@ Bundled and local plugins use the same contribution contracts. Within the source
 tree, shared implementation code remains importable without another registration
 layer; this is not a promise that external artifacts can import host source paths.
 
+### Interface composition
+
+Owning a React tree does not require inventing its visual system. Use the
+[design guide's surface recipes](../src/shared/design-system/DESIGN.md#compose-the-whole-surface)
+and [contribution ownership table](../src/shared/design-system/DESIGN.md#plugin-contribution-boundaries)
+before building a page, panel, Settings contribution, dialog, or menu. Establish
+which host supplies the outer surface, header, scrolling, and dismissal before
+adding any of them. The Settings host renders contributed content directly;
+registration metadata does not supply its content heading or group layout.
+
+Source plugins reuse shared components; external artifacts use their supported
+author contract and exposed roles. This is design guidance, not a new component
+SDK or automatic conformance guarantee. Keep specialized layouts and product
+behavior with the plugin, while preserving shared controls, states, and host
+lifecycle. The [adoption review](design-system-adoption.md#composition-review)
+distinguishes reusable examples from existing gaps.
+
 
 ## Code arrangement
 
@@ -351,8 +368,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
-toggle, check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, In progress and Done, with add, a per-item status
+selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 

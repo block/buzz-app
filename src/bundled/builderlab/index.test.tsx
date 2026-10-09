@@ -6,6 +6,9 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
+import { Agents2Service } from "../../features/agents2/service";
+import type { RelayData } from "../../features/relay/service";
+import { Agents2Page } from "../agents2/Agents2Page";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
@@ -38,47 +41,74 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("an unconfigured desktop build shows setup guidance and cannot start login", async () => {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
-  const root = new Context();
-  const runtime = new PluginRuntime(root, async () => builderlab);
-  new HostService(root);
-  const cards = new SettingsCardsService(root);
-  const community = enrollmentFixture(
-    createOAuthSession(async () => {
-      throw new Error("unused");
-    }),
-    null,
-  );
-  root.provide("relay", community.relay);
-  root.provide("communityReader", community.reader);
-  try {
-    runtime.reconcile([
-      {
-        manifest: { ...manifest, apiVersion: 1 },
-        source: "bundled",
-        revision: "bundled",
-        enabled: true,
-        previous: null,
-        reloadable: false,
-        error: null,
-      },
-    ]);
-    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    const card = cards.snapshot()[0];
-    if (!card) throw new Error("Missing Builderlab card");
-    const Card = card.component;
-    render(<Card active={() => true} />);
-    expect(screen.getByRole("status")).toHaveTextContent("not configured");
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(native.invoke).not.toHaveBeenCalled();
-  } finally {
-    cleanup();
-    await runtime.dispose();
-    await root.fiber.dispose();
-    await community.dispose();
-  }
-});
+function provideAgents2(root: Context, relay: RelayData) {
+  return new Agents2Service(root, relay, {
+    list: async () => [],
+    create: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+    forget: vi.fn(),
+    publish: vi.fn(),
+    publishProfile: vi.fn(),
+  });
+}
+
+it.each([undefined, "", "http://builderlab.example"])(
+  "an unavailable desktop build (%s) shows setup guidance without login or an Agents2 type",
+  async (url) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
+    const root = new Context();
+    const runtime = new PluginRuntime(root, async () => builderlab);
+    new HostService(root);
+    const cards = new SettingsCardsService(root);
+    const community = enrollmentFixture(
+      createOAuthSession(async () => {
+        throw new Error("unused");
+      }),
+      null,
+    );
+    root.provide("relay", community.relay);
+    root.provide("communityReader", community.reader);
+    const agents2 = provideAgents2(root, community.relay);
+    try {
+      runtime.reconcile([
+        {
+          manifest: { ...manifest, apiVersion: 1 },
+          source: "bundled",
+          revision: "bundled",
+          enabled: true,
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ]);
+      await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      const card = cards.snapshot()[0];
+      if (!card) throw new Error("Missing Builderlab card");
+      const Card = card.component;
+      render(<Card active={() => true} />);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /not configured|does not support/,
+      );
+      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(native.invoke).not.toHaveBeenCalled();
+      expect(agents2.types()).toHaveLength(0);
+      cleanup();
+      render(<Agents2Page agents2={agents2} relay={community.relay} />);
+      expect(
+        await screen.findByText("Enable an agent type plugin to make one."),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "New agent" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      cleanup();
+      await runtime.dispose();
+      await root.fiber.dispose();
+      await community.dispose();
+    }
+  },
+);
 
 it("binds login, list and creation to the plugin host and clears the session on disable/re-enable", async () => {
   native.invoke.mockImplementation(async (command, input) => {
@@ -125,6 +155,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   );
   root.provide("relay", community.relay);
   root.provide("communityReader", community.reader);
+  const agents2 = provideAgents2(root, community.relay);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
     source: "bundled",
@@ -137,6 +168,23 @@ it("binds login, list and creation to the plugin host and clears the session on 
   try {
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents2.types()).toMatchObject([
+      { key: "block.builderlab/builderlab", title: "Builderlab" },
+    ]);
+    expect(agents2.types()[0]?.defaults()).toEqual({ config: {} });
+    const picker = render(
+      <Agents2Page agents2={agents2} relay={community.relay} />,
+    );
+    const [newAgent] = await screen.findAllByRole("button", {
+      name: "New agent",
+    });
+    if (!newAgent) throw new Error("Missing New agent button");
+    await userEvent.setup().click(newAgent);
+    expect(
+      screen.getByRole("radio", { name: /Builderlab/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TBD")).toBeInTheDocument();
+    picker.unmount();
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Integrations");
     if (!card) throw new Error("Missing Builderlab login card");
@@ -234,12 +282,16 @@ it("binds login, list and creation to the plugin host and clears the session on 
       runtime.reconcile([]);
     });
     expect(cards.snapshot()).toHaveLength(0);
+    expect(agents2.types()).toHaveLength(0);
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents2.types()).toMatchObject([
+      { key: "block.builderlab/builderlab", title: "Builderlab" },
+    ]);
     const fresh = cards.snapshot()[0];
     expect(fresh).not.toBe(card);
     if (!fresh) throw new Error("Missing reactivated Builderlab login card");

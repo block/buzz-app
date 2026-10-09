@@ -76,11 +76,15 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     true,
   );
   await expect(link).toBeFocused();
+  const preview = page.getByLabel("Message preview", { exact: true });
+  await expect(preview).toHaveAttribute("data-open", "");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .focus();
+  // Finish the keyboard preview's blur/exit lifecycle before testing hover.
+  // Entering the trigger while that card is closing can consume the hover.
+  await expect(preview).toHaveCount(0);
   await link.hover();
-  const preview = page.getByLabel("Message preview", { exact: true });
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();

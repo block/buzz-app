@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  getConfig,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -1235,8 +1243,17 @@ it("retries ownership admission and failed owner names through the shared refres
 it("pages combined local and relay invitations without losing matches, and resets on query or refresh", async ({
   signal,
 }) => {
+  const { asyncWrapper } = getConfig();
   return ownedTask(signal, async (step) => {
     const t = await step(() => setup());
+    // Control the search debounce so slow rendering cannot issue partial queries.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // RTL's default async wrapper drains a real zero-delay timer. Under this
+    // controlled clock, React act owns that drain and the actual mounted updates.
+    configure({ asyncWrapper: async (action) => await act(action) });
+    const user = userEvent.setup({
+      advanceTimers: vi.advanceTimersByTimeAsync,
+    });
     const remote = Array.from({ length: 30 }, (_, index) =>
       profile(keypair(), { name: `Helper remote ${index}` }),
     );
@@ -1271,6 +1288,11 @@ it("pages combined local and relay invitations without losing matches, and reset
     });
     const input = screen.getByRole("searchbox");
     const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    const finishSearch = () =>
+      act(async () => {
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        await vi.advanceTimersByTimeAsync(200);
+      });
     const rows = () =>
       within(
         screen.getByRole("region", { name: "Not in this channel" }),
@@ -1280,7 +1302,8 @@ it("pages combined local and relay invitations without losing matches, and reset
         .flatMap(([filters]) => filters)
         .filter((filter) => filter.search)
         .map((filter) => filter.page);
-    await step(() => t.user.type(input, "Helper"));
+    await step(() => user.type(input, "Helper"));
+    await step(finishSearch);
     await step(() =>
       vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
     );
@@ -1293,14 +1316,15 @@ it("pages combined local and relay invitations without losing matches, and reset
     expect(pages()).toEqual([1]);
     for (const count of [60, 90, 95]) {
       await step(() =>
-        t.user.click(screen.getByRole("button", { name: "Show more results" })),
+        user.click(screen.getByRole("button", { name: "Show more results" })),
       );
       expect(rows()).toHaveLength(count);
       expect(pages()).toEqual([1]);
     }
     await step(() =>
-      t.user.click(screen.getByRole("button", { name: "Show more results" })),
+      user.click(screen.getByRole("button", { name: "Show more results" })),
     );
+    await step(finishSearch);
     await step(() =>
       screen.findByRole("button", { name: /^Add Helper final/ }),
     );
@@ -1312,26 +1336,32 @@ it("pages combined local and relay invitations without losing matches, and reset
     await step(() =>
       vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
     );
-    await step(() => t.user.click(refresh));
+    await step(() => user.click(refresh));
+    await step(finishSearch);
     await step(() =>
       vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
     );
     expect(rows()).toHaveLength(30);
     expect(pages()).toEqual([1, 2, 1]);
     await step(() =>
-      t.user.click(screen.getByRole("button", { name: "Show more results" })),
+      user.click(screen.getByRole("button", { name: "Show more results" })),
     );
     expect(rows()).toHaveLength(60);
-    await step(() => t.user.type(input, " local"));
+    await step(() => user.type(input, " local"));
+    await step(finishSearch);
     await step(() =>
       vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
     );
     expect(rows()).toHaveLength(30);
-    await step(() => t.user.clear(input));
+    await step(() => user.clear(input));
     expect(
       screen.queryByRole("region", { name: "Not in this channel" }),
     ).toBeNull();
     expect(t.publish).not.toHaveBeenCalled();
+  }).finally(() => {
+    cleanup();
+    vi.useRealTimers();
+    configure({ asyncWrapper });
   });
 });
 

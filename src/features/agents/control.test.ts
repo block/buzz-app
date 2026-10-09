@@ -36,6 +36,58 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+function codexEdit() {
+  const draft = agentDraft(controlFixture().agent);
+  draft.integration = "codex";
+  draft.command = "/tools/codex-acp";
+  draft.args = "[]";
+  draft.provider = "";
+  draft.model = "";
+  draft.configuration = { mode: "default" };
+  return agentEdit(draft);
+}
+it.each(["default", "advanced"] as const)(
+  "creates and saves Codex %s using ordinary native controls without a validation service",
+  async (mode) => {
+    const fixture = controlFixture();
+    const edit = codexEdit();
+    if (mode === "advanced") {
+      edit.harness.model = "model-a";
+      edit.harness.configuration = {
+        mode,
+        effort: { kind: "value", value: "high" },
+      };
+    }
+    fixture.host.prepareCreate = vi.fn(async () => ({
+      id: fixture.agent.id,
+      pubkey: fixture.agent.pubkey,
+    }));
+    fixture.host.commitCreate = vi.fn(async () =>
+      structuredClone(fixture.data),
+    );
+    const save = vi.spyOn(fixture.host, "save");
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    await control.create?.("request", fixture.agent.relayUrl, "owner", edit);
+    expect(fixture.host.prepareCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      fixture.agent.relayUrl,
+      "owner",
+    );
+    expect(fixture.host.commitCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      edit,
+      "[]",
+      undefined,
+    );
+    await control.save(fixture.agent.id, fixture.agent.revision, edit);
+    expect(save).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, 1, edit);
+    control.dispose();
+  },
+);
+
 it("browser is unavailable without any host or runner", async () => {
   const control = createAgentControl(null);
   await control.refresh();
@@ -1118,6 +1170,7 @@ for (const status of ["waiting", "starting"] as const) {
 it.each([
   ["Pi", "installPi", "piInstall", "installClaude"],
   ["Claude Code", "installClaude", "claudeInstall", "installPi"],
+  ["Codex ACP adapter", "installCodex", "codexInstall", "installClaude"],
 ] as const)(
   "runs %s installation outside agent writes, excludes other installs and preserves the report after Stop",
   async (_label, method, stateKey, other) => {

@@ -221,6 +221,13 @@ If no workspace is configured, edit the agent and set **Databricks workspace (HT
 under **Advanced → Model**. App maintainers can instead supply the nonsecret
 `DATABRICKS_HOST` build default below and rebuild the app.
 
+The native model-request service also has a Codex discovery path keyed by the
+stable integration ID. It reads the selected Codex CLI's `codex debug models`
+catalog, offers only the models Codex lists in its own picker, and reports effort
+choices for only the selected model. It opens no ACP session, sends no prompt,
+and persists no selection.
+See [Codex model and effort discovery](codex-model-discovery.md).
+
 ### Nonsecret build defaults
 
 Native builds read these inputs from the repository-root, ignored `.env.local`,
@@ -313,6 +320,7 @@ every provider requires an API key.
 | Buzz Agent | Selected provider | Scalar selector | Existing defaults and overrides |
 | Goose | Harness, with provider-specific overrides | Scalar selector | Existing defaults and overrides |
 | Pi | Harness, with provider-specific overrides | Discovered provider selector | A selected provider requires a model |
+| Codex | Codex CLI | External Codex configuration | Default, or Advanced discovered model and model-specific effort |
 | Custom executable | External executable | External configuration | Existing saved value |
 
 Policy does not migrate saved records or change validation timing. Pi selection
@@ -322,16 +330,26 @@ at launch. Worker selector keys are shared with native launch resolution;
 environment values never appear in the policy. Older hosts without the policy
 retain the existing editor behavior.
 
-`supportedModes` is currently empty for every integration. Legacy blank-field
-inheritance is not managed Default intent. Admission and persistence of explicit
-Default/Advanced modes belong to the later Codex persistence layer. Likewise,
-`effortDiscovery: "unknown"` means no model-specific capability evidence is
-available; it does not mean effort is unsupported. The existing Agent defaults
+`supportedModes` is empty for every integration except Codex, which supports
+Default and Advanced. Legacy blank-field inheritance is not managed Default
+intent. Likewise, `effortDiscovery: "unknown"` means no model-specific capability
+evidence is available; it does not mean effort is unsupported. Codex reports
+`modelSpecific` effort discovery. The existing Agent defaults
 effort suggestions remain editable suggestions, not allowed-value validation.
 
-This is PR 1 of the [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
-Codex registration, binding, discovery, connection validation, and mode controls
-are separate layers.
+Settings lists Codex with a stable native integration identity. New selection
+requires installed CLI and adapter presence. Once both are found, Settings reads
+the existing CLI login with a bounded `codex login status` on opening, Check
+again, and install completion, as it does for Claude Code; ordinary control
+snapshots do not launch it. Start launches the saved binding without a separate
+probe; adapter and login failures appear in the agent log, as for Claude Code.
+Codex discovery and execution resolve their saved context for each operation. **Adapter needed** offers an app-owned Install of
+the ACP adapter only, following Claude Code's setup. See
+[Codex binding readiness](codex-binding-readiness.md).
+
+Create and Save use ordinary persistence without inference validation. Existing
+agents retain their saved adapter. Advanced model/effort selection remains; see
+[Codex persistence and execution](codex-validation-execution.md).
 
 For native acceptance, use the Buzz community in the ordinary development app.
 Open Create, Edit, and Agent defaults for Buzz Agent, Goose, and Pi. Check

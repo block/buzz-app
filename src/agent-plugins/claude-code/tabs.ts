@@ -122,14 +122,16 @@ export function createTabs(
               : status.message;
     return h(
       "div",
-      { style: { display: "grid", gap: "var(--space-4, 1rem)" } },
+      { style: { display: "grid", gap: "var(--space-4)" } },
       h(
         "section",
-        { style: { display: "grid", gap: "var(--space-2, 0.5rem)" } },
+        { style: { display: "grid", gap: "var(--space-2)" } },
         h("p", { role: "status", style: { margin: 0 } }, line),
         h(
           "div",
-          { style: { display: "flex", flexWrap: "wrap", gap: "0.5rem" } },
+          {
+            style: { display: "flex", flexWrap: "wrap", gap: "var(--space-2)" },
+          },
           status?.state === "missing"
             ? button("Install Claude Code", {
                 variant: "prominent",
@@ -177,11 +179,11 @@ export function createTabs(
                 role: "log",
                 "aria-label": "Setup output",
                 style: {
-                  margin: 0,
                   maxHeight: "15rem",
                   overflow: "auto",
                   whiteSpace: "pre-wrap",
-                  fontSize: "0.75rem",
+                  fontSize: "var(--text-caption)",
+                  margin: 0,
                 },
               },
               state.output,
@@ -191,7 +193,11 @@ export function createTabs(
           ? h(
               "form",
               {
-                style: { display: "flex", gap: "0.5rem", alignItems: "end" },
+                style: {
+                  display: "flex",
+                  gap: "var(--space-2)",
+                  alignItems: "end",
+                },
                 onSubmit: (event: { preventDefault(): void }) => {
                   event.preventDefault();
                   void setup.answer(code);
@@ -218,7 +224,7 @@ export function createTabs(
       ),
       h(
         "section",
-        { style: { display: "grid", gap: "0.25rem" } },
+        { style: { display: "grid", gap: "var(--space-1)" } },
         h(
           "h3",
           { style: { margin: 0, fontSize: "inherit" } },
@@ -233,7 +239,7 @@ export function createTabs(
                   padding: 0,
                   listStyle: "none",
                   display: "grid",
-                  gap: "0.25rem",
+                  gap: "var(--space-1)",
                 },
               },
               sessions.map((session) =>
@@ -244,7 +250,7 @@ export function createTabs(
                     style: {
                       display: "flex",
                       justifyContent: "space-between",
-                      gap: "0.5rem",
+                      gap: "var(--space-2)",
                     },
                   },
                   h(
@@ -292,7 +298,7 @@ export function createTabs(
     return h(
       "form",
       {
-        style: { display: "grid", gap: "var(--space-4, 1rem)" },
+        style: { display: "grid", gap: "var(--space-4)" },
         onSubmit: (event: { preventDefault(): void }) => {
           event.preventDefault();
           void submit();

@@ -432,12 +432,13 @@ export function AppShell({
                           role: "tabpanel",
                           "aria-labelledby": `shell-page-${selected}-tab`,
                           tabIndex: 0,
+                          "data-focus-inset": "",
                         }
                       : {})}
                     className={
                       fillsWorkspace
-                        ? "h-full min-h-0"
-                        : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                        ? "buzz-tabs-panel h-full min-h-0"
+                        : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
                     }
                   >
                     <div

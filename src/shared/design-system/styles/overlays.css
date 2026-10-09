@@ -288,6 +288,14 @@
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }
+  /* Reserve the ring's space so clipped panels and opaque children cannot hide it. */
+  .buzz-tabs-panel[data-focus-inset] {
+    border: 2px solid transparent;
+  }
+  html[data-keyboard-navigation]
+    .buzz-tabs-panel[data-focus-inset]:focus-visible {
+    outline-offset: -2px;
+  }
   .navigation-item[data-variant="pill"] {
     width: auto;
     flex-shrink: 0;

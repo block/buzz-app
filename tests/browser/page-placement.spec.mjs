@@ -58,6 +58,74 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
     })
     .toBeLessThan(1);
   await expect(composer).toHaveText("Keep this draft");
+  // Enter the page through normal keyboard traversal, not programmatic panel focus.
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    for (const name of ["Me", "Messages"]) {
+      await topbar.getByRole("tab", { name, exact: true }).click();
+      const panel = page.getByRole("tabpanel", { name, exact: true });
+      await page.locator("#main-content").focus();
+      await page.keyboard.press("Tab");
+      await expect(panel).toBeFocused();
+      await expect(panel).toHaveCSS("outline-style", "solid");
+      await expect(panel).toHaveCSS("outline-width", "2px");
+      const focus = await panel.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        const frame = element.parentElement.getBoundingClientRect();
+        return {
+          offset: Number.parseFloat(style.outlineOffset),
+          width: Number.parseFloat(style.outlineWidth),
+          color: style.outlineColor,
+          insideFrame:
+            box.left >= frame.left &&
+            box.right <= frame.right &&
+            box.top >= frame.top &&
+            box.bottom <= frame.bottom,
+        };
+      });
+      expect(focus.insideFrame).toBe(true);
+      expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
+      expect(focus.offset + focus.width).toBeLessThanOrEqual(0);
+      const screenshot = await page.screenshot({
+        scale: "css",
+        path: test.info().outputPath(`panel-focus-${name}-${mode}.png`),
+      });
+      const edgeColors = await panel.evaluate(async (element, imageBase64) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${imageBase64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const box = element.getBoundingClientRect();
+        return [
+          [box.left + 1, box.top + box.height / 2],
+          [box.right - 1, box.top + box.height / 2],
+          [box.left + box.width / 2, box.top + 1],
+          [box.left + box.width / 2, box.bottom - 1],
+        ].map(([x, y]) => {
+          const [r, g, b] = context.getImageData(
+            Math.floor(x),
+            Math.floor(y),
+            1,
+            1,
+          ).data;
+          return `rgb(${r}, ${g}, ${b})`;
+        });
+      }, screenshot.toString("base64"));
+      expect(edgeColors).toEqual(Array(4).fill(focus.color));
+      await page.keyboard.press("Tab");
+      await expect(panel).not.toBeFocused();
+      await expect(panel).toHaveCSS("outline-style", "none");
+      await topbar.getByRole("tab", { name, exact: true }).click();
+      await expect(page.locator("html")).not.toHaveAttribute(
+        "data-keyboard-navigation",
+      );
+    }
+  }
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
   ).toBeVisible();

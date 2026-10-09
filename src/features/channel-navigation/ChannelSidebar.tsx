@@ -756,7 +756,7 @@ function ReadySidebar({
           }
         />,
       );
-    if (!surface && channel.channelType !== "session" && !channel.archived) {
+    if (!surface && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
@@ -1075,6 +1075,21 @@ function ReadySidebar({
                   session={queries}
                   open={!sidebar.collapsed.includes(section.key)}
                   onToggle={(open) => sidebar.toggle(section.key, open)}
+                  channelCount={section.rows.length}
+                  onRemove={
+                    preferences.removeSectionWritable &&
+                    section.key.startsWith("group:")
+                      ? async () => {
+                          await preferences.removeSection(section.key.slice(6));
+                          sidebar.toggle(section.key, true);
+                        }
+                      : undefined
+                  }
+                  removalFocus={() =>
+                    sidebar.list.current?.querySelector<HTMLButtonElement>(
+                      '[data-sidebar-section="channels"] button',
+                    )
+                  }
                   createChannel={
                     isChannelSectionKey(section.key)
                       ? {

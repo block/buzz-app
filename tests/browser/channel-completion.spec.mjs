@@ -176,3 +176,73 @@ test("channel completion preserves native editing, focus, popup geometry and sig
     await server.close();
   }
 });
+
+test("channel completion finds an open channel the viewer has not joined", async ({
+  page,
+}) => {
+  // Browser boundary: the real store's public search and its read-only preview.
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
+    plugins: [react()],
+    logLevel: "error",
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      open: false,
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?channels&stream&open-channels&test-controls`,
+    );
+    const input = page.getByRole("textbox");
+    await expect(input).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+      .toBe("ready");
+    const list = page.getByRole("listbox", { name: "Channel suggestions" });
+    await input.pressSequentially("#Ge");
+    const options = list.getByRole("option");
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toContainText("General");
+    await expect(options.nth(1)).toContainText("Gemstones");
+    await expect(options.nth(1)).toContainText("Not joined");
+    await input.press("ArrowDown");
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      "[\\#Gemstones](buzz://channel/open) ",
+    );
+    // Each edit remounts the completion. While the next lookup is held, the
+    // still-matching open row stays, so Enter completes instead of sending.
+    await input.press("ControlOrMeta+a");
+    await input.press("Backspace");
+    await input.pressSequentially("#Gem");
+    await expect(options).toHaveCount(1);
+    await expect(options.nth(0)).toContainText("Gemstones");
+    await page.evaluate(() => window.mentionFixture.holdChannelReads());
+    await input.pressSequentially("s");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Searching open channels…" }),
+    ).toBeVisible();
+    await expect(options).toHaveCount(1);
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      "[\\#Gemstones](buzz://channel/open) ",
+    );
+    expect(
+      await page.evaluate(() => window.mentionFixture.publications),
+    ).toEqual([]);
+    await page.evaluate(() => window.mentionFixture.releaseChannelReads());
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});

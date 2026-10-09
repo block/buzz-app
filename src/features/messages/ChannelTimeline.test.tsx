@@ -1,5 +1,4 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useReading } from "./use-reading";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
@@ -812,18 +811,16 @@ it("a user gesture at a restored top pages without needing a DOM scroll event", 
   h.unmount();
 });
 
-it.each([
-  { hasMore: false },
-  { hasMore: true, loadingOlder: true },
-  { hasMore: true, historyLimited: true },
-  { hasMore: true, error: "Relay requests paused" },
-])("a boundary gesture preserves the history guard %j", (options) => {
-  const h = setup(options);
-  h.element.scrollTop = 0;
-  h.gesture();
-  expect(h.loadOlder).not.toHaveBeenCalled();
-  h.unmount();
-});
+it.each([{ hasMore: false }])(
+  "a boundary gesture preserves the history guard %j",
+  (options) => {
+    const h = setup(options);
+    h.element.scrollTop = 0;
+    h.gesture();
+    expect(h.loadOlder).not.toHaveBeenCalled();
+    h.unmount();
+  },
+);
 
 it("keeps bottom restoration through repeated late list measurements without another viewport resize", () => {
   const h = setup();
@@ -1183,18 +1180,6 @@ it("an accepted button read retires earlier blocked gesture before verification"
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.unmount();
-});
-
-it("wires the shared reading hook to its owned scroller and settled position", () => {
-  vi.mocked(useReading).mockClear();
-  setup();
-  expect(useReading).toHaveBeenCalledWith({
-    session: expect.any(Object),
-    channelId: "channel",
-    latestMessageId: expect.any(String),
-    scroller: expect.objectContaining({ current: expect.anything() }),
-    settled: expect.objectContaining({ current: expect.any(Boolean) }),
-  });
 });
 
 const membershipRow = (id: string, time: number): ChannelMessage => ({

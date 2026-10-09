@@ -2452,6 +2452,7 @@ export const test = base.extend({
         ...(report.sidebarActivityFailures ?? []),
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
+        ...(report.sidebarRemovalFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
         ...(report.startupFailures ?? []),
       ];

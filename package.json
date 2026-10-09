@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "author:build": "node scripts/build-author.mjs",
     "plugin:dev": "node scripts/plugin-dev.mjs",
+    "plugin:claude-code": "vite build --config vite.claude-code.config.ts",
     "buzz-mcp": "vite build --config vite.buzz-mcp.config.ts",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",

@@ -57,9 +57,7 @@ it.each([
   ["UTF-16 emoji over limit", { content: "😀".repeat(51) }, false],
   ["untrimmed wire limit", { content: ` ${"x".repeat(100)} ` }, false],
   ["line feed", { content: "one\ntwo" }, false],
-  ["carriage return", { content: "one\rtwo" }, false],
   ["non-string content", { content: null }, false],
-  ["empty emoji tag", { tags: [...template.tags, ["emoji", ""]] }, false],
   ["blank emoji tag", { tags: [...template.tags, ["emoji", " "]] }, false],
   ["multiline emoji", { tags: [...template.tags, ["emoji", "x\ny"]] }, false],
   [

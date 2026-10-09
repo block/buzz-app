@@ -76,6 +76,10 @@ export default defineConfig(async ({ command, mode }) => {
       ),
     },
     clearScreen: false,
+    // Runtime preparation checks out the Buzz and Goose web UIs under target/.
+    optimizeDeps: {
+      entries: ["**/*.html", "!**/target/**", "!**/coverage/**"],
+    },
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so
       // each worktree has its own stable default. The CLI's --port still wins.

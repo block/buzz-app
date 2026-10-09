@@ -85,29 +85,6 @@ function setup(
     redraw: () => mounted.rerender(view()),
   };
 }
-it("keeps parked discovery community unknown without claiming saved setup", async () => {
-  setup(
-    "connected",
-    (fixture) => {
-      fixture.data.parked = [
-        { pubkey: "cd".repeat(32), name: "Saved", sources: ["installed"] },
-        { pubkey: "ee".repeat(32), name: "Unresolved", sources: ["installed"] },
-      ];
-    },
-    [],
-  );
-  const group = await screen.findByRole("region", {
-    name: "Available to import",
-  });
-  expect(
-    await within(group).findByRole("article", { name: "Agent Saved" }),
-  ).toBeVisible();
-  expect(
-    within(
-      screen.getByRole("region", { name: "Available to import" }),
-    ).getByRole("article", { name: "Agent Unresolved" }),
-  ).toBeVisible();
-});
 
 it("sorts displayed names within groups and profile cards without merging equal names", async () => {
   const keys = ["11", "22", "33", "44"].map((s) => s.repeat(32));

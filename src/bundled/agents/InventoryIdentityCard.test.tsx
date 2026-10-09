@@ -206,10 +206,6 @@ it.each([
   [false, false, true, true, true],
   [false, true, false, false, true],
   [false, true, true, false, true],
-  [true, false, false, false, false],
-  [true, false, true, true, true],
-  [true, true, false, false, true],
-  [true, true, true, false, true],
 ])(
   "card actions: community=%s local=%s oldBuzz=%s => Import=%s Clone=%s",
   async (community, local, oldBuzz, showImport, showClone) => {

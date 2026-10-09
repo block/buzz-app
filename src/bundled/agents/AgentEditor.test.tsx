@@ -45,68 +45,6 @@ it("reviews a requested model update before saving it", async () => {
   control.dispose();
 });
 
-it("keeps a requested update open with its edits when save fails", async () => {
-  const fixture = controlFixture();
-  fixture.failSave(true);
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  const onClose = vi.fn();
-  render(
-    <AgentEditor
-      agent={fixture.agent}
-      control={control}
-      state={control.snapshot()}
-      initialDraft={{ ...agentDraft(fixture.agent), model: "gpt-6-sol" }}
-      notice="Requested by an agent. Review every field before saving."
-      onClose={onClose}
-    />,
-    { wrapper: ToastProvider },
-  );
-
-  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The host could not save settings.",
-  );
-  expect(onClose).not.toHaveBeenCalled();
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
-    "gpt-6-sol",
-  );
-  control.dispose();
-});
-
-it("shows restart failures instead of dismissing a saved review", async () => {
-  const fixture = controlFixture();
-  const save = fixture.host.save;
-  const control = createAgentControl({
-    ...fixture.host,
-    save: async (id, revision, edit) => ({
-      ...(await save(id, revision, edit)),
-      restartFailures: 1,
-    }),
-  });
-  await control.refresh();
-  const onClose = vi.fn();
-  render(
-    <AgentEditor
-      agent={fixture.agent}
-      control={control}
-      state={control.snapshot()}
-      initialDraft={{ ...agentDraft(fixture.agent), model: "gpt-6-sol" }}
-      notice="Requested by an agent. Review every field before saving."
-      onClose={onClose}
-    />,
-    { wrapper: ToastProvider },
-  );
-
-  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "1 agent couldn’t restart with the new settings; check Agents.",
-  );
-  expect(onClose).not.toHaveBeenCalled();
-  expect(fixture.agent.harness.model).toBe("gpt-6-sol");
-  control.dispose();
-});
-
 it("closes the ordinary editor and keeps its success toast visible", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);

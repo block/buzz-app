@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import {
   cp,
   mkdtemp,
+  mkdir,
   readFile,
   rm,
   symlink,
@@ -119,29 +120,38 @@ test("plugin-only edits preserve matching host identity and generate utilities w
   }
 });
 
-test("new host imports/exports change compatibility before evaluation, while unrelated plugin-only edits leave their own hash stable", async () => {
-  const before = await hostBuildId("inbox", checkout);
-  const entry = join(checkout, "src/bundled/inbox/index.tsx");
-  const original = await readFile(entry, "utf8");
-  try {
-    await writeFile(entry, `${original}\nexport { useEffect } from "react";\n`);
-    // React is already projected as a namespace; request a new shared host module.
-    await writeFile(
-      entry,
-      `${original}\nexport { formatBinding } from "../../features/shortcuts/format";\n`,
-    );
-    expect(await hostBuildId("inbox", checkout)).not.toBe(before);
-  } finally {
-    await writeFile(entry, original);
-  }
-  const state = join(checkout, "src/shared/view-state.ts");
-  const previous = await readFile(state, "utf8");
-  try {
-    await writeFile(state, `${previous}\n// host changed\n`);
-    expect(await hostBuildId("inbox", checkout)).not.toBe(before);
-  } finally {
-    await writeFile(state, previous);
-  }
+test("new host imports/exports and shared edits change compatibility, but plugin-only edits do not", async () => {
+  const fixture = join(directory, "fingerprint");
+  await mkdir(join(fixture, "src/bundled/future"), { recursive: true });
+  await mkdir(join(fixture, "src/shared"), { recursive: true });
+  await writeFile(join(fixture, "src/main.tsx"), 'import "./bundled";');
+  await writeFile(
+    join(fixture, "src/bundled/index.ts"),
+    'import manifest from "./future/manifest.json"; import * as module from "./future"; export const bundledPlugins = [{manifest: {...manifest, apiVersion: 1}, module, enabledByDefault: false}];',
+  );
+  await writeFile(
+    join(fixture, "src/bundled/future/manifest.json"),
+    JSON.stringify({ id: "future.plugin", name: "Future", apiVersion: 1 }),
+  );
+  const entry = join(fixture, "src/bundled/future/index.tsx");
+  const shared = join(fixture, "src/shared/state.ts");
+  await writeFile(entry, 'export {state} from "../../shared/state";');
+  await writeFile(shared, "export const state = {}; export const value = {};");
+  execFileSync("git", ["init", "--quiet", fixture]);
+  const before = await hostBuildId("future", fixture);
+  await writeFile(
+    entry,
+    'export {state} from "../../shared/state"; export const local = 1;',
+  );
+  expect(await hostBuildId("future", fixture)).toBe(before);
+  await writeFile(entry, 'export {state, value} from "../../shared/state";');
+  expect(await hostBuildId("future", fixture)).not.toBe(before);
+  await writeFile(entry, 'export {state} from "../../shared/state";');
+  await writeFile(
+    shared,
+    "export const state = {changed: true}; export const value = {};",
+  );
+  expect(await hostBuildId("future", fixture)).not.toBe(before);
 });
 
 test("refuses unknown/alternate identities, private ownership leaks, destructive output and unrelated output files", async () => {

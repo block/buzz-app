@@ -351,12 +351,18 @@ it("archives from the row without opening it, remembers filters, and clears an e
   ).not.toBeChecked();
 });
 
-it.each(["button", "menu"] as const)(
-  "selected-row Archive via %s preserves the reader and leaves its neighbor unread",
-  async (action) => {
+it.each([
+  ["button", true],
+  ["menu", true],
+  ["button", false],
+  ["menu", false],
+] as const)(
+  "selected-row Archive via %s advances when a visible successor exists (%s)",
+  async (action, withSuccessor) => {
     const h = fixture({ withWriter: true });
     render(h.view);
     await waitFor(() => expect(rows()).toHaveLength(2));
+    if (!withSuccessor) await chooseFilter("Threads");
     const thread = rows().find((row) =>
       row.textContent?.includes("A thread update"),
     );
@@ -383,24 +389,79 @@ it.each(["button", "menu"] as const)(
         within(thread).getByRole("button", { name: /^Archive / }),
       );
     }
-    await waitFor(() => expect(rows()).toHaveLength(1));
+    await waitFor(() => expect(rows()).toHaveLength(withSuccessor ? 1 : 0));
     await waitFor(() =>
       expect(
         screen.getByRole("list", { name: "Inbox conversations" }),
       ).toHaveAttribute("aria-busy", "false"),
     );
-    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
-    const neighbor = rows()[0];
-    if (!neighbor) throw new Error("Missing unread neighbor row");
-    expect(
-      within(neighbor).getByRole("img", { name: "Unread" }),
-    ).toBeInTheDocument();
-    expect(rows()[0]).not.toHaveAttribute("data-selected");
+    if (withSuccessor) {
+      expect(rows()[0]).toHaveAttribute("data-selected");
+      await waitFor(() =>
+        expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
+      );
+      expect(screen.getByRole("textbox")).not.toBe(editor);
+    } else {
+      expect(
+        screen.queryByRole("region", { name: "Inbox detail" }),
+      ).not.toBeInTheDocument();
+      expect(
+        h.journal()?.state.frontiers[`msg:${h.mention.id}`],
+      ).toBeUndefined();
+    }
+    await chooseFilter("Archived", "Show");
+    const archivedThread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    if (!archivedThread) throw new Error("Missing archived draft row");
+    fireEvent.click(
+      within(archivedThread).getByRole("button", { name: /^Open / }),
+    );
+    expect(await screen.findByRole("textbox")).toHaveTextContent(
+      "Keep the selected draft",
+    );
+  },
+);
+
+it.each(["button", "menu"] as const)(
+  "unselected-row Archive via %s leaves the reader and its draft alone",
+  async (action) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const thread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    const mention = rows().find((row) =>
+      row.textContent?.includes("Please review"),
+    );
+    if (!thread || !mention) throw new Error("Missing fixture rows");
+    fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+    const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+    act(() => editor.insertText("Keep the open draft"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    if (action === "menu") {
+      fireEvent.contextMenu(
+        within(mention).getByRole("button", { name: /^Open / }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    } else {
+      fireEvent.click(
+        within(mention).getByRole("button", { name: /^Archive / }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toBe(thread);
+    expect(thread).toHaveAttribute("data-selected");
     expect(screen.getByRole("textbox")).toBe(editor);
-    expect(editor).toHaveTextContent("Keep the selected draft");
-    expect(
-      screen.getByRole("button", { name: "Restore conversation" }),
-    ).toBeEnabled();
+    expect(editor).toHaveTextContent("Keep the open draft");
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
   },
 );
 

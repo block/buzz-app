@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
+import { readJournal } from "./reading.mjs";
 
 const channel = "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd";
 test.use({
@@ -400,6 +401,130 @@ test("detail archive advances to next conversation then closes", async ({
   await expect(rows).toHaveCount(0);
   await expect(detail).toHaveCount(0);
 });
+// Browser-only: row hit targets and the keyboard menu must retarget the real
+// reader/editor, then restore its durable rich draft when the archive is reopened.
+// Successor/fallback/empty-list matrices live in InboxPage.test.tsx.
+test("selected row button advances and menu closes without losing the original draft", async ({
+  page,
+  app,
+}) => {
+  const neighbor = app.append(
+    "primary",
+    channel,
+    "Unread neighbor",
+    false,
+    false,
+    undefined,
+    undefined,
+    [["p", app.viewer]],
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const list = inbox.getByRole("list", { name: "Inbox conversations" });
+  const rows = list.getByRole("listitem");
+  const thread = rows.filter({ hasText: "Inbox strict reply" });
+  const next = rows.filter({ hasText: "Unread neighbor" });
+  await expect(rows).toHaveCount(2);
+  await thread.getByRole("button", { name: /^Open / }).click();
+  const editor = inbox.getByRole("textbox");
+  await editor.fill("Keep the selected archive draft");
+  await editor.evaluate((el) => {
+    el.dataset.retentionMarker = "original-editor";
+  });
+  await expect(list).toHaveAttribute("aria-busy", "false");
+  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await thread.getByRole("button", { name: /^Archive / }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(next).toHaveAttribute("data-selected", "true");
+  await expect
+    .poll(
+      async () =>
+        (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
+    )
+    .toBe(neighbor.created_at);
+  await expect(editor).not.toHaveAttribute(
+    "data-retention-marker",
+    "original-editor",
+  );
+  await next.getByRole("button", { name: /^Open / }).focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "Archive conversation" }).click();
+  await expect(rows).toHaveCount(0);
+  await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
+    0,
+  );
+  await choose(page, inbox, "Show", "Archived");
+  await expect(rows).toHaveCount(2);
+  await thread.getByRole("button", { name: /^Open / }).click();
+  await expect(editor).toHaveText("Keep the selected archive draft");
+});
+
+// Browser-only: a row menu beside a live rich editor must not replace it; a
+// combined-view Archive changes the row action but not its mounted reader.
+test("unselected row menu and combined-view Archive leave the open editor alone", async ({
+  page,
+  app,
+}) => {
+  const neighbor = app.append(
+    "primary",
+    channel,
+    "Unread neighbor",
+    false,
+    false,
+    undefined,
+    undefined,
+    [["p", app.viewer]],
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const list = inbox.getByRole("list", { name: "Inbox conversations" });
+  const rows = list.getByRole("listitem");
+  const thread = rows.filter({ hasText: "Inbox strict reply" });
+  const next = rows.filter({ hasText: "Unread neighbor" });
+  await expect(rows).toHaveCount(2);
+  await thread.getByRole("button", { name: /^Open / }).click();
+  const editor = inbox.getByRole("textbox");
+  await editor.fill("Keep the unselected archive draft");
+  await editor.evaluate((el) => {
+    el.dataset.retentionMarker = "original-editor";
+  });
+  await expect(list).toHaveAttribute("aria-busy", "false");
+  await next.getByRole("button", { name: /^Open / }).focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "Archive conversation" }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(list).toHaveAttribute("aria-busy", "false");
+  await expect(thread).toHaveAttribute("data-selected", "true");
+  await expect(editor).toHaveText("Keep the unselected archive draft");
+  await expect(editor).toHaveAttribute(
+    "data-retention-marker",
+    "original-editor",
+  );
+  expect(
+    (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
+  ).toBeUndefined();
+  await choose(page, inbox, "Show", "Inbox + archived");
+  await expect(rows).toHaveCount(2);
+  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await thread.getByRole("button", { name: /^Open / }).click();
+  await editor.evaluate((el) => {
+    el.dataset.retentionMarker = "combined-editor";
+  });
+  await expect(list).toHaveAttribute("aria-busy", "false");
+  await thread.getByRole("button", { name: /^Archive / }).click();
+  await expect(thread.getByRole("button", { name: /^Restore / })).toBeVisible();
+  await expect(rows).toHaveCount(2);
+  await expect(thread).toHaveAttribute("data-selected", "true");
+  await expect(editor).toHaveText("Keep the unselected archive draft");
+  await expect(editor).toHaveAttribute(
+    "data-retention-marker",
+    "combined-editor",
+  );
+  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+});
+
 test("reply and fresh mention reopen their filters without replacing composer draft", async ({
   page,
   app,

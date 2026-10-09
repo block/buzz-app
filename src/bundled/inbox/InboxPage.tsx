@@ -544,7 +544,7 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
-  function archive(item: InboxItem, value: boolean, navigate = false) {
+  function archive(item: InboxItem, value: boolean, navigate = value) {
     cancelRetry();
     // Retry repeats this click's cutoff, not a later clock or newly arrived mention.
     const at = Math.floor(Date.now() / 1000);
@@ -594,7 +594,7 @@ export function InboxView({
         updateArchive(archiveScope, item, value, at);
         setMenu(undefined);
         if (!leaves) return;
-        // Only header actions advance the reader; row actions keep its visit and draft.
+        // Archiving the selected row advances; unselected actions leave the reader alone.
         if (navigate && open && next) {
           advanced = next;
           setSelectedTarget(targetOf(next));

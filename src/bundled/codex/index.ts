@@ -1,9 +1,13 @@
+import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { defaults, config } from "./config";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
 export const inject = ["react", "agents2", "host", "relay", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  // Only the desktop app can start `codex`, and file uploads run `base64`,
+  // which stock Windows lacks; no unusable type elsewhere.
+  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const spawn = ctx.host.spawn?.bind(ctx.host);
   const start =
     spawn ??

@@ -1,6 +1,6 @@
 # Codex for Agents2
 
-An installable desktop plugin using the native process host introduced in #731.
+A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
 Agents2 owns the identity, admission, configuration, and signed Buzz actions. This plugin
 owns Codex work after delivery handover. It starts one `codex app-server` per agent
 and uses independent Codex threads for Buzz conversations.
@@ -11,14 +11,12 @@ From the feature worktree:
 
 ```sh
 source bin/activate-hermit
-bin/pnpm plugin:codex
 BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
-1. Open **Settings → Plugins → Load from folder**. Choose this worktree's
-   `dist-plugins/codex`, install it, and turn it on. Rebuild and import that folder
-   again after plugin source changes; frontend hot reload does not update an
-   installed plugin.
+1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
+   profile that installed Codex from a folder gets the bundled copy instead, and
+   keeps it off if the installed copy was off.
 2. Open **Agents2 → New agent**, choose **Codex**, and create an agent. The Codex
    tab checks the installed CLI and existing account. If needed, install Codex
    and run `codex login` in a terminal, then click **Check again**.
@@ -67,8 +65,8 @@ follow-up before its final reply.
 ## Checks
 
 ```sh
-bin/pnpm exec vitest run src/agent-plugins/codex
-bin/node src/agent-plugins/codex/live.mjs
+bin/pnpm exec vitest run src/bundled/codex
+bin/node src/bundled/codex/live.mjs
 ```
 
 The opt-in live check uses the installed Codex CLI/account in a disposable

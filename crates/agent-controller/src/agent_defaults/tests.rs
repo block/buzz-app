@@ -116,6 +116,38 @@ fn imported_portable_effort_is_saved_and_wins_over_older_sources() {
 }
 
 #[test]
+fn harness_change_without_effort_drops_the_agents_own_effort() {
+    for imported_only in [false, true] {
+        let mut agent = fixture();
+        agent.harness.command = "buzz-pi-acp".into();
+        agent.imported = serde_json::json!({"record":{"effort_level":"xhigh"}});
+        if !imported_only {
+            agent.extra.insert("effort".into(), "xhigh".into());
+        }
+        let edit = |agent: &Agent, command: &str| crate::config::AgentEdit {
+            effort: None,
+            name: agent.name.clone(),
+            picture: None,
+            system_prompt: agent.system_prompt.clone(),
+            session_policy: None,
+            workspace: agent.workspace.clone(),
+            harness: crate::config::HarnessEdit {
+                command: command.into(),
+                ..agent.harness.clone()
+            },
+            environment: BTreeMap::new(),
+        };
+        // Same harness keeps it; switching to Goose drops it.
+        agent.apply(edit(&agent, "buzz-pi-acp")).unwrap();
+        assert_eq!(effort(&agent), Some("xhigh"));
+        agent.apply(edit(&agent, "goose")).unwrap();
+        assert_eq!(effort(&agent), None);
+        let out = effective(&agent, &defaults("goose"));
+        assert_eq!(effort(&out), Some("high"), "goose default applies");
+    }
+}
+
+#[test]
 fn lowercase_effort_override_matches_launch_name_semantics() {
     let mut agent = fixture();
     agent.harness.command = "pi".into();

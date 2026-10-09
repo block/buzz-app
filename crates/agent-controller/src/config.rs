@@ -373,10 +373,16 @@ impl Agent {
             self.session_policy_inherit = policy.is_none();
         }
         self.workspace = edit.workspace;
+        let harness_changed = crate::agent_defaults::harness_kind(&self.harness.command)
+            != crate::agent_defaults::harness_kind(&edit.harness.command);
         self.harness = edit.harness;
         if let Some(effort) = edit.effort {
             validate_effort(&effort)?;
             self.extra.insert(OWN_EFFORT.into(), Value::String(effort));
+        } else if harness_changed {
+            // Effort names belong to one harness, as for agent defaults. Null
+            // also retires an old Buzz import's `effort_level`.
+            self.extra.insert(OWN_EFFORT.into(), Value::Null);
         }
         for (key, value) in edit.environment {
             if let Some(value) = value {

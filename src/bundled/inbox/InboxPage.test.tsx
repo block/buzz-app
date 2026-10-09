@@ -351,6 +351,59 @@ it("archives from the row without opening it, remembers filters, and clears an e
   ).not.toBeChecked();
 });
 
+it.each(["button", "menu"] as const)(
+  "selected-row Archive via %s preserves the reader and leaves its neighbor unread",
+  async (action) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const thread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    if (!thread) throw new Error("Missing fixture thread row");
+    const open = within(thread).getByRole("button", { name: /^Open / });
+    fireEvent.click(open);
+    const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+    act(() => {
+      editor.insertText("Keep the selected draft");
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+    if (action === "menu") {
+      fireEvent.contextMenu(open);
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    } else {
+      fireEvent.click(
+        within(thread).getByRole("button", { name: /^Archive / }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+    const neighbor = rows()[0];
+    if (!neighbor) throw new Error("Missing unread neighbor row");
+    expect(
+      within(neighbor).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument();
+    expect(rows()[0]).not.toHaveAttribute("data-selected");
+    expect(screen.getByRole("textbox")).toBe(editor);
+    expect(editor).toHaveTextContent("Keep the selected draft");
+    expect(
+      screen.getByRole("button", { name: "Restore conversation" }),
+    ).toBeEnabled();
+  },
+);
+
 it("archives and restores conversations in an active member channel across remounts", async () => {
   const h = fixture();
   let view = render(h.view);

@@ -540,7 +540,7 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
-  function archive(item: InboxItem, value: boolean) {
+  function archive(item: InboxItem, value: boolean, navigate = false) {
     cancelRetry();
     // Retry repeats this click's cutoff, not a later clock or newly arrived mention.
     const at = Math.floor(Date.now() / 1000);
@@ -566,8 +566,7 @@ export function InboxView({
           )
       );
     };
-    // Rows stay put in Inbox + archived; otherwise they leave this view, so
-    // an open viewer advances to the next conversation instead of closing.
+    // Only header actions advance the reader; row actions keep its visit and draft.
     const leaves = show === "inbox" ? value : show === "archived" && !value;
     const index = visible.findIndex((row) => row.id === item.id);
     const next = leaves
@@ -580,10 +579,10 @@ export function InboxView({
         updateArchive(archiveScope, item, value, at);
         setMenu(undefined);
         if (!leaves) return;
-        if (open && next) {
+        if (navigate && open && next) {
           advanced = next;
           setSelectedTarget(targetOf(next));
-        } else if (open) {
+        } else if (navigate && open) {
           setRestoringFocus(true);
           setSelectedTarget(undefined);
         } else focusRow.current = next?.id ?? "";
@@ -1102,7 +1101,7 @@ export function InboxView({
               archiveAction={{
                 archived: archived(selected),
                 disabled: pending,
-                run: () => archive(selected, !archived(selected)),
+                run: () => archive(selected, !archived(selected), true),
               }}
               onBack={() => {
                 setRestoringFocus(true);

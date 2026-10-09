@@ -20,6 +20,17 @@ export type AgentEventTemplate = Readonly<{
   content: string;
   tags?: readonly (readonly string[])[];
 }>;
+/** The community's description of an uploaded blob. */
+export type AgentUpload = Readonly<{
+  url: string;
+  sha256: string;
+  size: number;
+  type: string;
+  dim?: string;
+  blurhash?: string;
+  thumb?: string;
+  duration?: number;
+}>;
 export type AgentsNative = {
   list(): Promise<readonly AgentIdentity[]>;
   /** Generates a key, has the signed-in owner attest it, and saves both. */
@@ -34,9 +45,21 @@ export type AgentsNative = {
   remove(pubkey: string): Promise<void>;
   /** Drops a deleted identity. */
   forget(pubkey: string): Promise<void>;
-  /** Signs one event as the agent (kinds 5, 7, 9, 40003 only) with its owner
-   * attestation and posts it to the agent's community. */
+  /** Signs one event as the agent (deletions, reactions, messages, edits,
+   * canvases and DM opens only) with its owner attestation and posts it to the
+   * agent's community. */
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
+  /** Reads the agent's community as the agent: one to eight filters. */
+  query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Uploads base64 `data` (an image or MP4) as the agent. */
+  upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
+  /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
+  remember(
+    pubkey: string,
+    slug: string,
+    body: string,
+    after: number,
+  ): Promise<RelayEvent>;
   /** Publishes its name as its profile unless the community already has it. */
   publishProfile(pubkey: string): Promise<void>;
 };
@@ -59,6 +82,12 @@ export const nativeAgents = (): AgentsNative | undefined =>
               tags: event.tags ?? [],
             },
           }),
+        query: (pubkey, filters) =>
+          invoke("app_agent_query", { pubkey, filters }),
+        upload: (pubkey, data, mime) =>
+          invoke("app_agent_upload", { pubkey, data, mime }),
+        remember: (pubkey, slug, body, after) =>
+          invoke("app_agent_remember", { pubkey, slug, body, after }),
         publishProfile: (pubkey) =>
           invoke("app_agent_publish_profile", { pubkey }),
       }

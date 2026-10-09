@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySnapshot, RelayData } from "../../features/relay/service";
@@ -43,13 +44,7 @@ import {
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
-vi.stubGlobal(
-  "ResizeObserver",
-  class {
-    observe() {}
-    disconnect() {}
-  },
-);
+stubAvatarBrowserApis();
 HTMLElement.prototype.scrollIntoView = vi.fn();
 afterEach(() => {
   cleanup();
@@ -113,10 +108,10 @@ it.each(["reply", "message", "message after reply"])(
     await chooseFilter("Archived", "Show");
     await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Mentions");
-    await waitFor(() => expect(rows()).toHaveLength(1));
-    expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Inbox", "Show");
     await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).not.toHaveAttribute("data-inbox-row", "dm-room:dm-room");
     await chooseFilter("Archived", "Show");
     const mention = message(
       h.alice,
@@ -129,10 +124,12 @@ it.each(["reply", "message", "message after reply"])(
     act(() => h.emit([mention]));
     await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Inbox", "Show");
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    expect(
-      rows().some((row) => row.dataset.inboxRow === "dm-room:dm-room"),
-    ).toBe(true);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).not.toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    await chooseFilter("DMs");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    expect(rows()[0]).toHaveTextContent("A direct reply");
   },
 );
 
@@ -1553,38 +1550,100 @@ async function chooseFilter(label: string, control = "Activity type") {
     ),
   );
 }
-it("Mentions uses the mentioned message and excludes ordinary unread thread progress", async () => {
+it.each([false, true])(
+  "Mentions excludes ordinary thread progress (selected=%s)",
+  async (selectProgress) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await act(async () => {
+      await h.owner.session.unread.markThrough(
+        { kind: "message", channelId: "room", messageId: h.mention.id },
+        h.mention.id,
+      );
+    });
+    const response = message(h.viewer, "room", "My answer", 30, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    const progress = message(h.alice, "room", "Ordinary progress", 31, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    h.addEvent(response);
+    h.addEvent(progress);
+    act(() => h.emit([response, progress]));
+    if (selectProgress) {
+      const progressRow = rows().find((row) =>
+        row.textContent?.includes("Ordinary progress"),
+      );
+      if (!progressRow) throw new Error("Missing ordinary progress row");
+      fireEvent.click(
+        within(progressRow).getByRole("button", { name: /^Open / }),
+      );
+      await screen.findByRole("region", { name: "Inbox detail" });
+      await waitFor(() =>
+        expect(
+          within(progressRow).getByRole("button", { name: /^Open / }),
+        ).toBeEnabled(),
+      );
+    }
+    await chooseFilter("Mentions");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Please review this");
+    expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
+    await userEvent
+      .setup()
+      .click(screen.getByRole("checkbox", { name: "Unread only" }));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    const fresh = message(h.alice, "room", "Another decision", 32, [
+      ["e", h.mention.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    act(() => h.emit([fresh]));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Another decision");
+  },
+);
+
+it("Mentions orders and classifies matching senders and reads only through matching messages", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  await act(async () => {
-    await h.owner.session.unread.markThrough(
-      { kind: "message", channelId: "room", messageId: h.mention.id },
-      h.mention.id,
-    );
-  });
-  const response = message(h.viewer, "room", "My answer", 30, [
-    ["e", h.mention.id, "", "reply"],
-  ]);
-  const progress = message(h.alice, "room", "Ordinary progress", 31, [
-    ["e", h.mention.id, "", "reply"],
-  ]);
-  act(() => h.emit([response, progress]));
-  await chooseFilter("Mentions");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Please review this");
-  expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("checkbox", { name: "Unread only" }));
-  await waitFor(() => expect(rows()).toHaveLength(0));
-  const fresh = message(h.alice, "room", "Another decision", 32, [
-    ["e", h.mention.id, "", "reply"],
+  h.publishAgentProfile();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  const mention = message(h.agent, "room", "Agent decision", 23, [
+    ["e", root.id, "", "reply"],
     ["p", h.viewer.pubkey],
   ]);
-  act(() => h.emit([fresh]));
-  await waitFor(() => expect(rows()).toHaveLength(1));
-  expect(rows()[0]).toHaveTextContent("Another decision");
+  const progress = message(h.alice, "room", "Later human progress", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.addEvent(mention);
+  h.addEvent(progress);
+  act(() => h.emit([mention, progress]));
+  await chooseFilter("Mentions");
+  expect(rows().map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Agent decision"),
+    expect.stringContaining("Please review this"),
+  ]);
+  await chooseFilter("Humans", "Sender");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  await chooseFilter("Agents", "Sender");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Agent decision");
+  const row = rows()[0];
+  if (!row) throw new Error("Missing agent mention row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  await screen.findByRole("region", { name: "Inbox detail" });
+  await waitFor(() =>
+    expect(h.readSteps.map((step) => step.id)).toEqual([mention.id]),
+  );
+  expect(
+    h.owner.session.unread
+      .inbox()
+      .items.find((item) => item.id.endsWith(root.id)),
+  ).toMatchObject({ messageId: progress.id, unreadCount: 1 });
 });
 
 async function openRowMenu(

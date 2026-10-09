@@ -1,7 +1,8 @@
 # Builderlab
 
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
-It also registers `block.builderlab/builderlab` in Agents2's new-agent type picker.
+With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
+`block.builderlab/builderlab` in Agents2's new-agent type picker.
 This type has empty configuration and no execution handler yet; existing remote
 agents remain in Settings until the later migration.
 

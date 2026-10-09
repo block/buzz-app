@@ -19,12 +19,6 @@ export const inject = [
   "agents2",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.agents2.register({
-    id: "builderlab",
-    title: "Builderlab",
-    description: "TBD",
-    defaults: () => ({ config: {} }),
-  });
   let unavailable = "";
   try {
     oauthTarget();
@@ -34,6 +28,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
+  if (!unavailable)
+    ctx.agents2.register({
+      id: "builderlab",
+      title: "Builderlab",
+      description: "TBD",
+      defaults: () => ({ config: {} }),
+    });
   const session = createOAuthSession((signal) =>
     browserCredential(ctx.host, signal),
   );

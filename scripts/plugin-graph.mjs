@@ -149,29 +149,51 @@ export const moduleKey = (directory, path) =>
 export async function pluginGraph(directory = root) {
   const catalog = await pluginCatalog(directory);
   const nodes = new Map();
+  const resolved = new Map();
+  const resolveSource = (path) => {
+    let pending = resolved.get(path);
+    if (!pending) {
+      pending = sourcePath(path);
+      resolved.set(path, pending);
+    }
+    return pending;
+  };
   const owner = (path) =>
     catalog.find((plugin) => inside(plugin.folder, path.split("?")[0]));
-  async function visit(path) {
+  const pending = [];
+  const visit = (path) => {
     if (nodes.has(path)) return;
-    const imports = await importsOf(path);
-    nodes.set(path, imports);
-    for (const item of imports) {
-      if (!item.source) {
-        if (owner(path))
-          throw new Error(
-            `Plugin dynamic imports must be literal: ${relative(directory, path)}`,
-          );
-        continue;
-      }
-      item.path = item.source.startsWith(".")
-        ? await sourcePath(resolve(dirname(path), item.source))
-        : item.source;
-      if (isAbsolute(item.path)) await visit(item.path);
-    }
-  }
+    nodes.set(path, []);
+    pending.push(path);
+  };
   const catalogPath = join(directory, "src/bundled/index.ts");
-  await visit(join(directory, "src/main.tsx"));
-  for (const plugin of catalog) await visit(plugin.entry);
+  visit(join(directory, "src/main.tsx"));
+  for (const plugin of catalog) visit(plugin.entry);
+  // Resolve a bounded wave of modules together. A queued node is marked before
+  // its imports are visited, so cycles never wait on one another.
+  while (pending.length) {
+    await Promise.all(
+      pending.splice(0, 32).map(async (path) => {
+        const imports = await importsOf(path);
+        nodes.set(path, imports);
+        await Promise.all(
+          imports.map(async (item) => {
+            if (!item.source) {
+              if (owner(path))
+                throw new Error(
+                  `Plugin dynamic imports must be literal: ${relative(directory, path)}`,
+                );
+              return;
+            }
+            item.path = item.source.startsWith(".")
+              ? await resolveSource(resolve(dirname(path), item.source))
+              : item.source;
+            if (isAbsolute(item.path)) visit(item.path);
+          }),
+        );
+      }),
+    );
+  }
 
   function reachable(entry, stop) {
     const found = new Set();

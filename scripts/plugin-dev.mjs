@@ -31,13 +31,7 @@ const cssToken = "__BUZZ_PLUGIN_DEV_CSS__";
 const shimPrefix = "\0buzz-host:";
 const cssImport = (path) => /\.css(?:\?|$)/.test(path);
 
-export async function hostBuildId(plugin, directory = root, graph) {
-  graph ??= await pluginGraph(directory);
-  const selected = graph.catalog.find(
-    (entry) => entry.slug === plugin || entry.manifest.id === plugin,
-  );
-  if (!selected) throw new Error(`Unknown bundled plugin: ${plugin}`);
-  const hash = createHash("sha256");
+async function hostSources(directory) {
   const tracked = execFileSync(
     "git",
     [
@@ -58,8 +52,28 @@ export async function hostBuildId(plugin, directory = root, graph) {
     { cwd: directory, encoding: "utf8" },
   )
     .split("\0")
-    .filter(Boolean)
+    .filter(
+      (path) =>
+        path &&
+        !/\.test\.[cm]?[jt]sx?$/.test(path) &&
+        !path.endsWith("plugin-ownership-baseline.json"),
+    )
     .sort();
+  const sources = [];
+  for (let start = 0; start < tracked.length; start += 64) {
+    sources.push(
+      ...(await Promise.all(
+        tracked
+          .slice(start, start + 64)
+          .map(async (path) => [path, await readFile(join(directory, path))]),
+      )),
+    );
+  }
+  return sources;
+}
+
+function fingerprint(selected, directory, graph, sources) {
+  const hash = createHash("sha256");
   hash.update(selected.manifest.id).update("\0");
   // A new host import/export requires a host rebuild even if its source bytes
   // were already present. Validate compatibility before retiring healthy code.
@@ -72,20 +86,20 @@ export async function hostBuildId(plugin, directory = root, graph) {
       ),
     )
     .update("\0");
-  for (const path of tracked) {
-    if (
-      inside(selected.folder, join(directory, path)) ||
-      /\.test\.[cm]?[jt]sx?$/.test(path) ||
-      path.endsWith("plugin-ownership-baseline.json")
-    )
-      continue;
-    hash
-      .update(path)
-      .update("\0")
-      .update(await readFile(join(directory, path)))
-      .update("\0");
+  for (const [path, bytes] of sources) {
+    if (inside(selected.folder, join(directory, path))) continue;
+    hash.update(path).update("\0").update(bytes).update("\0");
   }
   return hash.digest("hex");
+}
+
+export async function hostBuildId(plugin, directory = root, graph) {
+  graph ??= await pluginGraph(directory);
+  const selected = graph.catalog.find(
+    (entry) => entry.slug === plugin || entry.manifest.id === plugin,
+  );
+  if (!selected) throw new Error(`Unknown bundled plugin: ${plugin}`);
+  return fingerprint(selected, directory, graph, await hostSources(directory));
 }
 
 // Native debug policy also gates attachment. This projection is explicitly
@@ -101,16 +115,26 @@ export function bundledHostPlugin(directory = root) {
       const graph = await pluginGraph(directory);
       const modules = new Map();
       const fingerprints = {};
+      // One captured source set per host projection, not 28 filesystem walks.
+      // It is local to this build so later source edits cannot reuse stale bytes.
+      let sources;
+      let unavailable;
+      try {
+        sources = await hostSources(directory);
+      } catch (error) {
+        unavailable = error;
+      }
       for (const plugin of graph.catalog) {
-        try {
-          fingerprints[plugin.manifest.id] = await hostBuildId(
-            plugin.slug,
+        if (sources) {
+          fingerprints[plugin.manifest.id] = fingerprint(
+            plugin,
             directory,
             graph,
+            sources,
           );
-        } catch (error) {
+        } else {
           this.warn(
-            `Local plugin compatibility unavailable for ${plugin.manifest.id}: ${error.message}`,
+            `Local plugin compatibility unavailable for ${plugin.manifest.id}: ${unavailable.message}`,
           );
           fingerprints[plugin.manifest.id] = null;
         }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pluginCatalog, pluginGraph, root } from "./plugin-graph.mjs";
@@ -99,6 +99,28 @@ test("a vendor reached outside its plugin is shared, and lazy host dependencies 
   expect([...imports.get("shared/lazy").names]).toEqual(["*"]);
 });
 
+test("cyclic and converging source imports retain every host dependency", async () => {
+  await fixture();
+  await source(
+    "src/bundled/future/index.tsx",
+    'import "./left"; import "./right"; export const render = () => import("./renderer");',
+  );
+  await source(
+    "src/bundled/future/left.ts",
+    'import "./right"; export {state} from "../../shared/state";',
+  );
+  await source(
+    "src/bundled/future/right.ts",
+    'import "./left"; export {value} from "../../shared/value";',
+  );
+  await source("src/shared/value.ts", "export const value = {};");
+  const graph = await pluginGraph(directory);
+  const dependencies = graph.dependencies(graph.catalog[0]);
+  expect([...dependencies.get("shared/state").names]).toEqual(["state"]);
+  expect([...dependencies.get("shared/value").names]).toEqual(["value"]);
+  expect(graph.violations).toEqual([]);
+});
+
 test("host source leakage is observable even for lazy imports", async () => {
   await fixture();
   await source(
@@ -139,20 +161,15 @@ test("the ownership migration baseline can shrink but never grow", async () => {
   expect(graph.violations.filter((edge) => !baseline.includes(edge))).toEqual(
     [],
   );
-  const checkout = join(directory, "ratchet");
-  await cp(join(root, "src"), join(checkout, "src"), { recursive: true });
-  await cp(
-    join(root, "crates/agent-controller/src/harness-presets.json"),
-    join(checkout, "crates/agent-controller/src/harness-presets.json"),
-    { recursive: true },
+  await fixture();
+  const clean = await pluginGraph(directory);
+  expect(clean.violations).toEqual([]);
+  await source(
+    "src/main.tsx",
+    'import "./bundled"; import "./bundled/future/renderer";',
   );
-  const path = join(checkout, "src/main.tsx");
-  await writeFile(
-    path,
-    `${await readFile(path, "utf8")}\nimport "./bundled/inbox/InboxPage";\n`,
-  );
-  const changed = await pluginGraph(checkout);
-  expect(changed.violations.filter((edge) => !baseline.includes(edge))).toEqual(
-    ["src/main.tsx -> src/bundled/inbox/InboxPage.tsx"],
-  );
+  const changed = await pluginGraph(directory);
+  expect(changed.violations).toEqual([
+    "src/main.tsx -> src/bundled/future/renderer.ts",
+  ]);
 });

@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
-import type { AgentControl } from "./control";
+import { createAgentControl, type AgentControl } from "./control";
+import { controlFixture } from "./control-testing";
 import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 import type { ChannelKit } from "../channel-templates/capability";
@@ -220,7 +221,8 @@ function harness(teams: Team[], texts: Record<string, string>) {
           id: "scout",
           pubkey: a,
           name: "Scout",
-          relayUrl: "https://relay.example",
+          // Native agents store the canonical websocket URL.
+          relayUrl: "wss://relay.example",
         },
       ],
     },
@@ -301,29 +303,101 @@ it("waits out a busy agent operation and then delivers in the same session", asy
   stop();
 });
 
-it("retries a rejected app-start delivery and shows the error only once retries run out", async () => {
+/** The harness's session and catalog with the real agent control over a
+ * host whose sync fails as `sync` decides; a rejected sync leaves the real
+ * control in `error`, as native does. */
+function realControl(sync: (call: number) => string | undefined) {
+  const h = harness([shared("one")], { one: "TEXT" });
+  const { data, agent } = controlFixture();
+  Object.assign(agent, {
+    pubkey: a,
+    name: "Scout",
+    relayUrl: "wss://relay.example",
+  });
+  let calls = 0;
+  const syncTeamInstructions = vi.fn(async () => {
+    const failure = sync(++calls);
+    if (failure) throw failure;
+    return structuredClone(data);
+  });
+  const control = createAgentControl({
+    snapshot: async () => structuredClone(data),
+    syncTeamInstructions,
+  } as unknown as Parameters<typeof createAgentControl>[0]);
+  return { ...h, control, syncTeamInstructions };
+}
+
+it("recovers the real control after a rejected app-start delivery and delivers in the same session", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = realControl((call) => (call === 1 ? "host failed" : undefined));
+    await h.control.refresh();
+    const stop = bindTeamTextSync(h.control, h.communities);
+    await vi.waitFor(() =>
+      expect(h.syncTeamInstructions).toHaveBeenCalledOnce(),
+    );
+    expect(h.control.snapshot().status).toBe("error");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.syncTeamInstructions).toHaveBeenCalledTimes(2);
+    expect(h.control.snapshot().status).toBe("ready");
+    expect(teamSyncError(h.kit)).toBeUndefined();
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows the error once a real control's deliveries keep failing", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = realControl(() => "host failed");
+    await h.control.refresh();
+    const stop = bindTeamTextSync(h.control, h.communities);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.syncTeamInstructions).toHaveBeenCalledTimes(4);
+    expect(teamSyncError(h.kit)).toMatch(/weren't updated: host failed/);
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("counts a failed catalog re-read as a failed attempt", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = realControl((call) => (call === 1 ? "host failed" : undefined));
+    vi.mocked(h.kit.refresh).mockImplementation(async () => {
+      if (vi.mocked(h.kit.refresh).mock.calls.length > 1)
+        throw new Error("relay unreachable");
+    });
+    await h.control.refresh();
+    const stop = bindTeamTextSync(h.control, h.communities);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.syncTeamInstructions).toHaveBeenCalledOnce();
+    expect(teamSyncError(h.kit)).toMatch(/relay unreachable/);
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does nothing after cleanup, even when a failure settles late", async () => {
   vi.useFakeTimers();
   try {
     const h = harness([shared("one")], { one: "TEXT" });
-    h.syncTeamInstructions.mockRejectedValueOnce(
-      new Error("Another agent operation is in progress"),
+    let fail!: (reason: Error) => void;
+    h.syncTeamInstructions.mockImplementationOnce(
+      () => new Promise((_, reject) => (fail = reject)),
     );
     const stop = bindTeamTextSync(h.control, h.communities);
     await vi.waitFor(() =>
       expect(h.syncTeamInstructions).toHaveBeenCalledOnce(),
     );
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(h.syncTeamInstructions).toHaveBeenCalledTimes(2);
-    expect(teamSyncError(h.kit)).toBeUndefined();
     stop();
-
-    const g = harness([shared("one")], { one: "TEXT" });
-    g.syncTeamInstructions.mockRejectedValue(new Error("host failed"));
-    const stopG = bindTeamTextSync(g.control, g.communities);
+    fail(new Error("late"));
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(g.syncTeamInstructions).toHaveBeenCalledTimes(4);
-    expect(teamSyncError(g.kit)).toMatch(/weren't updated: host failed/);
-    stopG();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(h.syncTeamInstructions).toHaveBeenCalledOnce();
   } finally {
     vi.useRealTimers();
   }

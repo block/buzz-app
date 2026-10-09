@@ -4,6 +4,7 @@ import type { Team } from "../channel-templates/model";
 import type { TeamSnapshot } from "./team-bundles";
 import type { RelaySession } from "../relay/session";
 import type { Communities } from "../communities/service";
+import { sameCommunityAgents } from "./choices";
 
 /** `text` is trimmed for delivery; `undefined` means it can't be read now. */
 export type TeamText = { team: Team; text: string | undefined };
@@ -112,10 +113,10 @@ export function teamTextConflict(
 function deliveryConflict(
   texts: readonly TeamText[],
   control: AgentControl,
-  relay: string,
+  scope: string,
 ): string | undefined {
-  for (const agent of control.snapshot().data?.agents ?? []) {
-    if (agent.relayUrl !== relay) continue;
+  const agents = control.snapshot().data?.agents ?? [];
+  for (const agent of sameCommunityAgents(agents, scope)) {
     const teams = texts.filter(
       ({ team, text }) => text && team.agents.includes(agent.pubkey),
     );
@@ -185,7 +186,7 @@ async function deliverNow(
   if (!control?.syncTeamInstructions || !session?.viewer) return;
   const relay = session.scope.slice(0, -(session.viewer.length + 1));
   const texts = await readTeamTexts(kit, control);
-  const conflict = deliveryConflict(texts, control, relay);
+  const conflict = deliveryConflict(texts, control, session.scope);
   if (conflict) throw new Error(conflict);
   await control.syncTeamInstructions(
     relay,
@@ -217,6 +218,7 @@ export function bindTeamTextSync(
   let failures = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let stopSession = () => {};
+  let stopped = false;
   const update = () => {
     const relay = communities.relay.snapshot();
     const session = relay.status === "ready" ? relay.session : undefined;
@@ -236,25 +238,28 @@ export function bindTeamTextSync(
         };
       } else stopSession = () => {};
     }
-    if (!session || synced === session || running || retry) return;
+    if (stopped || !session || synced === session || running || retry) return;
     if (session.channels.list().status === "ready") session.channelKit.ensure();
     const agents = control.snapshot();
+    // A retry re-reads control and the catalog itself, since a failed
+    // delivery or read leaves them unready; the first attempt waits for both.
     if (
-      session.channelKit.snapshot().status !== "ready" ||
-      agents.status !== "ready" ||
-      agents.busy
+      agents.busy ||
+      (!failures &&
+        (session.channelKit.snapshot().status !== "ready" ||
+          agents.status !== "ready"))
     )
       return;
     running = true;
     const kit = session.channelKit;
-    queueDelivery(kit, control, session).then(
-      () => {
-        if (watched !== session) return;
+    attempt(session).then(
+      (delivered) => {
+        if (stopped || watched !== session) return;
         running = false;
-        synced = session;
+        if (delivered) synced = session;
       },
       (reason) => {
-        if (watched !== session) return;
+        if (stopped || watched !== session) return;
         running = false;
         failures += 1;
         console.warn("Team instruction sync failed", reason);
@@ -276,10 +281,24 @@ export function bindTeamTextSync(
       },
     );
   };
+  /** Resolves false when control turned busy during its re-read, so the
+   * attempt waits for idle without counting as a failure. */
+  const attempt = async (session: RelaySession) => {
+    if (failures) {
+      await control.refresh();
+      const agents = control.snapshot();
+      if (agents.busy) return false;
+      if (agents.status !== "ready")
+        throw new Error(agents.error ?? "Local agents can't be read right now");
+    }
+    await queueDelivery(session.channelKit, control, session);
+    return true;
+  };
   const stopRelay = communities.relay.subscribe(update);
   const stopControl = control.subscribe(update);
   update();
   return () => {
+    stopped = true;
     clearTimeout(retry);
     stopSession();
     stopRelay();

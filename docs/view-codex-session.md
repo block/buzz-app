@@ -102,12 +102,12 @@ bin/node scripts/export-codex-session.mjs "$session" /tmp/codex-session.html
 ```
 
 Give the human the absolute output path, or open it with the app's file viewer.
-On macOS, `open /tmp/codex-session.html` opens it in a browser. The layout
-follows Pi's session viewer: a searchable sidebar with Default, No-tools, User,
-and All filters, and the conversation in order. Buzz turns show their request
-text, with the full turn context expandable. Each tool call shows its input,
-the Buzz tools it called, and its output; long text and instructions expand on
-click. The viewer contains escaped text, requires no server or network
+On macOS, `open /tmp/codex-session.html` opens it in a browser. The exporter
+renders through the shared session viewer (`scripts/session-viewer.mjs`): a
+searchable sidebar with Default, No-tools, User, and All filters, and the
+conversation in order. Buzz turns show their request text, with the full turn
+context expandable. Each tool call shows its input, the Buzz tools it called,
+and its output; long text and instructions expand on click. The viewer contains escaped text, requires no server or network
 resources, and does not execute rollout content. It includes every
 `response_item` in the rollout, which can span several Buzz threads for a
 channel-scoped session; `event_msg` and other metadata records are omitted. This

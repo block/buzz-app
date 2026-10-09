@@ -8,8 +8,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "vite",
-    "dev:desktop": "vite --strictPort",
+    "plugin:codex": "vite build --config vite.codex.config.ts",
+    "dev": "vite --force",
+    "dev:desktop": "vite --strictPort --force",
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "author:build": "node scripts/build-author.mjs",

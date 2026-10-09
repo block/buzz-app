@@ -53,6 +53,8 @@ function provideAgents2(root: Context, relay: RelayData) {
     query: vi.fn(),
     upload: vi.fn(),
     remember: vi.fn(),
+    claim: async () => true,
+    release: vi.fn(),
   });
 }
 

@@ -1263,7 +1263,9 @@ it("keeps a typed opening fence literal when a later sibling paragraph closes it
 it.each([
   ["- ", "ul", "- "],
   ["* ", "ul", "- "],
+  ["+ ", "ul", "- "],
   ["1. ", "ol", "1. "],
+  ["1) ", "ol", "1. "],
   ["> ", "blockquote", "> "],
 ] as const)(
   "opens a block as the space of %j is typed, with one undo restoring the prefix",

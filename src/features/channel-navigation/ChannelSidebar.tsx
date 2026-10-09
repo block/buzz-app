@@ -215,7 +215,6 @@ function ReadySidebar({
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
-  const [draggingChannel, setDraggingChannel] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -1043,8 +1042,6 @@ function ReadySidebar({
             <SidebarNavigation>{children}</SidebarNavigation>
             <ChannelSidebarDnd
               writable={placementWritable}
-              dragging={draggingChannel}
-              onDraggingChange={setDraggingChannel}
               onMove={(channelId, sectionKey) =>
                 sectionKey === "starred"
                   ? setChannelStar(channelId, true)

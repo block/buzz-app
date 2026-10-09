@@ -25,6 +25,7 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
+import { matchRank } from "../search/match";
 
 type Listener = () => void;
 type WindowState = {
@@ -77,6 +78,9 @@ const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 const DISCOVERY_LIMIT = 500;
 // One page of public channel metadata for name search; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** How long name search reuses one page of public channel metadata. Typing
+ * reads it once; a channel created meanwhile shows up after this. */
+const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
 /** Exact omission confirmations use the relay's explicit channel-ID cap. */
 const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
@@ -1405,9 +1409,13 @@ export function createChannelStore(
   }
   /** Find active public channels the viewer has not joined, by name.
    * The relay has no metadata text search, so this reads one bounded page of
-   * relay-signed 39000 metadata without applying it, matches names locally,
-   * and admits only the matches through `resolve`. Matches become readable
+   * relay-signed 39000 metadata without applying it (reused for typing, see
+   * PUBLIC_CHANNEL_PAGE_TTL), ranks name matches locally, and admits only
+   * the best matches through `resolve`. Matches become readable
    * previews through `get`; they never enter `list()`. */
+  let publicPage:
+    | { generation: number; at: number; events: readonly RelayEvent[] }
+    | undefined;
   async function searchPublic(
     query: string,
     settings?: ReadOptions & { limit?: number; exact?: boolean },
@@ -1419,22 +1427,33 @@ export function createChannelStore(
     if (list.status !== "ready")
       throw new Error("Channel list is not ready for channel search");
     const generation = epoch;
-    const events = await transport.read(
-      [
-        {
-          kinds: [39000],
-          authors: [transport.relayAuthor],
-          limit: PUBLIC_CHANNEL_PAGE,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
-    settings?.signal?.throwIfAborted();
-    if (disposed || generation !== epoch)
-      throw new DOMException("Stale channel search", "AbortError");
-    const metadata = events.filter(
-      (event) => event.kind === 39000 && event.pubkey === transport.relayAuthor,
-    );
+    // Candidates only: `resolve` below re-reads each match, so a reused page
+    // never grants access by itself.
+    let metadata =
+      publicPage?.generation === generation &&
+      now() - publicPage.at < PUBLIC_CHANNEL_PAGE_TTL
+        ? publicPage.events
+        : undefined;
+    if (!metadata) {
+      const events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            authors: [transport.relayAuthor],
+            limit: PUBLIC_CHANNEL_PAGE,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+      settings?.signal?.throwIfAborted();
+      if (disposed || generation !== epoch)
+        throw new DOMException("Stale channel search", "AbortError");
+      metadata = events.filter(
+        (event) =>
+          event.kind === 39000 && event.pubkey === transport.relayAuthor,
+      );
+      publicPage = { generation, at: now(), events: metadata };
+    }
     const latest = new Map<string, RelayEvent>();
     for (const event of metadata) {
       const id = tag(event, "d");
@@ -1452,10 +1471,16 @@ export function createChannelStore(
           (settings?.exact
             ? name.toLowerCase() === needle
             : name.toLowerCase().includes(needle))
-          ? [{ id, name }]
+          ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
           : [];
       })
-      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      // Best match first before the cut, so an exact name is never dropped.
+      .sort(
+        (a, b) =>
+          a.rank - b.rank ||
+          a.name.localeCompare(b.name) ||
+          a.id.localeCompare(b.id),
+      )
       .slice(0, settings?.limit ?? 8);
     // Exact resolution, not this page, owns access: it re-reads the signed
     // metadata and the viewer roster for each match before granting a preview.

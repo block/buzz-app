@@ -28,6 +28,7 @@ wry = { version = "=0.55.1", default-features = false, features = ["os-webview"]
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-credential-store = { path = "../crates/credential-store" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
+buzz-ifc = { path = "../crates/buzz-ifc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "4f51b9e1010e086a16c099cd8d8218ca974a5e18" }
@@ -45,7 +46,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 bech32 = "0.11"
 secp256k1 = { version = "0.31", default-features = false, features = ["std"] }

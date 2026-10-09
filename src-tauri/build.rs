@@ -109,6 +109,7 @@ fn main() {
             "app_agent_publish",
             "app_agent_publish_profile",
             "app_agent_query",
+            "app_agent_read_history",
             "app_agent_upload",
             "app_agent_remember",
             "app_agent_claim",

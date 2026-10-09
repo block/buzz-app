@@ -12,7 +12,7 @@ import type {
   Delivery,
 } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
-import type { EventData } from "../../features/relay/events";
+import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Spawn, ToolServer } from "./claude";
@@ -65,6 +65,7 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  ifcGeneration?: string;
 };
 
 export class ClaudeRuntime {
@@ -238,7 +239,7 @@ export class ClaudeRuntime {
   private async turn(
     entry: Entry,
     self: string,
-    event: EventData,
+    event: RelayEvent,
     channelId: string,
     fresh = false,
   ) {
@@ -253,11 +254,37 @@ export class ClaudeRuntime {
     const scope = entry.config.scope;
     const key =
       dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
-    const seen = fresh ? 0 : entry.sessions.seen(key);
-    let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    let history: readonly EventData[] | undefined;
+    let checkedGeneration: string | undefined;
+    if (dm && !thread && entry.handle?.readHistory) {
+      const previous = entry.ifcGeneration;
       try {
-        const events = await session.read(
+        const checked = await entry.handle.readHistory(channelId, event);
+        if (checked) {
+          checkedGeneration = checked.generation;
+          if (entry.ifcGeneration !== checked.generation) {
+            entry.ifcGeneration = checked.generation;
+            await entry.sessions.forget(key);
+          }
+          history = checked.events;
+        }
+      } catch (error) {
+        if (entry.ifcGeneration === (checkedGeneration ?? previous)) {
+          delete entry.ifcGeneration;
+          await entry.sessions.forget(key);
+          await this.report(
+            entry.handle,
+            channelId,
+            event,
+            "DM history could not be verified; please try again.",
+          );
+        }
+        throw error;
+      }
+    }
+    if (!history && session && (thread || dm))
+      try {
+        history = await session.read(
           thread
             ? [
                 { ids: [rootId], limit: 1 },
@@ -266,18 +293,19 @@ export class ClaudeRuntime {
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
         );
-        earlier = events
-          .filter(
-            (item) =>
-              CHAT.includes(item.kind) &&
-              item.id !== event.id &&
-              item.created_at <= event.created_at,
-          )
-          .sort((a, b) => a.created_at - b.created_at);
       } catch (error) {
         console.warn("Claude Code could not read the conversation", error);
       }
+    const earlier = (history ?? [])
+      .filter(
+        (item) =>
+          CHAT.includes(item.kind) &&
+          item.id !== event.id &&
+          item.created_at <= event.created_at,
+      )
+      .sort((a, b) => a.created_at - b.created_at);
     // A session already has its own replies; a new one is shown them too.
+    const seen = fresh ? 0 : entry.sessions.seen(key);
     const unseen = earlier.filter(
       (item) => item.created_at > seen && (!seen || item.pubkey !== self),
     );
@@ -296,6 +324,11 @@ export class ClaudeRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    if (
+      checkedGeneration !== undefined &&
+      entry.ifcGeneration !== checkedGeneration
+    )
+      throw new Error("IFC history read was superseded");
     return {
       key,
       event,

@@ -67,6 +67,17 @@ export class AgentSessions {
   seen(key: string) {
     return this.options.store.get(key)?.seen ?? 0;
   }
+  /** Drops both the process and saved history before changing its IFC domain. */
+  async forget(key: string) {
+    const opening = this.opening.get(key);
+    this.opening.delete(key);
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    this.options.store.delete(key);
+    const stopping = live?.process.kill();
+    const started = await opening;
+    await Promise.all([stopping, started?.process.kill()]);
+  }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
     return [...this.live].map(([key, live]) => ({
@@ -107,7 +118,11 @@ export class AgentSessions {
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
-    if (opening) await opening;
+    if (opening) {
+      const started = await opening;
+      if (!started || this.live.get(key) !== started)
+        return { ok: false, error: "Claude Code conversation was reset" };
+    }
     let live = this.live.get(key);
     if (
       live &&
@@ -140,7 +155,11 @@ export class AgentSessions {
     );
     this.opening.set(key, starting);
     live = await starting;
-    if (this.opening.get(key) === starting) this.opening.delete(key);
+    if (this.opening.get(key) !== starting) {
+      await live?.process.kill();
+      return { ok: false, error: "Claude Code conversation was reset" };
+    }
+    this.opening.delete(key);
     if (live && !this.disposed) this.adopt(key, live, seen);
     if (!live) return { ok: false, error: "Claude Code could not start" };
     if (this.disposed) {

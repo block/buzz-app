@@ -82,7 +82,8 @@ export async function deliverTeamTexts(
 }
 
 /** Delivers team text once per relay session, after its teams and the local
- * agents have both loaded. */
+ * agents have both loaded. The catalog read itself is left to the channel
+ * views, which start it only after channel discovery settles. */
 export function bindTeamTextSync(
   control: AgentControl,
   communities: Communities,
@@ -97,7 +98,6 @@ export function bindTeamTextSync(
       stopKit();
       watched = session;
       stopKit = session?.channelKit.subscribe(update) ?? (() => {});
-      session?.channelKit.ensure();
     }
     if (
       !session ||

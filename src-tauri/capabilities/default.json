@@ -89,6 +89,7 @@
     "allow-agent-control-team-capture",
     "allow-agent-control-team-export",
     "allow-agent-control-team-instructions",
+    "allow-agent-control-team-sync",
 
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",

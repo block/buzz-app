@@ -78,7 +78,8 @@ it("syncs team text once per session after teams and agents load", async () => {
     relay: { subscribe, snapshot: () => ({ status: "ready", session }) },
   } as unknown as Communities;
   const stop = bindTeamTextSync(control, communities);
-  expect(session.channelKit.ensure).toHaveBeenCalled();
+  // Channel views start the catalog read after discovery; the sync only waits.
+  expect(session.channelKit.ensure).not.toHaveBeenCalled();
   kitState.status = "ready";
   notify();
   expect(syncTeamInstructions).not.toHaveBeenCalled();

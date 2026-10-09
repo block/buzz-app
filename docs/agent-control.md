@@ -120,7 +120,8 @@ remain visible and controllable; this rule does not move or delete them.
 Local team-linked imports snapshot the deployment team's instructions from the
 chosen library's `agents/teams.json`, alongside the resolved persona prompt.
 The existing ACP team-instructions input receives that snapshot; later edits in
-old Buzz are not synchronized. As in old Buzz, a deleted team or a directory-only
+old Buzz are not synchronized. Teams saved in this app deliver their own text
+through the same input (see **Team instructions** in `docs/agents.md`). As in old Buzz, a deleted team or a directory-only
 legacy binding without a deployment team ID contributes no team instructions.
 Remote backends and relay mesh remain unsupported.
 

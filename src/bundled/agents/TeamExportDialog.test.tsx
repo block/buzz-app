@@ -40,6 +40,7 @@ function fixture(exported: Promise<TeamSnapshot> = Promise.resolve(portable)) {
   } as unknown as AgentControl;
   const kit = {
     loadTeam: vi.fn(async () => portable),
+    readText: vi.fn(async () => ({ text: "CURRENT", head: "h" })),
   } as unknown as ChannelKit;
   const close = vi.fn();
   const create = vi.fn(() => "blob:fixture");
@@ -67,13 +68,13 @@ function fixture(exported: Promise<TeamSnapshot> = Promise.resolve(portable)) {
   };
 }
 
-it("exports config-only by default", async () => {
+it("exports config-only by default, with the team's current text", async () => {
   const h = fixture();
   render(h.tree);
   fireEvent.click(screen.getByRole("button", { name: "Export" }));
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.exportTeam).toHaveBeenCalledExactlyOnceWith(
-    portable,
+    { name: team.name, instructions: "CURRENT" },
     [],
     "https://relay.example",
     "none",

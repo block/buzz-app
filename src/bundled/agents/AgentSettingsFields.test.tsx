@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentSettingsFields } from "./AgentSettingsFields";
 import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";

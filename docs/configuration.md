@@ -1,6 +1,6 @@
 # Deployment configuration: current-feature parity
 
-Buzz Foundation supports configuration for capabilities that exist here, not a
+Buzz supports configuration for capabilities that exist here, not a
 port of every OG Buzz feature. Keep deployment values in local/CI configuration,
 not in source. Build defaults are readable binary data, **never secret storage**.
 

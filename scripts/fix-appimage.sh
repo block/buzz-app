@@ -161,7 +161,7 @@ chmod +x "$APP_BIN"
 # never regenerate the manifest to bless transformed bytes.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_SOURCE="$SCRIPT_DIR/../src-tauri/resources/agent-runtime"
-RUNTIME_DEST="$LIBDIR/Buzz Foundation/agent-runtime"
+RUNTIME_DEST="$LIBDIR/Buzz/agent-runtime"
 if [[ ! -f "$RUNTIME_DEST/manifest.json" || -L "$RUNTIME_DEST" ]]; then
   echo "Error: expected runtime resource directory missing or symlinked" >&2
   exit 1

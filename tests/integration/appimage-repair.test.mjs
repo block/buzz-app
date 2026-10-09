@@ -50,7 +50,7 @@ function fixture(t) {
     }),
   );
   const extracted = join(root, "extracted");
-  const resource = "usr/lib/Buzz Foundation/agent-runtime";
+  const resource = "usr/lib/Buzz/agent-runtime";
   const destination = join(extracted, resource);
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(source, destination, { recursive: true });

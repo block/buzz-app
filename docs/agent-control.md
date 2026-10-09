@@ -11,9 +11,9 @@ Run from the feature worktree with `bin/just desktop`, not a management-only
 launcher. The command prepares the pinned agent runtime before starting Tauri;
 the first build may take several minutes. Later launches verify and reuse matching
 resources, rebuilding missing, stale or corrupt ones. Preparation failure stops
-launch rather than opening a desktop that cannot run agents. This opens **Buzz Foundation** using the ordinary live-development
+launch rather than opening a desktop that cannot run agents. This opens **Buzz** using the ordinary live-development
 configuration and persistent native settings. Coordinate the native rebuild/relaunch;
-quit other Foundation copies first. Saved enabled agents can restore on startup.
+quit other Buzz copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents** for discovered and imported identities grouped by known community

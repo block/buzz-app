@@ -2,7 +2,7 @@
   "app": {
     "windows": [
       {
-        "title": "Buzz Foundation",
+        "title": "Buzz",
         "dragDropEnabled": false,
         "width": 1200,
         "height": 800,

@@ -758,7 +758,7 @@ pub fn run() {
             browser::window_event(window, event);
         })
         .build(context)
-        .expect("failed to build Buzz Foundation")
+        .expect("failed to build Buzz")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {

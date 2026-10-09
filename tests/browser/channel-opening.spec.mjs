@@ -1,5 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -110,8 +111,28 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     expect(heads(app, "beta")).toHaveLength(1);
     const before = submittedHeads.length;
     const targetMs = 100;
+    const warmTimings = [];
+    // Attribution for a slow sample: long browser frames (with their scripts)
+    // show app work; a stalled test process, which also serves the app and
+    // broker, shows that the runner itself stopped. WebKit has no LoAF API.
+    const longFramesSupported = await page.evaluate(() => {
+      if (
+        !PerformanceObserver.supportedEntryTypes.includes(
+          "long-animation-frame",
+        )
+      )
+        return false;
+      window.__warmSwitchLongFrames = [];
+      new PerformanceObserver((list) =>
+        window.__warmSwitchLongFrames.push(...list.getEntries()),
+      ).observe({ type: "long-animation-frame" });
+      return true;
+    });
+    const loopDelay = monitorEventLoopDelay({ resolution: 10 });
     // Browser-clock click → first visible row → paint, excluding Playwright IPC.
     for (const name of ["Alpha", "Beta", "Alpha", "Beta"]) {
+      loopDelay.reset();
+      loopDelay.enable();
       const timing = await page
         .getByRole("button", { name, exact: true })
         .evaluate(
@@ -167,6 +188,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
             });
             const warmVisibleMs = performance.now() - start;
             return {
+              startedAt: start,
               warmVisibleMs,
               // Synchronous button.click() only, not all React/render work.
               clickDispatchMs,
@@ -182,13 +204,72 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
               .map((event) => event.id),
           },
         );
-      app.report.measurements.push({ name, ...timing });
-      // Surface target misses without truncating samples or functional checks.
-      if (timing.warmVisibleMs >= targetMs)
-        test.info().annotations.push({
-          type: "performance",
-          description: `${name} warm switch: ${timing.warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms)`,
-        });
+      loopDelay.disable();
+      timing.testProcessMaxStallMs = Math.round(loopDelay.max / 1e6);
+      // One shared record, so long-frame attribution reaches the evidence.
+      const sample = { name, ...timing };
+      app.report.measurements.push(sample);
+      warmTimings.push(sample);
+    }
+    if (longFramesSupported) {
+      // LoAF entries are queued after their frame ends; wait for the last one.
+      const frames = await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() =>
+              setTimeout(() =>
+                resolve(
+                  window.__warmSwitchLongFrames.map((frame) => ({
+                    start: frame.startTime,
+                    duration: frame.duration,
+                    blockingMs: frame.blockingDuration,
+                    scripts: frame.scripts.map((script) => ({
+                      invoker: script.invoker,
+                      source: `${script.sourceURL.split("/").at(-1)}:${script.sourceCharPosition}`,
+                      durationMs: Math.round(script.duration),
+                    })),
+                  })),
+                ),
+              ),
+            ),
+          ),
+      );
+      for (const timing of warmTimings) {
+        const end = timing.startedAt + timing.warmVisibleMs;
+        timing.longFrames = frames
+          .filter(
+            ({ start, duration }) =>
+              start < end && start + duration > timing.startedAt,
+          )
+          .map(({ start, duration, ...frame }) => ({
+            startMs: Math.round(start - timing.startedAt),
+            durationMs: Math.round(duration),
+            ...frame,
+          }));
+      }
+    }
+    // Surface target misses, with their attribution, without failing the
+    // test: shared-runner timing is evidence here, not a gate.
+    for (const {
+      name,
+      warmVisibleMs,
+      longFrames,
+      testProcessMaxStallMs,
+    } of warmTimings) {
+      if (warmVisibleMs < targetMs) continue;
+      const scriptMs = (longFrames ?? []).reduce(
+        (total, frame) =>
+          total +
+          frame.scripts.reduce((sum, script) => sum + script.durationMs, 0),
+        0,
+      );
+      const frames = longFrames
+        ? `${longFrames.length} long frames, ${scriptMs} ms of script`
+        : "long frames unavailable";
+      test.info().annotations.push({
+        type: "performance",
+        description: `${name} warm switch: ${warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms; ${frames}; test process stalled up to ${testProcessMaxStallMs} ms)`,
+      });
     }
     expect(submittedHeads).toHaveLength(before);
     await openChannelDetails(page);

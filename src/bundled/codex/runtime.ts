@@ -553,9 +553,9 @@ export class CodexRuntime {
         cwd: workspace,
         developerInstructions: developerInstructions(agent),
         approvalPolicy: "never",
-        sandbox: "workspace-write",
+        // Matches Claude Code's bypassPermissions; only the owner can start work.
+        sandbox: "danger-full-access",
         config: {
-          "sandbox_workspace_write.network_access": false,
           web_search: "disabled",
           mcp_servers: mcp,
           "features.plugins": false,

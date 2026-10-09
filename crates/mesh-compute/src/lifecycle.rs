@@ -67,6 +67,7 @@ pub enum Phase {
 }
 
 struct Slot {
+    generation: u64,
     phase: Phase,
     serving: bool,
     joining: bool,
@@ -87,6 +88,7 @@ impl Default for Lifecycle {
         Self {
             progress: crate::progress::Progress::default(),
             slot: Arc::new(Mutex::new(Slot {
+                generation: 0,
                 phase: Phase::Stopped,
                 serving: false,
                 joining: false,
@@ -100,6 +102,14 @@ impl Default for Lifecycle {
     }
 }
 impl Lifecycle {
+    /// Atomically observe the worker epoch and phase for telemetry fencing.
+    pub fn activity_epoch(&self) -> anyhow::Result<(u64, Phase)> {
+        self.slot
+            .lock()
+            .map(|slot| (slot.generation, slot.phase.clone()))
+            .map_err(|_| anyhow::anyhow!("Mesh activity unavailable"))
+    }
+
     pub fn phase(&self) -> Phase {
         self.slot.lock().expect("mesh slot poisoned").phase.clone()
     }
@@ -214,6 +224,10 @@ impl Lifecycle {
         let (status, mut reads) =
             mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>(1);
         let (stop, mut stopping) = watch::channel(false);
+        slot.generation = slot
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Mesh worker epoch exhausted"))?;
         slot.retryable = false;
         slot.pending_tokens.clear();
         slot.phase = Phase::Starting;
@@ -458,6 +472,7 @@ mod tests {
     #[tokio::test]
     async fn known_pre_node_failure_can_retry_but_unknown_startup_failure_cannot() {
         let owner = Lifecycle::default();
+        assert_eq!(owner.activity_epoch().unwrap().0, 0);
         owner
             .launch(async {
                 Err::<FakeNode, _>(BeforeNode(anyhow::anyhow!("download failed")).into())
@@ -467,9 +482,15 @@ mod tests {
             tokio::task::yield_now().await;
         }
         assert!(matches!(owner.phase(), Phase::Failed(_)));
+        assert_eq!(owner.activity_epoch().unwrap().0, 1);
         owner.stop_and_wait().await.unwrap();
         let (node, stopped, release, _) = fixture();
         owner.launch(async { Ok(node) }).unwrap();
+        assert_eq!(owner.activity_epoch().unwrap().0, 2);
+        assert!(owner
+            .launch(async { Err::<FakeNode, _>(anyhow::anyhow!("not started")) })
+            .is_err());
+        assert_eq!(owner.activity_epoch().unwrap().0, 2);
         owner.stop();
         stopped.await.unwrap();
         release.send(()).unwrap();

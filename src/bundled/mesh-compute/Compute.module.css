@@ -151,3 +151,100 @@
   background: var(--bg-hover);
   border-radius: var(--radius-control);
 }
+
+/* Thomas's bee visualization and the supplied Shared compute layout. */
+.sharing {
+  border: 0;
+  padding: 0;
+  gap: var(--space-control-inset);
+}
+.sharingHeader {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.shareControl,
+.modelMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-row-gap);
+}
+.statusDot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+.statusDot[data-active="true"] {
+  background: var(--text-success);
+}
+.machineOverview {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--space-control-inset);
+  align-items: start;
+}
+.activityTile {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: var(--radius-panel);
+}
+.hardwareGrid,
+.activityMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-control-inset);
+}
+.computeTile,
+.activity {
+  padding: var(--space-control-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+}
+.computeTile {
+  display: grid;
+  gap: var(--space-control-inset);
+  min-width: 0;
+}
+.computeTile > p:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-row-gap);
+  flex-wrap: wrap;
+}
+.computeTile .fit,
+.modelMeta {
+  margin-left: auto;
+}
+.modelTile {
+  grid-column: 1 / -1;
+}
+.activity {
+  display: grid;
+  gap: var(--space-control-inset);
+}
+.activityMetrics {
+  margin: 0;
+}
+.metricTile {
+  display: grid;
+  gap: var(--space-row-gap);
+  padding: var(--space-control-inset);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+}
+@media (max-width: 40rem) {
+  .machineOverview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .activityTile {
+    max-width: 14rem;
+  }
+  .hardwareGrid,
+  .activityMetrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

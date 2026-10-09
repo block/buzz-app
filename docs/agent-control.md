@@ -1203,3 +1203,18 @@ native artifact bytes. Stronger artifact policy (pinned hashes, bundling or
 upstream signatures) is a separate follow-up, not part of this port. Optional failed
 old-community retirement is best-effort; routing advertisements expire after
 120 seconds. No live packaged acceptance is claimed by fixture tests.
+
+### Shared-compute activity tile
+
+Shared compute embeds Thomas Petersen's original four-design canvas from
+`feat/community-compute-plugin` (`b4a910e7`). Its original history and notices are
+preserved; see [the integration record](agent-tile-integration.md). Focus the tile
+and use Left/Right to switch Bee, Orbit, Signal and LED. It is read-only: sharing
+consent, model selection and native lifetime remain with the existing host.
+
+The tile observes this app's worker epoch, lifecycle and allowlisted SDK counters.
+Unknown counters stay unknown; stale samples clear. Token totals describe
+routing-observed completions, not compute contributed by this machine, and peers
+are known nodes rather than proven serving members. Request activity is not proof
+of local model decoding. The tile does not access native IPC or register a separate
+runtime/window. Numeric synthetic previews are disabled in the live tile.

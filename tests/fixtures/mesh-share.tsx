@@ -26,6 +26,13 @@ Object.assign(window, {
         case "mesh_compute_status":
           return {
             available: true,
+            generation: 1,
+            usage: {
+              tokensServed: 120,
+              inflight: 0,
+              tokensPerSecond: 5,
+              peers: 2,
+            },
             sharing,
             savedSharing: enabled ? { model: sharing, enabled } : null,
             lifecycle: { state },

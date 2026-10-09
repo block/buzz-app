@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useId, useState } from "react";
+import {
+  MonitorIcon,
+  CpuIcon,
+  RobotIcon,
+  CheckIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -91,11 +97,43 @@ export function ShareModelPicker({
   const entry = catalog?.entries.find((entry) => entry.model === displayModel);
   return (
     <div>
-      {catalog && (
-        <p className="text-body-sm text-secondary">
-          {catalog.gpuName ?? "Hardware"} · {catalog.vramDisplay} AI memory
-        </p>
-      )}
+      <div className={styles.hardwareGrid}>
+        <div className={styles.computeTile}>
+          <p className="m-0 text-body text-secondary">
+            <MonitorIcon size={20} /> Hardware
+          </p>
+          <p className="m-0 text-body font-mono">{catalog?.gpuName ?? "—"}</p>
+        </div>
+        <div className={styles.computeTile}>
+          <p className="m-0 text-body text-secondary">
+            <CpuIcon size={20} /> AI memory
+            {entry && (
+              <span className={styles.fit} data-fit={entry.fit}>
+                {entry.fit.replaceAll("_", " ")}
+              </span>
+            )}
+          </p>
+          <p className="m-0 text-body font-mono">
+            {catalog?.vramDisplay ?? "—"}
+          </p>
+        </div>
+        <div className={`${styles.computeTile} ${styles.modelTile}`}>
+          <p className="m-0 text-body text-secondary">
+            <RobotIcon size={20} /> Model
+            <span className={styles.modelMeta}>
+              {entry?.installed && (
+                <>
+                  <CheckIcon size={18} /> Cached
+                </>
+              )}{" "}
+              {auto ? "Auto" : "Manual"}
+            </span>
+          </p>
+          <p className="m-0 text-body font-mono">
+            {entry?.name ?? (displayModel || "Auto")}
+          </p>
+        </div>
+      </div>
       {error ? (
         <p role="alert">
           {error}{" "}
@@ -106,19 +144,29 @@ export function ShareModelPicker({
       ) : (
         !catalog && <p role="status">Loading model choices…</p>
       )}
-      {auto && (
-        <p className="text-body">
-          {catalog?.recommended
-            ? `Auto — ${entry?.name ?? catalog.recommended} (${catalog.recommended.split(":").at(-1)}) for this device`
-            : "Auto — chooses a model for this device when sharing starts."}
-        </p>
-      )}
-      {entry && !advanced && !auto && (
-        <p className="text-body">{entry.name} — selected model.</p>
-      )}
-      {catalog && !catalog.recommended && !model && !auto && (
-        <p>No recommended model is available. Choose a model under Advanced.</p>
-      )}
+      <details>
+        <summary className="text-body-sm text-secondary">Model details</summary>
+        {catalog && (
+          <p className="text-body-sm text-secondary">
+            {catalog.gpuName ?? "Hardware"} · {catalog.vramDisplay} AI memory
+          </p>
+        )}
+        {auto && (
+          <p className="text-body">
+            {catalog?.recommended
+              ? `Auto — ${entry?.name ?? catalog.recommended} (${catalog.recommended.split(":").at(-1)}) for this device`
+              : "Auto — chooses a model for this device when sharing starts."}
+          </p>
+        )}
+        {entry && !advanced && !auto && (
+          <p className="text-body">{entry.name} — selected model.</p>
+        )}
+        {catalog && !catalog.recommended && !model && !auto && (
+          <p>
+            No recommended model is available. Choose a model under Advanced.
+          </p>
+        )}
+      </details>
       {auto &&
         runningModel &&
         catalog?.recommended &&

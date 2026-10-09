@@ -90,25 +90,41 @@ pub async fn mesh_compute_status(
             .lock()
             .map(|prefs| (prefs.hint().cloned(), prefs.error().map(str::to_owned)))
             .unwrap_or_default();
-        let model_ready = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
-            host.lifecycle.status().await.ok().is_some_and(|status| {
-                status
-                    .payload
-                    .get("llama_ready")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-            })
+        let (generation, phase) = host
+            .lifecycle
+            .activity_epoch()
+            .map_err(|error| error.to_string())?;
+        let sample = if phase == buzz_mesh_compute::lifecycle::Phase::Ready {
+            host.lifecycle.status().await.ok()
         } else {
-            false
+            None
         };
+        // A completed read belongs to its worker, never a replacement epoch.
+        let (current_generation, current_phase) = host
+            .lifecycle
+            .activity_epoch()
+            .map_err(|error| error.to_string())?;
+        let sample = sample.filter(|_| generation == current_generation && phase == current_phase);
+        let model_ready = sample.as_ref().is_some_and(|status| {
+            status
+                .payload
+                .get("llama_ready")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        });
+        let usage = sample
+            .as_ref()
+            .map(|status| buzz_mesh_compute::usage::Usage::from_payload(&status.payload));
         Ok(serde_json::json!({
             "available": true,
+            "generation": current_generation,
+            "usage": usage,
             "modelReady": model_ready,
             "finishingJoin": host.lifecycle.finishing_join(),
             "boundCommunity": host.lease.current()?.map(|(_, community)| community),
             "savedSharing": saved,
             "settingsError": settings_error,
-            "lifecycle": host.lifecycle.phase(),
+            "lifecycle": current_phase,
             "download": host.lifecycle.download_progress(),
             "startAvailable": true,
             "reason": null,

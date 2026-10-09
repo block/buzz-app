@@ -145,6 +145,26 @@ it("re-reads presence after native start or stop until the badge agrees, within 
   }
 });
 
+it.each([
+  ["buzz-agent", "relay-mesh", true],
+  ["buzz-agent", "fixture-provider", false],
+  ["fixture-acp", "relay-mesh", false],
+  // Native mesh_request / MeshLaunch accept only the bundled command.
+  ["/fixture/bin/buzz-agent", "relay-mesh", false],
+])(
+  "identifies only Buzz shared-compute setups (%s / %s)",
+  (command, provider, shared) => {
+    const agent = controlFixture().agent;
+    agent.harness.command = command as string;
+    agent.harness.provider = provider as string;
+    render(
+      <AgentCard name={agent.name} identities={[agent]} editable={[agent]} />,
+    );
+    if (shared) expect(screen.getByText("Shared compute")).toBeVisible();
+    else expect(screen.queryByText("Shared compute")).toBeNull();
+  },
+);
+
 it("reserves card-header space for a profile-only menu", () => {
   render(
     <AgentCard

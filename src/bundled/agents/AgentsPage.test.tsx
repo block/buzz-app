@@ -193,6 +193,113 @@ async function cardInCommunity(cards: HTMLElement[], community: string) {
   }
   throw Error(`Missing managed card in ${community}`);
 }
+it.each([false, true])(
+  "keeps shared-compute agents in normal cards and uses per-agent controls (unified: %s)",
+  async (unified) => {
+    const user = userEvent.setup();
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+      identities: [],
+    });
+    const { f, control } = setup("connected", (fixture) => {
+      fixture.agent.harness.command = "buzz-agent";
+      fixture.agent.harness.provider = "relay-mesh";
+      fixture.agent.enabled = false;
+      fixture.agent.status = "stopped";
+      fixture.agent.runningRevision = null;
+      fixture.agent.startOnAppLaunch = false;
+      if (unified) fixture.data.parked = [];
+      // Isolate two namesake identities in this community, not the helper's
+      // additional setup in another community.
+      fixture.host.snapshot = async () =>
+        structuredClone({
+          ...fixture.data,
+          agents: fixture.data.agents.filter(
+            (agent) => agent.id !== "other-destination",
+          ),
+        });
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "namesake",
+        pubkey: "bc".repeat(32),
+      });
+      fixture.host.action = async (id, action) => {
+        fixture.calls.push({ action, payload: { id } });
+        const agent = fixture.data.agents.find((entry) => entry.id === id);
+        if (!agent) throw Error("Missing fixture agent");
+        agent.enabled = action !== "stop";
+        agent.status = action === "stop" ? "stopped" : "running";
+        agent.runningRevision = action === "stop" ? null : agent.revision;
+        return fixture.host.snapshot();
+      };
+    });
+    await waitFor(() => expect(control.snapshot().status).toBe("ready"));
+    const cards = await screen.findAllByRole("article", {
+      name: /^Agent Fixture agent/,
+    });
+    const first = cards.find(
+      (card) => card.dataset.agentPubkey === f.agent.pubkey,
+    );
+    const other = cards.find(
+      (card) => card.dataset.agentPubkey === "bc".repeat(32),
+    );
+    if (!first || !other) throw Error("Missing namesake cards");
+    expect(cards).toHaveLength(2);
+    expect(within(first).getByText("Shared compute")).toBeVisible();
+    expect(within(other).getByText("Shared compute")).toBeVisible();
+    let dialog = await manageCard(first);
+    expect(
+      within(dialog).getByText(
+        /Enable Shared compute in this agent’s community/,
+      ),
+    ).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Start" }));
+    await within(dialog).findByText(
+      "Runner started in this app · shared compute",
+    );
+    expect(f.calls).toContainEqual({
+      action: "start",
+      payload: { id: f.agent.id },
+    });
+    expect(
+      control.snapshot().data?.agents.find((agent) => agent.id === "namesake")
+        ?.status,
+    ).toBe("stopped");
+    await user.click(within(dialog).getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(
+        control.snapshot().data?.agents.find((agent) => agent.id === f.agent.id)
+          ?.status,
+      ).toBe("stopped"),
+    );
+    expect(
+      within(dialog).queryByText("Runner started in this app · shared compute"),
+    ).toBeNull();
+    expect(f.calls).toContainEqual({
+      action: "stop",
+      payload: { id: f.agent.id },
+    });
+    await closeManagement(dialog);
+
+    const failure = "Enable Shared compute in the agent’s community first";
+    f.host.action = async () => {
+      // Native host failures use a string; arbitrary Error text is not
+      // projected by the controller's safe failure-reason contract.
+      throw failure;
+    };
+    dialog = await manageCard(first);
+    await user.click(within(dialog).getByRole("button", { name: "Start" }));
+    await within(dialog).findByText(new RegExp(failure));
+    expect(
+      within(dialog).queryByText("Runner started in this app · shared compute"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Start" }),
+      ).toBeEnabled(),
+    );
+  },
+);
+
 it("opens the selected managed agent in the existing profile panel", async () => {
   let profileTargetSeen = "";
   const panel = {

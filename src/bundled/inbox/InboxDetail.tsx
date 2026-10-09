@@ -16,9 +16,15 @@ import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ArrowSquareOutIcon,
+  ChatCircleIcon,
+  HashIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
@@ -51,7 +57,7 @@ export function InboxDetail({
   const readerFocus = useRef<HTMLElement | null>(null);
   const withheldFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    // Only the initial placeholder visit needs this; readers own exact reveal.
+    // The one visible header owns entry focus; readers may reveal the exact target.
     placeholderClose.current?.focus({ preventScroll: true });
   }, []);
   const list = useSyncExternalStore(
@@ -94,11 +100,11 @@ export function InboxDetail({
       const prior = withheldFocus.current;
       withheldFocus.current = null;
       // Close's blur cancels the handoff, including an intentional blur to body.
-      // Its removal on recovery is not a user move; still respect another owner.
+      // The header remains mounted during recovery; restore only while it owns focus.
       if (
         prior?.isConnected &&
         reader.current?.contains(prior) &&
-        document.activeElement === document.body &&
+        document.activeElement === placeholderClose.current &&
         !prior.closest('[hidden], [inert], [aria-hidden="true"]') &&
         !prior.matches(':disabled, [aria-disabled="true"]') &&
         prior.getClientRects().length
@@ -157,10 +163,10 @@ export function InboxDetail({
   };
   const openAction = (
     <IconButton
-      size="toolbar"
+      size="sm"
       aria-label="Open in channel"
       onClick={() => void open()}
-      icon={<ArrowSquareOutIcon size={18} aria-hidden="true" />}
+      icon={<ArrowSquareOutIcon size="1rem" />}
     />
   );
   return (
@@ -180,28 +186,37 @@ export function InboxDetail({
         }
       }}
     >
-      <div className={styles.detailHeading}>
-        <h2 className="text-label text-primary">
-          {channel?.channelType === "dm"
-            ? `DM with ${dmName}`
-            : `#${channelName}`}
-        </h2>
-        {(!available || previewIncomplete) && (
-          <div className={styles.detailActions}>
+      <PanelHeader
+        title={
+          <PanelHeaderLabel
+            title={
+              channel?.channelType === "dm" ? "Direct message" : channelName
+            }
+            icon={
+              channel?.channelType === "dm" ? (
+                <ChatCircleIcon size="1rem" />
+              ) : (
+                <HashIcon size="1rem" />
+              )
+            }
+          />
+        }
+        actions={
+          <>
             {openAction}
             <IconButton
               ref={placeholderClose}
               onBlur={() => {
                 withheldFocus.current = null;
               }}
-              size="toolbar"
+              size="sm"
               aria-label="Close detail"
               onClick={onBack}
-              icon={<XIcon size={18} aria-hidden="true" />}
+              icon={<XIcon size="1rem" />}
             />
-          </div>
-        )}
-      </div>
+          </>
+        }
+      />
       <div className={styles.detailBody}>
         {error && (
           <p role="alert" className={styles.notice}>
@@ -256,19 +271,6 @@ export function InboxDetail({
                       : channelName
                   }
                   anchor={target.messageId}
-                  onClose={onBack}
-                  exactActions={openAction}
-                  actions={
-                    <>
-                      {openAction}
-                      <IconButton
-                        size="toolbar"
-                        aria-label="Close detail"
-                        onClick={onBack}
-                        icon={<XIcon size={18} aria-hidden="true" />}
-                      />
-                    </>
-                  }
                 />
               ) : (
                 <ThreadPanel
@@ -280,9 +282,7 @@ export function InboxDetail({
                   messageId={target.messageId}
                   sessionConversation={channel?.channelType === "session"}
                   revealSelected
-                  close={onBack}
                   onOpenLink={() => false}
-                  headerActions={openAction}
                 />
               )}
             </div>

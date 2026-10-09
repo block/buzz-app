@@ -26,7 +26,11 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import {
+  InboxFilters,
+  type ActivityFilter,
+  type SenderFilter,
+} from "./InboxFilters";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
@@ -34,7 +38,6 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { BellIcon } from "../../shared/design-system/icons";
-import { Select } from "../../shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -44,19 +47,6 @@ import {
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
 
-type ActivityFilter = "all" | "dms" | "threads" | "mentions";
-type SenderFilter = "everyone" | "humans" | "agents";
-const activities = [
-  { value: "all", label: "All activity" },
-  { value: "dms", label: "DMs" },
-  { value: "threads", label: "Threads" },
-  { value: "mentions", label: "Mentions" },
-] as const;
-const senders = [
-  { value: "everyone", label: "Everyone" },
-  { value: "humans", label: "Humans" },
-  { value: "agents", label: "Agents" },
-] as const;
 const matchesActivity = (
   item: InboxItem,
   filter: ActivityFilter,
@@ -167,7 +157,6 @@ export function InboxView({
   const [senderFilter, setSenderFilter] = useState<SenderFilter>("everyone");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [drafts, setDrafts] = useState(false);
-  const draftsControl = useRef<HTMLButtonElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<{
     channelId: string;
     messageId: string;
@@ -175,7 +164,17 @@ export function InboxView({
   }>();
   const invokingRow = useRef<HTMLButtonElement | null>(null);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
-  const fallbackControl = useRef<HTMLDivElement | null>(null);
+  const fallbackControl = useRef<HTMLButtonElement | null>(null);
+  const viewFocus = useRef(false);
+  useLayoutEffect(() => {
+    // Switching Drafts replaces the trigger. Restore it only if the dismissed
+    // popup still owned focus, not after the user moved to another control.
+    void drafts;
+    if (!viewFocus.current) return;
+    viewFocus.current = false;
+    if (document.activeElement === document.body)
+      fallbackControl.current?.focus({ preventScroll: true });
+  }, [drafts]);
   const workspace = useRef<HTMLDivElement | null>(null);
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
@@ -246,9 +245,7 @@ export function InboxView({
       ? invokingRow.current
       : fallbackRow.current?.isConnected
         ? fallbackRow.current
-        : fallbackControl.current?.querySelector<HTMLElement>(
-            '[role="combobox"]',
-          );
+        : fallbackControl.current;
     row?.focus({ preventScroll: true });
     invokingRow.current = null;
     setRestoringFocus(false);
@@ -275,10 +272,8 @@ export function InboxView({
   }, [items, menu]);
   // Enrich bounded activity candidates before applying Sender: unknown authors
   // must be able to appear after their profiles arrive, even in an empty view.
-  const [limit, setLimit] = useState(50);
-  const candidateIds = activityItems
-    .slice(0, limit)
-    .map((item) => item.authorId);
+  // Keep main's bounded optional profile demand, independent of presentation.
+  const candidateIds = activityItems.slice(0, 50).map((item) => item.authorId);
   const matchingAuthors = [...new Set(candidateIds)].sort().join(":");
   const authorIds = useMemo(
     () => (matchingAuthors ? matchingAuthors.split(":") : []),
@@ -321,14 +316,16 @@ export function InboxView({
           (senderFilter === "agents" ? "agent" : "human")) &&
       (!unreadOnly || hasUnread(item) || item.id === selectedId),
   );
-  const visible = matching.slice(0, limit);
+  const visible = matching;
   const profileKey = [
     ...new Set([
       ...authorIds,
-      ...visible.flatMap((item) =>
-        item.workflowOwnerId ? [item.workflowOwnerId] : [],
-      ),
-      ...visible.flatMap((item) => {
+      ...matching
+        .slice(0, 50)
+        .flatMap((item) =>
+          item.workflowOwnerId ? [item.workflowOwnerId] : [],
+        ),
+      ...matching.slice(0, 50).flatMap((item) => {
         const channel = list.channels.find(
           (entry) => entry.id === item.channelId,
         );
@@ -497,42 +494,40 @@ export function InboxView({
     const control =
       workspace.current?.querySelector<HTMLElement>(
         '[aria-label="Inbox detail"] button[aria-label^="Close "]',
-      ) ??
-      fallbackControl.current?.querySelector<HTMLElement>('[role="combobox"]');
+      ) ?? fallbackControl.current;
     control?.focus({ preventScroll: true });
   }, [failure, pending]);
+  const toolbar = (
+    <header className={styles.toolbar}>
+      <InboxFilters
+        view={drafts ? "drafts" : activity}
+        sender={senderFilter}
+        unreadOnly={unreadOnly}
+        triggerRef={fallbackControl}
+        onViewChange={(view) => {
+          if (drafts !== (view === "drafts")) {
+            cancelRetry();
+            viewFocus.current = true;
+          }
+          setDrafts(view === "drafts");
+          if (view !== "drafts") setActivity(view);
+        }}
+        onSenderChange={setSenderFilter}
+        onUnreadChange={setUnreadOnly}
+      />
+      {!drafts && (
+        <div className={styles.headerTitle}>
+          {loading && (
+            <span className={`${styles.refreshStatus} text-caption text-subtle`} role="status">
+              Checking recent activity…
+            </span>
+          )}
+        </div>
+      )}
+    </header>
+  );
   return (
     <div data-buzz-ui="" className={styles.page}>
-      <PanelHeader
-        title={
-          <div className={styles.headerTitle}>
-            <PanelHeaderLabel title="Inbox" icon={<BellIcon size="1rem" />} />
-            {!drafts && loading && (
-              <span
-                className={`${styles.refreshStatus} text-caption text-subtle`}
-                role="status"
-              >
-                Checking recent activity…
-              </span>
-            )}
-          </div>
-        }
-        actions={
-          <Button
-            size="sm"
-            variant="ghost"
-            ref={draftsControl}
-            onClick={() => {
-              cancelRetry();
-              setDrafts((current) => !current);
-            }}
-          >
-            <span className="text-body">
-              {drafts ? "Back to Inbox" : "Drafts"}
-            </span>
-          </Button>
-        }
-      />
       {!drafts && failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
@@ -543,7 +538,8 @@ export function InboxView({
       )}
       {drafts ? (
         <DraftsView
-          onEmptyRetire={() => draftsControl.current?.focus()}
+          toolbar={toolbar}
+          onEmptyRetire={() => fallbackControl.current?.focus()}
           session={session}
           scope={scope}
           navigator={navigator}
@@ -556,38 +552,7 @@ export function InboxView({
           data-selected={!!selected || undefined}
         >
           <div className={styles.listPane}>
-            <div ref={fallbackControl} className={styles.toolbar}>
-              <div className={styles.filterPair}>
-                <Select
-                  label="Activity type"
-                  variant="compact"
-                  value={activity}
-                  groups={[{ label: "", options: activities }]}
-                  onValueChange={(value) => {
-                    setActivity(value as ActivityFilter);
-                    setLimit(50);
-                  }}
-                />
-                <Select
-                  label="Sender"
-                  variant="compact"
-                  value={senderFilter}
-                  groups={[{ label: "", options: senders }]}
-                  onValueChange={(value) => {
-                    setSenderFilter(value as SenderFilter);
-                    setLimit(50);
-                  }}
-                />
-              </div>
-              <Checkbox
-                label="Unread only"
-                checked={unreadOnly}
-                onCheckedChange={(checked) => {
-                  setUnreadOnly(checked);
-                  setLimit(50);
-                }}
-              />
-            </div>
+            {toolbar}
             <div className={styles.scroll}>
               {inbox.freshness === "stale" && !failure && (
                 <div className={styles.notice} role="status">
@@ -772,6 +737,22 @@ export function InboxView({
                                 </span>
                               </span>
                             }
+                            trailing={
+                              unread ? (
+                                <span
+                                  className={styles.unreadSlot}
+                                  role="img"
+                                  aria-label="Unread"
+                                >
+                                  <span className={styles.unreadDot} />
+                                </span>
+                              ) : (
+                                <span
+                                  className={styles.unreadSlot}
+                                  aria-hidden="true"
+                                />
+                              )
+                            }
                             onClick={(event) => {
                               // The selected row is the same visit, even when its
                               // current representative changed after reading.
@@ -787,20 +768,6 @@ export function InboxView({
                               if (unread && canRead) mutate(item, false);
                             }}
                           />
-                          {unread ? (
-                            <span
-                              className={styles.unreadSlot}
-                              role="img"
-                              aria-label="Unread"
-                            >
-                              <span className={styles.unreadDot} />
-                            </span>
-                          ) : (
-                            <span
-                              className={styles.unreadSlot}
-                              aria-hidden="true"
-                            />
-                          )}
                         </ContextMenuTrigger>
                         <MenuPopup
                           size="compact"
@@ -821,13 +788,6 @@ export function InboxView({
                   );
                 })}
               </ul>
-              {matching.length > limit && (
-                <div className={styles.notice}>
-                  <Button onClick={() => setLimit((value) => value + 50)}>
-                    Show more
-                  </Button>
-                </div>
-              )}
             </div>
           </div>
           {selected && selectedTarget && (

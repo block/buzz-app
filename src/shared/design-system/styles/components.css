@@ -112,7 +112,8 @@
         [data-disabled],
         [data-icon-variant="chrome"],
         [data-icon-variant="avatar"],
-        [data-icon-variant="media"]
+        [data-icon-variant="media"],
+        [data-icon-variant="bare"]
       ) {
       background: var(--interaction-hover);
     }
@@ -140,7 +141,8 @@
   ):not(
     [data-disabled],
     [data-icon-variant="avatar"],
-    [data-icon-variant="media"]
+    [data-icon-variant="media"],
+    [data-icon-variant="bare"]
   ) {
     background: var(--interaction-pressed);
   }
@@ -253,6 +255,18 @@
     [data-disabled]
   ) {
     background: var(--interaction-selected);
+  }
+
+  /* Glyph-state toggles stay unfilled; their caller supplies outline/filled art.
+     Keep the 32px small hit area with slightly larger 20px artwork. */
+  .buzz-button[data-icon-variant="bare"] {
+    background: transparent;
+  }
+  .buzz-button[data-icon-variant="bare"][data-size="sm"]
+    .buzz-button-label
+    > svg {
+    width: var(--space-5);
+    height: var(--space-5);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */
@@ -1122,6 +1136,9 @@
     --text-metadata: var(--text-standard);
     background: var(--interaction-row-hover);
   }
+  .buzz-menu-item[data-selection="highlight"][data-checked] {
+    background: var(--affordance-popover-selected);
+  }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
   }
@@ -1157,6 +1174,9 @@
   .buzz-menu-group-label {
     padding: var(--space-2) var(--space-2) var(--space-1);
     color: var(--text-subtle);
+  }
+  .buzz-menu-group-label[data-emphasis="quiet"] {
+    color: var(--text-metadata);
   }
   .buzz-menu-separator {
     height: 1px;

@@ -615,6 +615,8 @@ it.each(["outside", "blur", "other detail control", "away and back"])(
       expect(reader).toBeVisible();
       expect(editor).not.toHaveFocus();
       if (move === "outside") expect(sender).toHaveFocus();
+      else if (move === "other detail control") expect(other).toHaveFocus();
+      else if (move === "away and back") expect(close).toHaveFocus();
       else expect(document.body).toHaveFocus();
     } finally {
       gate.gate.resolve();

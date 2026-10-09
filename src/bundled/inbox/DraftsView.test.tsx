@@ -420,12 +420,34 @@ function fixture(
 
 async function chooseFilter(label: string, control = "Activity type") {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: control }));
-  await user.click(await screen.findByRole("option", { name: label }));
+  const trigger = screen.getByRole("button", { name: "Inbox filters" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("menu", { name: "Inbox filters" });
+  if (control === "Sender") {
+    const people = screen.getByRole("menuitemcheckbox", { name: "People" });
+    const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
+    // Enable the desired sender before disabling the other: never select none.
+    if (label !== "Agents" && people.getAttribute("aria-checked") !== "true")
+      await user.click(people);
+    if (label !== "Humans" && agents.getAttribute("aria-checked") !== "true")
+      await user.click(agents);
+    if (label === "Agents" && people.getAttribute("aria-checked") === "true")
+      await user.click(people);
+    if (label === "Humans" && agents.getAttribute("aria-checked") === "true")
+      await user.click(agents);
+    await user.keyboard("{Escape}");
+  } else {
+    await user.click(
+      screen.getByRole("menuitemradio", {
+        name: label === "All activity" ? "All" : label,
+      }),
+    );
+  }
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: control })).toHaveTextContent(
-      label,
-    ),
+    expect(
+      screen.queryByRole("menu", { name: "Inbox filters" }),
+    ).not.toBeInTheDocument(),
   );
 }
 it("Drafts shares the composer storage, gates origin navigation on current membership, and deletes only after consent", async () => {
@@ -444,20 +466,29 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   await screen.findByText("Please review this");
   await chooseFilter("Threads");
   await chooseFilter("Humans", "Sender");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
+  await chooseFilter("Drafts");
   expect(
-    screen.queryByRole("combobox", { name: "Activity type" }),
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("Drafts");
+  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: "Unread only" }),
   ).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Inbox filters" }).focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("menu", { name: "Inbox filters" });
+  const people = screen.getByRole("menuitemcheckbox", { name: "People" });
+  const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
+  expect(people).toHaveAttribute("aria-disabled", "true");
+  expect(agents).toHaveAttribute("aria-disabled", "true");
   expect(
-    screen.queryByRole("combobox", { name: "Sender" }),
+    screen.queryByText("Sender filters don’t apply to drafts."),
   ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("checkbox", { name: "Unread only" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Back to Inbox" }),
-  ).toBeInTheDocument();
+  expect(people).toBeChecked();
+  expect(agents).not.toBeChecked();
+  await user.keyboard("{Escape}");
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();
@@ -479,12 +510,10 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
-  expect(
-    screen.getByRole("heading", { name: "Draft · Reply in #Design" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Design" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveAttribute(
     "data-variant",
-    "destructive",
+    "ghost",
   );
   expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveAttribute(
     "data-size",
@@ -510,14 +539,18 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
   expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(screen.getByText("No drafts")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Back to Inbox" }));
+  await chooseFilter("Threads");
+  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
   expect(
-    screen.getByRole("combobox", { name: "Activity type" }),
+    screen.getByRole("button", { name: "Inbox filters" }),
   ).toHaveTextContent("Threads");
-  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
-    "Humans",
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("People");
+  expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
-  expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
   expect(h.journal()?.state.frontiers).toEqual({});
 });
 
@@ -525,7 +558,7 @@ it("Drafts responds to same-window editor changes and disables composition if me
   const h = fixture({ withWriter: true });
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   expect(screen.getByText("No drafts")).toBeVisible();
   act(() =>
     writeView(h.owner.session.scope, "draft:room", {
@@ -550,7 +583,7 @@ it("Drafts responds to same-window editor changes and disables composition if me
   fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(
-    screen.getByRole("heading", { name: "Draft · Unavailable conversation" }),
+    screen.getByRole("heading", { name: "Unavailable conversation" }),
   ).toBeInTheDocument();
   expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
     text: "Unsent message",
@@ -571,7 +604,7 @@ it("a failed confirmed draft deletion keeps the original saved text and remains 
   writeView(h.owner.session.scope, key, "Do not discard me");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -599,7 +632,7 @@ it("a selected DM draft reads only its real window and preserves its scoped comp
   writeView(h.owner.session.scope, "draft:room", "Channel draft body");
   render(h.view);
   await screen.findByText("A direct reply");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   expect(h.owner.session.channels.window("room").status).toBe("idle");
   expect(h.owner.session.channels.window("dm-room").status).toBe("idle");
   fireEvent.click(screen.getByRole("button", { name: "Open draft for Alice" }));
@@ -641,7 +674,7 @@ it("a selected draft edits through the shared scoped composer without navigating
   writeView(h.owner.session.scope, key, "First draft");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -657,7 +690,7 @@ it("a selected draft edits through the shared scoped composer without navigating
   expect(h.journal()?.state.frontiers).toEqual({});
 });
 
-it("DM draft headings use exact roster participants and recover as profile evidence arrives", async () => {
+it("DM draft composer labels use exact roster participants and recover as profiles arrive", async () => {
   const h = fixture({ withDm: true, holdProfiles: true, withWriter: true });
   const key = "draft:dm-room";
   writeView(h.owner.session.scope, key, {
@@ -666,7 +699,7 @@ it("DM draft headings use exact roster participants and recover as profile evide
   });
   render(h.view);
   await screen.findByText("A direct reply");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const detail = () => screen.getByRole("region", { name: "Draft detail" });
   const row = screen.getByRole("list", { name: "Drafts" });
   expect(row).toHaveTextContent("DM");
@@ -674,7 +707,7 @@ it("DM draft headings use exact roster participants and recover as profile evide
     within(row).getByRole("button", { name: /^Open draft for / }),
   );
   expect(
-    within(detail()).getByRole("heading", { name: /Draft · DM to npub/ }),
+    within(detail()).getByRole("heading", { name: "Direct message" }),
   ).toBeInTheDocument();
   expect(
     within(detail()).getByRole("textbox", { name: /Message DM with npub/ }),
@@ -683,7 +716,9 @@ it("DM draft headings use exact roster participants and recover as profile evide
     await act(async () => h.releaseProfiles());
     await waitFor(() =>
       expect(
-        within(detail()).getByRole("heading", { name: "Draft · DM to Alice" }),
+        within(detail()).getByRole("textbox", {
+          name: "Message DM with Alice",
+        }),
       ).toBeInTheDocument(),
     );
     expect(h.journal()?.state.frontiers).toEqual({});
@@ -706,7 +741,7 @@ it("holds selected history, surfaces failure, and retries to a genuinely empty c
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const release = h.holdHistory("dm-room");
   h.failHistory("dm-room");
   try {
@@ -747,7 +782,7 @@ it("retargets a held DM history without leaking the old context or draft and sen
   writeView(h.owner.session.scope, "draft:room", "Send this channel draft");
   render(h.view);
   await screen.findByText("A direct reply");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const release = h.holdHistory("dm-room");
   try {
     fireEvent.click(
@@ -797,7 +832,7 @@ it("renders an exact draft thread's real root and replies with one composer and 
   writeView(h.owner.session.scope, key, "Thread draft to send");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const release = h.holdHistory("room");
   try {
     fireEvent.click(
@@ -841,7 +876,7 @@ it("keeps the scoped draft but removes its thread composer and history when the 
   writeView(h.owner.session.scope, key, "Do not retarget this reply");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -866,7 +901,7 @@ it("retries thread history failure without another composer and never rebinds a 
   writeView(h.owner.session.scope, key, "Retry this thread draft");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   h.failHistory("room");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
@@ -884,7 +919,7 @@ it("retries thread history failure without another composer and never rebinds a 
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
   );
   expect(composer).toHaveValue("Retry this thread draft");
-  fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
   // A saved reply ID cannot silently resolve to another root-keyed draft.
   act(() => {
     writeView(h.owner.session.scope, key, "");
@@ -912,7 +947,7 @@ it("sends a DM draft only to its restored destination through the session outbox
   writeView(h.owner.session.scope, "draft:dm-room", "Only this DM");
   render(h.view);
   await screen.findByText("A direct reply");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(screen.getByRole("button", { name: "Open draft for Alice" }));
   const detail = screen.getByRole("region", { name: "Draft detail" });
   expect(
@@ -935,7 +970,7 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   });
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -964,18 +999,46 @@ it("hands keyboard focus into draft deletion and back on cancel without changing
   render(h.view);
   await screen.findByText("Please review this");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   await user.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
   const trigger = screen.getByRole("button", { name: "Delete draft…" });
   trigger.focus();
   await user.keyboard("{Enter}");
-  expect(screen.getByRole("button", { name: "Delete draft" })).toHaveFocus();
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete draft?",
+  });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
+  expect(dialog).toHaveAccessibleDescription(
+    "Delete this saved draft and its attachments on this device? This cannot be undone.",
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Delete draft" }),
+    ).toHaveFocus(),
+  );
   await user.tab();
-  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await user.keyboard("{Enter}");
-  expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveFocus();
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.getByRole("region", { name: "Draft detail" })).toBeVisible();
+  expect(readView(h.owner.session.scope, "draft:room", "")).toBe(
+    "Keep this draft",
+  );
+  await user.keyboard("{Enter}");
+  const reopened = await screen.findByRole("alertdialog", {
+    name: "Delete draft?",
+  });
+  await waitFor(() =>
+    expect(
+      within(reopened).getByRole("button", { name: "Delete draft" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Draft detail" })).toBeVisible();
   expect(readView(h.owner.session.scope, "draft:room", "")).toBe(
     "Keep this draft",
   );
@@ -1018,7 +1081,7 @@ it("Delete draft clears exact ready attachments but preserves sibling channel an
   });
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -1055,11 +1118,14 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
   act(() => files.result.current.store.add([new File(["keep"], "keep.txt")]));
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
   fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Delete draft" })).toHaveFocus(),
+  );
   const denied = vi
     .spyOn(Storage.prototype, "removeItem")
     .mockImplementation(() => {
@@ -1068,7 +1134,7 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
   try {
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
     expect(
-      screen.getByRole("region", { name: "Draft detail" }),
+      screen.getByRole("alertdialog", { name: "Delete draft?" }),
     ).toHaveTextContent("disk full");
     expect(readView(h.owner.session.scope, key, "")).toBe("Keep this body");
     expect(files.result.current.items).toHaveLength(1);
@@ -1090,7 +1156,7 @@ it.each([false, true])(
     writeView(h.owner.session.scope, key, "Accepted body");
     render(h.view);
     await screen.findByText("Please review this");
-    fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+    await chooseFilter("Drafts");
     fireEvent.click(
       screen.getByRole("button", { name: "Open draft for #Design" }),
     );
@@ -1114,7 +1180,7 @@ it.each([false, true])(
       ).toBeDisabled();
       fireEvent.click(
         screen.getByRole("button", {
-          name: thread ? "Close thread" : "Close detail",
+          name: "Close detail",
         }),
       );
       fireEvent.click(
@@ -1161,7 +1227,7 @@ it("reloads a clean selected editor with the row and requires a dirty conflict c
   writeView(scope, key, "Original body");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const row = screen.getByRole("button", { name: "Open draft for #Design" });
   fireEvent.click(row);
   const input = screen.getByRole(
@@ -1213,7 +1279,7 @@ it("keeps a valid rich editor mounted across 128 KiB and reopens the saved docum
   writeView(h.owner.session.scope, "draft:room", rich);
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -1242,7 +1308,7 @@ it("discloses records beyond the bounded preview without retiring a selected edi
   writeView(h.owner.session.scope, "draft:room", "Kept in the selected editor");
   render(h.view);
   await screen.findByText("Please review this");
-  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -1287,11 +1353,11 @@ it.each(["channel", "thread", "unavailable"])(
     render(h.view);
     await screen.findByText("Please review this");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Drafts" }));
+    await chooseFilter("Drafts");
     const row = screen.getByRole("button", { name: /^Open draft for/ });
     await user.click(row);
     const close = await screen.findByRole("button", {
-      name: kind === "thread" ? "Close thread" : "Close detail",
+      name: "Close detail",
     });
     close.focus();
     await user.keyboard("{Enter}");
@@ -1303,7 +1369,7 @@ it.each(["channel", "thread", "unavailable"])(
 );
 
 it.each(["delete", "send", "empty-close"])(
-  "restores focus to a remaining row then Back to Inbox on %s",
+  "restores focus to a remaining row then Inbox filters on %s",
   async (exit) => {
     const h = fixture({ withWriter: true, withDm: true });
     writeView(h.owner.session.scope, "draft:room", "First draft");
@@ -1311,7 +1377,7 @@ it.each(["delete", "send", "empty-close"])(
     render(h.view);
     await screen.findByText("Please review this");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Drafts" }));
+    await chooseFilter("Drafts");
     const remaining = screen.getByRole("button", {
       name: "Open draft for Alice",
     });
@@ -1338,7 +1404,7 @@ it.each(["delete", "send", "empty-close"])(
       expect(
         name === "Open draft for #Design"
           ? remaining
-          : screen.getByRole("button", { name: "Back to Inbox" }),
+          : screen.getByRole("button", { name: "Inbox filters" }),
       ).toHaveFocus();
     }
   },
@@ -1357,7 +1423,7 @@ it.each([false, true])(
     render(h.view);
     await screen.findByText("Please review this");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Drafts" }));
+    await chooseFilter("Drafts");
     const firstRow = screen.getByRole("button", {
       name: "Open draft for #Design",
     });
@@ -1406,7 +1472,7 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
   render(h.view);
   await screen.findByText("Please review this");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Drafts" }));
+  await chooseFilter("Drafts");
   const row = screen.getByRole("button", { name: "Open draft for Alice" });
   await user.click(row);
   await screen.findByRole("textbox");

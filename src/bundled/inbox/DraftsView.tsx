@@ -1,4 +1,5 @@
 import {
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -25,10 +26,17 @@ import {
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowSquareOutIcon,
+  ChatCircleIcon,
+  TrashIcon,
   HashIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
@@ -41,12 +49,14 @@ export function DraftsView({
   navigator,
   extensions,
   onEmptyRetire,
+  toolbar,
 }: {
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
   onEmptyRetire(): void;
+  toolbar: ReactNode;
 }) {
   const [revision, update] = useState(0);
   useEffect(
@@ -89,16 +99,11 @@ export function DraftsView({
   const channels = list.channels;
   const [limit, setLimit] = useState(50);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const closeControl = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected) closeControl.current?.focus({ preventScroll: true });
+  }, [selected]);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
-  const deleteConfirm = useRef<HTMLButtonElement>(null);
-  const deleteFocus = useRef<"confirm" | "trigger" | undefined>(undefined);
-  useLayoutEffect(() => {
-    const target = deleteFocus.current;
-    deleteFocus.current = undefined;
-    if (target === "confirm" && confirmDelete) deleteConfirm.current?.focus();
-    else if (target === "trigger" && !confirmDelete)
-      deleteTrigger.current?.focus();
-  }, [confirmDelete]);
   const [error, setError] = useState<string>();
   // Selection owns editor lifetime, not the bounded list summary's eligibility.
   const coordinates = selected && draftCoordinates(selected);
@@ -160,15 +165,11 @@ export function DraftsView({
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)
     : undefined;
-  const title = active
-    ? !activeChannel
-      ? "Draft · Unavailable conversation"
-      : activeChannel.channelType === "dm"
-        ? active.coordinates.threadRootId
-          ? `Draft · Reply in DM with ${destination(activeChannel)}`
-          : `Draft · DM to ${destination(activeChannel)}`
-        : `Draft · ${active.coordinates.threadRootId ? "Reply in" : "Message to"} ${destination(activeChannel)}`
-    : "";
+  const title = !activeChannel
+    ? "Unavailable conversation"
+    : activeChannel.channelType === "dm"
+      ? "Direct message"
+      : activeChannel.name;
   const open = async () => {
     if (!active) return;
     const channel = channelFor(active.coordinates.channelId);
@@ -197,11 +198,11 @@ export function DraftsView({
   };
   const originAction = (
     <IconButton
-      size="toolbar"
+      size="sm"
       aria-label="Open in origin"
       title="Open in origin"
       onClick={() => void open()}
-      icon={<ArrowSquareOutIcon size={18} aria-hidden="true" />}
+      icon={<ArrowSquareOutIcon size="1rem" aria-hidden="true" />}
     />
   );
   const retire = () => {
@@ -229,215 +230,236 @@ export function DraftsView({
     }
   };
   return (
-    <div
-      className={styles.draftWorkspace}
-      data-selected={!!active || undefined}
-    >
-      <div className={styles.draftList}>
-        {!entries.length && !saved.unavailable && !active && (
-          <p role="status" className={styles.notice}>
-            No drafts
-          </p>
-        )}
-        <ul className={styles.list} aria-label="Drafts">
-          {visible.map((entry) => {
-            const channel = channelFor(entry.coordinates.channelId);
-            const label = destination(channel);
-            const dm = channel?.channelType === "dm";
-            const first = dm ? channel.participants?.[0] : undefined;
-            const artwork = first && profiles.get(first)?.picture;
-            return (
-              <li
-                key={entry.key}
-                className={styles.row}
-                data-selected={selected === entry.key || undefined}
-              >
-                <NavigationItem
-                  ref={entry === visible[0] ? fallbackRow : undefined}
-                  aria-label={`Open draft for ${label}`}
-                  selected={selected === entry.key}
-                  icon={
-                    dm && first ? (
-                      <Avatar
-                        size="default"
-                        alt=""
-                        fallback={label}
-                        src={artwork ? session.media(artwork) : undefined}
-                        shape={
-                          profiles.get(first)?.isAgent ? "squircle" : "circle"
-                        }
-                      />
-                    ) : (
-                      <HashIcon size={20} aria-hidden="true" />
-                    )
-                  }
-                  label={
-                    <span className={styles.content}>
-                      <strong
-                        className={`text-label-sm text-standard ${styles.sender}`}
-                      >
-                        {label}
-                      </strong>
-                      <span className={styles.sourceLine}>
-                        <span
-                          className={`text-caption ${styles.source}`}
-                          data-inbox-source=""
-                        >
-                          <span className={styles.sourceName}>
-                            {entry.coordinates.threadRootId
-                              ? "Reply"
-                              : "Message"}{" "}
-                            · {dm ? "DM" : "Channel"}
-                          </span>
-                        </span>
-                      </span>
-                      <span
-                        className={`text-body text-subtle ${styles.preview}`}
-                      >
-                        {entry.draft.text}
-                      </span>
-                    </span>
-                  }
-                  onClick={(event) => {
-                    if (invoking.current?.key !== entry.key)
-                      invoking.current = {
-                        key: entry.key,
-                        row: event.currentTarget,
-                      };
-                    setSelected(entry.key);
-                    setConfirmDelete(false);
-                    setError(undefined);
-                  }}
-                />
-              </li>
-            );
-          })}
-        </ul>
-        {!!saved.unavailable && (
-          <p className={styles.notice} role="status">
-            {saved.unavailable} saved drafts exceed the preview size limit. They
-            remain in their conversations.
-          </p>
-        )}
-        {saved.limited && (
-          <p className={styles.notice} role="status">
-            Showing the first 500 saved drafts. Other drafts remain in their
-            conversations.
-          </p>
-        )}
-        {entries.length > limit && (
-          <div className={styles.notice}>
-            <Button onClick={() => setLimit((value) => value + 50)}>
-              Show more
-            </Button>
-          </div>
-        )}
-      </div>
-      {active && (
-        <section aria-label="Draft detail" className={styles.draftDetail}>
-          <div className={styles.draftHeading}>
-            <h3 className="text-label text-primary">{title}</h3>
-            {!activeChannel && (
-              <IconButton
-                size="toolbar"
-                aria-label="Close detail"
-                onClick={retire}
-                icon={<XIcon size={18} aria-hidden="true" />}
-              />
-            )}
-          </div>
-          {error && (
-            <p role="alert" className="text-body">
-              {error}
+    <div className={styles.workspace} data-selected={!!active || undefined}>
+      <div className={styles.listPane}>
+        {toolbar}
+        <div className={styles.draftList}>
+          {!entries.length && !saved.unavailable && !active && (
+            <p role="status" className={styles.notice}>
+              No drafts
             </p>
           )}
-          <div className={styles.draftEditor}>
-            {activeChannel ? (
-              active.coordinates.threadRootId ? (
-                <ThreadPanel
-                  key={active.key}
-                  session={session}
-                  scope={session.scope}
-                  extensions={extensions}
-                  channelId={activeChannel.id}
-                  channelName={activeChannel.name}
-                  messageId={active.coordinates.threadRootId}
-                  close={retire}
-                  requireReadyRoot
-                  onDraftSaved={retire}
-                  sessionConversation={activeChannel.channelType === "session"}
-                  headerActions={originAction}
-                  onOpenLink={() => false}
+          <ul className={styles.list} aria-label="Drafts">
+            {visible.map((entry) => {
+              const channel = channelFor(entry.coordinates.channelId);
+              const label = destination(channel);
+              const dm = channel?.channelType === "dm";
+              const first = dm ? channel.participants?.[0] : undefined;
+              const artwork = first && profiles.get(first)?.picture;
+              return (
+                <li
+                  key={entry.key}
+                  className={styles.row}
+                  data-selected={selected === entry.key || undefined}
+                >
+                  <NavigationItem
+                    ref={entry === visible[0] ? fallbackRow : undefined}
+                    aria-label={`Open draft for ${label}`}
+                    selected={selected === entry.key}
+                    icon={
+                      dm && first ? (
+                        <Avatar
+                          size="default"
+                          alt=""
+                          fallback={label}
+                          src={artwork ? session.media(artwork) : undefined}
+                          shape={
+                            profiles.get(first)?.isAgent ? "squircle" : "circle"
+                          }
+                        />
+                      ) : (
+                        <HashIcon size={20} aria-hidden="true" />
+                      )
+                    }
+                    label={
+                      <span className={styles.content}>
+                        <strong
+                          className={`text-label-sm text-standard ${styles.sender}`}
+                        >
+                          {label}
+                        </strong>
+                        <span className={styles.sourceLine}>
+                          <span
+                            className={`text-caption ${styles.source}`}
+                            data-inbox-source=""
+                          >
+                            <span className={styles.sourceName}>
+                              {entry.coordinates.threadRootId
+                                ? "Reply"
+                                : "Message"}{" "}
+                              · {dm ? "DM" : "Channel"}
+                            </span>
+                          </span>
+                        </span>
+                        <span
+                          className={`text-body text-subtle ${styles.preview}`}
+                        >
+                          {entry.draft.text}
+                        </span>
+                      </span>
+                    }
+                    onClick={(event) => {
+                      if (invoking.current?.key !== entry.key)
+                        invoking.current = {
+                          key: entry.key,
+                          row: event.currentTarget,
+                        };
+                      setSelected(entry.key);
+                      setConfirmDelete(false);
+                      setError(undefined);
+                    }}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+          {!!saved.unavailable && (
+            <p className={styles.notice} role="status">
+              {saved.unavailable} saved drafts exceed the preview size limit.
+              They remain in their conversations.
+            </p>
+          )}
+          {saved.limited && (
+            <p className={styles.notice} role="status">
+              Showing the first 500 saved drafts. Other drafts remain in their
+              conversations.
+            </p>
+          )}
+          {entries.length > limit && (
+            <div className={styles.notice}>
+              <Button onClick={() => setLimit((value) => value + 50)}>
+                Show more
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+      {active && (
+        <section
+          aria-label="Draft detail"
+          className={styles.detail}
+          onKeyDown={(event) => {
+            if (
+              event.key !== "Escape" ||
+              event.defaultPrevented ||
+              !event.currentTarget.contains(event.target as Node)
+            )
+              return;
+            event.stopPropagation();
+            retire();
+          }}
+        >
+          <PanelHeader
+            title={
+              <PanelHeaderLabel
+                title={title}
+                icon={
+                  activeChannel?.channelType === "dm" ? (
+                    <ChatCircleIcon size="1rem" />
+                  ) : (
+                    <HashIcon size="1rem" />
+                  )
+                }
+              />
+            }
+            actions={
+              <>
+                <IconButton
+                  size="sm"
+                  ref={deleteTrigger}
+                  aria-label="Delete draft…"
+                  title="Delete draft"
+                  aria-expanded={confirmDelete}
+                  onClick={() => setConfirmDelete(true)}
+                  icon={<TrashIcon size="1rem" />}
                 />
-              ) : (
-                <ChannelPreview
-                  key={active.key}
-                  session={session}
-                  extensions={extensions}
-                  channelId={activeChannel.id}
-                  channelName={
-                    activeChannel.channelType === "dm"
-                      ? `DM with ${destination(activeChannel)}`
-                      : activeChannel.name
-                  }
-                  draft
-                  actions={
-                    <>
-                      {originAction}
-                      <IconButton
-                        size="toolbar"
-                        aria-label="Close detail"
-                        onClick={retire}
-                        icon={<XIcon size={18} aria-hidden="true" />}
-                      />
-                    </>
-                  }
-                  onDraftSaved={retire}
+                {activeChannel && originAction}
+                <IconButton
+                  ref={closeControl}
+                  size="sm"
+                  aria-label="Close detail"
+                  onClick={retire}
+                  icon={<XIcon size="1rem" />}
                 />
-              )
-            ) : (
-              <p role="status" className="text-body text-subtle">
-                This conversation is unavailable. Your draft is unchanged.
+              </>
+            }
+          />
+          <div className={styles.detailBody}>
+            {error && !confirmDelete && (
+              <p role="alert" className="text-body">
+                {error}
               </p>
             )}
-          </div>
-          <div className={styles.draftActions}>
-            {!confirmDelete ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                ref={deleteTrigger}
-                onClick={() => {
-                  deleteFocus.current = "confirm";
-                  setConfirmDelete(true);
-                }}
+            <div className={styles.draftEditor}>
+              {activeChannel ? (
+                active.coordinates.threadRootId ? (
+                  <ThreadPanel
+                    key={active.key}
+                    session={session}
+                    scope={session.scope}
+                    extensions={extensions}
+                    channelId={activeChannel.id}
+                    channelName={activeChannel.name}
+                    messageId={active.coordinates.threadRootId}
+                    requireReadyRoot
+                    onDraftSaved={retire}
+                    sessionConversation={
+                      activeChannel.channelType === "session"
+                    }
+                    onOpenLink={() => false}
+                  />
+                ) : (
+                  <ChannelPreview
+                    key={active.key}
+                    session={session}
+                    extensions={extensions}
+                    channelId={activeChannel.id}
+                    channelName={
+                      activeChannel.channelType === "dm"
+                        ? `DM with ${destination(activeChannel)}`
+                        : activeChannel.name
+                    }
+                    draft
+                    onDraftSaved={retire}
+                  />
+                )
+              ) : (
+                <p role="status" className="text-body text-subtle">
+                  This conversation is unavailable. Your draft is unchanged.
+                </p>
+              )}
+            </div>
+            {confirmDelete && (
+              <AlertDialog
+                title="Delete draft?"
+                description="Delete this saved draft and its attachments on this device? This cannot be undone."
+                onClose={() => setConfirmDelete(false)}
+                // On deletion, retirement restores the surviving list control.
+                // On cancel, Base UI restores the still-mounted delete trigger.
+                finalFocus={() =>
+                  invoking.current === visit ? deleteTrigger.current : false
+                }
+                actions={
+                  <>
+                    <Button size="sm" variant="destructive" onClick={remove}>
+                      Delete draft
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setConfirmDelete(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                }
               >
-                Delete draft…
-              </Button>
-            ) : (
-              <>
-                <span className="text-body">
-                  Delete this saved draft on this device?
-                </span>
-                <Button
-                  ref={deleteConfirm}
-                  size="sm"
-                  variant="destructive"
-                  onClick={remove}
-                >
-                  Delete draft
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    deleteFocus.current = "trigger";
-                    setConfirmDelete(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-              </>
+                {error && (
+                  <p role="alert" className="text-body text-danger">
+                    {error}
+                  </p>
+                )}
+              </AlertDialog>
             )}
           </div>
         </section>

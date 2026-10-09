@@ -378,6 +378,11 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+IconButton's `bare` variant is for toggles whose glyph supplies the state:
+no resting, hover, pressed or selected background. The small control keeps its
+32px hit area with 20px artwork. The caller supplies outline/filled artwork,
+aria-pressed and the accessible name; focus behavior remains unchanged.
+
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
@@ -475,8 +480,12 @@ short forms, and Select/Combobox for form values. Both anchored surfaces reuse
 Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
 keyboard navigation, positioning and dismissal.
 
-Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
-edge; the pointer/keyboard highlight is independent of that persistent selection.
+Menu group labels belong inside MenuGroup. `emphasis="quiet"` uses metadata
+color for lower-emphasis group labels. Radio items may use `selection="highlight"`
+for a single-choice view: the checked item has a persistent selection fill and no
+check icon. Default radio and checkbox items retain their trailing checks.
+Trailing selection checks and persistent selection fills remain independent
+of the pointer/keyboard highlight.
 Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
 for destructive actions and MenuNote for explanatory or status copy outside the
 keyboard item list. Long lists scroll inside the popup.

@@ -119,6 +119,20 @@ import TablerDropboxLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandD
 export const DropboxLogoIcon = defineIcon("tabler", TablerDropboxLogoIcon);
 import TablerEnvelopeIcon from "@tabler/icons-react/dist/esm/icons/IconMail.mjs";
 export const EnvelopeIcon = defineIcon("tabler", TablerEnvelopeIcon);
+import TablerNotificationIcon from "@tabler/icons-react/dist/esm/icons/IconNotification.mjs";
+export const NotificationIcon = defineIcon("tabler", TablerNotificationIcon);
+import { NotificationFilledArtwork } from "./NotificationFilled";
+export const NotificationFilledIcon = defineIcon(
+  "custom",
+  NotificationFilledArtwork,
+  {
+    meaning: "Unread-only filtering enabled",
+    category: "State indicator",
+    provenance:
+      "Designer-requested filled counterpart to the MIT-licensed Tabler Notification icon, preserving its 24px geometry.",
+    intendedSizes: [{ width: 20, height: 20 }],
+  },
+);
 import TablerEnvelopeOpenIcon from "@tabler/icons-react/dist/esm/icons/IconMailOpened.mjs";
 export const EnvelopeOpenIcon = defineIcon("tabler", TablerEnvelopeOpenIcon);
 import TablerEyeIcon from "@tabler/icons-react/dist/esm/icons/IconEye.mjs";

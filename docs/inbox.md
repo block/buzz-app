@@ -262,3 +262,56 @@ Independent changed-path re-review found no remaining blockers in the repairs.
 These are local fixture/service results, not checks on pushed PR heads or a future
 merged tree. Human, live-relay and attended native/packaged acceptance remain open;
 no full scan or shipping-readiness attestation is implied.
+
+
+## Visual-only pass (#770)
+
+The 2026-10-09 narrowing starts from current main's already-landed Inbox and
+Drafts. It replaces the two filter selects and separate Drafts button with one
+menu, adds the outline/filled unread toggle, places unread dots inside selected
+rows, and uses adjacent list/detail regions with one shared header. Narrow layouts
+replace the list with the detail. Draft deletion uses the existing shared centered
+AlertDialog, keeping text-before-attachment cleanup and consent unchanged.
+
+All matching **already-loaded** Inbox rows render without Show more; this removes
+local presentation pagination, not the shared evidence budget. Optional author,
+workflow-owner and DM-participant enrichment stays bounded to the initial 50
+candidates as on main. Uncached names beyond that demand may keep key fallbacks.
+The shared snapshots still supply cached names and classification; there is no new
+profile-demand loop, row cache or history query.
+
+Main retains ownership of loading, representative-based People/Agents filtering,
+grouped Mentions, selected-read-row visibility, read/retry semantics, workflow
+attribution, thread follows, and Drafts persistence. This PR changes none of the
+relay/session/unread/store implementations. The former broader history/candidate/
+exact-mention work is excluded, not asserted to have landed or been fixed here.
+
+### Separate engineering follow-ups
+
+Reliable older/agent conversation loading remains outside this visual PR. Trace
+whether missing conversations were fetched, satisfy participation evidence, and
+match the existing sender filter. Product and engineering should agree separately
+on mixed conversations, unknown senders, mention policy and filter persistence.
+Coordinate with the independent Inbox archive/refresh/development PRs rather than
+folding their behavior into visual polish. No progressive relay loading is claimed.
+
+### Coverage and acceptance
+
+Keep the existing mounted Inbox/Drafts and five browser files, updating only
+control/header/modal/layout assertions and the approved local row-cap removal.
+No browser case is added or removed; main's data, read, retry, persistence, exact
+reader, portal and focus assertions remain. Real-browser geometry, pointer states,
+modal focus and responsive behavior stay in Chromium and WebKit, not inferred
+from jsdom. Earlier green results and visual approval on the broader branch do
+not validate this narrowed snapshot; human recheck and hosted CI remain required.
+
+
+On the narrowed tree based on `b61b39ab`, TypeScript, all 112 existing colocated
+Inbox/Drafts tests, 132 design tests, design typecheck/guards/builds, the frontend
+build and all 32 existing Inbox browser executions passed. The initial browser
+run's two failures were stale child Close-thread selectors; the unchanged Retry
+focus assertions passed in both engines after targeting the persistent parent
+Close-detail control. No assertion was relaxed or browser case removed. Source
+review found no scope/correctness blocker (9/10). Light/dark wide/intermediate/
+narrow fixtures were inspected. These are local synthetic checks, not native or
+live-loading acceptance; this narrowed preview still needs human confirmation.

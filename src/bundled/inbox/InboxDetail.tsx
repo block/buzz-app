@@ -1,5 +1,6 @@
 import { ConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -40,7 +41,9 @@ export function InboxDetail({
   channelName,
   previewIncomplete,
   onBack,
+  resizeHandle,
 }: {
+  resizeHandle?: ReactNode;
   item: InboxItem;
   target: { channelId: string; messageId: string; rootId?: string };
   session: RelaySession;
@@ -186,6 +189,7 @@ export function InboxDetail({
         }
       }}
     >
+      {resizeHandle}
       <PanelHeader
         title={
           <PanelHeaderLabel

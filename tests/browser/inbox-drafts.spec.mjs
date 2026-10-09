@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
+import { resizeInboxDetail } from "./inbox-resize.mjs";
 
 test.use({
   productionBroker: true,
@@ -18,6 +19,9 @@ test("Draft and conversation previews share their plain layout and show real sel
   page,
   app,
 }, testInfo) => {
+  // Keep the retention comparison at the same available width; narrower
+  // containers legitimately clamp the saved preference.
+  await page.setViewportSize({ width: 1280, height: 900 });
   // A bounded, scrollable DM tail exercises bottom positioning. These rows are
   // signed upstream fixture data, not a client cache or live-account mutation.
   for (let index = 0; index < 16; index++)
@@ -88,6 +92,8 @@ test("Draft and conversation previews share their plain layout and show real sel
   await page.evaluate((mode) => {
     document.documentElement.dataset.colorMode = mode;
   }, mode);
+  const inboxDetail = inbox.getByRole("region", { name: "Inbox detail" });
+  const resizedWidth = await resizeInboxDetail(page, inboxDetail);
   const expectedStyle = await styleOf(reference);
   expect(expectedStyle).toMatchObject({
     border: "0px",
@@ -221,6 +227,18 @@ test("Draft and conversation previews share their plain layout and show real sel
   for (const width of [1280, 760, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await selectDraft("Alice Fixture");
+    const handle = detail.getByRole("separator", {
+      name: "Resize main and secondary panels",
+    });
+    if (width === 1280) {
+      await expect
+        .poll(async () => (await detail.boundingBox()).width)
+        .toBeCloseTo(resizedWidth, 0);
+      await handle.dblclick();
+      await resizeInboxDetail(page, detail);
+    } else {
+      await expect(handle).not.toBeVisible();
+    }
     const dm = detail.getByRole("region", { name: "Conversation preview" });
     const history = dm.getByRole("region", { name: "Channel message history" });
     await detail.scrollIntoViewIfNeeded();

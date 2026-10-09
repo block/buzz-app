@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
+import { resizeInboxDetail } from "./inbox-resize.mjs";
 
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
@@ -308,6 +309,14 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await page.keyboard.press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   await expect(detail).toBeVisible();
+  const resizedWidth = await resizeInboxDetail(page, detail);
+  await detail
+    .getByRole("button", { name: "Close detail", exact: true })
+    .click();
+  await mentionRow.getByRole("button", { name: /^Open / }).click();
+  await expect
+    .poll(async () => (await detail.boundingBox()).width)
+    .toBeCloseTo(resizedWidth, 0);
   const thread = detail.getByRole("region", {
     name: "Thread messages",
     exact: true,
@@ -380,6 +389,11 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       inbox.getByRole("list", { name: "Inbox conversations" }),
     ).not.toBeVisible();
     await expect(filter).not.toBeVisible();
+    await expect(
+      detail.getByRole("separator", {
+        name: "Resize main and secondary panels",
+      }),
+    ).not.toBeVisible();
     const editor = detail.getByRole("textbox", { name: "Reply to thread" });
     const close = detail.getByRole("button", { name: "Close detail" });
     const send = detail.getByRole("button", { name: "Send message" });

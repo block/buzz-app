@@ -28,7 +28,11 @@
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(17rem, 1fr) minmax(0, 2fr);
+  /* Match usePanelSplit's 320px list reserve and 316px detail minimum. */
+  grid-template-columns: minmax(320px, 1fr) minmax(
+      316px,
+      var(--secondary-panel-width, 2fr)
+    );
   flex: 1;
   min-height: 0;
 }
@@ -48,6 +52,7 @@
 }
 
 .detail {
+  position: relative;
   border-inline-start: 1px solid var(--border-standard);
 }
 
@@ -110,6 +115,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .workspace[data-selected] > .listPane {
+    display: none;
+  }
+  .detail > [data-panel-resize] {
     display: none;
   }
   .workspace[data-selected] > .detail {

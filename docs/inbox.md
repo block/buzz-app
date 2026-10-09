@@ -270,7 +270,12 @@ The 2026-10-09 narrowing starts from current main's already-landed Inbox and
 Drafts. It replaces the two filter selects and separate Drafts button with one
 menu, adds the outline/filled unread toggle, places unread dots inside selected
 rows, and uses adjacent list/detail regions with one shared header. Narrow layouts
-replace the list with the detail. Draft deletion uses the existing shared centered
+replace the list with the detail. The list/detail divider reuses the app-owned
+`usePanelSplit` and `ResizeHandle` for dragging, arrow keys (Shift for larger
+steps), Home/End and double-click reset. The chosen width stays in memory while
+closing/reopening details and switching to Drafts, clamped to the available space;
+it is not persisted across app restarts. Narrow detail-only layouts hide the
+divider. Draft deletion uses the existing shared centered
 AlertDialog, keeping text-before-attachment cleanup and consent unchanged.
 
 All matching **already-loaded** Inbox rows render without Show more; this removes
@@ -298,7 +303,8 @@ folding their behavior into visual polish. No progressive relay loading is claim
 ### Coverage and acceptance
 
 Keep the existing mounted Inbox/Drafts and five browser files, updating only
-control/header/modal/layout assertions and the approved local row-cap removal.
+control/header/modal/layout assertions, shared resizing and the approved local
+row-cap removal.
 No browser case is added or removed; main's data, read, retry, persistence, exact
 reader, portal and focus assertions remain. Real-browser geometry, pointer states,
 modal focus and responsive behavior stay in Chromium and WebKit, not inferred
@@ -315,3 +321,9 @@ Close-detail control. No assertion was relaxed or browser case removed. Source
 review found no scope/correctness blocker (9/10). Light/dark wide/intermediate/
 narrow fixtures were inspected. These are local synthetic checks, not native or
 live-loading acceptance; this narrowed preview still needs human confirmation.
+
+The follow-up resize addition changes only Inbox composition and layout, reusing
+the existing panel owner without modifying it. Browser-only checks exercise drag,
+keyboard bounds/reset, retained width and narrow hiding in the existing journeys.
+Its final rebased check and human confirmation are tracked separately from the
+earlier narrowed results above.

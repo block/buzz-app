@@ -14,6 +14,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import { InboxDetail } from "./InboxDetail";
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { DraftsView } from "./DraftsView";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
@@ -131,6 +132,7 @@ export function InboxView({
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
 }) {
+  const split = usePanelSplit();
   const previewId = useId();
   const list = useChannelList(session.channels);
   const inbox = useSyncExternalStore(
@@ -527,7 +529,12 @@ export function InboxView({
     </header>
   );
   return (
-    <div data-buzz-ui="" className={styles.page}>
+    <div
+      ref={split.ref}
+      style={split.style}
+      data-buzz-ui=""
+      className={styles.page}
+    >
       {!drafts && failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
@@ -539,6 +546,7 @@ export function InboxView({
       {drafts ? (
         <DraftsView
           toolbar={toolbar}
+          resizeHandle={split.handle}
           onEmptyRetire={() => fallbackControl.current?.focus()}
           session={session}
           scope={scope}
@@ -793,6 +801,7 @@ export function InboxView({
           {selected && selectedTarget && (
             <InboxDetail
               key={`${selectedTarget.channelId}:${selectedTarget.messageId}`}
+              resizeHandle={split.handle}
               item={selected}
               target={selectedTarget}
               session={session}

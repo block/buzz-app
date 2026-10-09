@@ -50,6 +50,7 @@ export function DraftsView({
   extensions,
   onEmptyRetire,
   toolbar,
+  resizeHandle,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -57,6 +58,7 @@ export function DraftsView({
   extensions?: ConversationExtensions | undefined;
   onEmptyRetire(): void;
   toolbar: ReactNode;
+  resizeHandle?: ReactNode;
 }) {
   const [revision, update] = useState(0);
   useEffect(
@@ -349,6 +351,7 @@ export function DraftsView({
             retire();
           }}
         >
+          {resizeHandle}
           <PanelHeader
             title={
               <PanelHeaderLabel

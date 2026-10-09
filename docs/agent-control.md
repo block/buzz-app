@@ -959,8 +959,9 @@ live handover remains a separate step below.
 2. Review prompt, workspace, harness/provider/model and write-only overrides.
    Browse models, save explicitly, and verify settings after reopening.
 3. Before Start or an outgoing mention, stop old Buzz **and its listeners** with
-   the human's agreement. Native refuses detected legacy paths; it never kills
-   them. Cooperating new-app profiles also hold an exact-key/community OS lock.
+   the human's agreement. Native refuses while it detects old Buzz running (by
+   macOS bundle identifier, or a `buzz-desktop` process); it never kills them.
+   Cooperating new-app profiles also hold an exact-key/community OS lock.
    Neither protects against relaunching unmodified old Buzz: no coexistence claim.
 4. Observe a real channel/thread reply, idle wake, Stop cancellation and Quit
    cleanup in the attended workflow. A process-running badge is not relay evidence.

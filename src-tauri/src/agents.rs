@@ -1609,6 +1609,9 @@ pub(crate) mod tests;
 
 // Advisory handover guard only: unmodified old Buzz does not share our lock and
 // can be launched afterward. Never inspect process environments or terminate it.
+const LEGACY_RUNNING: &str =
+    "Stop old Buzz before starting agents here; simultaneous ownership is unsupported";
+// An unbundled old-Buzz dev build has no bundle identifier, only its binary name.
 fn refuse_legacy_listing(listing: &str) -> Result<(), String> {
     for line in listing.lines() {
         let executable = line
@@ -1620,20 +1623,33 @@ fn refuse_legacy_listing(listing: &str) -> Result<(), String> {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        // Our own bundle is also `Buzz.app`; only its `Buzz` binary lives there.
-        let legacy_bundle = name != "Buzz"
-            && (executable.contains("/Buzz.app/Contents/MacOS/")
-                || executable.contains("/Buzz Dev.app/Contents/MacOS/"));
-        if name == "buzz-desktop" || legacy_bundle {
-            return Err(
-                "Stop old Buzz before starting agents here; simultaneous ownership is unsupported"
-                    .into(),
-            );
+        if name == "buzz-desktop" {
+            return Err(LEGACY_RUNNING.into());
         }
     }
     Ok(())
 }
+// Bundled old Buzz, matched by LaunchServices identity rather than bundle path:
+// our bundle is also `Buzz.app`. Relies on our identifier staying distinct.
+#[cfg(target_os = "macos")]
+fn legacy_bundle_running() -> bool {
+    use objc2_app_kit::NSRunningApplication;
+    objc2::rc::autoreleasepool(|_| {
+        [LegacySource::Installed, LegacySource::Development]
+            .into_iter()
+            .any(|source| {
+                let id = objc2_foundation::NSString::from_str(source.bundle_identifier());
+                NSRunningApplication::runningApplicationsWithBundleIdentifier(&id)
+                    .iter()
+                    .any(|app| !app.isTerminated())
+            })
+    })
+}
 fn refuse_legacy() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if legacy_bundle_running() {
+        return Err(LEGACY_RUNNING.into());
+    }
     let output = std::process::Command::new("/bin/ps")
         .args(["-axo", "pid=,comm="])
         .env_clear()

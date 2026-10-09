@@ -195,9 +195,9 @@ Tests must control the ordering they assert, not depend on runner speed.
 
 Every PR commit needs a `Signed-off-by` (the hosted **DCO Check** fails without
 one, and hooks do not add it): commit with `git commit --signoff`, which signs
-off as your effective git identity. Don't change that identity. Credit the other
-party with a `Co-authored-by` trailer: an agent committing as its human credits
-itself, and an agent committing as itself credits its human.
+off as your effective git identity. Credit the other party with a
+`Co-authored-by` trailer: an agent committing as its human credits itself, and
+an agent committing as itself credits its human.
 
 ## Before opening a PR
 

@@ -92,15 +92,14 @@ export function MessageLink({
   const destination = parsed?.format === "legacy" ? parsed : undefined;
   // Channel-only links name a channel the reader may not have joined. A
   // composer decoration is the writer's own draft: it never looks one up.
-  const reference = useChannelReference(
-    session?.channels,
+  const referenced =
     interactive &&
-      destination &&
-      !destination.messageId &&
-      !destination.threadRootId
+    destination &&
+    !destination.messageId &&
+    !destination.threadRootId
       ? destination.channelId
-      : undefined,
-  );
+      : undefined;
+  const reference = useChannelReference(session?.channels, referenced);
   // DMs and sessions keep their existing presentation.
   const named =
     reference.state === "found" &&
@@ -321,17 +320,24 @@ export function MessageLink({
                 body: <ChannelLinkPreview channel={named} />,
               }
             : undefined;
-    return card ? (
+    // A channel-only link keeps one root while its name resolves, so a link
+    // focused during the lookup keeps its focus. Its card opens once found.
+    const root =
+      card ??
+      (active && interactive && session && referenced
+        ? { label: "Channel preview", body: null }
+        : undefined);
+    return root ? (
       <PreviewCard
         trigger={element}
         link={<a href={url} {...navigation} />}
-        open={previewOpen}
+        open={previewOpen && !!card}
         onOpenChange={setPreviewOpen}
         side="top"
         className={styles.popup ?? ""}
-        aria-label={card.label}
+        aria-label={root.label}
       >
-        {card.body}
+        {root.body}
       </PreviewCard>
     ) : (
       element

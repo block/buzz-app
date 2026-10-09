@@ -1,4 +1,7 @@
+// @vitest-environment jsdom
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useChannelReference } from "../conversation/channel-reference";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import { keypair, metadata, roster, scriptedTransport } from "./testing";
@@ -7,8 +10,15 @@ const relay = keypair(),
   viewer = keypair();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
+  cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
 });
+/** Settles store callbacks, with or without fake timers. */
+const flush = () =>
+  vi.isFakeTimers()
+    ? act(() => vi.advanceTimersByTimeAsync(0))
+    : new Promise((resolve) => setTimeout(resolve, 0));
 const MINE = "20000000-0000-4000-8000-000000000001";
 const OPEN = "20000000-0000-4000-8000-000000000002";
 const SECRET = "20000000-0000-4000-8000-000000000003";
@@ -67,7 +77,12 @@ async function setup() {
       if (events instanceof Error) request.fail(events);
       else request.respond(events);
       await vi.waitFor(() => expect(wire.pending).toHaveLength(0));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flush();
+    },
+    /** Moves the store clock and its timers together. */
+    async advance(ms: number) {
+      clock += ms;
+      await act(() => vi.advanceTimersByTimeAsync(ms));
     },
   };
 }
@@ -205,4 +220,38 @@ it("describes a joined channel restored from cache as joined", async () => {
     joined: true,
     members: 1,
   });
+});
+
+it("retries a mounted link after its failure backoff, then stops once unmounted", async () => {
+  const h = await setup();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const link = renderHook(() => useChannelReference(h.channels, SECRET));
+  await h.lookup([SECRET], new Error("503"));
+  expect(link.result.current).toEqual({ state: "unknown" });
+  await h.advance(29_999);
+  expect(h.pending).toHaveLength(0);
+  // Nothing re-renders the link: the store's own wake-up retries it.
+  await h.advance(1);
+  await h.lookup([SECRET], []);
+  expect(link.result.current).toEqual({ state: "withheld" });
+  link.unmount();
+  await h.advance(5 * 60_000);
+  await flush();
+  expect(h.pending).toHaveLength(0);
+});
+
+it("rechecks a mounted withheld link after five minutes", async () => {
+  const h = await setup();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const link = renderHook(() => useChannelReference(h.channels, SECRET));
+  await h.lookup([SECRET], []);
+  expect(link.result.current).toEqual({ state: "withheld" });
+  await h.advance(5 * 60_000 - 1);
+  expect(h.pending).toHaveLength(0);
+  await h.advance(1);
+  // The answer stays on screen while it is rechecked.
+  expect(link.result.current).toEqual({ state: "withheld" });
+  // The channel has since become public.
+  await h.lookup([SECRET], [open(SECRET, "launch")]);
+  expect(link.result.current).toMatchObject({ state: "found", name: "launch" });
 });

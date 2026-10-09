@@ -337,8 +337,10 @@ that channel. `channels.describe(id)` answers from local evidence and never
 reads: `found` with the name and flags, `withheld`, or `unknown`. `joined`
 comes from the viewer in the roster, so a channel restored from cache counts.
 A public channel the viewer left is `found` from its signed open metadata; that
-names it but does not restore member reads. `channels.refer(id)` asks for a
-background lookup once the list is ready. The store coalesces lookups into
+names it but does not restore member reads. `channels.refer(id)` demands a
+background lookup once the list is ready, until the returned release; a
+mounted link holds that demand, and the store rechecks demanded links itself
+when an answer expires or a backoff ends. The store coalesces lookups into
 exact `resolve` reads of at most 128 channels. A completed read that admits
 nothing is `withheld`: the relay hides a private channel's metadata from
 non-members, so private, deleted and invalid channels look the same. A

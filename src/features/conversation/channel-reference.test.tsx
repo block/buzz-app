@@ -171,3 +171,26 @@ it("asks only once the list is ready, and never from a composer decoration", asy
   expect(screen.getByText("#draft")).toBeTruthy();
   expect(screen.queryByText("Private channel")).toBeNull();
 });
+
+it("keeps a link focused while its name resolves, then opens its card", async () => {
+  vi.useFakeTimers();
+  HTMLElement.prototype.showPopover = function () {
+    this.style.display = "block";
+  };
+  const t = fixture();
+  render(link(t.session, "open", null));
+  await act(async () => {});
+  const focused = screen.getByRole("link");
+  act(() => focused.focus());
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(screen.queryByLabelText("Channel preview")).toBeNull();
+  t.answer("open", crew);
+  // The same node, still focused, now named. (The open card is a link too.)
+  expect(screen.getAllByRole("link")[0]).toBe(focused);
+  expect(document.activeElement).toBe(focused);
+  expect(focused.textContent).toBe("#crew-open");
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(screen.getByLabelText("Channel preview").textContent).toContain(
+    "crew-open",
+  );
+});

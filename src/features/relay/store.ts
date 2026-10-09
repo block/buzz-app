@@ -1702,7 +1702,9 @@ export function createChannelStore(
     }
   }
   /** Channel-link lookups. `withheld` answers are kept for a while (and
-   * shown while rechecked); failures back off. Both reset with the epoch. */
+   * shown while rechecked); failures back off. Both reset with the epoch.
+   * `demand` counts mounted links per channel; a timer rechecks them when
+   * their answer expires or their backoff ends. */
   const references = {
     generation: -1,
     withheld: new Map<string, number>(),
@@ -1711,6 +1713,10 @@ export function createChannelStore(
     pending: new Set<string>(),
     scheduled: false,
   };
+  const demand = new Map<string, number>();
+  let referenceWake:
+    | { at: number; timer: ReturnType<typeof setTimeout> }
+    | undefined;
   function currentReferences() {
     if (references.generation !== epoch) {
       references.generation = epoch;
@@ -1759,17 +1765,46 @@ export function createChannelStore(
       ? { state: "withheld" }
       : { state: "unknown" };
   }
-  function referChannel(id: string) {
+  /** When a demanded reference may be looked up again: its withheld answer
+   * expires, or its backoff ends. */
+  function referenceDue(id: string) {
+    const state = currentReferences();
+    const checked = state.withheld.get(id);
+    return Math.max(
+      checked === undefined ? 0 : checked + REFERENCE_TTL,
+      state.retryAt.get(id) ?? 0,
+    );
+  }
+  /** One timer for the earliest demanded recheck. */
+  function wakeReferences() {
+    if (disposed) return;
+    let at = Number.POSITIVE_INFINITY;
+    for (const id of demand.keys()) {
+      const due = referenceDue(id);
+      if (due > now()) at = Math.min(at, due);
+    }
+    if (referenceWake && referenceWake.at <= at) return;
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
+    if (at === Number.POSITIVE_INFINITY) return;
+    referenceWake = {
+      at,
+      timer: setTimeout(() => {
+        referenceWake = undefined;
+        for (const id of demand.keys()) lookUpReference(id);
+        wakeReferences();
+      }, at - now()),
+    };
+  }
+  function lookUpReference(id: string) {
     if (disposed || !transport || !discovery || options.cachedOnly) return;
     if (list.status !== "ready" || describeReference(id).state === "found")
       return;
     const state = currentReferences();
-    const checked = state.withheld.get(id);
     if (
       state.queue.has(id) ||
       state.pending.has(id) ||
-      (checked !== undefined && now() - checked < REFERENCE_TTL) ||
-      now() < (state.retryAt.get(id) ?? 0)
+      now() < referenceDue(id)
     )
       return;
     state.queue.add(id);
@@ -1795,6 +1830,7 @@ export function createChannelStore(
               else state.withheld.set(id, now());
             }
             setList(list, true);
+            wakeReferences();
           },
           (error: unknown) => {
             if (state.generation !== epoch) return;
@@ -1806,10 +1842,23 @@ export function createChannelStore(
               state.pending.delete(id);
               state.retryAt.set(id, now() + wait);
             }
+            wakeReferences();
           },
         );
       }
     });
+  }
+  function referChannel(id: string) {
+    demand.set(id, (demand.get(id) ?? 0) + 1);
+    lookUpReference(id);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = (demand.get(id) ?? 1) - 1;
+      if (count) demand.set(id, count);
+      else demand.delete(id);
+    };
   }
   function restore() {
     if (!prepared || !persistence?.readStartup) return Promise.resolve();
@@ -2266,6 +2315,8 @@ export function createChannelStore(
   }
   function dispose() {
     disposed = true;
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
     unsubscribeLocal?.();
     unsubscribeProfiles();
     epoch++;

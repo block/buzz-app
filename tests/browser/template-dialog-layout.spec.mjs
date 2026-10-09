@@ -78,10 +78,10 @@ test("template dialogs keep headers and optional setup contained across layouts"
       await expect(editor).toHaveAccessibleDescription(
         /existing channels stay unchanged/,
       );
-      await expect(editor).toHaveCSS("backdrop-filter", "blur(8px)");
+      await expect(editor).toHaveCSS("backdrop-filter", "none");
       await expect(editor).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
+        mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
       );
       if (width === 1440)
         await editor.screenshot({

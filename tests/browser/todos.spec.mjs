@@ -223,9 +223,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   });
   // The new-tab picker hosts the same registered tool after its drawer closes.
   await page.setViewportSize({ width: 1440, height: 950 });
-  await page
-    .getByRole("button", { name: "Toggle tab pane", exact: true })
-    .click();
+  await drawer.getByRole("button", { name: "Hide todos", exact: true }).click();
   await expect(drawer).toHaveCount(0);
   await page
     .getByRole("button", { name: "Toggle tab pane", exact: true })

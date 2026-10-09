@@ -74,7 +74,7 @@
   color: var(--text-subtle);
   gap: var(--space-2);
 }
-.edge:not(:empty) {
+.edge[data-history-space] {
   min-height: calc(var(--size-control) + var(--space-4));
 }
 .day {

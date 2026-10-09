@@ -90,7 +90,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
             const style = getComputedStyle(el);
             const probe = document.createElement("div");
             probe.style.cssText =
-              "background:var(--bg-panel);border-radius:var(--radius-panel);border:1px solid var(--border-primary);box-shadow:var(--shadow-xs)";
+              "background:var(--surface-panel);border-radius:var(--radius-container);border:1px solid transparent;box-shadow:var(--shadow-panel)";
             el.append(probe);
             const reference = getComputedStyle(probe);
             const matches = [

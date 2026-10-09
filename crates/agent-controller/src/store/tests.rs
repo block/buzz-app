@@ -35,6 +35,7 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        effort: None,
         picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
@@ -914,4 +915,140 @@ fn existing_agent_save_accepts_international_text_and_crlf_but_rejects_hidden_co
     let mut invalid = edit();
     invalid.system_prompt = "hidden\u{202e} instructions".into();
     assert!(store.save(&agent.id, saved.revision, invalid).is_err());
+}
+fn beta_agent(key: &str, prompt: &str, imported: serde_json::Value) -> Agent {
+    let mut agent = fixture();
+    agent.pubkey = key.repeat(32);
+    agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+    agent.system_prompt = prompt.into();
+    agent.imported = imported;
+    agent
+}
+const D: &str = "\n\n---\n# Team Instructions\n";
+fn cleaned(dir: &Path) -> (Vec<Agent>, Option<String>) {
+    let mut store = Store::open(dir.to_owned()).unwrap();
+    let warning = store.clean_imported_prompts().unwrap();
+    (store.agents().unwrap(), warning)
+}
+#[test]
+fn cleanup_cuts_beta_imports_once_at_the_last_delimiter() {
+    let dir = tempfile::tempdir().unwrap();
+    let twice = format!("role{D}old{D}team");
+    let beta = serde_json::json!({"record": {"system_prompt": twice}, "global": {}});
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![
+            beta_agent("01", &twice, beta),
+            beta_agent(
+                "02",
+                &twice,
+                serde_json::json!({"record": {"system_prompt": twice}}),
+            ),
+            beta_agent(
+                "03",
+                "role only",
+                serde_json::json!({"record": {"system_prompt": "role only"}, "global": {}}),
+            ),
+        ])
+        .unwrap();
+    let before = store.agents().unwrap();
+    drop(store);
+    let (after, warning) = cleaned(dir.path());
+    assert_eq!(warning, None);
+    assert_eq!(after[0].system_prompt, format!("role{D}old"));
+    assert_eq!(after[0].revision, before[0].revision + 1);
+    for i in [1, 2] {
+        assert_eq!(after[i].system_prompt, before[i].system_prompt);
+        assert_eq!(after[i].revision, before[i].revision);
+    }
+    let (again, _) = cleaned(dir.path());
+    assert_eq!(again[0].system_prompt, format!("role{D}old"));
+    assert_eq!(again[0].revision, after[0].revision);
+}
+#[test]
+fn cleanup_leaves_later_owner_edits_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![beta_agent(
+            "01",
+            "role",
+            serde_json::json!({"global": {}}),
+        )])
+        .unwrap();
+    drop(store);
+    cleaned(dir.path());
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let saved = store.agents().unwrap()[0].clone();
+    assert_eq!(saved.imported[CLEANED], true);
+    let mut update = edit();
+    update.system_prompt = format!("mine{D}also mine");
+    store.save(&saved.id, saved.revision, update).unwrap();
+    drop(store);
+    let (after, _) = cleaned(dir.path());
+    assert_eq!(after[0].system_prompt, format!("mine{D}also mine"));
+}
+#[test]
+fn cleanup_keeps_prompts_edited_before_upgrade_or_without_an_original() {
+    let dir = tempfile::tempdir().unwrap();
+    let edited = format!("role{D}my own team notes");
+    let original = format!("role{D}baked team");
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![
+            beta_agent(
+                "01",
+                &edited,
+                serde_json::json!({"record": {"system_prompt": original}, "global": {}}),
+            ),
+            beta_agent(
+                "02",
+                &edited,
+                serde_json::json!({
+                    "record": {"system_prompt": edited},
+                    "definition": {"system_prompt": original},
+                    "global": {},
+                }),
+            ),
+            beta_agent(
+                "03",
+                &original,
+                serde_json::json!({"record": {}, "global": {}}),
+            ),
+        ])
+        .unwrap();
+    let before = store.agents().unwrap();
+    drop(store);
+    let (after, warning) = cleaned(dir.path());
+    assert_eq!(warning, None);
+    for (agent, prior) in after.iter().zip(&before) {
+        assert_eq!(agent.system_prompt, prior.system_prompt);
+        assert_eq!(agent.revision, prior.revision);
+        assert_eq!(agent.imported[CLEANED], true);
+    }
+}
+#[test]
+fn failed_cleanup_write_warns_and_sets_no_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let baked = format!("role{D}team");
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![beta_agent(
+            "01",
+            &baked,
+            serde_json::json!({"record": {"system_prompt": baked}, "global": {}}),
+        )])
+        .unwrap();
+    drop(store);
+    fs::remove_file(dir.path().join("agents.previous.json")).ok();
+    fs::create_dir(dir.path().join("agents.previous.json")).unwrap();
+    let (agents, warning) = cleaned(dir.path());
+    assert!(warning
+        .unwrap()
+        .contains("Could not finish removing old Buzz team text"));
+    assert_eq!(agents[0].system_prompt, baked);
+    assert!(agents[0].imported.get(CLEANED).is_none());
+    fs::remove_dir(dir.path().join("agents.previous.json")).unwrap();
+    let (agents, warning) = cleaned(dir.path());
+    assert_eq!((warning, agents[0].system_prompt.as_str()), (None, "role"));
 }

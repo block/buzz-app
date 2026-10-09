@@ -12,6 +12,8 @@ import type {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 
+const STRIPPED_TEAM_INSTRUCTIONS =
+  "Old team instructions saved inside this agent's prompt are left out, so the agent doesn't get them twice.";
 export function AgentImport({
   ref,
   control,
@@ -205,6 +207,11 @@ export function AgentImport({
             )}
           </dd>
         </dl>
+        {candidate?.stripsTeamInstructions && (
+          <p className="m-0 text-body-sm text-secondary">
+            {STRIPPED_TEAM_INSTRUCTIONS}
+          </p>
+        )}
         <p className="m-0 text-body-sm text-secondary">
           Stop the agent in the old Buzz installation before starting it here.
         </p>
@@ -339,6 +346,11 @@ export function AgentImport({
               <p className="m-0 text-body-sm text-secondary">
                 {repair ? "Team instructions not imported" : "Not imported"}
               </p>
+              {!repair && candidate.stripsTeamInstructions && (
+                <p className="m-0 text-body-sm text-secondary">
+                  {STRIPPED_TEAM_INSTRUCTIONS}
+                </p>
+              )}
               <details className="text-body-sm text-secondary">
                 <summary className="cursor-pointer">Identity</summary>
                 <p className="break-all font-mono text-mono-sm">

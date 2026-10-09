@@ -53,6 +53,9 @@ function setup(available = true) {
   const placed = new Set<string>();
   const mePlacement = {
     available: true,
+    admit: vi.fn(
+      async (_id: string, _options: { sectionId?: string | undefined }) => {},
+    ),
     set: vi.fn(async (id: string, personal: boolean) => {
       if (personal) placed.add(id);
       else placed.delete(id);
@@ -677,7 +680,7 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   });
   const onStarted = vi.fn();
   const user = userEvent.setup();
-  const view = (focusRequest = 0) => (
+  const view = (focusRequest: number | AbortSignal = 0) => (
     <NewSessionComposer
       standalone
       focusRequest={focusRequest}
@@ -703,6 +706,11 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   const composer = screen.getByRole("textbox", {
     name: "Message this session",
   });
+  expect(composer).toHaveFocus();
+  const actions = screen.getByRole("button", { name: "Session actions" });
+  actions.focus();
+  expect(actions).toHaveFocus();
+  mounted.rerender(view(new AbortController().signal));
   expect(composer).toHaveFocus();
   await user.type(composer, "Build this");
   await user.keyboard("{Enter}");
@@ -862,4 +870,105 @@ it("passes the frozen Me section into initial placement before setup and send", 
     "First thought",
     [],
   );
+});
+
+it("keeps the Me draft and creates nothing until capacity admission succeeds", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  f.mePlacement.admit.mockRejectedValueOnce(new Error("Me storage is full"));
+  writeView("me-full", "me:new-draft", "Keep this thought");
+  const view = render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="me-full"
+      onStarted={started}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByText("Me storage is full");
+  expect(f.workSessions.create).not.toHaveBeenCalled();
+  expect(f.messages.send).not.toHaveBeenCalled();
+  const id = f.mePlacement.admit.mock.calls[0]?.[0];
+  view.unmount();
+  render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="me-full"
+      onStarted={started}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledWith(id));
+  expect(f.workSessions.create).toHaveBeenCalledOnce();
+  expect(f.mePlacement.admit).toHaveBeenNthCalledWith(2, id, {
+    sectionId: undefined,
+  });
+  expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
+    id,
+    "Keep this thought",
+    [],
+  );
+});
+
+it("opens and saves local draft settings in a fresh Me-only group", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  try {
+    const f = setup();
+    const refreshMe = vi.fn(async () => {});
+    const refreshMessages = vi.fn(async () => {
+      throw new Error("Wrong namespace");
+    });
+    Object.assign(f.session, {
+      mePreferences: {
+        writable: true,
+        refresh: refreshMe,
+        snapshot: () => ({
+          status: "ready",
+          data: {
+            sections: [{ id: "me-only", name: "Work" }],
+            assignments: {},
+          },
+        }),
+      },
+      sidebarPreferences: { refresh: refreshMessages },
+      channelKit: {
+        refresh: async () => {},
+        snapshot: () => ({ status: "ready", entries: [] }),
+      },
+    });
+    const view = () => (
+      <NewSessionComposer
+        standalone
+        personal
+        session={f.session}
+        scope="me-settings"
+        sectionId="me-only"
+        onStarted={() => {}}
+      />
+    );
+    const user = userEvent.setup();
+    const mounted = render(view());
+    const open = async () => {
+      await user.click(screen.getByRole("button", { name: "Session actions" }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Session settings…" }),
+      );
+      return screen.findByRole("textbox", { name: "Canvas" });
+    };
+    await user.type(await open(), "Keep this Me draft");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(refreshMe).toHaveBeenCalledOnce();
+    expect(refreshMessages).not.toHaveBeenCalled();
+    mounted.unmount();
+    render(view());
+    expect(await open()).toHaveValue("Keep this Me draft");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(f.workSessions.create).not.toHaveBeenCalled();
+    expect(f.messages.send).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

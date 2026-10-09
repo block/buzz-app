@@ -1,3 +1,4 @@
+import { trackMemberAdditionReceipts } from "../channel-members/operations";
 import type { RelaySession } from "../relay/session";
 import type { MemberAdditionIntent } from "../channel-members/members";
 
@@ -19,6 +20,7 @@ export type ShareAttempt = {
   audienceKeys?: readonly string[];
   /** Two mounted entry points must never enqueue competing link operations. */
   running?: boolean;
+  stopReceipts?: (() => void) | undefined;
 };
 
 // A submitted attempt is owned by this relay session, not its dialog. The
@@ -43,9 +45,13 @@ export function beginSessionShare(
     intent,
     grants: new Map<string, MemberAdditionIntent>(),
   };
+  attempt.stopReceipts = trackMemberAdditionReceipts(session.outbox, () =>
+    attempt.grants.values(),
+  );
   bySource.set(sourceId, attempt);
   return attempt;
 }
 export function finishSessionShare(session: RelaySession, sourceId: string) {
+  sessionShareAttempt(session, sourceId)?.stopReceipts?.();
   attempts.get(session)?.delete(sourceId);
 }

@@ -84,9 +84,13 @@ export function SessionSections({
     preferences.snapshot,
     preferences.snapshot,
   );
+  const channels = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
   useEffect(() => {
-    void preferences.ensure();
-  }, [preferences]);
+    if (!personal || channels.status === "ready") void preferences.ensure();
+  }, [preferences, personal, channels.status]);
   const [collapsed, setCollapsed] = useState<string[]>(() => {
     const saved = readView<unknown>(scope, collapsedKey, []);
     return Array.isArray(saved)

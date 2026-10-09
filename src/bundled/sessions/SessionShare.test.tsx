@@ -25,6 +25,8 @@ import {
   finishSessionShare,
   sessionShareAttempt,
 } from "../../features/sessions/share-attempt";
+import { OutboxStatus } from "../channels/OutboxStatus";
+import { createRelayProfiler } from "../../features/relay/profiling";
 import { SessionShare } from "./SessionShare";
 
 const source = "11111111-1111-4111-8111-111111111111";
@@ -332,6 +334,13 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
     expect(
       t.publish.mock.calls.filter(([event]) => event.kind === 9),
     ).toHaveLength(1);
+    const running = sessionShareAttempt(t.session, source);
+    await user.click(within(other).getByRole("button", { name: "Start over" }));
+    expect(sessionShareAttempt(t.session, source)).toBe(running);
+    expect(running?.running).toBe(true);
+    expect(within(other).getByRole("alert")).toHaveTextContent(
+      "already in progress",
+    );
     release();
     t.holdLink(undefined);
     await waitFor(() =>
@@ -536,3 +545,192 @@ it.each(["abort", "unmount"] as const)(
     }
   },
 );
+
+it("lets an oversized Everyone attempt start over and share with selected people", async () => {
+  const t = fixture();
+  await t.ready();
+  for (let i = 1; i <= 101; i++)
+    t.addDestination(i.toString(16).padStart(64, "0"));
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "more than 100 recipients",
+  );
+  expect(t.publish).not.toHaveBeenCalled();
+  expect(
+    within(dialog).getByRole("radio", { name: "Selected people" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(within(dialog).getByRole("button", { name: "Start over" }));
+  expect(sessionShareAttempt(t.session, source)).toBeUndefined();
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(
+    within(dialog).getByRole("combobox", { name: "Share to" }),
+  ).toBeEnabled();
+  await chooseDestination(user, dialog);
+  await user.click(
+    within(dialog).getByRole("radio", { name: "Selected people" }),
+  );
+  await user.type(
+    within(dialog).getByRole("combobox", { name: "Find people" }),
+    "Aria",
+  );
+  await user.click(await within(dialog).findByRole("option", { name: /Aria/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]);
+  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+});
+
+it("starting over preserves access and lets Outbox finish the exact link before another share", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  t.failLink(true);
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Post refused",
+  );
+  const saved = sessionShareAttempt(t.session, source);
+  expect(saved?.messageId).toBeDefined();
+  const receipt = t.session.outbox
+    ?.snapshot()
+    .find((item) => item.event.id === saved?.messageId);
+  expect(receipt).toBeDefined();
+  expect(dialog).toHaveTextContent("A new share may post another link.");
+  const writes = t.publish.mock.calls.length;
+  await user.click(within(dialog).getByRole("button", { name: "Start over" }));
+  expect(sessionShareAttempt(t.session, source)).toBeUndefined();
+  expect(t.members.get(source)).toContain(t.aria.pubkey);
+  expect(
+    t.session.outbox
+      ?.snapshot()
+      .find((item) => item.event.id === saved?.messageId),
+  ).toEqual(receipt);
+  expect(t.publish).toHaveBeenCalledTimes(writes);
+  expect(
+    within(dialog).getByRole("combobox", { name: "Share to" }),
+  ).toHaveTextContent("Choose a channel");
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  const outbox = t.session.outbox;
+  if (!outbox || !receipt) throw new Error("Missing link receipt");
+  render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
+  await user.click(screen.getByText(/^Outbox ·/));
+  // The Outbox renders the message, not its last transport error.
+  const linkRow = screen.getByText(/\[Session ·/).closest("li");
+  if (!linkRow) throw new Error("Missing Outbox link");
+  t.failLink(false);
+  await user.click(within(linkRow).getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(["accepted", "seen"]).toContain(
+      outbox.snapshot().find((item) => item.event.id === receipt.event.id)
+        ?.delivery,
+    ),
+  );
+  expect(
+    t.publish.mock.calls
+      .filter(([event]) => event.kind === 9)
+      .map(([event]) => event.id),
+  ).toEqual([receipt.event.id, receipt.event.id]);
+  await user.click(
+    within(linkRow).getByRole("button", { name: "Remove from outbox" }),
+  );
+  await waitFor(() =>
+    expect(
+      outbox.snapshot().find((item) => item.event.id === receipt.event.id),
+    ).toBeUndefined(),
+  );
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const next = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, next);
+  await user.click(within(next).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(next).not.toBeInTheDocument());
+  expect(t.published.filter((event) => event.kind === 9)).toHaveLength(2);
+  expect(t.published.filter((event) => event.kind === 9000)).toHaveLength(1);
+});
+
+it("a stale Start over cannot discard a replacement attempt", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  const intent = {
+    destination,
+    audience: "selected" as const,
+    channelPeople: [],
+    sessionPeople: [],
+  };
+  const original = beginSessionShare(t.session, source, intent);
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  finishSessionShare(t.session, source);
+  const replacement = beginSessionShare(t.session, source, intent);
+  expect(replacement).not.toBe(original);
+  await user.click(within(dialog).getByRole("button", { name: "Start over" }));
+  expect(sessionShareAttempt(t.session, source)).toBe(replacement);
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "finished or changed",
+  );
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("retries a rejected, expired grant only after its failed Outbox item is dismissed", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  t.failGrant(true);
+  const user = userEvent.setup();
+  const view = t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  let dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Session invite refused",
+  );
+  const first = t.publish.mock.calls[0]?.[0];
+  if (!first) throw new Error("Expected invitation");
+  const now = vi
+    .spyOn(Date, "now")
+    .mockReturnValue((first.created_at + 16 * 60) * 1000);
+  try {
+    await user.click(
+      within(dialog).getByRole("button", { name: "Retry share" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "addition expired",
+    );
+    expect(t.publish).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await t.session.outbox?.dismiss(first.id);
+    expect(
+      sessionShareAttempt(t.session, source)?.grants.get(t.aria.pubkey)
+        ?.dismissed,
+    ).toBe(true);
+    t.failGrant(false);
+    t.mount();
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    dialog = screen.getByRole("dialog", { name: "Share session" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Retry share" }),
+    );
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const grants = t.publish.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.kind === 9000);
+    expect(grants).toHaveLength(2);
+    expect(grants[1]?.id).not.toBe(first.id);
+    expect(t.members.get(source)).toContain(t.aria.pubkey);
+    expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  } finally {
+    now.mockRestore();
+  }
+});

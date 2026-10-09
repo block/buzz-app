@@ -71,13 +71,19 @@ function fixture() {
       remove,
     );
   const onNew = vi.fn();
+  const channels = { status: "ready", channels: [] };
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
   ) => (
     <SessionSections
       onNew={onNew}
-      session={{ sidebarPreferences: preferences } as RelaySession}
+      session={
+        {
+          sidebarPreferences: preferences,
+          channels: { list: () => channels, subscribeList: () => () => {} },
+        } as unknown as RelaySession
+      }
       scope={scope}
       sessions={[
         { id: "session", title: "Planning" },

@@ -6,7 +6,13 @@ import type { RelaySession } from "../relay/session";
 export function useMePlacement(session: RelaySession) {
   const placement = session.mePlacement;
   const state = useSyncExternalStore(placement.subscribe, placement.snapshot);
-  useEffect(() => placement.ensure(), [placement]);
+  const channels = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
+  useEffect(() => {
+    if (channels.status === "ready") placement.ensure();
+  }, [placement, channels.status]);
   const entry = meGroups(state.entries);
   const ids =
     !entry?.record.deleted && entry?.record.value.type === "groups"

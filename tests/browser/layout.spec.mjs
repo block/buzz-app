@@ -62,7 +62,6 @@ const destinationTitles = [
   "Projects",
   "Agents",
   "Agents2",
-  "Sessions",
   "Workflows",
 ];
 const sidebarDestinations = (page, options = {}) =>
@@ -1052,7 +1051,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Projects",
     "Agents",
     "Agents2",
-    "Sessions",
+    "Sessions (now in Me)",
     "Workflows",
   ];
   const expectPageOrder = async (expected) => {
@@ -1135,7 +1134,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Bestie",
     "Agents",
     "Agents2",
-    "Sessions",
+    "Sessions (now in Me)",
     "Workflows",
   ]);
   await closeSearch();

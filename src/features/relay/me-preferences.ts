@@ -1,6 +1,11 @@
 import { removedSectionMessage } from "../sessions/workspace";
 import type { ChannelKit } from "../channel-templates/capability";
-import type { Groups, KitEntry } from "../channel-templates/model";
+import {
+  kitRecordFits,
+  meCapacityMessage,
+  type Groups,
+  type KitEntry,
+} from "../channel-templates/model";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { projectPersonalGroups } from "./sidebar-personal-groups";
 import type { SidebarAssignmentIntent } from "./sidebar-preferences";
@@ -32,6 +37,35 @@ function comparable(value: Groups) {
     Object.entries(value.assignments).sort(([a], [b]) => a.localeCompare(b)),
     value.channels ?? [],
   ]);
+}
+
+function placed(
+  value: Groups,
+  id: string,
+  personal: boolean,
+  sectionId?: string,
+) {
+  if (sectionId && !value.groups.some((group) => group.id === sectionId))
+    throw new Error(removedSectionMessage);
+  const ids = value.channels ?? [];
+  const assignments = { ...value.assignments };
+  if (!personal) delete assignments[id];
+  else if (sectionId) assignments[id] = sectionId;
+  return {
+    ...value,
+    assignments,
+    channels: personal
+      ? ids.includes(id)
+        ? ids
+        : [...ids, id]
+      : ids.filter((key) => key !== id),
+  };
+}
+function admit(value: Groups, entry: KitEntry | undefined) {
+  // With no saved record, one placement always fits. Existing records retain
+  // their exact community envelope, including its UTF-8 byte cost.
+  if (entry && !kitRecordFits({ ...entry.record, deleted: false, value }))
+    throw new Error(meCapacityMessage);
 }
 
 /** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
@@ -74,6 +108,7 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
     entry: KitEntry | undefined,
     active: AbortSignal,
   ) {
+    admit(value, entry);
     await kit.save(value, entry?.eventId, false, active);
     active.throwIfAborted();
     const confirmed = meGroups(kit.snapshot().entries);
@@ -176,6 +211,15 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
           !!entry.record.value.channels?.includes(id)
         );
       },
+      admit(
+        id: string,
+        options: { signal?: AbortSignal; sectionId?: string | undefined } = {},
+      ) {
+        return serialize(async () => {
+          const { value, entry } = await current(options.signal);
+          admit(placed(value, id, true, options.sectionId), entry);
+        });
+      },
       set(
         id: string,
         personal: boolean,
@@ -183,33 +227,14 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
       ) {
         return serialize(async () => {
           const { value, entry, active } = await current(options.signal);
-          const sectionId = personal ? options.sectionId : undefined;
-          if (
-            sectionId &&
-            !value.groups.some((group) => group.id === sectionId)
-          )
-            throw new Error(removedSectionMessage);
-          const ids = value.channels ?? [];
-          if (
-            ids.includes(id) === personal &&
-            (!sectionId || value.assignments[id] === sectionId)
-          )
-            return;
-          await save(
-            {
-              ...value,
-              ...(sectionId
-                ? { assignments: { ...value.assignments, [id]: sectionId } }
-                : {}),
-              channels: personal
-                ? ids.includes(id)
-                  ? ids
-                  : [...ids, id]
-                : ids.filter((key) => key !== id),
-            },
-            entry,
-            active,
+          const next = placed(
+            value,
+            id,
+            personal,
+            personal ? options.sectionId : undefined,
           );
+          if (comparable(next) === comparable(value)) return;
+          await save(next, entry, active);
         });
       },
     }),

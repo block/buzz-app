@@ -458,6 +458,31 @@ function ChannelWorkspace({
     useCallback((notify) => subscribeView(scope, notify), [scope]),
     () => (currentId ? pendingSessionDraft(scope, currentId) : undefined),
   );
+  useEffect(() => {
+    if (
+      !pendingStart ||
+      !current ||
+      current.cached ||
+      resolving ||
+      navigation?.signal.aborted ||
+      navigation?.target.kind !== "conversation"
+    )
+      return;
+    // Recovery replaces the timeline, so it owns completion of the plain route.
+    // An exact address cannot be claimed opened without revealing its message.
+    navigation.complete(
+      requestedMessage || requestedThread
+        ? { status: "failed", reason: "unavailable" }
+        : { status: "opened" },
+    );
+  }, [
+    pendingStart,
+    current,
+    resolving,
+    navigation,
+    requestedMessage,
+    requestedThread,
+  ]);
   const canvasOpen =
     !!canvasOrigin &&
     canvasOrigin.channelId === currentId &&
@@ -1550,7 +1575,12 @@ function ChannelWorkspace({
                     )?.name
                   }
                 >
-                  <SessionShare session={queries} channel={current} />
+                  <SessionShare
+                    key={`${current.id}:${navigation?.entryId ?? ""}`}
+                    session={queries}
+                    channel={current}
+                    signal={navigation?.signal}
+                  />
                 </SessionHeading>
               ) : (
                 <PanelHeader

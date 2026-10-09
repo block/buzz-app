@@ -43,7 +43,7 @@ export function NewSessionComposer({
   personal?: boolean;
   resumeDraftKey?: string | undefined;
   standalone?: boolean;
-  focusRequest?: number;
+  focusRequest?: number | AbortSignal;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -184,6 +184,12 @@ export function NewSessionComposer({
         if (!mounted.current) return;
       }
       if (!current.creationId) {
+        if (personal) {
+          await session.mePlacement.admit(current.id, {
+            sectionId: current.setup?.sectionId,
+          });
+          if (!mounted.current) return;
+        }
         current.creationId = session.workSessions.create(
           current.id,
           [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
@@ -452,6 +458,7 @@ export function NewSessionComposer({
       {composer}
       {settingsOpen && (
         <DraftSessionSettings
+          personal={personal}
           session={session}
           sectionId={sectionId}
           canvas={draftCanvas}

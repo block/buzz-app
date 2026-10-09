@@ -8,6 +8,8 @@ import {
   KIT_TAG,
   ME_KIT_TAG,
   kitTag,
+  kitRecordFits,
+  parseKitRecord,
   type Groups,
   type KitRecord,
 } from "../channel-templates/model";
@@ -618,3 +620,61 @@ it("repairs a frozen initial section without duplicating existing Me placement",
     f.dispose();
   }
 });
+
+it.each([false, true])(
+  "checks the exact Me capacity before saving (grouped=%s) and reclaims moved placement",
+  async (grouped) => {
+    const f = fixture();
+    const value: Groups = {
+      type: "groups",
+      id: "me",
+      groups: grouped
+        ? [{ id: "work", name: "Work", defaultTemplateId: "" }]
+        : [],
+      assignments: {},
+      channels: [],
+    };
+    const record = () => ({
+      version: 1 as const,
+      community,
+      deleted: false,
+      value,
+    });
+    let id = "";
+    for (let i = 1; i < 1000; i++) {
+      id = `00000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`;
+      value.channels?.push(id);
+      if (grouped) value.assignments[id] = "work";
+      if (!kitRecordFits(record())) {
+        value.channels?.pop();
+        delete value.assignments[id];
+        break;
+      }
+    }
+    parseKitRecord(record(), community);
+    f.install(value);
+    const options = { sectionId: grouped ? "work" : undefined };
+    try {
+      await expect(f.session.mePlacement.admit(id, options)).rejects.toThrow(
+        "Me storage is full",
+      );
+      await expect(
+        f.session.mePlacement.set(id, true, options),
+      ).rejects.toThrow("Me storage is full");
+      expect(f.publish).not.toHaveBeenCalled();
+      const removed = value.channels?.[0];
+      if (!removed) throw new Error("Missing placement");
+      await f.session.mePlacement.set(removed, false);
+      await f.session.mePlacement.admit(id, options);
+      await f.session.mePlacement.set(id, true, options);
+      expect(f.session.mePlacement.has(id)).toBe(true);
+      expect(f.session.mePlacement.has(removed)).toBe(false);
+      await f.session.mePreferences.ensure();
+      expect(
+        f.session.mePreferences.snapshot().data?.assignments[removed],
+      ).toBeUndefined();
+    } finally {
+      f.dispose();
+    }
+  },
+);

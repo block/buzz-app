@@ -128,7 +128,7 @@ function LiveSessions({
           pendingDraft.startsWith("me:")
         }
         standalone
-        focusRequest={1}
+        focusRequest={navigation?.signal ?? 1}
         key={pendingDraft ?? newSection ?? "unfiled"}
         resumeDraftKey={pendingDraft}
         sectionId={

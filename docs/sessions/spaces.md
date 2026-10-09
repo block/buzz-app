@@ -1,9 +1,12 @@
 # Me and Messages: channel spaces
 
-**Status:** agreed product direction; protocol details below are proposed, not
-implemented or validated. This supersedes roster-based placement and shared
-Me/Messages grouping as the target design. The [current implementation](README.md)
-still uses those shortcuts. Existing access is unchanged by this document.
+**Status: superseded proposal, retained for design history.** The approved baseline
+uses client-side Me organization over ordinary channels, not a relay-enforced
+space classification. The [current implementation](README.md) uses encrypted,
+account/community-scoped `groups:me` preferences and independent Me defaults.
+It does not infer placement from the roster or promise the admission policy below.
+The protocol, relay enforcement and rollout sequence in this historical proposal
+are not requirements implemented by the baseline, nor authorized follow-up work.
 
 ## Product contract
 

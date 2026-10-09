@@ -1,11 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
 import { generateSecretKey } from "nostr-tools";
 
 // Browser-only: actual Markdown link hit-testing, panel placement, two independent
 // virtualized conversations and composer focus cannot be verified in jsdom.
 test.use({
+  pluginFixtures: true,
   sessionChannels: ["beta"],
   sessionWriteKinds: [9, 9000, 9007],
   historyCounts: { alpha: 2, beta: 2 },
@@ -119,13 +119,8 @@ test("Share dialog uses styled controls in light/dark without extra status copy"
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Sessions");
-  const workspace = page.getByRole("region", { name: "Sessions", exact: true });
-  await workspace
-    .getByRole("navigation", { name: "Previous sessions" })
-    .getByRole("button", { name: /Beta/ })
-    .click();
-  await workspace.getByRole("button", { name: "Share", exact: true }).click();
+  await openSession(page, app, "beta");
+  await page.getByRole("button", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share session" });
   await expect(
     dialog.getByRole("radio", { name: "Everyone in this channel" }),
@@ -222,13 +217,8 @@ test("Selected people keeps the compact dialog and opens a human-only anchored l
 }) => {
   await page.setViewportSize({ width: 390, height: 620 });
   await page.goto(app.origin);
-  await openPage(page, "Sessions");
-  const workspace = page.getByRole("region", { name: "Sessions", exact: true });
-  await workspace
-    .getByRole("navigation", { name: "Previous sessions" })
-    .getByRole("button", { name: /Beta/ })
-    .click();
-  await workspace.getByRole("button", { name: "Share", exact: true }).click();
+  await openSession(page, app, "beta");
+  await page.getByRole("button", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share session" });
   await waitForSettledShareDialog(page);
   const rect = () =>
@@ -510,4 +500,108 @@ test("Selected people keeps the compact dialog and opens a human-only anchored l
   } finally {
     release();
   }
+});
+
+async function openSession(page, app, channelId, messageId) {
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+    )
+    .toBe("opened");
+  expect(
+    await page.evaluate((target) => window.fixtureNavigation.open(target), {
+      version: 1,
+      kind: "conversation",
+      channelId,
+      ...(messageId ? { messageId } : {}),
+      scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+    }),
+  ).toEqual({ status: "opened" });
+}
+
+test.describe("Messages Share navigation", () => {
+  test.use({
+    sessionChannels: ["alpha", "beta"],
+    channelIds: ["alpha", "beta", "gamma"],
+    channelNames: { gamma: "Gamma" },
+    historyCounts: { alpha: 1, beta: 1, gamma: 0 },
+  });
+
+  // Browser-only: production ChannelsPage reconciliation and host/browser history
+  // must tear down a portalled Share dialog before another source becomes active.
+  test("Messages Share choices never cross source or history visits", async ({
+    page,
+    app,
+  }) => {
+    const aria = app.serveProfile(generateSecretKey(), { name: "Aria" });
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (
+        filters.some(
+          (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
+        )
+      ) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([aria]),
+        });
+      } else await route.continue();
+    });
+    await page.goto(app.origin);
+    await openSession(page, app, "alpha");
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Share session" });
+    await dialog.getByRole("combobox", { name: "Share to" }).click();
+    await page.getByRole("option", { name: "Gamma", exact: true }).click();
+    await dialog.getByRole("radio", { name: "Selected people" }).click();
+    await dialog.getByRole("combobox", { name: "Find people" }).fill("Aria");
+    await dialog.getByRole("option", { name: /Aria/ }).click();
+    await expect(
+      dialog.getByRole("button", { name: "1 selected" }),
+    ).toBeVisible();
+    await openSession(page, app, "beta");
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Share to" })).toHaveText(
+      "Choose a channel",
+    );
+    await expect(
+      dialog.getByRole("radio", { name: "Everyone in this channel" }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("button", { name: "Share", exact: true }),
+    ).toBeDisabled();
+    await page.goBack();
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          channel: window.fixtureNavigation.snapshot().entry.target.channelId,
+          status: window.fixtureNavigation.snapshot().status,
+        })),
+      )
+      .toEqual({ channel: "alpha", status: "opened" });
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Share to" })).toHaveText(
+      "Choose a channel",
+    );
+    await expect(
+      dialog.getByRole("button", { name: "Share", exact: true }),
+    ).toBeDisabled();
+    // Another message visit in the same source also discards unsent UI.
+    await dialog.getByRole("combobox", { name: "Share to" }).click();
+    await page.getByRole("option", { name: "Gamma", exact: true }).click();
+    const next = app.append(
+      "primary",
+      "alpha",
+      "A new visit in the same session",
+    );
+    await openSession(page, app, "alpha", next.id);
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Share to" })).toHaveText(
+      "Choose a channel",
+    );
+  });
 });

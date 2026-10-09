@@ -108,6 +108,14 @@ export function parseLineup(raw: unknown): Lineup {
     canvas,
   };
 }
+export function kitRecordFits(record: KitRecord) {
+  return (
+    new TextEncoder().encode(JSON.stringify(record)).length <= KIT_RECORD_BYTES
+  );
+}
+export const meCapacityMessage =
+  "Me storage is full. Move a conversation from Me to Messages, then try again.";
+
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
     v = object(r.value);
@@ -189,11 +197,11 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
     deleted: r.deleted,
     value,
   };
-  if (
-    new TextEncoder().encode(JSON.stringify(result)).length > KIT_RECORD_BYTES
-  )
+  if (!kitRecordFits(result))
     throw new Error(
-      "This saved recipe exceeds 16 KiB; shorten its Canvas or selections",
+      value.type === "groups" && value.id === "me"
+        ? meCapacityMessage
+        : "This saved recipe exceeds 16 KiB; shorten its Canvas or selections",
     );
   return result;
 }

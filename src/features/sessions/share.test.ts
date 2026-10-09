@@ -3,6 +3,7 @@ import { createRelaySession } from "../relay/session";
 import { keypair, metadata, profile, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
+import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
 import {
   destinationShareAudience,
@@ -421,3 +422,65 @@ it("refuses a known agent and prevents posting after loss of session membership"
   ).rejects.toThrow(/access changed|membership/);
   expect(t.published).toHaveLength(0);
 });
+
+it.each(["accepted", "unknown"] as const)(
+  "a missing %s Share grant receipt never authorizes another invitation",
+  async (delivery) => {
+    const t = setup();
+    await t.ready();
+    const outbox = t.session.outbox;
+    if (!outbox) throw new Error("Missing outbox");
+    const event = signed(t.viewer, {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", sessionId],
+        ["p", t.human.pubkey],
+      ],
+    });
+    // Inject loss of receipt evidence, not a user dismissal. The real Outbox
+    // disallows dismissing these states; absence must remain fail-closed too.
+    let receipts: ReturnType<typeof outbox.snapshot> = [{ event, delivery }];
+    const subscribers = new Set<() => void>();
+    const session = {
+      ...t.session,
+      outbox: {
+        ...outbox,
+        snapshot: () => receipts,
+        subscribe(listener: () => void) {
+          subscribers.add(listener);
+          return () => {
+            subscribers.delete(listener);
+          };
+        },
+      },
+    };
+    const resumed = beginSessionShare(session, sessionId, {
+      destination: channelId,
+      audience: "selected",
+      channelPeople: [],
+      sessionPeople: [t.human.pubkey],
+    });
+    resumed.grants.set(t.human.pubkey, { id: event.id });
+    for (const listener of subscribers) listener();
+    receipts = [];
+    for (const listener of subscribers) listener();
+    try {
+      await expect(
+        grantSessionAccess(
+          t.session,
+          sessionId,
+          [t.human.pubkey],
+          resumed.grants,
+          new AbortController().signal,
+          () => {},
+        ),
+      ).rejects.toThrow("original addition receipt is unavailable");
+      expect(resumed.grants.get(t.human.pubkey)?.dismissed).not.toBe(true);
+      expect(t.publish).not.toHaveBeenCalled();
+    } finally {
+      finishSessionShare(session, sessionId);
+      expect(subscribers.size).toBe(0);
+    }
+  },
+);

@@ -181,6 +181,24 @@ export function SessionShare({
     setProgress("");
     setFrozen(sessionShareAttempt(session, channel.id));
   };
+  const startOver = () => {
+    if (!visible() || busy || !saved) return;
+    if (saved.running) {
+      setError("This share is already in progress in another view.");
+      return;
+    }
+    if (sessionShareAttempt(session, channel.id) !== saved) {
+      setError(
+        "This share finished or changed. Close and reopen to start a new share.",
+      );
+      return;
+    }
+    // Forget only this settled intent. Durable operations and existing access
+    // remain with their owners; starting over is not cancellation or revocation.
+    finishSessionShare(session, channel.id);
+    reset();
+    setOpen(true);
+  };
   const copy = async () => {
     setCopyStatus("");
     try {
@@ -668,23 +686,30 @@ export function SessionShare({
           </Button>
         }
         actions={
-          <Button
-            variant="prominent"
-            disabled={
-              busy ||
-              !eligible ||
-              (!directShare && !newChannel && !chosen) ||
-              (directShare &&
-                !(saved?.intent.sessionPeople.length ?? people.length)) ||
-              (newChannel &&
-                !saved &&
-                (!canonicalDetailsName(newName) ||
-                  !session.channelCreation.available))
-            }
-            onClick={() => void submit()}
-          >
-            {busy ? "Sharing…" : saved ? "Retry share" : "Share"}
-          </Button>
+          <>
+            {saved && (
+              <Button disabled={busy} onClick={startOver}>
+                Start over
+              </Button>
+            )}
+            <Button
+              variant="prominent"
+              disabled={
+                busy ||
+                !eligible ||
+                (!directShare && !newChannel && !chosen) ||
+                (directShare &&
+                  !(saved?.intent.sessionPeople.length ?? people.length)) ||
+                (newChannel &&
+                  !saved &&
+                  (!canonicalDetailsName(newName) ||
+                    !session.channelCreation.available))
+              }
+              onClick={() => void submit()}
+            >
+              {busy ? "Sharing…" : saved ? "Retry share" : "Share"}
+            </Button>
+          </>
         }
       >
         <div className={styles.form}>
@@ -838,6 +863,13 @@ export function SessionShare({
               saved.intent.channelPeople.length > 0
                 ? ` ${saved.intent.channelPeople.length} chosen for the new channel.`
                 : ""}
+            </p>
+          )}
+          {saved && (
+            <p className="text-body-sm text-subtle">
+              Starting over clears these choices, not work already submitted.
+              Existing access, created channels, Messages placement and queued
+              operations are kept. A new share may post another link.
             </p>
           )}
           {pendingCreation && !saved && !error && (

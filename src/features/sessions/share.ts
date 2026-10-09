@@ -2,12 +2,28 @@ import { addChannelMember, canShareSession } from "../channel-members/members";
 import { archiveHides } from "../relay/identity-archives";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { OutgoingEvent } from "../relay/outbox";
 import type { MemberAdditionIntent } from "../channel-members/members";
 
 export const sessionLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const sessionLinkMessage = (id: string) =>
   `[Session · ${id.slice(0, 8)}](${sessionLink(id)})`;
+
+/** Outbox can finish a delivered link even after its in-process share was reset. */
+export function isSessionLinkReceipt(item: OutgoingEvent) {
+  const match = /^session-share-link:([^:]+):([^:]+)$/.exec(
+    item.recovery?.key ?? "",
+  );
+  return !!(
+    match?.[1] &&
+    match[2] &&
+    item.recovery?.value === "1" &&
+    item.event.kind === 9 &&
+    item.event.content === sessionLinkMessage(match[1]) &&
+    item.event.tags.some(([name, value]) => name === "h" && value === match[2])
+  );
+}
 
 /** Exact selected people are grants to the session, not the destination or its parent. */
 export async function grantSessionAccess(

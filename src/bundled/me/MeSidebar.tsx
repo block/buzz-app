@@ -211,7 +211,6 @@ function MeConversationRow({
         <NavigationItem
           type="button"
           selected={selected}
-          aria-label={title}
           data-me-channel-id={id}
           aria-current={selected ? "page" : undefined}
           onClick={onSelect}

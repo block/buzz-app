@@ -195,7 +195,7 @@ function fixture() {
 }
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();
-  const row = screen.getByRole("button", { name: "Planning" });
+  const row = screen.getByRole("button", { name: /^Planning/ });
   expect(
     row.querySelector('[data-channel-unread-title="true"]'),
   ).toBeInTheDocument();
@@ -209,6 +209,8 @@ it("keeps unread state while owned thread typing and observer working signals st
     within(row).getByRole("img", { name: "Owned Agent working in Planning" }),
   ).toBeInTheDocument();
   expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  expect(row).toHaveAccessibleName(/observed unread messages/);
+  expect(row).toHaveAccessibleName(/Owned Agent working in Planning/);
   f.activity({
     ...f.activitySnapshot,
     status: "listening",
@@ -252,7 +254,7 @@ it("offers unread thread navigation and mark-read through the shared activity po
     coverage: "observed",
     freshness: "observed",
   });
-  const row = screen.getByRole("button", { name: "Planning" });
+  const row = screen.getByRole("button", { name: /^Planning/ });
   row.focus();
   await user.keyboard("{Enter}");
   const popup = screen.getByRole("dialog", { name: "Activity in Planning" });
@@ -282,7 +284,7 @@ it("does not offer a disabled activity panel for typing-only agents", async () =
   const f = fixture();
   f.typing([{ channelId: id, pubkey: agent }]);
   const user = userEvent.setup();
-  screen.getByRole("button", { name: "Planning" }).focus();
+  screen.getByRole("button", { name: /^Planning/ }).focus();
   await user.keyboard("{Enter}");
   const popup = screen.getByRole("dialog", { name: "Activity in Planning" });
   expect(

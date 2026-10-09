@@ -230,16 +230,6 @@ pub struct TeamCatalogEntry {
     pub deleted: bool,
 }
 impl Controller {
-    pub fn reconcile_team_bindings(
-        &mut self,
-        community: &str,
-        owner: &str,
-        teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
-    ) -> Result<()> {
-        self.validate_team_catalog(owner, teams)?;
-        let relay = crate::config::canonical_relay(community)?;
-        self.store.reconcile_team_bindings(&relay, owner, teams)
-    }
     fn validate_team_catalog(
         &self,
         owner: &str,
@@ -275,29 +265,6 @@ impl Controller {
         let relay = crate::config::canonical_relay(community)?;
         self.store
             .sync_team_instructions(&relay, owner, heads, texts)
-    }
-    pub fn apply_team_instructions(
-        &mut self,
-        id: &str,
-        revision: u64,
-        instructions: &str,
-        owner: &str,
-        binding: (&str, &str),
-    ) -> Result<bool> {
-        let (team, community) = binding;
-        self.verify_team_member_owner(id, owner)?;
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
-            .find(|a| a.id == id)
-            .ok_or("Agent no longer exists")?;
-        let relay = crate::config::canonical_relay(community)?;
-        if agent.relay_url != relay {
-            return Err("Team member belongs to another community".into());
-        }
-        self.store
-            .team_instructions(id, revision, instructions, team)
     }
     pub fn team_member_authorization(&self, id: &str, owner: &str) -> Result<String> {
         self.verify_team_member_owner(id, owner)?;

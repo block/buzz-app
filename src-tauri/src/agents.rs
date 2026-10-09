@@ -1685,45 +1685,6 @@ pub(crate) async fn agent_security(
     Ok(result)
 }
 
-#[tauri::command]
-pub(crate) async fn agent_control_team_instructions(
-    state: tauri::State<'_, AgentHost>,
-    identity: tauri::State<'_, crate::identity::IdentityHost>,
-    id: String,
-    revision: u64,
-    instructions: String,
-    team: String,
-    community: String,
-) -> Result<ControlSnapshot, String> {
-    let (owner, teams) = crate::relay::current_team_members(identity.inner(), &community).await?;
-    run(state.inner().clone(), move |host| {
-        let agent = host
-            .controller
-            .snapshot()?
-            .agents
-            .into_iter()
-            .find(|agent| agent.id == id)
-            .ok_or("Agent no longer exists")?;
-        if !teams
-            .get(&team)
-            .is_some_and(|head| head.members.contains(&agent.pubkey))
-        {
-            return Err("Team no longer contains this member; refresh before deploying".into());
-        }
-        host.controller
-            .reconcile_team_bindings(&community, &owner, &teams)?;
-        host.controller.apply_team_instructions(
-            &id,
-            revision,
-            &instructions,
-            &owner,
-            (&team, &community),
-        )?;
-        Ok(host.snapshot()?.data)
-    })
-    .await
-}
-
 /// Team Save and app-start sync. `teams` maps every readable team to its
 /// current text; a team left out is temporarily unreadable, not removed.
 #[tauri::command]

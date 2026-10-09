@@ -1,4 +1,8 @@
-import { deliverTeamTexts } from "../../features/agents/team-instructions";
+import {
+  deliverTeamTexts,
+  subscribeTeamSyncError,
+  teamSyncError,
+} from "../../features/agents/team-instructions";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import type { Resume } from "../../features/channel-templates/capability";
@@ -7,7 +11,7 @@ import { decodeTeamFile } from "../../features/agents/team-encoding";
 import { TeamImportDialog } from "../agents/TeamImportDialog";
 import { TeamDeployDialog } from "../agents/TeamDeployDialog";
 import { npubEncode } from "nostr-tools/nip19";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import {
   emptyLineup,
@@ -74,6 +78,9 @@ export function TemplateLibrary({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
+  const syncError = useSyncExternalStore(subscribeTeamSyncError, () =>
+    section === "team" ? teamSyncError(kit) : undefined,
+  );
   const trigger = useRef<HTMLElement | null>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   const newTemplate = useRef<HTMLButtonElement>(null);
@@ -210,6 +217,11 @@ export function TemplateLibrary({
         />
       )}
       <div className={styles.library}>
+        {syncError && (
+          <p role="alert" className="text-body-sm text-danger">
+            {syncError}
+          </p>
+        )}
         {(state.status !== "ready" ||
           !catalog.agentsReady ||
           catalog.error) && (

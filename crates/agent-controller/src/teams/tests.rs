@@ -357,152 +357,6 @@ fn malformed_snapshots_are_rejected_before_creation() {
 }
 
 #[test]
-fn deployment_instruction_updates_preserve_identity_and_individual_settings() {
-    let root = tempfile::tempdir().unwrap();
-    let mut control = controller(root.path());
-    let prepared = NewAgent::prepare("https://relay.example/", &owner()).unwrap();
-    control
-        .create_bundle_member(
-            &prepared,
-            edit(root.path()),
-            &crate::secret::test_attestation(prepared.key.pubkey()),
-            "request",
-            &BundleMember {
-                team: "team-a".into(),
-                member: member(),
-                instructions: "OLD_TEAM".into(),
-                keep_allowlist: false,
-            },
-        )
-        .unwrap();
-    let before = control.store.agents().unwrap().remove(0);
-    for instructions in ["", "UNRELATED"] {
-        assert!(control
-            .apply_team_instructions(
-                &before.id,
-                before.revision,
-                instructions,
-                &owner(),
-                ("team-b", "https://relay.example")
-            )
-            .is_err());
-    }
-    assert_eq!(
-        control.store.agents().unwrap()[0].imported["teamInstructions"],
-        "OLD_TEAM"
-    );
-    assert!(!control
-        .apply_team_instructions(
-            &before.id,
-            before.revision,
-            "OLD_TEAM",
-            &owner(),
-            ("team-a", "https://relay.example")
-        )
-        .unwrap());
-
-    assert!(control
-        .apply_team_instructions(
-            &before.id,
-            before.revision,
-            "NEW_TEAM",
-            &"ab".repeat(32),
-            ("team-a", "https://relay.example")
-        )
-        .is_err());
-    assert!(control
-        .apply_team_instructions(
-            &before.id,
-            before.revision + 1,
-            "NEW_TEAM",
-            &owner(),
-            ("team-a", "https://relay.example")
-        )
-        .is_err());
-    assert!(control
-        .apply_team_instructions(
-            &before.id,
-            before.revision,
-            "NEW_TEAM",
-            &owner(),
-            ("team-a", "https://relay.example")
-        )
-        .unwrap());
-    assert!(control
-        .apply_team_instructions(
-            &before.id,
-            before.revision + 1,
-            "OTHER_TEAM",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-    assert!(control
-        .apply_team_instructions(
-            &before.id,
-            before.revision + 1,
-            "NEW_TEAM",
-            &owner(),
-            ("team-a", "https://foreign.example")
-        )
-        .is_err());
-    let after = control.store.agents().unwrap().remove(0);
-    assert_eq!(after.pubkey, before.pubkey);
-    assert_eq!(after.credential_id, before.credential_id);
-    assert_eq!(after.system_prompt, before.system_prompt);
-    assert_eq!(after.harness.command, before.harness.command);
-    assert_eq!(after.environment, before.environment);
-    assert_eq!(after.imported["record"], before.imported["record"]);
-    assert_eq!(after.imported["teamInstructions"], "NEW_TEAM");
-    assert_eq!(after.revision, before.revision + 1);
-    assert!(!after.enabled);
-    assert!(!control
-        .apply_team_instructions(
-            &after.id,
-            after.revision,
-            "  NEW_TEAM\n",
-            &owner(),
-            ("team-a", "https://relay.example")
-        )
-        .unwrap());
-    assert!(control
-        .apply_team_instructions(
-            &after.id,
-            after.revision,
-            "OTHER_TEAM",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-    assert_eq!(
-        control.store.agents().unwrap()[0].imported["teamInstructions"],
-        "NEW_TEAM"
-    );
-    drop(control);
-    let mut control = controller(root.path());
-    assert!(control
-        .apply_team_instructions(
-            &after.id,
-            after.revision,
-            "OTHER_TEAM",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-
-    assert!(!control
-        .apply_team_instructions(
-            &after.id,
-            after.revision,
-            "NEW_TEAM",
-            &owner(),
-            ("team-a", "https://relay.example")
-        )
-        .unwrap());
-    assert_eq!(control.store.agents().unwrap()[0].revision, after.revision);
-}
-
-#[test]
 fn memory_authorization_requires_exact_saved_owner_and_valid_member_attestation() {
     let root = tempfile::tempdir().unwrap();
     let mut control = controller(root.path());
@@ -551,115 +405,6 @@ fn memory_authorization_requires_exact_saved_owner_and_valid_member_attestation(
         .is_err());
 }
 
-#[test]
-fn legacy_unbound_instructions_require_matching_adoption_before_changes() {
-    let root = tempfile::tempdir().unwrap();
-    let mut control = controller(root.path());
-    let mut source = crate::store::tests::fixture();
-    source.imported = serde_json::json!({"teamInstructions": "LEGACY"});
-    control.store.insert(vec![source.clone()]).unwrap();
-    assert!(control
-        .store
-        .team_instructions(&source.id, source.revision, "", "unrelated")
-        .is_err());
-    assert!(!control
-        .store
-        .team_instructions(&source.id, source.revision, " LEGACY ", "original")
-        .unwrap());
-    assert!(control
-        .store
-        .team_instructions(&source.id, source.revision, "UPDATED", "original")
-        .unwrap());
-}
-
-#[test]
-fn catalog_removal_releases_only_obsolete_bindings_and_preserves_pending_imports() {
-    let root = tempfile::tempdir().unwrap();
-    let mut control = controller(root.path());
-    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
-    control
-        .create_bundle_member(
-            &prepared,
-            edit(root.path()),
-            &crate::secret::test_attestation(prepared.key.pubkey()),
-            "lifecycle",
-            &BundleMember {
-                team: "team-a".into(),
-                member: member(),
-                instructions: "SHARED".into(),
-                keep_allowlist: false,
-            },
-        )
-        .unwrap();
-    let agent = control.store.agents().unwrap().remove(0);
-    let mut teams = std::collections::BTreeMap::new();
-    control
-        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
-        .unwrap();
-    assert!(control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "OTHER",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-    // A second active team sharing the same instructions retains protection.
-    assert!(!control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "SHARED",
-            &owner(),
-            ("team-c", "https://relay.example")
-        )
-        .unwrap());
-    teams.insert("team-a".into(), catalog(1, vec![])); // deletion or removal
-    teams.insert("team-c".into(), catalog(1, vec![agent.pubkey.clone()]));
-    control
-        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
-        .unwrap();
-    assert!(control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "OTHER",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-    teams.insert("team-c".into(), catalog(2, vec![]));
-    control
-        .reconcile_team_bindings("https://foreign.example", &owner(), &teams)
-        .unwrap();
-    control
-        .reconcile_team_bindings("https://relay.example", &"ab".repeat(32), &teams)
-        .unwrap();
-    assert_eq!(
-        control.store.agents().unwrap()[0].imported["teamBindings"],
-        serde_json::json!(["team-c"])
-    );
-    control
-        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
-        .unwrap();
-    drop(control);
-    let mut control = controller(root.path());
-    assert!(control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "RECREATED",
-            &owner(),
-            ("team-new", "https://relay.example")
-        )
-        .unwrap());
-    assert_eq!(
-        control.store.agents().unwrap()[0].imported["teamBindings"],
-        serde_json::json!(["team-new"])
-    );
-}
-
 fn catalog(created_at: u64, members: Vec<String>) -> crate::TeamCatalogEntry {
     crate::TeamCatalogEntry {
         created_at,
@@ -670,72 +415,43 @@ fn catalog(created_at: u64, members: Vec<String>) -> crate::TeamCatalogEntry {
 }
 
 #[test]
-fn late_catalog_removal_cannot_erase_a_newer_live_binding_even_after_reopen() {
+fn late_catalog_read_cannot_release_a_newer_binding_even_after_reopen() {
     let root = tempfile::tempdir().unwrap();
-    let mut control = controller(root.path());
-    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
-    control
-        .create_bundle_member(
-            &prepared,
-            edit(root.path()),
-            &crate::secret::test_attestation(prepared.key.pubkey()),
-            "ordering",
-            &BundleMember {
-                team: "team-a".into(),
-                member: member(),
-                instructions: "SHARED".into(),
-                keep_allowlist: false,
-            },
-        )
-        .unwrap();
-    let agent = control.store.agents().unwrap().remove(0);
-    let old = std::collections::BTreeMap::from([("team-a".into(), catalog(1, vec![]))]);
-    let fresh = std::collections::BTreeMap::from([
-        ("team-a".into(), catalog(2, vec![agent.pubkey.clone()])),
-        ("team-b".into(), catalog(2, vec![agent.pubkey.clone()])),
-    ]);
-    control
-        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
-        .unwrap();
-    control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "SHARED",
-            &owner(),
-            ("team-a", "https://relay.example"),
-        )
-        .unwrap();
+    let (mut control, agent) = synced_agent(root.path(), json!({}));
+    let me = vec![agent.pubkey.clone()];
+    sync(
+        &mut control,
+        &[("team-a", 2, me.clone())],
+        &[("team-a", "SHARED")],
+    )
+    .unwrap();
     drop(control);
     let mut control = controller(root.path());
-    assert!(control
-        .reconcile_team_bindings("https://relay.example", &owner(), &old)
-        .is_err());
-    control
-        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
-        .unwrap();
-    assert!(control
-        .apply_team_instructions(
-            &agent.id,
-            agent.revision,
-            "OTHER",
-            &owner(),
-            ("team-b", "https://relay.example")
-        )
-        .is_err());
-    assert_eq!(
-        control.store.agents().unwrap()[0].imported["teamBindings"],
-        serde_json::json!(["team-a"])
+    // An older roster read that finishes late is refused and changes nothing.
+    let late = sync(
+        &mut control,
+        &[("team-a", 1, vec![])],
+        &[("team-a", "SHARED")],
     );
+    assert!(late.is_err_and(|error| error.contains("Team catalog changed")));
+    let saved = control.store.agents().unwrap().remove(0);
+    assert_eq!(saved.imported["teamBindings"], json!(["team-a"]));
+    assert_eq!(saved.imported["teamInstructions"], "SHARED");
     // Same timestamp uses the NIP-01 lower-event-ID winner; a late loser is refused.
-    let mut winner = fresh.clone();
-    winner.get_mut("team-a").unwrap().event_id = "00".repeat(32);
+    let texts = std::collections::BTreeMap::from([("team-a".to_string(), "SHARED".to_string())]);
+    let mut winner = catalog(2, me.clone());
+    winner.event_id = "00".repeat(32);
+    let winner = std::collections::BTreeMap::from([("team-a".to_string(), winner)]);
     control
-        .reconcile_team_bindings("https://relay.example", &owner(), &winner)
+        .sync_team_instructions("wss://relay.example", &owner(), &winner, &texts)
         .unwrap();
-    assert!(control
-        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
-        .is_err());
+    assert!(sync(&mut control, &[("team-a", 2, me)], &[("team-a", "SHARED")]).is_err());
+    // Another owner's sync never touches this owner's agent.
+    let other = std::collections::BTreeMap::from([("team-a".to_string(), "OTHER".to_string())]);
+    control
+        .sync_team_instructions("wss://relay.example", &"ab".repeat(32), &winner, &other)
+        .unwrap();
+    assert_eq!(control.store.agents().unwrap()[0].imported, saved.imported);
 }
 
 #[test]
@@ -1251,4 +967,45 @@ fn unreadable_team_keeps_link_and_text_when_its_roster_drops_the_agent() {
     let kept = sync(&mut control, &[("crew", 2, vec![])], &[]).unwrap();
     assert_eq!(kept.imported["teamBindings"], serde_json::json!(["crew"]));
     assert_eq!(kept.imported["teamInstructions"], "SHARED");
+}
+
+#[test]
+fn team_sync_instruction_change_preserves_identity_and_individual_settings() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example/", &owner()).unwrap();
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "request",
+            &BundleMember {
+                team: "team-a".into(),
+                member: member(),
+                instructions: "OLD_TEAM".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let before = control.store.agents().unwrap().remove(0);
+    let me = vec![before.pubkey.clone()];
+    let after = sync(
+        &mut control,
+        &[("team-a", 1, me)],
+        &[("team-a", "NEW_TEAM")],
+    )
+    .unwrap();
+    assert_eq!(after.imported["teamInstructions"], "NEW_TEAM");
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.pubkey, before.pubkey);
+    assert_eq!(after.credential_id, before.credential_id);
+    assert_eq!(after.auth_tag, before.auth_tag);
+    assert_eq!(after.system_prompt, "INDIVIDUAL_MARKER");
+    assert_eq!(after.system_prompt, before.system_prompt);
+    assert_eq!(after.harness.command, before.harness.command);
+    assert_eq!(after.environment, before.environment);
+    assert_eq!(after.imported["record"], before.imported["record"]);
+    assert_eq!(after.enabled, before.enabled);
 }

@@ -75,13 +75,11 @@ it("adds an existing running member without writing team text or restarting it",
     status: "running",
     relayUrl: "wss://relay.example",
   } as AgentView;
-  const applyTeamInstructions = vi.fn();
   const syncTeamInstructions = vi.fn();
   const action = vi.fn();
   const control = {
     refresh: vi.fn(),
     snapshot: () => ({ data: { agents: [agent] } }),
-    applyTeamInstructions,
     syncTeamInstructions,
     action,
   } as unknown as AgentControl;
@@ -108,7 +106,6 @@ it("adds an existing running member without writing team text or restarting it",
     signal,
     true,
   );
-  expect(applyTeamInstructions).not.toHaveBeenCalled();
   expect(syncTeamInstructions).not.toHaveBeenCalled();
   expect(action).not.toHaveBeenCalled();
 });

@@ -274,13 +274,6 @@ export interface AgentControlHost {
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  applyTeamInstructions?(
-    id: string,
-    revision: number,
-    instructions: string,
-    team: string,
-    community: string,
-  ): Promise<ControlSnapshot>;
   /** Writes each team's current text into its members' settings, clears it
    * for agents no team with text lists, and never restarts anyone. */
   syncTeamInstructions?(
@@ -386,13 +379,6 @@ export interface AgentControl {
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  applyTeamInstructions?(
-    id: string,
-    revision: number,
-    instructions: string,
-    team: string,
-    community: string,
-  ): Promise<ControlSnapshot>;
   /** Writes each team's current text into its members' settings, clears it
    * for agents no team with text lists, and never restarts anyone. */
   syncTeamInstructions?(
@@ -765,28 +751,6 @@ export function createAgentControl(
               if (!host.syncTeamInstructions)
                 throw new Error("Team instruction updates are unavailable.");
               return host.syncTeamInstructions(community, teams);
-            }, ready),
-        }
-      : {}),
-    ...(host?.applyTeamInstructions
-      ? {
-          applyTeamInstructions: (
-            id: string,
-            revision: number,
-            instructions: string,
-            team: string,
-            community: string,
-          ) =>
-            run(async (host) => {
-              if (!host.applyTeamInstructions)
-                throw new Error("Team instruction updates are unavailable.");
-              return host.applyTeamInstructions(
-                id,
-                revision,
-                instructions,
-                team,
-                community,
-              );
             }, ready),
         }
       : {}),

@@ -91,7 +91,8 @@ export function SearchResults({
           (!channel.archived ||
             (!channel.readOnly &&
               (channel.channelType === "stream" ||
-                channel.channelType === "forum"))) &&
+                channel.channelType === "forum" ||
+                channel.channelType === "session"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),

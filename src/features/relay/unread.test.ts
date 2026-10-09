@@ -2570,6 +2570,70 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
   stop();
 });
 
+it.each([false, true])(
+  "inbox hides archived channels and restores retained unread state (subscribed=%s)",
+  async (subscribed) => {
+    const h = setup();
+    h.grant("room");
+    h.grant("dm");
+    h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+    const root = message(h.viewer, "room", "My thread", 20);
+    const mention = message(h.alice, "room", "Mention", 21, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const reply = message(h.alice, "room", "Reply", 22, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const dm = message(h.alice, "dm", "Direct hello", 23);
+    h.emit([root, mention, reply, dm]);
+    const unread = h.session.unread;
+    await unread.markMessageRead("room", mention.id);
+    await unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: mention.id,
+    });
+    const before = unread.inbox();
+    expect(before.items).toHaveLength(3);
+    const journal = h.journal();
+    const snapshot = h.snapshot();
+    const generation = unread.generation();
+    const noticed: string[][] = [];
+    const stop = subscribed
+      ? unread.subscribeInbox(() =>
+          noticed.push(unread.inbox().items.map((item) => item.channelId)),
+        )
+      : () => {};
+    h.emit([metadata(h.relay, "room", "room", 30, [["archived", "true"]])]);
+    expect(unread.inbox().items.map((item) => item.channelId)).toEqual(["dm"]);
+    if (subscribed) expect(noticed.at(-1)).toEqual(["dm"]);
+    expect(h.snapshot()).toEqual(snapshot);
+    expect(unread.generation()).toBe(generation);
+    expect(h.journal()).toEqual(journal);
+    // Fresh addressed evidence stays hidden, not discarded or marked read.
+    const fresh = message(h.alice, "room", "Fresh mention", 31, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([fresh]);
+    expect(unread.inbox().items.map((item) => item.channelId)).toEqual(["dm"]);
+    h.emit([metadata(h.relay, "room", "room", 32, [["archived", "false"]])]);
+    const restored = unread.inbox();
+    expect(restored.items).toHaveLength(4);
+    for (const item of before.items)
+      expect(restored.items).toContainEqual(item);
+    expect(
+      restored.items.find((item) => item.messageId === fresh.id)?.unreadCount,
+    ).toBe(1);
+    expect(h.journal()).toEqual(journal);
+    // Renaming is not an Inbox invalidation input.
+    const count = noticed.length;
+    h.emit([metadata(h.relay, "room", "Renamed", 33)]);
+    expect(unread.inbox()).toBe(restored);
+    expect(noticed).toHaveLength(count);
+    stop();
+  },
+);
+
 it("inbox folds edits and deletions and revokes all evidence before a reentrant subscriber", async () => {
   const h = setup();
   h.grant("room");

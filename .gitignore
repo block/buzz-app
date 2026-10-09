@@ -34,3 +34,4 @@ dist-plugins/
 # Generated immutable agent runtime resources.
 src-tauri/resources/agent-runtime/*
 !src-tauri/resources/agent-runtime/README.md
+dist-buzz-mcp/

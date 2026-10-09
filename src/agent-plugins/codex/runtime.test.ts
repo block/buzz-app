@@ -295,7 +295,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     "features.apps": false,
     "features.plugins": false,
   });
-  expect(f.spawn.mock.calls[0]?.[1]?.agent).toBeUndefined();
+  expect(f.spawn.mock.calls[0]?.[1]).not.toHaveProperty("agent");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     kind: 9,
     content: "FIRST",

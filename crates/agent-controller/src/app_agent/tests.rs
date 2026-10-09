@@ -211,7 +211,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
-    for kind in [5, 7, 9, 40003] {
+    for kind in [5, 7, 9, 40003, 40100, 41010] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
             vec!["h".to_owned(), "channel".to_owned()],
@@ -239,7 +239,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let event = agent.sign(&key, 7, "+".into(), vec![]).unwrap();
     let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
     assert!(tags.iter().all(|tag| tag[0] != "ms"));
-    for kind in [0, 1, 3, 9000, 30078, 40002] {
+    for kind in [0, 1, 3, 9000, 24242, 27235, 30078, 30174, 40002] {
         assert!(agent.sign(&key, kind, String::new(), vec![]).is_err());
     }
     assert!(agent
@@ -248,9 +248,42 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     assert!(agent.sign(&key, 9, String::new(), vec![vec![]]).is_err());
     let other = Secret::generate().unwrap();
     assert!(agent.sign(&other, 9, String::new(), vec![]).is_err());
-    assert!(agent.http_auth(&other, b"{}").is_err());
-    let auth = agent.http_auth(&key, b"{}").unwrap();
-    assert_eq!(auth["kind"], 27235);
+    assert!(agent.http_auth(&other, &agent.events_url(), b"{}").is_err());
+    for url in [agent.events_url(), agent.query_url()] {
+        let auth = agent.http_auth(&key, &url, b"{}").unwrap();
+        assert_eq!(auth["kind"], 27235);
+        assert_eq!(auth["tags"][0], serde_json::json!(["u", url]));
+    }
+    assert!(agent
+        .http_auth(&key, "https://elsewhere.test/events", b"{}")
+        .is_err());
+}
+
+#[test]
+fn signs_uploads_and_memory_for_its_own_community_and_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let sha = "a".repeat(64);
+    let auth = agent.upload_auth(&key, &sha).unwrap();
+    assert_eq!(auth["kind"], 24242);
+    let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
+    assert_eq!(tags[1], ["x", sha.as_str()]);
+    assert_eq!(
+        tags[3],
+        ["server", agent.relay.trim_start_matches("wss://")]
+    );
+    assert!(agent.upload_auth(&key, "not-a-hash").is_err());
+    let future = u64::MAX / 2;
+    let memory = agent.memory(&key, "mem/notes", "hi", future).unwrap();
+    assert_eq!(memory["kind"], 30174);
+    assert_eq!(memory["created_at"], future + 1);
+    assert_eq!(memory["tags"][1], serde_json::json!(["p", agent.owner]));
+    assert!(agent.memory(&key, "../notes", "hi", 0).is_err());
+    let other = Secret::generate().unwrap();
+    assert!(agent.upload_auth(&other, &sha).is_err());
+    assert!(agent.memory(&other, "core", "hi", 0).is_err());
 }
 
 #[test]

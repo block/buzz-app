@@ -82,11 +82,9 @@ test("Codex Create supports keyboard selection, model-specific effort and edit",
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html?codex`,
     );
-    await page
-      .getByRole("button", { name: "Create agent", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Add agent", exact: true }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Create agent",
+      name: "Add agent",
       exact: true,
     });
     await dialog.getByLabel("Name", { exact: true }).fill("Browser Codex");

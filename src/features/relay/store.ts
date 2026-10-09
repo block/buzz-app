@@ -1654,6 +1654,7 @@ export function createChannelStore(
     heads.clear();
     tails.clear();
     if (discovery) setList({ ...list, channels: discovery.channels() });
+    resetReferences();
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -1724,8 +1725,21 @@ export function createChannelStore(
       references.retryAt.clear();
       references.queue.clear();
       references.pending.clear();
+      // A queued microtask from the old epoch drops its batch.
+      references.scheduled = false;
     }
     return references;
+  }
+  /** Cache and access resets drop every answer. Mounted links still show the
+   * old one until notified, and an in-flight lookup's reply is dropped, so
+   * notify them and look their channels up again. */
+  function resetReferences() {
+    currentReferences();
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
+    setList(list, true);
+    for (const id of demand.keys()) lookUpReference(id);
+    wakeReferences();
   }
   function describeReference(id: string): ChannelReference {
     const channel = discovery?.get(id);
@@ -1810,9 +1824,11 @@ export function createChannelStore(
     state.queue.add(id);
     if (state.scheduled) return;
     state.scheduled = true;
+    // `state` is shared across epochs; this batch belongs to this one.
+    const generation = epoch;
     queueMicrotask(() => {
+      if (generation !== epoch) return;
       state.scheduled = false;
-      if (state.generation !== epoch) return;
       const ids = [...state.queue];
       state.queue.clear();
       // `resolve` bounds one exact read to 128 channels.
@@ -1821,7 +1837,7 @@ export function createChannelStore(
         for (const id of batch) state.pending.add(id);
         resolve(batch, { priority: "background" }).then(
           () => {
-            if (state.generation !== epoch) return;
+            if (generation !== epoch) return;
             for (const id of batch) {
               state.pending.delete(id);
               state.retryAt.delete(id);
@@ -1833,7 +1849,7 @@ export function createChannelStore(
             wakeReferences();
           },
           (error: unknown) => {
-            if (state.generation !== epoch) return;
+            if (generation !== epoch) return;
             const wait = Math.max(
               REFERENCE_RETRY,
               error instanceof ReadError ? (error.retryAfterMs ?? 0) : 0,
@@ -2315,6 +2331,7 @@ export function createChannelStore(
     // this disposable cache conservatively; pending writes use separate storage.
     if (hadHydration) void persistence?.retain([]).catch(() => {});
     setList(list);
+    resetReferences();
   }
   function dispose() {
     disposed = true;

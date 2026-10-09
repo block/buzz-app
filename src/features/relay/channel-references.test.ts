@@ -277,3 +277,45 @@ it("arms the recheck for a link remounted during its backoff", async () => {
   await h.lookup([SECRET], []);
   expect(link.result.current).toEqual({ state: "withheld" });
 });
+
+it("tells a mounted withheld link about a cache reset and looks it up again", async () => {
+  const h = await setup();
+  const link = renderHook(() => useChannelReference(h.channels, SECRET));
+  await h.lookup([SECRET], []);
+  expect(link.result.current).toEqual({ state: "withheld" });
+  await act(() => h.owner.clearCache());
+  expect(link.result.current).toEqual({ state: "unknown" });
+  // The channel has since become public.
+  await h.lookup([SECRET], [open(SECRET, "launch")]);
+  expect(link.result.current).toMatchObject({ state: "found", name: "launch" });
+});
+
+it("looks a mounted link up again when a reset drops its in-flight reply", async () => {
+  const h = await setup();
+  const link = renderHook(() => useChannelReference(h.channels, SECRET));
+  await flush();
+  const stale = await h.next(39000);
+  await act(() => h.owner.clearCache());
+  stale.respond([]);
+  await flush();
+  await h.lookup([SECRET], [open(SECRET, "launch")]);
+  expect(link.result.current).toMatchObject({ state: "found", name: "launch" });
+});
+
+it("keeps a cancelled lookup from the old cache out of the new one's backoff", async () => {
+  const h = await setup();
+  const release = h.channels.refer?.(SECRET);
+  await flush();
+  const stale = await h.next(39000);
+  release?.();
+  const cleared = h.owner.clearCache();
+  // The new cache's answers are read before the old read's cancellation
+  // settles.
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "unknown" });
+  await cleared;
+  stale.fail(new Error("aborted"));
+  await flush();
+  h.channels.refer?.(SECRET);
+  await h.lookup([SECRET], []);
+  expect(h.channels.describe?.(SECRET)).toEqual({ state: "withheld" });
+});

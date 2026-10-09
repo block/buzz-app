@@ -346,8 +346,9 @@ nothing is `withheld`: the relay hides a private channel's metadata from
 non-members, so private, deleted and invalid channels look the same. A
 `withheld` answer is kept for five minutes and stays shown while it is
 rechecked. A failed read is never `withheld`; it waits at least 30 seconds (or
-the relay's `retryAfterMs`) before another try. Clearing the cache forgets
-every answer. Composer decorations never ask.
+the relay's `retryAfterMs`) before another try. Clearing the cache or
+losing access forgets every answer and drops replies still in flight; mounted
+links are notified and looked up again. Composer decorations never ask.
 
 ## Ownership and reconciliation
 

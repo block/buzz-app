@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+/// Marks a beta import whose prompt no longer needs the baked-team cut.
+pub(crate) const CLEANED: &str = "teamSuffixCleaned";
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -138,6 +140,56 @@ impl Store {
         };
         store.read()?;
         Ok(store)
+    }
+    /// Imports made before the import-time cut kept old Buzz's baked team
+    /// section in their saved prompt. Only beta imports carry `imported.global`,
+    /// so prompts written in this app are never touched, and a prompt is cut
+    /// only while it still equals the retained original. Each agent is cleaned
+    /// once: `imported.teamSuffixCleaned` is saved in the same write, and new
+    /// imports carry it already. Unreadable storage stays fatal; a failed write
+    /// only returns a warning, so one prompt cannot disable the controller.
+    pub fn clean_imported_prompts(&mut self) -> Result<Option<String>> {
+        let mut doc = self.read()?;
+        let mut changed = false;
+        for agent in &mut doc.agents {
+            if agent.imported.get("global").is_none()
+                || agent.imported.get(CLEANED) == Some(&Value::Bool(true))
+            {
+                continue;
+            }
+            // Cut only a prompt still exactly as imported; an owner edit made
+            // in this app, or an unreadable original, is left untouched.
+            let original = match agent.imported.get("definition") {
+                Some(definition) if !definition.is_null() => definition,
+                _ => &agent.imported["record"],
+            };
+            let unedited = original.get("system_prompt").and_then(Value::as_str)
+                == Some(agent.system_prompt.as_str());
+            let prompt = crate::import::imported_prompt(&agent.system_prompt);
+            if unedited && prompt.len() != agent.system_prompt.len() {
+                agent.system_prompt = prompt.to_owned();
+                agent.revision = agent
+                    .revision
+                    .checked_add(1)
+                    .ok_or("Agent revision exhausted")?;
+            }
+            agent.imported[CLEANED] = Value::Bool(true);
+            changed = true;
+        }
+        if !changed {
+            return Ok(None);
+        }
+        let Err(error) = self.write(&doc) else {
+            return Ok(None);
+        };
+        eprintln!("buzz: could not clean imported agent prompts: {error}");
+        // The new file may have landed before a later step such as the
+        // directory sync failed. Either way the saved file must still read
+        // back cleanly, and the error (which says which case) is shown.
+        self.read()?;
+        Ok(Some(format!(
+            "Could not finish removing old Buzz team text from imported agent prompts: {error}"
+        )))
     }
     pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {
         self.importing

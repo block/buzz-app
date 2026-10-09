@@ -179,7 +179,10 @@ export interface AgentEdit {
 export interface AgentImportPreview {
   token: string;
   sourcePath: string;
-  candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
+  candidates: (Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name"> & {
+    /** The imported prompt drops a team section old Buzz baked into it. */
+    stripsTeamInstructions?: boolean;
+  })[];
   warnings: string[];
 }
 export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {

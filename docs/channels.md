@@ -428,9 +428,10 @@ messages, membership and open Settings, replacing Archive with Unarchive after a
 fresh permission read. The conversation stays selected after reload; archived
 write restrictions still apply. When refreshed Settings actions remount, focus
 returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
-joined archived channels remain available by name in search, labeled **Archived
-channel**, but stay out of the sidebar and Recent activity. Open the search result
-and Settings to restore it. This uses the existing membership discovery and exact
+joined archived channels, including session conversations, remain available by name
+in search, labeled **Archived channel**, but stay out of the sidebar and Recent
+activity. After navigating away, open the search result and Settings to restore it.
+This uses the existing membership discovery and exact
 navigation, not a new archived-channel directory.
 
 Search also finds active public channels the viewer has not joined, by name,

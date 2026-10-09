@@ -461,12 +461,12 @@ test("pending modal Escape in narrow navigation preserves visible recovery after
   expect(app.report.unexpected).toEqual([]);
 });
 
-// Browser-only: the legacy header branch must keep a working details entry after
-// Archive removes its row, with real menu/dialog focus and retained transcript.
+// Browser-only: recover an archived session after leaving its URL via the real
+// search -> header -> Settings route. The empty session has no message fallback.
 test.describe("legacy sessions", () => {
   test.use({ sessionChannels: ["11111111-1111-4111-8111-111111111111"] });
 
-  test("sidebar and header manage a legacy session without converting it", async ({
+  test("sidebar and header manage a session and recover it through name search", async ({
     page,
     app,
   }) => {
@@ -523,6 +523,29 @@ test.describe("legacy sessions", () => {
     await page.reload();
     await expect(composer).toBeDisabled();
     await expect(page).toHaveURL(url);
+    await page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Alpha", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeVisible();
+    await expect(page).not.toHaveURL(url);
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    const search = page.getByRole("dialog", { name: "Search Buzz" });
+    await search
+      .getByRole("combobox", { name: "Search Buzz" })
+      .fill("Lifecycle channel");
+    const result = search
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /Lifecycle channel/ });
+    await expect(result).toContainText("Archived channel");
+    await result.click();
+    await expect(search).toHaveCount(0);
+    await expect(page).toHaveURL(url);
+    await expect(composer).toBeDisabled();
     await openChannelDetails(page);
     await expect(
       page.getByRole("button", { name: "View members" }),

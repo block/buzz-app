@@ -22,8 +22,7 @@ const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
 // `just desktop` skips the pin's size optimizations; packaged builds keep them.
-const dev = process.argv.includes("--dev");
-const goose = dev
+const goose = process.argv.includes("--dev")
   ? { ...spec.goose, profile: spec.gooseDevProfile }
   : spec.goose;
 const { env, cargo, rustc } = runtimeBuildPlatform(root);
@@ -286,7 +285,7 @@ try {
 } catch (error) {
   if (error.code !== "EEXIST") throw error;
   throw new Error(
-    `Runtime preparation already in progress: ${preparationLock}. Retry after it finishes. If interrupted, stop its Git/Cargo processes before removing this lock.`,
+    `Runtime preparation already in progress: ${preparationLock}. Retry after it finishes. If it was force-killed, stop its Git/Cargo processes before removing this lock.`,
   );
 }
 // Ctrl-C skips `finally`; the terminal signals Git and Cargo too.

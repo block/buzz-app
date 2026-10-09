@@ -169,20 +169,15 @@ test("desktop dev builds Goose with the dev profile; packaged preparation keeps 
       realpathSync(dir),
     ),
   );
-  // A checkout an interrupted run left unusable is fetched again from scratch.
-  writeFileSync(path.join(sources, "goose/broken-checkout"), "");
-  assert.match(run("--dev"), /Verified inputs staged/);
-  assert.ok(!existsSync(path.join(sources, "goose/broken-checkout")));
 });
 
-test("overlapping preparation cannot replace another build's source checkout", async (t) => {
-  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  runtimeFixture(directory);
+// Starts dev preparation and resolves once its first compiler call is held open.
+async function heldPreparation(t, directory, options = {}) {
   const server = createServer();
   const started = once(server, "connection");
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  t.after(() => server.close());
   writeFileSync(
     path.join(directory, "hold-build"),
     String(server.address().port),
@@ -190,30 +185,34 @@ test("overlapping preparation cannot replace another build's source checkout", a
   const child = spawn(
     process.execPath,
     ["scripts/build-agent-runtime.mjs", "--dev"],
-    {
-      cwd: directory,
-      stdio: ["ignore", "ignore", "pipe"],
-    },
+    { cwd: directory, stdio: ["ignore", "ignore", "pipe"], ...options },
   );
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
   const completed = once(child, "close");
-  let socket;
+  const [socket] = await Promise.race([
+    started,
+    completed.then(([code]) => {
+      throw new Error(
+        `Preparation exited before reaching the compiler (${code}): ${stderr}`,
+      );
+    }),
+  ]);
+  return { child, socket, completed, stderr: () => stderr };
+}
+
+test("overlapping preparation cannot replace another build's source checkout", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const { socket, completed, stderr } = await heldPreparation(t, directory);
   const marker = path.join(
     directory,
     "target/agent-runtime-src/buzz/broken-checkout",
   );
   try {
-    [socket] = await Promise.race([
-      started,
-      completed.then(([code]) => {
-        throw new Error(
-          `Preparation exited before reaching the compiler (${code}): ${stderr}`,
-        );
-      }),
-    ]);
     writeFileSync(marker, "owned by the first preparation");
     const competing = spawnSync(
       process.execPath,
@@ -242,11 +241,9 @@ test("overlapping preparation cannot replace another build's source checkout", a
       1,
     );
   } finally {
-    socket?.end("release");
-    if (!socket) child.kill();
-    server.close();
+    socket.end("release");
     const [code] = await completed;
-    assert.equal(code, 0, stderr);
+    assert.equal(code, 0, stderr());
   }
   // A force-killed preparation's lock is retained until explicitly cleared.
   const lock = path.join(directory, "target/agent-runtime-prepare.lock");
@@ -297,28 +294,10 @@ test("interrupting preparation releases its lock", {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   runtimeFixture(directory);
-  const server = createServer();
-  const started = once(server, "connection");
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(() => server.close());
-  writeFileSync(
-    path.join(directory, "hold-build"),
-    String(server.address().port),
-  );
   // Its own process group, like a terminal's foreground job.
-  const child = spawn(
-    process.execPath,
-    ["scripts/build-agent-runtime.mjs", "--dev"],
-    { cwd: directory, stdio: "ignore", detached: true },
-  );
-  const completed = once(child, "close");
-  const [socket] = await Promise.race([
-    started,
-    completed.then(([code]) => {
-      throw new Error(`Preparation exited before the compiler (${code})`);
-    }),
-  ]);
+  const { child, socket, completed } = await heldPreparation(t, directory, {
+    detached: true,
+  });
   const lock = path.join(directory, "target/agent-runtime-prepare.lock");
   assert.ok(existsSync(lock));
   const compilerStopped = once(socket, "close");

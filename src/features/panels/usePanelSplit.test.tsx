@@ -19,9 +19,9 @@ afterEach(() => {
 
 // Controlled container measurements exercise the hook's clamp and observer
 // lifecycle. Pointer hit targets and actual grid geometry stay in browser tests.
-test.each([undefined, 420])(
-  "optional primary limit %s preserves widths and existing defaults",
-  (primaryMax) => {
+test.each([undefined, { defaultWidth: 420, maxRatio: 0.5 }])(
+  "optional primary sizing %s preserves widths and existing defaults",
+  (primary) => {
     let available = 960;
     let measure = () => {};
     const disconnect = vi.fn();
@@ -39,7 +39,7 @@ test.each([undefined, 420])(
       },
     );
     function Workspace() {
-      const split = usePanelSplit(undefined, 316, primaryMax);
+      const split = usePanelSplit(undefined, 316, primary);
       return (
         <div ref={split.ref} style={split.style} data-testid="workspace">
           <section>{split.handle}</section>
@@ -55,19 +55,22 @@ test.each([undefined, 420])(
     const workspace = screen.getByTestId("workspace");
     const width = () =>
       workspace.style.getPropertyValue("--secondary-panel-width");
-    expect(width()).toBe(primaryMax ? "540px" : "");
-    expect(handle).toHaveAttribute("aria-valuemin", primaryMax ? "540" : "316");
+    expect(width()).toBe(primary ? "540px" : "");
+    expect(handle).toHaveAttribute("aria-valuemin", primary ? "480" : "316");
     fireEvent.keyDown(handle, { key: "Home" });
-    expect(width()).toBe(primaryMax ? "540px" : "316px");
+    expect(width()).toBe(primary ? "480px" : "316px");
     fireEvent.keyDown(handle, { key: "End" });
     expect(width()).toBe("640px");
     available = 720;
     act(measure);
     expect(width()).toBe("400px");
     fireEvent.keyDown(handle, { key: "Home" });
-    expect(width()).toBe("316px");
+    expect(width()).toBe(primary ? "360px" : "316px");
     fireEvent.doubleClick(handle);
-    expect(width()).toBe(primaryMax ? `${720 / 2.1}px` : "");
+    expect(width()).toBe(primary ? "360px" : "");
+    available = 1200;
+    act(measure);
+    expect(width()).toBe(primary ? "780px" : "");
     view.unmount();
     expect(disconnect).toHaveBeenCalledTimes(2);
   },

@@ -6,7 +6,7 @@ import styles from "./Panels.module.css";
 export function usePanelSplit(
   defaultWidth?: number,
   min = 316,
-  primaryMax?: number,
+  primary?: { defaultWidth: number; maxRatio: number },
 ) {
   const ref = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(0);
@@ -20,13 +20,17 @@ export function usePanelSplit(
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const minimum = Math.max(min, available - (primaryMax ?? available));
+  const minimum = Math.max(min, available * (1 - (primary?.maxRatio ?? 1)));
   const max = Math.max(minimum, available - 320);
   const clamp = (width: number) => Math.min(max, Math.max(minimum, width));
-  const width = clamp(preferred ?? defaultWidth ?? available / 2.1);
+  const width = clamp(
+    preferred ??
+      defaultWidth ??
+      (primary ? available - primary.defaultWidth : available / 2.1),
+  );
   return {
     ref,
-    style: (preferred === undefined && primaryMax === undefined
+    style: (preferred === undefined && primary === undefined
       ? {}
       : {
           "--secondary-panel-width": `${width}px`,

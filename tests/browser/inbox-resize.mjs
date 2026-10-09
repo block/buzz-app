@@ -36,9 +36,12 @@ export async function resizeInboxDetail(page, detail) {
   await expect.poll(width).toBeCloseTo(initial - 80, 0);
   await handle.press("Shift+ArrowLeft");
   await expect.poll(width).toBeCloseTo(initial - 32, 0);
-  // Over-dragging in either direction must retain usable list and reader widths.
+  // Over-dragging may widen the list up to an equal split, never beyond it.
+  const halfWidth = await detail.evaluate(
+    (element) => element.parentElement.clientWidth / 2,
+  );
   for (const [offset, expected] of [
-    [1000, 420],
+    [1000, halfWidth],
     [-1000, 320],
   ]) {
     const grip = await handle.boundingBox();
@@ -56,7 +59,8 @@ export async function resizeInboxDetail(page, detail) {
   await expect
     .poll(width)
     .toBeCloseTo(Number(await handle.getAttribute("aria-valuemin")), 0);
-  await expect.poll(listWidth).toBeCloseTo(420, 0);
+  await expect.poll(listWidth).toBeCloseTo(halfWidth, 0);
+  await expect.poll(width).toBeCloseTo(await listWidth(), 0);
   await handle.press("End");
   await expect
     .poll(width)

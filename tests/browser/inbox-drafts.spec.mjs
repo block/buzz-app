@@ -92,8 +92,7 @@ test("Draft and conversation previews share their plain layout and show real sel
   }, mode);
   const inboxDetail = inbox.getByRole("region", { name: "Inbox detail" });
   // Full splitter input/bounds are covered by Inbox; here prove shared preference.
-  await inboxDetail.getByRole("separator").press("End");
-  await inboxDetail.getByRole("separator").press("ArrowRight");
+  await inboxDetail.getByRole("separator").press("Home");
   const resizedWidth = (await inboxDetail.boundingBox()).width;
   const expectedStyle = await styleOf(reference);
   expect(expectedStyle).toMatchObject({
@@ -172,10 +171,17 @@ test("Draft and conversation previews share their plain layout and show real sel
       await expect
         .poll(async () => (await detail.boundingBox()).width)
         .toBeCloseTo(resizedWidth, 0);
-      await handle.press("ArrowRight");
+      await handle.press("ArrowLeft");
       await expect
         .poll(async () => (await detail.boundingBox()).width)
-        .toBeCloseTo(resizedWidth - 16, 0);
+        .toBeCloseTo(resizedWidth + 16, 0);
+      await handle.press("Home");
+      const halfWidth = await detail.evaluate(
+        (element) => element.parentElement.clientWidth / 2,
+      );
+      await expect
+        .poll(async () => (await detail.boundingBox()).width)
+        .toBeCloseTo(halfWidth, 0);
       // Drafts now places its toolbar directly in the grid, unlike Inbox.
       const toolbar = inbox.locator('[class*="toolbar"]');
       const headerBox = await detail.locator("header").boundingBox();

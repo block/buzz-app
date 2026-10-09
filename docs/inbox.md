@@ -270,7 +270,8 @@ Built on main's existing Inbox and Drafts: one filter menu, outline/filled unrea
 toggle, trailing unread dots, adjacent list/detail with one header, and the shared
 centered draft-delete dialog. The list/detail divider reuses `usePanelSplit` and
 `ResizeHandle`: drag, arrows (Shift for larger steps), Home/End and double-click
-reset. The list stays between 320–420px and the conversation keeps at least 316px.
+reset. The list defaults to 420px where space allows and can resize from 320px
+up to a 50/50 split with the conversation, which keeps at least 316px.
 Its chosen width is in memory across detail close/reopen and Inbox/Drafts switching,
 not persisted across restarts. At ≤700px available width, detail replaces the list
 and the divider is hidden.

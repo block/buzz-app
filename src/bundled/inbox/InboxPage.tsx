@@ -132,7 +132,10 @@ export function InboxView({
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
 }) {
-  const split = usePanelSplit(undefined, 316, 420);
+  const split = usePanelSplit(undefined, 316, {
+    defaultWidth: 420,
+    maxRatio: 0.5,
+  });
   const previewId = useId();
   const list = useChannelList(session.channels);
   const inbox = useSyncExternalStore(

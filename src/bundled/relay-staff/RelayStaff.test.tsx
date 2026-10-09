@@ -740,6 +740,7 @@ async function openFeedback(mime: string) {
     id: "f1",
     communityId: "c1",
     communityHost: "team.example.com",
+    submitterPubkey: member,
     status: "new",
     receivedAt: "2026-10-08T00:00:00Z",
   };
@@ -1141,6 +1142,7 @@ it("review witness: attachment authorization loss reprobes", async () => {
         id: "f1",
         communityId: "c1",
         communityHost: "team.example.com",
+        submitterPubkey: member,
         bodySummary: "Attachment",
         status: "new",
         receivedAt: "2026-10-08T00:00:00Z",
@@ -1775,6 +1777,7 @@ it("each community's count is a lower bound when the relay's limit is hit", asyn
         id: "f1",
         communityId: "c1",
         communityHost: "team.example.com",
+        submitterPubkey: member,
         status: "new",
         receivedAt: report.createdAt,
         bodySummary: "Hello",
@@ -2052,4 +2055,54 @@ it("member search fetches every unknown result profile in one batch", async () =
   const search = ensured.filter((ids) => keys.some((k) => ids.includes(k)));
   expect(search).toHaveLength(1);
   expect(new Set(search[0])).toEqual(new Set(keys));
+});
+
+const feedbackFrom = (submitterPubkey: string, id = submitterPubkey) => ({
+  id,
+  communityId: "c1",
+  communityHost: "team.example.com",
+  submitterPubkey,
+  status: "new",
+  receivedAt: report.createdAt,
+  bodySummary: "Hello",
+});
+
+async function openFeedbackList() {
+  fireEvent.click(await screen.findByRole("tab", { name: "Feedback" }));
+  return screen.findAllByRole("button", { name: /Hello/ });
+}
+
+it("feedback cards show the submitter by name and short key", async () => {
+  routes.listFeedback = () => ok([feedbackFrom(member)]);
+  mountWithProfiles(new Map([[member, { name: "Alice" }]]));
+  const [card] = await openFeedbackList();
+  expect(card).toHaveTextContent(
+    `submitter: Alice (${formatPublicKey(member)})`,
+  );
+  expect(
+    screen.getByText("Names come from profiles in team.example.com."),
+  ).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain(member.slice(0, 10));
+});
+
+it("same-name feedback submitters get distinct labels", async () => {
+  routes.listFeedback = () => ok([feedbackFrom(bobA), feedbackFrom(bobB)]);
+  mountWithProfiles(twins);
+  const cards = await openFeedbackList();
+  expect(cards[0]).toHaveTextContent(`submitter: Bob (${longA})`);
+  expect(cards[1]).toHaveTextContent(`submitter: Bob (${longB})`);
+});
+
+it("feedback list fetches every unknown submitter in one batch", async () => {
+  const keys = ["c", "d", "e"].map((c) => c.repeat(64));
+  routes.listFeedback = () => ok(keys.map((key) => feedbackFrom(key)));
+  const ensured: string[][] = [];
+  mountWithProfiles(new Map(), ensured);
+  await openFeedbackList();
+  await waitFor(() =>
+    expect(ensured.some((ids) => ids.includes(keys[0] as string))).toBe(true),
+  );
+  const batch = ensured.filter((ids) => keys.some((k) => ids.includes(k)));
+  expect(batch).toHaveLength(1);
+  expect(new Set(batch[0])).toEqual(new Set(keys));
 });

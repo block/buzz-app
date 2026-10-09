@@ -1,4 +1,10 @@
-import { Person } from "./people";
+import {
+  NamesSource,
+  PeopleScope,
+  Person,
+  PersonName,
+  usePeople,
+} from "./people";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MediaViewer } from "../../features/messages/MediaAttachment";
@@ -69,6 +75,9 @@ export function Feedback() {
   const { context } = useSession();
   const [selected, setSelected] = useState<string | null>(null);
   const [list, reload] = useRead({ route: "listFeedback" }, [context]);
+  const people = usePeople(
+    list.state === "ok" ? list.value.map((item) => item.submitterPubkey) : [],
+  );
   if (selected)
     return (
       <FeedbackDetail
@@ -83,33 +92,39 @@ export function Feedback() {
         items.length === 0 ? (
           <p className="text-body-sm text-secondary">No feedback found.</p>
         ) : (
-          <GroupedList
-            items={items}
-            limit={FEEDBACK_LIMIT}
-            render={(item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className={listButton}
-                  onClick={() => setSelected(item.id)}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="line-clamp-2 font-medium">
-                      {item.bodySummary.slice(0, 120)}
-                    </span>
-                    {item.status !== "new" && (
-                      <span className="text-caption text-secondary">
-                        {item.status}
+          <PeopleScope people={people}>
+            <NamesSource />
+            <GroupedList
+              items={items}
+              limit={FEEDBACK_LIMIT}
+              render={(item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={listButton}
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="line-clamp-2 font-medium">
+                        {item.bodySummary.slice(0, 120)}
                       </span>
-                    )}
-                  </span>
-                  <span className="text-caption text-secondary">
-                    {time(item.receivedAt)}
-                  </span>
-                </button>
-              </li>
-            )}
-          />
+                      {item.status !== "new" && (
+                        <span className="text-caption text-secondary">
+                          {item.status}
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate text-caption text-secondary">
+                      submitter: <PersonName pubkey={item.submitterPubkey} />
+                    </span>
+                    <span className="text-caption text-secondary">
+                      {time(item.receivedAt)}
+                    </span>
+                  </button>
+                </li>
+              )}
+            />
+          </PeopleScope>
         )
       }
     </Loaded>
@@ -188,6 +203,7 @@ function FeedbackBody({
         <p className="mt-2 whitespace-pre-wrap break-words text-body-sm">
           {feedback.body}
         </p>
+        <NamesSource />
       </div>
       <div className="flex flex-col gap-1.5">
         <span className="text-caption font-medium text-secondary">Status</span>

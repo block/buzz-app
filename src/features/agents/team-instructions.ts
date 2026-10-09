@@ -106,49 +106,126 @@ export function teamTextConflict(
     : undefined;
 }
 
+/** The agent and two teams that make a delivery impossible: one of the
+ * owner's agents is listed on two teams with different text. Names them so
+ * the user knows which team to edit. */
+function deliveryConflict(
+  texts: readonly TeamText[],
+  control: AgentControl,
+  relay: string,
+): string | undefined {
+  for (const agent of control.snapshot().data?.agents ?? []) {
+    if (agent.relayUrl !== relay) continue;
+    const teams = texts.filter(
+      ({ team, text }) => text && team.agents.includes(agent.pubkey),
+    );
+    const other = teams.find(({ text }) => text !== teams[0]?.text);
+    if (teams[0] && other)
+      return `${agent.name} is on teams "${teams[0].team.name}" and "${other.team.name}", which have different instructions. Give both teams the same instructions or remove the agent from one.`;
+  }
+  return undefined;
+}
+
+const deliveries = new WeakMap<ChannelKit, Promise<void>>();
+const syncErrors = new WeakMap<ChannelKit, string>();
+const syncListeners = new Set<() => void>();
+function setSyncError(kit: ChannelKit, message: string | undefined) {
+  if (syncErrors.get(kit) === message) return;
+  if (message === undefined) syncErrors.delete(kit);
+  else syncErrors.set(kit, message);
+  for (const listener of syncListeners) listener();
+}
+/** Why app-start delivery gave up for this catalog, until a delivery
+ * succeeds. */
+export const teamSyncError = (kit: ChannelKit) => syncErrors.get(kit);
+export function subscribeTeamSyncError(listener: () => void) {
+  syncListeners.add(listener);
+  return () => {
+    syncListeners.delete(listener);
+  };
+}
+
 /** Writes every team's current text into its members' settings and clears it
  * for agents no team with text lists. Never restarts: running members show
  * restart-needed instead. Runs after each team save or delete and once teams
- * load at app start. */
-export async function deliverTeamTexts(
+ * load at app start. Deliveries for one catalog run one at a time, each from
+ * its own fresh read, so an older pass can never land after a newer one. */
+export function deliverTeamTexts(
+  kit: ChannelKit,
+  control: AgentControl | undefined,
+  session: RelaySession | undefined,
+): Promise<void> {
+  return queueDelivery(kit, control, session).catch((reason) => {
+    throw new Error(
+      `Saved, but team members' instructions weren't updated: ${message(reason)}`,
+    );
+  });
+}
+
+const message = (reason: unknown) =>
+  reason instanceof Error ? reason.message : String(reason);
+
+function queueDelivery(
+  kit: ChannelKit,
+  control: AgentControl | undefined,
+  session: RelaySession | undefined,
+) {
+  const run = (deliveries.get(kit) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => deliverNow(kit, control, session));
+  deliveries.set(kit, run);
+  return run;
+}
+
+async function deliverNow(
   kit: ChannelKit,
   control: AgentControl | undefined,
   session: RelaySession | undefined,
 ) {
   if (!control?.syncTeamInstructions || !session?.viewer) return;
-  try {
-    const texts = await readTeamTexts(kit, control);
-    await control.syncTeamInstructions(
-      session.scope.slice(0, -(session.viewer.length + 1)),
-      Object.fromEntries(
-        texts.flatMap(({ team, text }) =>
-          text === undefined ? [] : [[team.id, text]],
-        ),
+  const relay = session.scope.slice(0, -(session.viewer.length + 1));
+  const texts = await readTeamTexts(kit, control);
+  const conflict = deliveryConflict(texts, control, relay);
+  if (conflict) throw new Error(conflict);
+  await control.syncTeamInstructions(
+    relay,
+    Object.fromEntries(
+      texts.flatMap(({ team, text }) =>
+        text === undefined ? [] : [[team.id, text]],
       ),
-    );
-  } catch (reason) {
-    throw new Error(
-      `Saved, but team members' instructions weren't updated: ${reason instanceof Error ? reason.message : String(reason)}`,
-    );
-  }
+    ),
+  );
+  setSyncError(kit, undefined);
 }
 
+/** App-start attempts before the failure is shown and retries stop. */
+export const STARTUP_SYNC_ATTEMPTS = 4;
+
 /** Delivers team text once per relay session, after its teams and the local
- * agents have both loaded. It starts the catalog read only once channel
- * discovery is ready, the same gate the channel views use, so the sync also
- * runs when the app opens on a page without a channel view. */
+ * agents have both loaded and no other agent operation is running. It starts
+ * the catalog read only once channel discovery is ready, the same gate the
+ * channel views use, so the sync also runs when the app opens on a page
+ * without a channel view. A failed delivery retries with backoff; after the
+ * last attempt the error is shown until a later delivery succeeds. */
 export function bindTeamTextSync(
   control: AgentControl,
   communities: Communities,
 ) {
   let watched: RelaySession | undefined;
   let synced: RelaySession | undefined;
+  let running = false;
+  let failures = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
   let stopSession = () => {};
   const update = () => {
     const relay = communities.relay.snapshot();
     const session = relay.status === "ready" ? relay.session : undefined;
     if (session !== watched) {
       stopSession();
+      clearTimeout(retry);
+      retry = undefined;
+      failures = 0;
+      running = false;
       watched = session;
       if (session) {
         const stopKit = session.channelKit.subscribe(update);
@@ -159,22 +236,51 @@ export function bindTeamTextSync(
         };
       } else stopSession = () => {};
     }
-    if (!session || synced === session) return;
+    if (!session || synced === session || running || retry) return;
     if (session.channels.list().status === "ready") session.channelKit.ensure();
+    const agents = control.snapshot();
     if (
       session.channelKit.snapshot().status !== "ready" ||
-      control.snapshot().status !== "ready"
+      agents.status !== "ready" ||
+      agents.busy
     )
       return;
-    synced = session;
-    void deliverTeamTexts(session.channelKit, control, session).catch(
-      (reason) => console.warn("Team instruction sync failed", reason),
+    running = true;
+    const kit = session.channelKit;
+    queueDelivery(kit, control, session).then(
+      () => {
+        if (watched !== session) return;
+        running = false;
+        synced = session;
+      },
+      (reason) => {
+        if (watched !== session) return;
+        running = false;
+        failures += 1;
+        console.warn("Team instruction sync failed", reason);
+        if (failures >= STARTUP_SYNC_ATTEMPTS) {
+          synced = session;
+          setSyncError(
+            kit,
+            `Team members' instructions weren't updated: ${message(reason)}`,
+          );
+          return;
+        }
+        retry = setTimeout(
+          () => {
+            retry = undefined;
+            update();
+          },
+          1_000 * 2 ** (failures - 1),
+        );
+      },
     );
   };
   const stopRelay = communities.relay.subscribe(update);
   const stopControl = control.subscribe(update);
   update();
   return () => {
+    clearTimeout(retry);
     stopSession();
     stopRelay();
     stopControl();

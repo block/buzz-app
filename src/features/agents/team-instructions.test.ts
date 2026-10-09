@@ -6,7 +6,9 @@ import type { ChannelKit } from "../channel-templates/capability";
 import type { KitEntry, Team } from "../channel-templates/model";
 import {
   bindTeamTextSync,
+  deliverTeamTexts,
   readTeamTexts,
+  teamSyncError,
   teamTextConflict,
   type TeamText,
 } from "./team-instructions";
@@ -182,4 +184,167 @@ it("syncs team text once per session after teams and agents load", async () => {
     ),
   );
   stop();
+});
+
+/** A ready session whose catalog holds `teams`, with each team's text in
+ * `texts`, and an agent control that owns agent `a` ("Scout"). */
+function harness(teams: Team[], texts: Record<string, string>) {
+  const viewer = "c".repeat(64);
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const kit = {
+    subscribe,
+    snapshot: () => ({ status: "ready", entries: teams.map((t) => entry(t)) }),
+    ensure: vi.fn(),
+    refresh: vi.fn(async () => {}),
+    readText: vi.fn(async (id: string) => ({ text: texts[id], head: "h" })),
+  } as unknown as ChannelKit;
+  const session = {
+    viewer,
+    scope: `https://relay.example:${viewer}`,
+    channelKit: kit,
+    channels: { subscribeList: subscribe, list: () => ({ status: "ready" }) },
+  } as unknown as RelaySession;
+  const controlState = {
+    status: "ready",
+    busy: false,
+    data: {
+      agents: [
+        {
+          id: "scout",
+          pubkey: a,
+          name: "Scout",
+          relayUrl: "https://relay.example",
+        },
+      ],
+    },
+  };
+  const syncTeamInstructions = vi.fn(
+    async (_relay: string, _texts: Record<string, string>) => ({}),
+  );
+  const control = {
+    subscribe,
+    snapshot: () => controlState,
+    syncTeamInstructions,
+  } as unknown as AgentControl;
+  const communities = {
+    relay: { subscribe, snapshot: () => ({ status: "ready", session }) },
+  } as unknown as Communities;
+  return {
+    kit,
+    session,
+    control,
+    controlState,
+    communities,
+    syncTeamInstructions,
+    notify,
+  };
+}
+const shared = (id: string, name = id): Team => ({
+  type: "team",
+  id,
+  name,
+  agents: [a],
+});
+
+it("an older delivery that reads first never lands after a newer save's", async () => {
+  const texts = { one: "OLD" };
+  const h = harness([shared("one")], texts);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(h.kit.readText).mockImplementationOnce(async (id) => {
+    const read = { text: texts[id as "one"], head: "h" };
+    await gate;
+    return read;
+  });
+  // App-start sync reads OLD, then stalls; a save changes the text and
+  // delivers while the first pass is still waiting.
+  const startup = deliverTeamTexts(h.kit, h.control, h.session);
+  await vi.waitFor(() => expect(h.kit.readText).toHaveBeenCalled());
+  texts.one = "NEW";
+  const save = deliverTeamTexts(h.kit, h.control, h.session);
+  // Give the save's pass every chance to read and deliver before the
+  // stalled one resumes.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await Promise.all([startup, save]);
+  expect(h.syncTeamInstructions.mock.calls.map(([, t]) => t.one)).toEqual([
+    "OLD",
+    "NEW",
+  ]);
+});
+
+it("waits out a busy agent operation and then delivers in the same session", async () => {
+  const h = harness([shared("one")], { one: "TEXT" });
+  h.controlState.busy = true;
+  const stop = bindTeamTextSync(h.control, h.communities);
+  h.notify();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(h.syncTeamInstructions).not.toHaveBeenCalled();
+  h.controlState.busy = false;
+  h.notify();
+  await vi.waitFor(() =>
+    expect(h.syncTeamInstructions).toHaveBeenCalledExactlyOnceWith(
+      "https://relay.example",
+      { one: "TEXT" },
+    ),
+  );
+  h.notify();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(h.syncTeamInstructions).toHaveBeenCalledOnce();
+  stop();
+});
+
+it("retries a rejected app-start delivery and shows the error only once retries run out", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness([shared("one")], { one: "TEXT" });
+    h.syncTeamInstructions.mockRejectedValueOnce(
+      new Error("Another agent operation is in progress"),
+    );
+    const stop = bindTeamTextSync(h.control, h.communities);
+    await vi.waitFor(() =>
+      expect(h.syncTeamInstructions).toHaveBeenCalledOnce(),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.syncTeamInstructions).toHaveBeenCalledTimes(2);
+    expect(teamSyncError(h.kit)).toBeUndefined();
+    stop();
+
+    const g = harness([shared("one")], { one: "TEXT" });
+    g.syncTeamInstructions.mockRejectedValue(new Error("host failed"));
+    const stopG = bindTeamTextSync(g.control, g.communities);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(g.syncTeamInstructions).toHaveBeenCalledTimes(4);
+    expect(teamSyncError(g.kit)).toMatch(/weren't updated: host failed/);
+    stopG();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refuses delivery while two devices left one agent on two differently instructed teams, until one team is edited", async () => {
+  // Each device saved its own team after its own check passed, so the relay
+  // now lists Scout on both teams with different text.
+  const texts = { one: "FIRST", two: "SECOND" };
+  const h = harness(
+    [shared("one", "Writers"), shared("two", "Editors")],
+    texts,
+  );
+  await expect(deliverTeamTexts(h.kit, h.control, h.session)).rejects.toThrow(
+    'Scout is on teams "Writers" and "Editors", which have different instructions',
+  );
+  expect(h.syncTeamInstructions).not.toHaveBeenCalled();
+  texts.two = "FIRST";
+  await deliverTeamTexts(h.kit, h.control, h.session);
+  expect(h.syncTeamInstructions).toHaveBeenCalledExactlyOnceWith(
+    "https://relay.example",
+    { one: "FIRST", two: "FIRST" },
+  );
 });

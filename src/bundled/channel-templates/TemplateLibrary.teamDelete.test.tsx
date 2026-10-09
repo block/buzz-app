@@ -62,7 +62,12 @@ function renderLibrary(
         error: undefined,
         refresh: vi.fn(),
       }}
-      control={control as unknown as AgentControl}
+      control={
+        {
+          snapshot: () => ({ data: { agents: [] } }),
+          ...control,
+        } as unknown as AgentControl
+      }
       session={
         {
           viewer,

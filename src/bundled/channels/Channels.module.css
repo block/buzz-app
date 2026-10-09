@@ -35,9 +35,6 @@
   display: flex;
   flex-direction: column;
 }
-.conversation {
-  position: relative;
-}
 .sessionConversation {
   container: session-conversation / inline-size;
 }

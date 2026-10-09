@@ -221,6 +221,7 @@ function ChannelWorkspace({
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  const historyContainer = useRef<HTMLDivElement>(null);
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
@@ -1463,89 +1464,103 @@ function ChannelWorkspace({
               )}
               <SessionColumn enabled={flatSession}>
                 <MessageManagementStatus />
-                {flatSession &&
-                current &&
-                navigation &&
-                requestedMessage &&
-                exact &&
-                !exact.inTimeline ? (
-                  <SessionMessageTarget
-                    key={`${current.id}:${requestedMessage}`}
-                    session={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    messageId={requestedMessage}
-                    navigation={navigation}
-                    extensions={extensions}
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onLatest={() => select(current.id)}
-                    onRetry={() => {
-                      void navigator?.retry();
-                    }}
-                  />
-                ) : current ? (
-                  <ChannelBody
-                    onContentReady={setContentReadyChannel}
-                    viewer={viewer}
-                    extensions={extensions}
-                    key={current.id}
-                    queries={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    cached={cached}
-                    navigation={
-                      flatSession || !requestedMessage || exact?.inTimeline
-                        ? navigation
-                        : undefined
-                    }
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onOpenThread={flatSession ? undefined : openThread}
-                    onOpenMediaReview={openMediaReview}
-                    revealMessageId={
-                      sent?.channelId === current.id ? sent.id : undefined
-                    }
-                  />
-                ) : (
-                  <div
-                    className={styles.empty}
-                    data-buzz-launch-pending={
-                      resolving && !navigation?.signal.aborted
-                        ? "required"
-                        : undefined
-                    }
-                  >
-                    {resolving
-                      ? "Checking conversation access…"
-                      : "Select a channel to read it."}
-                  </div>
-                )}
-                {current?.readOnly && !current.cached && (
-                  <ChannelJoinNotice
-                    key={`join:${current.id}`}
-                    ready={contentReadyChannel === current.id}
-                    channelId={current.id}
-                    lifecycle={queries.channelLifecycle}
-                    joinable={
-                      !current.archived &&
-                      (current.channelType === "stream" ||
-                        current.channelType === "forum")
-                    }
-                    onJoin={() => setJoiningChannel(current.id)}
-                    onHeightChange={setJoinNoticeHeight}
-                  />
-                )}
+                <div
+                  ref={historyContainer}
+                  className="relative flex min-h-0 flex-1 flex-col"
+                >
+                  {flatSession &&
+                  current &&
+                  navigation &&
+                  requestedMessage &&
+                  exact &&
+                  !exact.inTimeline ? (
+                    <SessionMessageTarget
+                      key={`${current.id}:${requestedMessage}`}
+                      session={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      messageId={requestedMessage}
+                      navigation={navigation}
+                      extensions={extensions}
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onLatest={() => select(current.id)}
+                      onRetry={() => {
+                        void navigator?.retry();
+                      }}
+                    />
+                  ) : current ? (
+                    <ChannelBody
+                      onContentReady={setContentReadyChannel}
+                      viewer={viewer}
+                      extensions={extensions}
+                      key={current.id}
+                      queries={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      cached={cached}
+                      navigation={
+                        flatSession || !requestedMessage || exact?.inTimeline
+                          ? navigation
+                          : undefined
+                      }
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onOpenThread={flatSession ? undefined : openThread}
+                      onOpenMediaReview={openMediaReview}
+                      revealMessageId={
+                        sent?.channelId === current.id ? sent.id : undefined
+                      }
+                    />
+                  ) : (
+                    <div
+                      className={styles.empty}
+                      data-buzz-launch-pending={
+                        resolving && !navigation?.signal.aborted
+                          ? "required"
+                          : undefined
+                      }
+                    >
+                      {resolving
+                        ? "Checking conversation access…"
+                        : "Select a channel to read it."}
+                    </div>
+                  )}
+                  {current?.readOnly && !current.cached && (
+                    <ChannelJoinNotice
+                      key={`join:${current.id}`}
+                      ready={contentReadyChannel === current.id}
+                      channelId={current.id}
+                      lifecycle={queries.channelLifecycle}
+                      joinable={
+                        !current.archived &&
+                        (current.channelType === "stream" ||
+                          current.channelType === "forum")
+                      }
+                      onJoin={() => setJoiningChannel(current.id)}
+                      onHeightChange={setJoinNoticeHeight}
+                    />
+                  )}
+                </div>
                 {!cached && (
                   <LiveStatus
                     live={queries.live}
                     channelId={current?.id}
                     partialRoster={list.coverage === "partial"}
-                    // Retry removes this focused control. Reuse the composer’s
-                    // explicit focus handoff instead of relying on browser Tab memory.
+                    // Retry removes this control; previews have no composer.
                     onRetry={
                       current
-                        ? () => setComposerFocus((value) => value + 1)
+                        ? () => {
+                            if (current.readOnly && !current.cached) {
+                              historyContainer.current
+                                ?.querySelector<HTMLElement>(
+                                  "[data-message-scroller]",
+                                )
+                                ?.focus({ preventScroll: true });
+                            } else {
+                              setComposerFocus((value) => value + 1);
+                            }
+                          }
                         : undefined
                     }
                   />

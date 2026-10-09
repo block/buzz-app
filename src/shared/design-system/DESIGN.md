@@ -1,5 +1,268 @@
 # Design guide
 
+## Start here when building a screen
+
+This guide applies to all Buzz UI, including feature pages and bundled plugins.
+Start with the screen's structure, then choose components, then their tokens.
+Matching colors alone does not make a screen consistent. Existing app code can
+contain adoption gaps; it is not automatically an approved design example.
+
+1. Identify the surface and what its host already supplies. For plugins, start
+   with [contribution boundaries](#plugin-contribution-boundaries).
+2. Choose the shared composition below. Inspect its implementation and a current
+   caller; keep navigation, data, and persistence with their existing owners.
+3. Read the linked rules for the affected controls and states. Reuse their recipes
+   instead of overriding appearance in feature CSS.
+4. Check the rendered screen, including loading, empty, error, and populated states.
+   Report any checks you did not perform. Follow the root contribution workflow
+   for iteration; a token-check pass is not a visual review.
+
+| What you are building | Use | Keep out of this role |
+| --- | --- | --- |
+| A workspace pane or full-page destination | `PanelHeader` with the [panel header recipe](#panel-headers) | A large page heading in place of pane chrome |
+| Static pane identity | `PanelHeaderLabel` in the header's `title` slot | A bare title string or a custom icon/title flex row in new compositions |
+| Existing tabbed pane navigation | `Tabs variant="navigation"` in that slot | New tab semantics for a static title or route destination |
+| Actions at the trailing edge of pane chrome | Small, ghost `IconButton`s; shared Menu for overflow | Text buttons, forms, filters, or a primary call-to-action banner |
+| Content introduction within a pane, such as a Settings page | `Header` | A second copy of the pane title with no additional purpose |
+| A named content group | `InlineHeader`; Settings groups use `SettingsGroup` | Another panel header or an arbitrary large heading |
+| A modal | `Dialog` / `AlertDialog` and their title, body, and action slots | Panel chrome or generic headings replacing dialog labelling |
+| Empty collection or setup state | `EmptyState` with a useful next action | Hiding the pane header, or calling a loading/error state empty |
+| A list, directory, or master/detail workspace | [Collection layout](#collections-and-workspaces) | A new card style for each feature or a filter inside pane chrome |
+| An object opened beside the current task | [Detail panel](#detail-panels) within the existing panel host | A second dock, duplicate close button, or nested outer frame |
+| Preferences, account configuration, or plugin setup | [Settings composition](#settings-pages-and-contributions) | A dashboard layout or a custom row/control recipe |
+| A form, confirmation, catalog, or inspector that blocks the task | [Dialog composition](#modal-composition) | A hand-built modal shell or an unrelated pane-header rule |
+| Actions, a short anchored form, or a field choice | [Anchored surfaces](#menus-popovers-and-pickers) | Interchanging Menu, Popover, and Select just because they look similar |
+
+Component sources live in [`ui/`](ui/). Use the
+[adoption map](../../../docs/design-system-adoption.md) for feature ownership and
+[appearance and settings guidance](../../../docs/design-system.md) for host integration.
+For details, consult [Controls](#controls), [Form composition](#form-composition),
+[Surface and depth](#surface-and-depth), [row alignment](#align-row-content-not-state-backgrounds),
+[Writing](#writing), and [Responsiveness](#responsiveness).
+
+Adopted rules describe the target, even where callers have not migrated yet.
+Sections explicitly marked **proposed** are not permission for a broad rollout.
+Keep documented exceptions local to their stated use. If the requested design
+needs a new exception or shared variant, explain the gap before expanding scope;
+do not infer approval from an existing inconsistent screen.
+
+## Compose the whole surface
+
+Use these recipes before the detailed visual reference below. They describe
+structure and ownership, not new plugin APIs. Examples demonstrate the named
+pattern only; the [adoption review](../../../docs/design-system-adoption.md#composition-review)
+records known gaps so callers are not mistaken for complete design approval.
+
+### Collections and workspaces
+
+Arrange a full view in this order: pane identity and global icon actions; optional
+search/filter controls; scoped status or recovery; the collection or working area.
+Put filters beside the collection they affect, with one clear reading order. A
+filter does not belong in the pane's icon-action slot. Resetting a filter must be
+possible when the results are empty.
+
+Use rows for objects people scan and compare. Use cards when an item's preview or
+grouped content earns the extra area; a grid is not the default for every directory.
+Reuse the shared row/control appropriate to the interaction, with a consistent
+leading icon/avatar slot, primary label, supporting text, and trailing metadata
+or actions. Keep an independent row action outside the row's primary click target.
+Do not make decorative metadata look like another control.
+
+Use `FullPageSurface` for one page surface, or the existing workspace owner for
+multiple regions. FullPageSurface supplies the surface, not padding or scrolling.
+Give each independently scrolling region one intentional scrollport; fix toolbars
+and composers outside it when they must remain available. Let flex/grid children
+shrink before adding overflow. Do not nest an additional scrollport around an
+already bounded list, timeline, editor, or terminal.
+
+Master/detail layouts preserve list selection, scroll, and drafts while inspecting
+an item. Follow the existing host's narrow overlay/navigation behavior rather than
+squeezing two unusable columns into a small viewport. Selection, hover, and focus
+remain distinct. Shared tabs connect related views of one object; route destinations
+retain navigation semantics. When replacing a focused page heading with shared
+chrome, preserve a meaningful destination focus target, such as a named content
+region. Do not add a duplicate title or discard the focus handoff just because the
+shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
+body filters and list/detail ownership; [Sessions](../../bundled/sessions/SessionsPage.tsx)
+demonstrates a working area with a persistent composer. Neither is a blanket visual
+template: check the adoption review before copying their surrounding chrome.
+
+### Detail panels
+
+First inspect the mounting host. `PanelCard` and `PanelWorkspace` can already supply
+the surface, identity, close action, and tabs. A contributed body supplies object
+content, local controls, and its states; it must not repeat those outer elements.
+Keep object summary before detailed sections. Use panel-style tabs for related
+content on the opaque surface; do not use backdrop/chrome tabs inside it.
+
+Use the existing panel navigation/subview mechanism for related details. Preserve
+the original panel's scroll and draft state, the host's close/back behavior, and
+focus restoration. Do not create another overlay, navigation history, or global
+panel selection to show a local detail. Profile content in
+[`ProfilePanel`](../../bundled/profiles/ProfilePanel.tsx) and the
+[`PanelSubview`](../../features/panels/PanelSubview.tsx) host show this boundary.
+Media, diffs, browser content, and terminals retain their renderer-owned geometry
+and input semantics; shared framing does not turn them into padded forms.
+
+### Settings pages and contributions
+
+Settings is a reading/form column inside host-owned navigation. Reuse its centered
+48rem maximum column, shared insets, and responsive behavior; do not add a second
+page surface, sidebar, fixed viewport width, or nested settings scroll container.
+A Settings destination starts with `Header`, then named groups with `InlineHeader`.
+Align headings with their groups' content, not just their outer borders.
+
+Choose the group by how it behaves:
+
+| Behavior | Composition | Actions and feedback |
+| --- | --- | --- |
+| Immediate preference | `SettingsGroup` with `PreferenceRow` / `SwitchPreferenceRow` | Control at the trailing edge; pending/error beside that setting; no unrelated Save button |
+| Draft that needs explicit save | `SettingsGroup layout="form"` with shared labelled fields | Secondary action then primary Save in a wrapping action row; preserve draft, validation, and save gates |
+| Manage connected objects or integrations | `InlineHeader` plus rows/list and contextual actions | Keep connection, permission, recovery, and destructive actions attached to the object they affect |
+| Active connection or stepped setup | `Header`, `SettingsGroup layout="form"`, shared labelled fields, and the existing step owner | Preserve immediate setup actions and recovery; do not invent a Save step or replace the active flow with EmptyState |
+| Setup or settled empty collection | `EmptyState` | Explain what belongs here and provide the available next step; do not wrap it in another SettingsGroup |
+
+Keep group headings outside SettingsGroup, and use the documented field/section
+gaps rather than each plugin inventing its own rhythm. Dependent preferences retain
+the row's alignment. A row is not an extra click target around its input. Preserve
+visible labels and connect help/error text; placeholders cannot replace labels.
+Use `Accordion` for optional details, retaining mounted draft input where needed.
+See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
+[`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
+preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
+explicit-save form. Their save behavior is not interchangeable.
+
+### Modal composition
+
+A modal interrupts the current task to complete a bounded task. Use the shared
+`Dialog` for forms, editors, catalogs, and inspectors; use `AlertDialog` for a
+standalone consequential confirmation. “Modal” is the interaction mode, not another
+component to build. Preserve established stepped confirmations and their dismissal
+policy rather than silently changing semantics during visual adoption.
+
+Compose title and optional useful description, task body, then actions. Put the
+completion action in the `actions` footer, with Cancel/Close before it. Keep other
+task controls in the body; reserve `headerActions` for contextual utilities beside
+the shared Close control. The pane-header icon-only rule does not prohibit text
+buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
+close button, body padding, or footer with feature-specific markup.
+
+| Task | Shared starting point | Scrolling |
+| --- | --- | --- |
+| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Shared bounded body; keep actions reachable |
+| Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
+| Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
+| Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
+| Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
+
+These are starting choices, not permission to combine every option. Default to
+content height; reserve stable height when changing results would otherwise make
+the task jump. Do not hardcode a screen-sized modal or add header/body gaps on top
+of the shared padding. [`ChannelMembersDialog`](../../bundled/channels/ChannelMembersDialog.tsx)
+shows bounded search/results; [`RemindDialog`](../../bundled/reminders/RemindDialog.tsx)
+shows a short form; [`DiffMessage`](../../bundled/diffs/DiffMessage.tsx) shows expanded
+reading. See [dialog behavior and geometry](#dialogs-and-supporting-compositions).
+
+Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
+behavior explicitly. An asynchronous operation must not gain a dismissal path that
+loses work. Keep failure and recovery in the modal with entered values intact.
+If a nested step consumes Escape, it must not also dismiss the parent.
+For an imperatively mounted dialog, verify return focus after its nested picker
+closes. If automatic restoration loses the trigger, pass the surviving trigger
+through the shared `finalFocus` contract; preserve the shared guard against
+stealing focus after the person moves elsewhere.
+
+The geometry options above belong to `Dialog`; `AlertDialog` does not expose the
+same props or structured body yet. Its visual parity is an
+[open shared-owner gap](../../../docs/design-system-adoption.md#gaps-to-address-when-migrating-owners).
+Do not compensate with a private modal shell or silently switch confirmation semantics.
+
+### Menus, popovers, and pickers
+
+Choose by interaction before choosing size. They share a material, not semantics:
+
+| Need | Owner | Content structure |
+| --- | --- | --- |
+| Invoke an action or choose a lightweight mode | `Menu` / `ContextMenu` parts | Shared items, related groups, optional separators, and trailing selection marks |
+| Edit a short value or show interactive supporting content | `Popover` parts | Named content, optional short description, fields/content, and local actions |
+| Choose a form value | `Select` or `Combobox` | Labelled trigger/control and options; searchable values use Combobox |
+| Brief help on a control | `Tooltip` | Short hint; the control still owns its accessible name |
+| Rich preview of an object | `PreviewCard` | Supplemental content; no essential workflow available only on hover |
+| Editor completion or embedded media picker | Existing feature adapter and shared popup recipe | Preserve editor focus, selection, and keyboard semantics |
+
+Do not put a form in an action-menu item or simulate selectable values with a set
+of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="danger"`
+for a destructive menu action. Select an existing compact/default/wide recipe for
+the content; never make every popup compact just because the screen is narrow.
+Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+Use their supported `padding`/alignment props; do not add another padded card inside
+the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
+
+Opening a dialog from a menu needs a deliberate focus handoff: dismiss the menu
+without stealing focus from the new dialog. On completion, return focus to the
+appropriate surviving trigger unless the person has moved elsewhere. See
+[`ChannelHeaderMenu`](../../bundled/channels/ChannelHeaderMenu.tsx) and the shared
+[menus and choice-row rules](#menus-popovers-and-choice-rows).
+
+### States, feedback, and motion
+
+Design the states as part of the layout, not as unrelated replacement screens.
+Keep useful existing content while refreshing. Show initial loading in the area
+being loaded; put an error and retry beside the operation that failed. Distinguish
+no results, nothing created yet, missing permission, unavailable host capability,
+and failed loading. An empty result explains how to broaden the search; a setup
+state offers a next step only if that action is available.
+When discovery is partial, scope empty copy to the inspected collection. Missing
+or failed reads do not prove absence. Keep a focused create or retry control
+mounted when the body changes from loading to empty or populated.
+
+Use `EmptyState` for a substantial settled empty/setup region. Use concise inline
+status for a small subsection or loading state. A huge icon-only creation tile is
+not a general empty-state recipe. Avoid stacking multiple borders, surfaces, or
+success messages around a routine task. Keep important scope, privacy, destructive
+consequences, and recovery copy; move it next to the relevant decision rather than
+deleting it to make a layout quieter.
+
+Use inline feedback for lasting problems and shared Toast for transient results.
+Do not build another notification stack. Preserve labels, focus, and control size
+while pending, and prevent repeated activation in behavior. Shared surfaces own
+their motion: keyboard/high-frequency interactions stay immediate, exits do not
+delay access to the underlying task, and reduced-motion behavior stays intact.
+Do not add a page-wide entrance, result stagger, press scale, blur, or new timing
+curve merely because a generic design recipe recommends one. Buzz's existing
+[motion decisions](#motion) and named component exceptions take precedence.
+
+Inspect the states that actually contain the affected controls. An unavailable
+preview with no action cannot establish that the available action fits. Confirm
+the control is present before checking bounds, and check changing labels such as
+Sign in, Cancel, and Sign out at narrow widths with enlarged text.
+
+### Plugin contribution boundaries
+
+| Contribution | Host already owns | Contributor supplies |
+| --- | --- | --- |
+| Page | Shell navigation, outer workspace, activation/error boundary | Its interior composition, header where needed, padding/scrolling, data states, and local actions |
+| `companion: true` page | Ready-to-render companion card | Placement in every state; reuse PanelFrame when suitable, without a second host dock |
+| Panel mounted in PanelCard/PanelWorkspace | Outer surface, close behavior, and header or tabs | Object body and local interactions; inspect the actual host before adding chrome |
+| Settings card/destination | Settings navigation, content column, contribution lifetime/error boundary | Content Header/grouping and controls; registration title is navigation metadata, not rendered content hierarchy |
+| Channel launcher or menu contribution | Placement, surrounding header/menu, target selection | The supported launcher/item only; preserve host action sizing and lifecycle |
+| Message/link/attachment renderer | Surrounding message and navigation contracts | Content inside that boundary; no duplicate author/actions or nested interactive target where the contract forbids it |
+
+Source plugins can import the shared components directly. External plugins must
+use the actual supported author contract and exposed CSS roles; source paths are
+not a published component SDK. These are composition requirements for Buzz UI,
+not a claim that arbitrary external code is automatically constrained. Do not
+introduce a private reset, theme provider, palette, body-level stylesheet, global
+control override, or parallel dialog/toast system to make one contribution fit.
+Keep plugin styles scoped to owned layout/content. Renderer exceptions do not
+exempt surrounding controls from shared appearance.
+
+For a genuinely new surface, describe its task and the nearest recipe first.
+State the missing capability and smallest extension in its existing owner. Keep
+specialized behavior local until another real use justifies sharing it; do not
+force every plugin into one universal page component. Read the
+[plugin contracts](../../../docs/plugin-architecture.md) before changing host boundaries.
+
 ## Direction
 
 Buzz adopts Block UI's visual language and semantic color grammar. Base UI
@@ -324,10 +587,9 @@ The floating control mappings are proposed, not an accessibility certification.
 Dark floating action fills are neutral-6/7/8 at rest/hover/press, on the
 neutral-raised (#282828) floating surface; those fill edges are below 3:1. The contextual control
 stroke uses neutral-9 and clears 3:1 against that outer surface. This proof does
-not change focus appearance: the viewer's temporary outline suppression remains,
-while the host's separate stylesheet still renders keyboard rings. That existing
-host/viewer mismatch needs a separate decision. Glass/inverse/media surfaces
-retain their existing explicit treatments, outside this opaque-surface proof.
+not change the shared [focus appearance policy](#focus-appearance), which applies
+in both the app and viewer. Glass/inverse/media surfaces retain their existing
+explicit treatments, outside this opaque-surface proof.
 
 The Floating surfaces viewer shows actions, rows, fields and choices in actual
 shared Panel/Dialog/Popover components, including a nested Panel reset. Verify
@@ -506,9 +768,72 @@ show these contracts and their compositions.
 
 ## Compositions
 
+### Panel headers
+
+Every workspace pane and full-page destination has one shared `PanelHeader` at
+its top, outside the scrolling body. If the containing workspace already supplies
+that header, reuse it rather than adding a second one. Keep the frame present
+during loading, empty, error, and populated states. Content cards and Settings
+groups are not workspace panes and do not each need chrome.
+
+The approved visual reference is the main channel header in
+[`ChannelsPage.tsx`](../../bundled/channels/ChannelsPage.tsx): compact identity at
+the leading edge and **icon-only actions at the trailing edge**. Reuse the shared
+components, not a screenshot's measured offsets.
+
+- **Leading identity:** static destinations use `PanelHeaderLabel`, including its
+  icon slot and title typography. Omit the icon when there is no meaningful one.
+  Existing channel/workspace tabs retain `Tabs variant="navigation"`; the channel's
+  single non-closable tab uses `showSelection={false}`. Do not invent tab semantics
+  for a static page just to reproduce its appearance.
+- **Trailing actions:** use `IconButton size="sm" variant="ghost"` with 1rem
+  artwork, an action-specific `aria-label`, and a matching `title` hint. Use the
+  shared Menu with an icon-only trigger for overflow. Keep permission, pending,
+  disabled, expanded, and focus behavior with the action's current owner.
+- **Text actions:** a labelled action such as “Add agent” belongs in the content
+  or empty state. If it is available in panel chrome, render it as an icon action
+  with that accessible name. Never shrink, clip, or locally restyle a text button
+  to make it fit the header. Destructive confirmations retain explicit text actions.
+- **Navigation:** use the `navigation` slot for local back/close controls. Keep
+  title, navigation, and actions in their designated slots; do not build a parallel
+  header layout inside the body or add wrapper gaps around actions.
+- **Limited space:** preserve control hit areas and the shared title truncation.
+  Group secondary actions in the existing overflow menu when needed. Shared
+  wrapping is a fallback, not a reason to add oversized controls. Verify long
+  titles and enlarged text; no action may become unreachable.
+
+Static-pane composition (imports come from the shared UI and icon gateways;
+`openAddAgent`, `canAddAgent`, and pending state remain feature-owned):
+
+```tsx
+<PanelHeader
+  title={<PanelHeaderLabel title="Agents" />}
+  actions={
+    <IconButton
+      size="sm"
+      variant="ghost"
+      icon={<PlusIcon size="1rem" aria-hidden="true" />}
+      aria-label="Add agent"
+      title="Add agent"
+      aria-haspopup="dialog"
+      disabled={!canAddAgent || pending}
+      onClick={openAddAgent}
+    />
+  }
+/>
+```
+
+`PanelHeader` currently accepts arbitrary React nodes and bare strings. That API
+flexibility does not enforce this composition. In particular, the existing Agents
+text action and Projects' standalone large title are adoption gaps, not templates
+for new screens. Review action producers too, including actions portalled into a
+header from another component.
+
+### Header geometry
+
 PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
 and trailing `actions`. `PanelHeaderLabel` supplies the smaller tab-aligned
-label role; omit its optional icon for image and video detail titles. Use a toolbar IconButton with ArrowLeft for a local back
+label role; omit its optional icon for image and video detail titles. Use a small IconButton with ArrowLeft for a local back
 action and X for closing the panel. The default 2.5rem (40px at the default root size) minimum height aligns conversation,
 thread, profile, tabbed workspace, and Todos headers. The compact variant shares
 this height. Headers use 0.25rem inline padding (matching the centered 2rem controls’
@@ -521,6 +846,29 @@ Static identities use PanelHeaderLabel to share navigation tabs’ icon slot,
 regular title weight, and leading inset without adding a tab stop. Terminal context
 can follow the label; Inbox and Bestie use the same composition.
 Navigation state, focus restoration, and content transitions belong to the host.
+
+### Content hierarchy and layout
+
+Pane chrome identifies where you are. The body holds the work: descriptions,
+filters, lists, forms, and their labelled actions. Use `Header` only when the body
+needs its own introduction, and `InlineHeader` for named sections. Do not repeat
+“Projects” as a large body heading immediately below a Projects pane header.
+Preserve Settings' documented content headings inside its shared workspace.
+
+Use the owning layout's shared panel inset and spacing tokens. Align headings,
+list content, and form labels to consistent leading edges. Keep related controls
+closer than separate groups; use the existing field and section gaps rather than
+adding separators between every group. Keep section actions with that section,
+not in unrelated pane chrome. Apply the [row alignment rule](#align-row-content-not-state-backgrounds)
+when state backgrounds extend beyond the content edge.
+
+Let the body shrink and scroll within its pane (`min-height: 0` / `min-width: 0`
+where the layout requires them); do not make the whole workspace scroll to reach
+local content. Keep controls reachable at narrow widths and enlarged text, and
+use logical inline/block properties for content alignment. Preserve the existing
+host's scrolling and focus ownership rather than adding another scroll container.
+
+### Dialogs and supporting compositions
 
 Composer pickers reuse PopoverPopup and anchor above the whole composer with a
 4px gap, preserving the shared popup behavior and material.
@@ -600,6 +948,12 @@ Escape behavior from Base UI. For asynchronous action feedback (such as copying 
 channel ID), control `open` / `onOpenChange` and set `closeOnClick={false}` so the
 initiating click does not dismiss its result. Defaults retain ordinary hint behavior.
 Overlay layers keep menus and hints above dialogs.
+Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
+can consume Escape before a panel's Back handler; the existing PanelSubview
+controls expose this conflict. Preserve their accessible names and current Back
+behavior while the shared policy is unresolved; see the
+[adoption gap](../../../docs/design-system-adoption.md#gaps-to-address-when-migrating-owners)
+before adding hints to these controls. This is not a general exemption from hints.
 Hints use text-caption (12px / 16px), with space-1 vertical and space-2 horizontal
 padding. Pointer entry uses the shared state duration (150ms), fading from a
 0.97 scale, 2px downward offset and 2px blur; exit reverses it with the fast
@@ -890,6 +1244,20 @@ Use direct, familiar language and remove words that do not help someone decide o
 - Empty states explain what belongs there and provide a useful next step.
 - Errors explain what happened and how to recover, beside the affected control.
 - Keep names and capitalization consistent across the flow.
+
+Pane titles name the destination (“Agents”, “Projects”); they do not carry setup
+instructions or implementation details. Subtitles must add useful orientation,
+not repeat the title. Put collection limits and recovery guidance next to the
+affected content. For example, “Showing up to 100 projects and repositories” is
+appropriate only if the limit counts displayed objects. Projects currently limits
+announcements before grouping/deduplication, so use “Showing a partial list from
+up to 100 announcements.” Preserve what the limit actually counts. Explain technical
+distinctions only when they change what someone can find or do.
+
+Use concise, verb-first action names in buttons, menus, and icon hints. Switching
+from a labelled button to an icon must preserve the action's accessible name.
+Keep the same term across the trigger, dialog, and result. Empty-state actions
+may use text buttons even though pane-header actions are icon-only.
 
 ## Accessibility
 

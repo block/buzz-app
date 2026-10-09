@@ -393,3 +393,39 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await expect(button(page, "Retry navigation")).toBeVisible();
   expect((await state(page)).status).toBe("failed");
 });
+
+test.describe("links to channels the reader hasn't joined", () => {
+  test.use({ openSearch: true });
+  test("name an open channel with a hover card and lock a withheld one", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const secret = "5ec2e700-0000-4000-8000-000000000001";
+    const message = app.append(
+      "primary",
+      "alpha",
+      `See <buzz://channel/${app.openChannelId}>, <buzz://channel/${secret}> and [#launch-plans](buzz://channel/${secret}).`,
+    );
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${message.id}"]`,
+    );
+    const named = row.getByRole("link", { name: "#open", exact: true });
+    await expect(named).toBeVisible();
+    const locked = row.getByRole("link", {
+      name: "Private channel",
+      exact: true,
+    });
+    await expect(locked).toHaveAttribute("title", /aren’t a member/);
+    // The authored label is message text; it stays beside the lock.
+    const authored = row.getByRole("link", {
+      name: "#launch-plans",
+      exact: true,
+    });
+    await expect(authored).toHaveAttribute("title", /aren’t a member/);
+    await virtuaIdle(page);
+    await named.hover();
+    const card = page.getByLabel("Channel preview", { exact: true });
+    await expect(card).toContainText("Public channel · Not joined");
+  });
+});

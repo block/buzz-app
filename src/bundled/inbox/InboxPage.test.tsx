@@ -1080,8 +1080,10 @@ function fixture(
             ["private"],
             ["about", "Buzz session (buzz.sessions/v1)"],
           ]
-        : [["t", "stream"]]),
-      ...(options.archivedChannel ? [["archived", "true"]] : []),
+        : [
+            ["t", "stream"],
+            ...(options.archivedChannel ? [["archived", "true"]] : []),
+          ]),
     ]),
     profile(alice, { name: "Alice" }),
     ...roots,

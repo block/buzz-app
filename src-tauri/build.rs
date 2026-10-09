@@ -137,6 +137,7 @@ fn main() {
             "agent_control_action",
             "agent_control_attach_mention",
             "agent_control_import_preview",
+            "agent_control_import_beta_text",
             "agent_control_import_commit",
             "agent_control_local_clone_settings",
             "agent_control_clone_settings",

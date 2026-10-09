@@ -241,6 +241,32 @@ impl Imports {
             .map(|member| (member.id.clone(), member.revision, beta.clone()))
             .collect())
     }
+    /// Read-only: the team instructions one previewed candidate would bring
+    /// from old Buzz, so the app can check team clashes before committing.
+    /// Empty when the candidate has no live team there.
+    pub fn beta_text(&self, token: &str, id: &str) -> Result<String> {
+        let pending = self
+            .pending
+            .as_ref()
+            .filter(|p| !token.is_empty() && p.preview.token == token)
+            .ok_or("Import preview expired; choose the source again")?;
+        let candidate = pending
+            .preview
+            .candidates
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or("Identity was not in this preview")?;
+        let data = read_source(&pending.source)?;
+        if data.digest != pending.digest {
+            return Err("Source changed after preview; preview it again".into());
+        }
+        let record = data
+            .records
+            .iter()
+            .find(|r| string(r, "pubkey") == candidate.pubkey)
+            .ok_or("Import identity disappeared")?;
+        team_instructions(&data, record)
+    }
     pub fn discard(&mut self) {
         self.pending = None;
     }

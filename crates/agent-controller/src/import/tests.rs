@@ -1228,3 +1228,36 @@ fn import_records_the_beta_team_once_and_skips_teams_old_buzz_deleted() {
         "a".repeat(119)
     );
 }
+#[test]
+fn beta_text_reads_only_a_current_preview_candidate_without_writes() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let teams = team_source(old.path(), json!(" team prompt "));
+    let mut imports = Imports::default();
+    let store = Store::open(dest.path().into()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let id = &preview.candidates[0].id;
+    assert_eq!(
+        imports.beta_text(&preview.token, id).unwrap(),
+        "team prompt"
+    );
+    // Reading commits nothing and leaves the preview usable.
+    assert!(store.agents().unwrap().is_empty());
+    assert_eq!(
+        imports.beta_text(&preview.token, id).unwrap(),
+        "team prompt"
+    );
+    let refused = |result: crate::Result<String>| result.unwrap_err();
+    assert!(refused(imports.beta_text("wrong", id)).contains("expired"));
+    assert!(refused(imports.beta_text("", id)).contains("expired"));
+    assert!(refused(imports.beta_text(&preview.token, "unknown")).contains("not in this preview"));
+    // A source change after preview is refused rather than read.
+    fs::write(&teams, b"[]").unwrap();
+    assert!(refused(imports.beta_text(&preview.token, id)).contains("Source changed"));
+    // A new preview expires the old token.
+    let next = team_preview(&mut imports, old.path(), dest.path());
+    assert!(refused(imports.beta_text(&preview.token, id)).contains("expired"));
+    assert_eq!(imports.beta_text(&next.token, id).unwrap(), "");
+    imports.discard();
+    assert!(refused(imports.beta_text(&next.token, id)).contains("expired"));
+}

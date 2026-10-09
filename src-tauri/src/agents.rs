@@ -1399,6 +1399,19 @@ pub(crate) async fn agent_control_import_preview(
     })
     .await
 }
+/// Read-only: one previewed candidate's team instructions from old Buzz, for
+/// the clash check before import. The ordinary preview stays text-free.
+#[tauri::command]
+pub(crate) async fn agent_control_import_beta_text(
+    state: tauri::State<'_, AgentHost>,
+    token: String,
+    id: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.imports.beta_text(&token, &id)
+    })
+    .await
+}
 #[tauri::command]
 pub(crate) async fn agent_control_import_commit(
     state: tauri::State<'_, AgentHost>,

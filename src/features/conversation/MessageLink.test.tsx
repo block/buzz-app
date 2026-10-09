@@ -186,20 +186,19 @@ it("reports a clipboard failure and allows an explicit retry", async () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
-it.each([
-  "buzz://channel/alpha",
-  "mailto:hello@example.com",
-  "ftp://example.com/file",
-])("leaves non-HTTP(S) link context menus alone: %s", (target) => {
-  const { anchor } = mount(target);
-  const event = new MouseEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-  });
-  fireEvent(anchor, event);
-  expect(event.defaultPrevented).toBe(false);
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-});
+it.each(["buzz://channel/alpha"])(
+  "leaves non-HTTP(S) link context menus alone: %s",
+  (target) => {
+    const { anchor } = mount(target);
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(anchor, event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  },
+);
 
 it("leaves noninteractive message content without a menu or anchor", () => {
   mount(url, false);

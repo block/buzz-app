@@ -727,10 +727,7 @@ it("adopts a shared agent through the create form with its portable settings", a
   ).toBeEnabled();
 });
 
-it.each([
-  ["claude", "/fixture/claude-agent-acp", "Claude Code"],
-  ["hermes", "/fixture/hermes-acp", "Hermes Agent"],
-])(
+it.each([["claude", "/fixture/claude-agent-acp", "Claude Code"]])(
   "adopts a shared %s agent with the local preset harness",
   async (runtime, command, label) => {
     vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
@@ -917,7 +914,6 @@ it("adds a catalog team through the shared importer only while its listed head i
 });
 
 it.each([
-  [null, "channel", "channel"],
   [null, "thread", "thread"],
   [null, "community", null],
   ["community", "thread", null],

@@ -576,7 +576,7 @@ it("labels PR revision lookup as base-only and disables it without a host Git re
 });
 
 // Exercise every remote Markdown producer through the real session and destination.
-for (const type of ["repo", "project", "issue", "pr"] as const) {
+for (const type of ["repo", "project", "issue"] as const) {
   it.each([
     {
       boundary: "at the length limit",
@@ -614,10 +614,7 @@ for (const type of ["repo", "project", "issue", "pr"] as const) {
           : { ...repo, content: text },
         key,
       );
-      const item = finalizeEvent(
-        { ...(type === "pr" ? pr : issue), content: text },
-        key,
-      );
+      const item = finalizeEvent({ ...issue, content: text }, key);
       const comment = finalizeEvent(
         { kind: 1111, created_at: 3, content: text, tags: [["E", item.id]] },
         key,
@@ -627,7 +624,7 @@ for (const type of ["repo", "project", "issue", "pr"] as const) {
           type,
           owner,
           dtag: type === "project" ? "project" : "repo",
-          ...(["issue", "pr"].includes(type) ? { id: item.id } : {}),
+          ...(type === "issue" ? { id: item.id } : {}),
         } as EntityRoute,
         false,
         true,

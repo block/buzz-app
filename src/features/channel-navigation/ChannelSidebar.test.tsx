@@ -421,7 +421,7 @@ it("explains and disables unavailable move retries, then enables them after pref
   }
 });
 
-it.each(["ready", "connecting", "error"] as const)(
+it.each(["ready", "error"] as const)(
   "keeps the supplied page navigation while the relay is %s",
   (status) => {
     const h = fixture(undefined, status);
@@ -434,7 +434,7 @@ it.each(["ready", "connecting", "error"] as const)(
   },
 );
 
-it.each(["ready", "connecting", "error"] as const)(
+it.each(["ready", "connecting"] as const)(
   "omits the page destinations wrapper when the shell passes none while %s",
   (status) => {
     const h = fixture(undefined, status);

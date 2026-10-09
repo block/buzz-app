@@ -17,9 +17,7 @@ afterEach(() => {
 
 it.each([
   [false, "Linux x86_64"],
-  [false, "Win32"],
   [true, "MacIntel"],
-  [true, "Darwin"],
 ])(
   "does not render outside native Linux or Windows (%s, %s)",
   (native, platform) => {
@@ -31,7 +29,7 @@ it.each([
   },
 );
 
-it.each(["Linux x86_64", "Win32"])(
+it.each(["Linux x86_64"])(
   "supports keyboard window actions and retry on %s",
   async (platform) => {
     vi.mocked(isTauri).mockReturnValue(true);

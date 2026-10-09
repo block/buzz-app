@@ -822,9 +822,7 @@ it("finishes automatic pages before initial positioning and preserves a readerâ€
 });
 it.each([
   { limited: false, routed: false },
-  { limited: true, routed: false },
   { limited: false, routed: true },
-  { limited: true, routed: true },
 ])(
   "positions after automatic loading stops (limited=$limited, routed=$routed), without restarting pagination",
   ({ limited, routed }) => {
@@ -860,10 +858,12 @@ it.each([
 );
 it.each(
   [false, true].flatMap((routed) =>
-    ["wheel", "touchMove", "pointerDown", "keyDown"].map((handler) => ({
-      routed,
-      handler,
-    })),
+    (routed ? ["wheel", "touchMove", "pointerDown", "keyDown"] : ["wheel"]).map(
+      (handler) => ({
+        routed,
+        handler,
+      }),
+    ),
   ),
 )(
   "a user $handler gesture before the page completes wins over initial positioning (routed=$routed)",

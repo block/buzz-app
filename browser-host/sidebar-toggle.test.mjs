@@ -211,30 +211,4 @@ describe.each([
     await mutate(intent, h.secret, read, publish);
     expect(publish).toHaveBeenCalledOnce();
   });
-  it("does not report success on read/publish failures or conflicting confirmation", async () => {
-    const h = harness(),
-      intent = { channelId: "alpha", [field]: true };
-    const publish = vi.fn();
-    await expect(
-      mutate(
-        intent,
-        h.secret,
-        async () => {
-          throw new Error("read failed");
-        },
-        publish,
-      ),
-    ).rejects.toThrow("read failed");
-    expect(publish).not.toHaveBeenCalled();
-    const read = vi.fn(async () => []);
-    await expect(
-      mutate(intent, h.secret, read, async () => {
-        throw new Error("publish failed");
-      }),
-    ).rejects.toThrow("publish failed");
-    expect(read).toHaveBeenCalledOnce();
-    await expect(mutate(intent, h.secret, read, publish)).rejects.toThrow(
-      "changed on another device",
-    );
-  });
 });

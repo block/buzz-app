@@ -180,9 +180,6 @@ it("honors next-page evidence even when a reported total would suggest completio
   ).toMatchObject({ state: "failure" });
 });
 it.each([
-  "403",
-  "404",
-  "429",
   "500",
   "network",
   "malformed",

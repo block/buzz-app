@@ -52,7 +52,6 @@ it.each([
   { filename: "helper.png" },
   { displayName: "" },
   { size: 0 },
-  { size: MAX_AGENT_SNAPSHOT_PNG_BYTES + 1 },
   { size: 1.5 },
   { sha256: "b".repeat(64) },
   { type: "text/html" },

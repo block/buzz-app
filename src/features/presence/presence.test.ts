@@ -403,7 +403,7 @@ it("retains profile priority across duplicate cleanup and refills released slots
   h.owner.dispose();
 });
 
-it.each([null, true] as const)(
+it.each([null, true, "error"] as const)(
   "renewal retries only locally unsent status promptly: %s",
   async (result) => {
     const h = setup();
@@ -417,7 +417,10 @@ it.each([null, true] as const)(
         ) => work(),
       },
     });
-    const publish = vi.fn(async (): Promise<boolean | null> => result);
+    const publish = vi.fn(async (): Promise<boolean | null> => {
+      if (result === "error") throw new Error("unconfirmed");
+      return result;
+    });
     const owner = createPresence(h.transport, h.activity, publish, (fn) =>
       fn(),
     );

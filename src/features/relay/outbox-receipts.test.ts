@@ -36,7 +36,7 @@ function setup(timeoutMs = 10000) {
     },
   };
   const owner = createOutbox(key.pubkey, { sign, publish }, storage, {
-    needsReceipt: (event) => [30620, 46020].includes(event.kind),
+    needsReceipt: (event) => [30620, 46020, 5].includes(event.kind),
     onReceipt,
     timeoutMs,
   });
@@ -71,7 +71,9 @@ function setup(timeoutMs = 10000) {
         content: "disabled workflow",
         tags: [
           ["h", "channel"],
-          ["d", "workflow"],
+          ...(kind === 5
+            ? [["a", `30620:${key.pubkey}:workflow`]]
+            : [["d", "workflow"]]),
         ],
       }),
   };
@@ -199,7 +201,7 @@ it("seen commands can dismiss retained receipts without another publication", as
   expect(h.saved()).toEqual([]);
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
-it.each([30620])(
+it.each([30620, 46020, 5])(
   "rejection text never journals command secrets and generic retry cannot replay kind %s",
   async (kind) => {
     const h = setup();
@@ -216,7 +218,7 @@ it.each([30620])(
   },
 );
 
-it.each([30620])(
+it.each([30620, 46020, 5])(
   "unknown kind %s is inspect-only while dismissal remains available",
   async (kind) => {
     const h = setup();

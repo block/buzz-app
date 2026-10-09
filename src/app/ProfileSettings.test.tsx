@@ -57,6 +57,63 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("loads and publishes the selected community profile before updating the local seed", async () => {
+  const service = communities();
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test", name: "legacy" },
+    profile: {
+      name: "Community name",
+      picture: "",
+      about: "Community bio",
+    },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading your profile in Acme",
+  );
+  const name = await screen.findByLabelText("Display name");
+  expect(name).toHaveValue("Community name");
+  expect(screen.getByLabelText("Profile description (optional)")).toHaveValue(
+    "Community bio",
+  );
+  await user.clear(name);
+  await user.type(name, "Updated community name");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      {
+        name: "Updated community name",
+        picture: "",
+        about: "Community bio",
+      },
+      { website: "https://example.test", name: "legacy" },
+    ),
+  );
+  expect(service.saveProfile).toHaveBeenCalledWith({
+    name: "Updated community name",
+    picture: "",
+    about: "Community bio",
+  });
+  expect(screen.getByText("Profile updated")).toBeVisible();
+  expect(inspect).toHaveBeenCalledWith("community-id");
+});
+
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
   const service = communities();
   const olderPublication = deferred();

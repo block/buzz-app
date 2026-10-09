@@ -1,3 +1,7 @@
+import type {
+  ChannelDetails,
+  ChannelDetailsDraft,
+} from "../relay/channel-details-protocol";
 import { trackMemberAdditionReceipts } from "../channel-members/operations";
 import type { RelaySession } from "../relay/session";
 import type { MemberAdditionIntent } from "../channel-members/members";
@@ -7,6 +11,8 @@ export type ShareIntent = Readonly<{
   audience: "everyone" | "selected";
   name?: string;
   visibility?: "private" | "open";
+  details?: ChannelDetailsDraft;
+  detailsBase?: ChannelDetails;
   channelPeople: readonly string[];
   sessionPeople: readonly string[];
 }>;
@@ -14,6 +20,7 @@ export type ShareAttempt = {
   intent: ShareIntent;
   /** A created channel stays the same destination on every retry. */
   created?: string;
+  detailsApplied?: boolean;
   messageId?: string;
   grants: Map<string, MemberAdditionIntent>;
   /** Frozen after a fresh destination roster read, before any session grants. */

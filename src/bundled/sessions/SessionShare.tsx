@@ -4,11 +4,13 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { Popover } from "@base-ui/react/popover";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { archiveHides } from "../../features/relay/identity-archives";
+import { useMePlacement } from "../../features/sessions/personal";
 import { canShareSession } from "../../features/channel-members/members";
 import {
   beginSessionShare,
@@ -17,12 +19,18 @@ import {
   type ShareAttempt,
 } from "../../features/sessions/share-attempt";
 import { searchMembers } from "../../features/channel-members/search";
-import { canonicalDetailsName } from "../../features/relay/channel-details-protocol";
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+  type ChannelDetails,
+  type ChannelDetailsDraft,
+} from "../../features/relay/channel-details-protocol";
 import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
 import {
+  applySharedChannelDetails,
   destinationShareAudience,
   grantSessionAccess,
   publishSessionLink,
@@ -35,6 +43,10 @@ import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { ChannelPrivacyConfirmation } from "../channels/ChannelPrivacyConfirmation";
+import { ChannelDurationField } from "../channels/ChannelDurationField";
+import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
+import { sessionMetadata } from "../../features/sessions/metadata";
 import { ChannelTextField } from "../channels/ChannelTextField";
 import { UsersIcon } from "../../shared/design-system/icons";
 import styles from "./SessionShare.module.css";
@@ -48,10 +60,18 @@ export function SessionShare({
   direct = false,
   onShared,
   signal,
+  renderTrigger,
+  initialOpen = false,
+  onClose,
+  finalFocus,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
   direct?: boolean;
+  initialOpen?: boolean;
+  onClose?: () => void;
+  finalFocus?: () => HTMLElement | false;
+  renderTrigger?: (open: () => void, disabled: boolean) => ReactNode;
   onShared?: () => void;
   signal?: AbortSignal | undefined;
 }) {
@@ -83,7 +103,16 @@ export function SessionShare({
     session.channelCreation.snapshot,
     session.channelCreation.snapshot,
   );
-  const [open, setOpen] = useState(false);
+  const pendingDetails = useSyncExternalStore(
+    session.channelDetails.subscribe,
+    () => session.channelDetails.snapshot(channel.id),
+  );
+  const [open, setOpen] = useState(initialOpen);
+  const [base, setBase] = useState<ChannelDetails>();
+  const [detailsDraft, setDetailsDraft] = useState<ChannelDetailsDraft>();
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsReload, setDetailsReload] = useState(0);
+  const [confirmPublic, setConfirmPublic] = useState(false);
   const [destination, setDestination] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrivate, setNewPrivate] = useState(false);
@@ -118,8 +147,67 @@ export function SessionShare({
   // A mounted page may remain while another entry point resumes this session's attempt.
   const saved = frozen ?? sessionShareAttempt(session, channel.id);
   const directShare = saved ? saved.intent.destination === channel.id : direct;
+  const placement = useMePlacement(session);
   const source = list.channels.find((item) => item.id === channel.id);
-  const eligible = canShareSession(session, source);
+  const eligible = directShare
+    ? !!(
+        source &&
+        !source.readOnly &&
+        !source.cached &&
+        !source.archived &&
+        ["session", "stream"].includes(source.channelType ?? "") &&
+        source.members?.includes(session.viewer ?? "") &&
+        session.channelDetails.available &&
+        session.mePlacement.available &&
+        placement.status === "ready"
+      )
+    : canShareSession(session, source);
+  useEffect(() => {
+    void detailsReload;
+    if (!open || !directShare) return;
+    const controller = new AbortController();
+    setDetailsLoading(true);
+    setBase(undefined);
+    void session.channelDetails
+      .load(channel.id, controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        setBase(next);
+        setDetailsDraft(
+          (old) =>
+            old ?? {
+              name: next.name,
+              description: sessionMetadata(next.description)
+                ? ""
+                : next.description,
+              visibility: next.visibility,
+              ttlSeconds: next.ttlSeconds,
+            },
+        );
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted)
+          setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailsLoading(false);
+      });
+    return () => controller.abort();
+  }, [open, directShare, session, channel.id, detailsReload]);
+  const sharedDetails = saved?.intent.details ?? detailsDraft;
+  const normalizedDetails = sharedDetails && {
+    ...sharedDetails,
+    name: canonicalDetailsName(sharedDetails.name),
+  };
+  const detailsErrors = normalizedDetails
+    ? detailsDraftErrors(normalizedDetails)
+    : undefined;
+  const detailsInvalid =
+    directShare &&
+    (!base?.canEdit ||
+      detailsLoading ||
+      !normalizedDetails ||
+      Object.values(detailsErrors ?? {}).some(Boolean));
   const destinations = list.channels.filter(
     (item) =>
       !item.readOnly &&
@@ -167,6 +255,9 @@ export function SessionShare({
   const reset = () => {
     setOpen(false);
     setDestination("");
+    setDetailsDraft(undefined);
+    setBase(undefined);
+    setConfirmPublic(false);
     setNewName("");
     setNewPrivate(false);
     setAudience(direct ? "selected" : "everyone");
@@ -197,6 +288,7 @@ export function SessionShare({
     // remain with their owners; starting over is not cancellation or revocation.
     finishSessionShare(session, channel.id);
     reset();
+    if (directShare) setDetailsReload((value) => value + 1);
     setOpen(true);
   };
   const copy = async () => {
@@ -368,8 +460,8 @@ export function SessionShare({
       !visible() ||
       !eligible ||
       busy ||
-      (!directShare && !newChannel && !chosen) ||
-      (directShare && !(saved?.intent.sessionPeople.length ?? people.length))
+      detailsInvalid ||
+      (!directShare && !newChannel && !chosen)
     )
       return;
     if (
@@ -418,6 +510,9 @@ export function SessionShare({
         ? channelPeople.map((person) => person.pubkey)
         : [],
       sessionPeople: people.map((person) => person.pubkey),
+      ...(directShare && normalizedDetails && base
+        ? { details: normalizedDetails, detailsBase: base }
+        : {}),
     });
     setFrozen(exact);
     if (exact.running) {
@@ -448,12 +543,6 @@ export function SessionShare({
           "Add agents from their own channel or session controls instead.",
         );
       let target = exact.intent.destination;
-      if (target === channel.id) {
-        progress("Moving to Messages…");
-        await session.mePlacement.set(channel.id, false, {
-          signal: controller.signal,
-        });
-      }
       if (target === "new") {
         if (!exact.intent.name || !exact.intent.visibility)
           throw new Error("Enter a channel name.");
@@ -493,12 +582,34 @@ export function SessionShare({
         channel.id,
         exact.intent.audience === "everyone"
           ? (exact.audienceKeys ?? [])
-          : exact.intent.sessionPeople,
+          : directShare
+            ? exact.intent.sessionPeople.filter(
+                (key) => !exact.grants.get(key)?.confirmed,
+              )
+            : exact.intent.sessionPeople,
         exact.grants,
         controller.signal,
         (key) => confirmed.push(key),
         exact.intent.audience === "everyone",
+        !directShare || source?.channelType === "session",
       );
+      if (target === channel.id) {
+        if (!exact.intent.details || !exact.intent.detailsBase)
+          throw new Error("Reload channel details before sharing.");
+        progress("Saving channel settings…");
+        await applySharedChannelDetails(
+          session,
+          channel.id,
+          exact.intent.details,
+          exact.intent.detailsBase,
+          controller.signal,
+        );
+        exact.detailsApplied = true;
+        progress("Moving to Messages…");
+        await session.mePlacement.set(channel.id, false, {
+          signal: controller.signal,
+        });
+      }
       if (target !== channel.id) {
         progress("Posting session link…");
         await publishSessionLink(
@@ -525,7 +636,7 @@ export function SessionShare({
           : "Couldn’t share this session.";
       progress("");
       setError(
-        `${message}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Messages; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
+        `${message}${exact.detailsApplied ? " Channel settings were saved; retry to finish moving to Messages." : ""}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Messages; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
       );
     } finally {
       delete exact.running;
@@ -655,22 +766,34 @@ export function SessionShare({
   );
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={!eligible}
-        onClick={() => {
+      {renderTrigger ? (
+        renderTrigger(() => {
           setCopyStatus("");
           setFrozen(sessionShareAttempt(session, channel.id));
           setOpen(true);
-        }}
-      >
-        Share
-      </Button>
+        }, !eligible)
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!eligible}
+          onClick={() => {
+            setCopyStatus("");
+            setFrozen(sessionShareAttempt(session, channel.id));
+            setOpen(true);
+          }}
+        >
+          Share
+        </Button>
+      )}
       <Dialog
+        finalFocus={finalFocus}
         open={open}
         onOpenChange={(next) => {
-          if (!next && !busy) reset();
+          if (!next && !busy) {
+            reset();
+            onClose?.();
+          }
         }}
         onEscape={() => {
           if (!popupVisible) return false;
@@ -698,16 +821,30 @@ export function SessionShare({
                 busy ||
                 !eligible ||
                 (!directShare && !newChannel && !chosen) ||
-                (directShare &&
-                  !(saved?.intent.sessionPeople.length ?? people.length)) ||
+                detailsInvalid ||
                 (newChannel &&
                   !saved &&
                   (!canonicalDetailsName(newName) ||
                     !session.channelCreation.available))
               }
-              onClick={() => void submit()}
+              onClick={() => {
+                if (
+                  directShare &&
+                  normalizedDetails?.visibility === "public" &&
+                  !saved &&
+                  !confirmPublic
+                )
+                  setConfirmPublic(true);
+                else void submit();
+              }}
             >
-              {busy ? "Sharing…" : saved ? "Retry share" : "Share"}
+              {confirmPublic
+                ? "Make public and share"
+                : busy
+                  ? "Sharing…"
+                  : saved
+                    ? "Retry share"
+                    : "Share"}
             </Button>
           </>
         }
@@ -715,8 +852,109 @@ export function SessionShare({
         <div className={styles.form}>
           {directShare && (
             <p>
-              This moves the same conversation to Messages. Selected people can
-              read its full history and participate.
+              Move this conversation to Messages with its full history, Canvas
+              and existing agents. No new conversation is created.
+            </p>
+          )}
+          {directShare &&
+            (sharedDetails ? (
+              <>
+                <ChannelTextField
+                  field="name"
+                  value={sharedDetails.name}
+                  error={detailsErrors?.name}
+                  disabled={busy || !!saved || detailsLoading}
+                  onChange={(name) =>
+                    setDetailsDraft({ ...sharedDetails, name })
+                  }
+                />
+                <ChannelDurationField
+                  temporary={sharedDetails.ttlSeconds !== undefined}
+                  ttlSeconds={
+                    sharedDetails.ttlSeconds ??
+                    DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS
+                  }
+                  error={detailsErrors?.lifetime}
+                  disabled={busy || !!saved || detailsLoading}
+                  onChange={(ttlSeconds) =>
+                    setDetailsDraft({ ...sharedDetails, ttlSeconds })
+                  }
+                />
+                {sharedDetails.ttlSeconds !== undefined && (
+                  <p className="text-body-sm text-subtle">
+                    This conversation is automatically archived when its
+                    duration ends. Its history is not deleted.
+                  </p>
+                )}
+                <Switch
+                  label="Private"
+                  checked={sharedDetails.visibility === "private"}
+                  disabled={busy || !!saved || detailsLoading}
+                  onCheckedChange={(checked) => {
+                    setDetailsDraft({
+                      ...sharedDetails,
+                      visibility: checked ? "private" : "public",
+                    });
+                    setConfirmPublic(false);
+                  }}
+                />
+                <p className="text-body-sm text-subtle">
+                  {sharedDetails.visibility === "private"
+                    ? "Only channel members can read its history and participate. Add people below (optional)."
+                    : "Everyone in this community will be able to view this channel’s full history."}
+                </p>
+                {confirmPublic && (
+                  <ChannelPrivacyConfirmation
+                    visibility="public"
+                    hidePreference
+                    checked={false}
+                    onCheckedChange={() => {}}
+                  />
+                )}
+              </>
+            ) : (
+              <p role="status">
+                {detailsLoading
+                  ? "Loading channel settings…"
+                  : "Channel settings could not be loaded."}
+              </p>
+            ))}
+          {directShare && !detailsLoading && !base && (
+            <Button
+              onClick={() => {
+                setError("");
+                setDetailsReload((value) => value + 1);
+              }}
+            >
+              Reload channel settings
+            </Button>
+          )}
+          {directShare && pendingDetails?.status === "unconfirmed" && (
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  await session.channelDetails.check(channel.id);
+                  if (visible()) setDetailsReload((value) => value + 1);
+                } catch (reason) {
+                  if (visible())
+                    setError(
+                      reason instanceof Error ? reason.message : String(reason),
+                    );
+                } finally {
+                  if (visible()) setBusy(false);
+                }
+              }}
+            >
+              Check channel settings status
+            </Button>
+          )}
+          {directShare && base && !base.canEdit && (
+            <p role="alert">
+              Only a channel owner or admin can change these settings and share
+              to Messages.
             </p>
           )}
           {!directShare && (
@@ -867,9 +1105,9 @@ export function SessionShare({
           )}
           {saved && (
             <p className="text-body-sm text-subtle">
-              Starting over clears these choices, not work already submitted.
-              Existing access, created channels, Messages placement and queued
-              operations are kept. A new share may post another link.
+              {directShare
+                ? "Starting over clears these choices, not settings or access already saved."
+                : "Starting over clears these choices, not work already submitted. Existing access, created channels, Messages placement and queued operations are kept. A new share may post another link."}
             </p>
           )}
           {pendingCreation && !saved && !error && (

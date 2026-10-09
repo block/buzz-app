@@ -8,6 +8,7 @@ import { decode } from "nostr-tools/nip19";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
+import { eventsDto } from "../features/relay/events";
 import type { BuzzClient, BuzzEvent, Memory, Template, Upload } from "./client";
 
 const sha256 = (data: Uint8Array | string) =>
@@ -93,7 +94,7 @@ export function nodeClient(
   return {
     pubkey,
     query: async (filters) =>
-      (await request("/query", JSON.stringify(filters))) as BuzzEvent[],
+      eventsDto(await request("/query", JSON.stringify(filters))),
     publish(event) {
       const tags = event.tags.filter(
         (tag) => tag[0] !== "auth" && tag[0] !== "ms",
@@ -141,12 +142,14 @@ export function nodeClient(
     },
     async memories() {
       const key = conversation();
-      const events = (await request(
-        "/query",
-        JSON.stringify([
-          { kinds: [30174], authors: [pubkey], "#p": [owner], limit: 5000 },
-        ]),
-      )) as BuzzEvent[];
+      const events = eventsDto(
+        await request(
+          "/query",
+          JSON.stringify([
+            { kinds: [30174], authors: [pubkey], "#p": [owner], limit: 5000 },
+          ]),
+        ),
+      );
       const heads = new Map<string, BuzzEvent>();
       for (const event of events) {
         const d = event.tags.find((tag) => tag[0] === "d")?.[1];

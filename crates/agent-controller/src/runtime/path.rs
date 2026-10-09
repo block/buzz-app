@@ -221,7 +221,7 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
     (length > 0).then(|| OsString::from_vec(bytes[start..start + length].to_vec()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[test]

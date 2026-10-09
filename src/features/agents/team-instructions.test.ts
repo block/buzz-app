@@ -403,6 +403,110 @@ it("does nothing after cleanup, even when a failure settles late", async () => {
   }
 });
 
+/** The real control over a host whose next status read is held until
+ * `releaseRead`, with an agent Save held until `finishSave`; the first
+ * catalog refresh fails so the binding retries through that read. */
+function heldRetry() {
+  const h = harness([shared("one")], { one: "TEXT" });
+  const { data, agent } = controlFixture();
+  Object.assign(agent, {
+    pubkey: a,
+    name: "Scout",
+    relayUrl: "wss://relay.example",
+  });
+  let hold = false;
+  let releaseRead!: () => void;
+  let finishSave!: () => void;
+  const syncTeamInstructions = vi.fn(async () => structuredClone(data));
+  const control = createAgentControl({
+    snapshot: async () => {
+      if (hold) {
+        hold = false;
+        await new Promise<void>((resolve) => (releaseRead = resolve));
+      }
+      return structuredClone(data);
+    },
+    save: () =>
+      new Promise(
+        (resolve) => (finishSave = () => resolve(structuredClone(data))),
+      ),
+    syncTeamInstructions,
+  } as unknown as Parameters<typeof createAgentControl>[0]);
+  vi.mocked(h.kit.refresh).mockRejectedValueOnce(
+    new Error("relay unreachable"),
+  );
+  return {
+    ...h,
+    control,
+    syncTeamInstructions,
+    holdRead: () => (hold = true),
+    releaseRead: () => releaseRead(),
+    finishSave: () => finishSave(),
+  };
+}
+
+it("resumes a retry whose idle notice arrived while it was backing off from a busy Save", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = heldRetry();
+    await h.control.refresh();
+    // The retry's busy check is the next control read once `seen` is set,
+    // and sees the state from while the Save was busy: the read settled
+    // mid-Save and the Save finished before the retry completed.
+    let seen: ReturnType<AgentControl["snapshot"]> | undefined;
+    const control = {
+      ...h.control,
+      snapshot: () => {
+        const state = seen ?? h.control.snapshot();
+        seen = undefined;
+        return state;
+      },
+    } as AgentControl;
+    const stop = bindTeamTextSync(control, h.communities);
+    await vi.waitFor(() => expect(h.kit.refresh).toHaveBeenCalledOnce());
+    h.holdRead();
+    await vi.advanceTimersByTimeAsync(1_000);
+    // A Save starts during the held read, then finishes while the retry is
+    // still running, so its idle notice is the one the binding drops.
+    const save = h.control.save("fixture-agent", 1, {} as never);
+    seen = h.control.snapshot();
+    expect(seen.busy).toBe(true);
+    h.finishSave();
+    await save;
+    expect(h.syncTeamInstructions).not.toHaveBeenCalled();
+    h.releaseRead();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.control.snapshot()).toMatchObject({
+      busy: false,
+      status: "ready",
+    });
+    expect(h.syncTeamInstructions).toHaveBeenCalledOnce();
+    expect(teamSyncError(h.kit)).toBeUndefined();
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not deliver when cleanup runs during a retry's status read", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = heldRetry();
+    await h.control.refresh();
+    const stop = bindTeamTextSync(h.control, h.communities);
+    await vi.waitFor(() => expect(h.kit.refresh).toHaveBeenCalledOnce());
+    h.holdRead();
+    await vi.advanceTimersByTimeAsync(1_000);
+    stop();
+    h.releaseRead();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.kit.refresh).toHaveBeenCalledOnce();
+    expect(h.syncTeamInstructions).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("refuses delivery while two devices left one agent on two differently instructed teams, until one team is edited", async () => {
   // Each device saved its own team after its own check passed, so the relay
   // now lists Scout on both teams with different text.

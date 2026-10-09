@@ -257,6 +257,9 @@ export function bindTeamTextSync(
         if (stopped || watched !== session) return;
         running = false;
         if (delivered) synced = session;
+        // An idle notice that arrived while this deferred attempt was still
+        // running was dropped, so recheck admission now.
+        else update();
       },
       (reason) => {
         if (stopped || watched !== session) return;
@@ -286,6 +289,7 @@ export function bindTeamTextSync(
   const attempt = async (session: RelaySession) => {
     if (failures) {
       await control.refresh();
+      if (stopped || watched !== session) return false;
       const agents = control.snapshot();
       if (agents.busy) return false;
       if (agents.status !== "ready")

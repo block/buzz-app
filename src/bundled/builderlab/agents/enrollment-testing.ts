@@ -84,7 +84,7 @@ export function enrollmentFixture(
     viewer,
     selected,
     memberships: [],
-    sync: { known: {}, outbox: [] },
+    sync: { known: [], outbox: [] },
     profile: { name: "", picture: "", about: "" },
   };
   const listeners = new Set<() => void>();

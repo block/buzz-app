@@ -18,8 +18,6 @@ import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
-/** The device's identity, which the account must be bound to before its
- * community list follows the sign-in. */
 const viewer = "cd".repeat(32);
 function provideKnownCommunities(root: Context) {
   const knownCommunities: KnownCommunities = {
@@ -27,7 +25,7 @@ function provideKnownCommunities(root: Context) {
       status: "ready",
       relayAvailable: true,
       profile: { name: "", picture: "" },
-      sync: { known: {}, outbox: [] },
+      sync: { known: [], outbox: [] },
       viewer,
       selected: null,
       memberships: [],
@@ -132,14 +130,12 @@ it("binds login, list, creation and community sync to the plugin host and clears
                 ? { status: 1, agent_id: "one", agent_pubkey: "ab".repeat(32) }
                 : input.request.url.endsWith("/attest-agent")
                   ? { status: 1 }
-                  : input.request.url.endsWith("/nostr-identities/current")
-                    ? { identity: { pubkey_hex: viewer } }
-                    : input.request.url.endsWith("/known-communities/list")
-                      ? { communities: [] }
-                      : {
-                          subject: "user",
-                          email: "a@example.com",
-                        },
+                  : input.request.url.endsWith("/known-communities/list")
+                    ? { communities: [] }
+                    : {
+                        subject: "user",
+                        email: "a@example.com",
+                      },
         ),
       };
     throw new Error(`Unexpected command ${command}`);
@@ -190,7 +186,7 @@ it("binds login, list, creation and community sync to the plugin host and clears
       id: "native-attempt-id",
     });
     // The signed-in account's community list follows through the same wiring:
-    // the binding is checked, then the complete list is read.
+    // the complete list is read under the session credential.
     await waitFor(() =>
       expect(knownCommunities.status).toHaveBeenLastCalledWith({
         phase: "synced",
@@ -216,16 +212,12 @@ it("binds login, list, creation and community sync to the plugin host and clears
       "private-token",
     );
     expect(sync.map((input) => input.request.url)).toEqual([
-      "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
       "https://builderlab.example/api/goose/v1/buzz/known-communities/list",
     ]);
-    expect(
-      sync.every(
-        (input) =>
-          input.request.headers["X-BB-Session-Credential"] === "private-token",
-      ),
-    ).toBe(true);
-    expect(sync[1].request.body).toBe(JSON.stringify({ pubkey_hex: viewer }));
+    expect(sync[0].request.headers["X-BB-Session-Credential"]).toBe(
+      "private-token",
+    );
+    expect(sync[0].request.body).toBe("{}");
     const user = userEvent.setup();
     await user.type(
       screen.getByRole("textbox", { name: "Agent name" }),

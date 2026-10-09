@@ -477,7 +477,10 @@ provider, model, effort and environment variables.
 - Provider, model and effort are **looked up at each start** for fields an agent
   leaves blank, only when the agent uses the default harness; per-agent values
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
-  per-agent field: an imported agent's `effort_level` stays its override.
+  per-agent field: effort carried by a portable agent or team import is saved as
+  the agent's own effort and overrides the default, as does an older imported
+  agent's `effort_level`. Effort chosen through `BUZZ_ACP_EFFORT_LEVEL` is never
+  shown or exported; agents and teams relying on it are refused for export.
 - Permitted environment variables merge **per key**; the agent's key wins.
   `BUZZ_ACP_MODEL` inherits only within the default harness, while shared controls
   such as worker count and system prompt can inherit across Pi and Goose.
@@ -522,11 +525,14 @@ agent's saved community without restarting it. Older native hosts without
 `avatarEditingAvailable` retain the display-only avatar.
 
 An omitted picture preserves the saved override; an empty string explicitly removes
-it. A changed picture durably marks `profilePending`, so closing/reloading does not
-lose the Retry action. The native publisher reads and verifies the agent's current
-signed kind-0 profile, changes only picture, and preserves unrelated content and
-non-auth tags. Name/bot initialization is only for a missing profile. A local
-configuration rename is not an implicit published-profile rename.
+it. A changed picture or name durably marks `profilePending` and remains persisted
+across restart/reload until publication is confirmed. A successful profile publication
+clears both pending fields atomically at the same saved revision; failures and
+superseded receipts leave them available for explicit Retry. The native publisher
+reads and verifies the agent's current signed kind-0 profile, changes only
+`name`/`display_name` for a rename (and `picture` when requested), and preserves
+unrelated content and non-auth tags. Name/bot initialization is only for a missing
+profile.
 
 One native publication per agent can run at a time, including across renderer
 reloads. The host verifies current-profile readback after a matching accepted

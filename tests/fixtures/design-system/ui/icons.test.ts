@@ -19,6 +19,7 @@ it("derives the complete categorized inventory from the public gateway", () => {
     "GooseLogoIcon",
     "HashArrowInIcon",
     "HermesLogoIcon",
+    "NotificationFilledIcon",
     "OneDriveLogoIcon",
     "PiLogoIcon",
   ]);
@@ -65,6 +66,11 @@ it("derives the complete categorized inventory from the public gateway", () => {
         { width: 32, height: 32 },
         { width: 48, height: 48 },
       ],
+    }),
+    expect.objectContaining({
+      name: "NotificationFilledIcon",
+      category: "State indicator",
+      intendedSizes: [{ width: 20, height: 20 }],
     }),
     expect.objectContaining({
       name: "OneDriveLogoIcon",

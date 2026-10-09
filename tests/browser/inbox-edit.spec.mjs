@@ -199,9 +199,9 @@ test("Inbox withholding dismisses deletion and releases body modality", async ({
     await expect(editor).toHaveCount(0);
     const close = detail.getByRole("button", { name: "Close detail" });
     await expect(close).toBeFocused();
-    const sender = inbox.getByRole("combobox", { name: "Sender" });
-    await sender.focus();
-    await expect(sender).toBeFocused();
+    const filters = inbox.getByRole("button", { name: "Inbox filters" });
+    await filters.focus();
+    await expect(filters).toBeFocused();
     closure.resolve();
     await expect(detail.getByText("Preview updating…")).toHaveCount(0);
     await expect(row).toBeVisible();
@@ -212,7 +212,7 @@ test("Inbox withholding dismisses deletion and releases body modality", async ({
         originalEditor,
       ),
     ).toBe(true);
-    await expect(sender).toBeFocused();
+    await expect(filters).toBeFocused();
     await expect(page.locator('[role="alertdialog"]')).toHaveCount(0);
     expect(
       app.report.publications.filter(({ event }) => event.kind === 5),

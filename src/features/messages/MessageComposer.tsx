@@ -21,7 +21,7 @@ import {
   markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
-import { npubEncode } from "nostr-tools/nip19";
+import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -781,7 +781,7 @@ function Composer({
       return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
-      text = `nostr:${npubEncode(recipient.pubkey)} `;
+      text = editMentionText(recipient);
       recipient = undefined;
     }
     if (
@@ -857,11 +857,7 @@ function Composer({
       return false;
     // Message edits only add references, never new notification intent.
     if (editing.target)
-      return insert(
-        unique.map((person) => `nostr:${npubEncode(person.pubkey)} `).join(""),
-        undefined,
-        range,
-      );
+      return insert(unique.map(editMentionText).join(""), undefined, range);
     const admits = mentionAdmission(
       session,
       channelId,

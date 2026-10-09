@@ -8,6 +8,9 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
+// The plugin registers only in the Mac/Linux desktop app.
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
@@ -258,6 +261,7 @@ function fixture(
   let pluginDispose = () => {};
   if (plugin) {
     vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       react: React,
       host: { spawn },

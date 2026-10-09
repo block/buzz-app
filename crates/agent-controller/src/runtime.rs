@@ -684,12 +684,21 @@ impl Controller {
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
     /// Resolve a saved Codex draft only after its revision has been fenced.
+    /// Discovery precedes the Advanced model/effort choice and does not depend
+    /// on it, so validate that intent at Save, as Create does.
     pub fn codex_model_context(
         &self,
         id: &str,
         revision: u64,
-        edit: AgentEdit,
+        mut edit: AgentEdit,
     ) -> Result<crate::codex::CodexContext> {
+        if matches!(
+            edit.harness.configuration,
+            Some(crate::AiConfiguration::Advanced { .. })
+        ) {
+            edit.harness.configuration = Some(crate::AiConfiguration::Default);
+            edit.harness.model.clear();
+        }
         let agent = self.edited_agent(id, revision, edit)?;
         crate::codex::CodexContext::for_agent(
             &agent.harness.command,

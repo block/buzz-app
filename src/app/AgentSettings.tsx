@@ -1,5 +1,11 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   harnessPresets,
   harnessKind,
@@ -146,6 +152,16 @@ export function AgentSettings({
     authCheck,
     control,
   ]);
+  // Like Claude Code: keep keyboard focus when a successful install removes Install.
+  const codexStatusRef = useRef<HTMLSpanElement>(null);
+  const codexInstallRef = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    return () => {
+      if (button.ownerDocument.activeElement === button) {
+        codexStatusRef.current?.focus();
+      }
+    };
+  }, []);
   const offerCodexInstall =
     !!control.installCodex &&
     !!codexOption?.installSupported &&
@@ -265,7 +281,13 @@ export function AgentSettings({
                         <span>{option?.label}</span>
                       </span>
                       <span className="flex items-center gap-2">
-                        <span className="text-secondary">
+                        <span
+                          ref={
+                            option?.id === "codex" ? codexStatusRef : undefined
+                          }
+                          tabIndex={option?.id === "codex" ? -1 : undefined}
+                          className="text-secondary"
+                        >
                           {option?.id === "codex"
                             ? codexStatus
                             : option?.status
@@ -301,6 +323,7 @@ export function AgentSettings({
                           )}
                         {option?.id === "codex" && offerCodexInstall && (
                           <Button
+                            ref={codexInstallRef}
                             size="sm"
                             type="button"
                             loading={!!codexInstall?.installing}

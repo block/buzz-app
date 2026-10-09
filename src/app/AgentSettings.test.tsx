@@ -472,6 +472,88 @@ it("offers the Codex ACP adapter Install only when the adapter is missing, then 
   expect(install).toHaveBeenCalledTimes(2);
 });
 
+it.each([false, true] as const)(
+  "keeps Codex keyboard retry usable and hands off success only while Install owns focus (moved: %s)",
+  async (moveFocus) => {
+    const user = userEvent.setup();
+    const report: HarnessInstallReport = {
+      ready: false,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/codex-install.log",
+      output: "npm ERR! network",
+      error: "Installation failed",
+    };
+    let finish!: (report: HarnessInstallReport) => void;
+    const pending = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    const install = vi
+      .fn<NonNullable<AgentControlHost["installCodex"]>>()
+      .mockReturnValue(pending);
+    const fixture = codexHarnesses("adapter-needed");
+    fixture.host.installCodex = install;
+    fixture.host.checkCodexAuth = async () => !moveFocus;
+    const control = createAgentControl(fixture.host);
+    disposals.push(() => control.dispose());
+    render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+
+    await screen.findByText("Codex");
+    const button = await codexRow().findByRole("button", { name: "Install" });
+    for (let i = 0; i < 20 && document.activeElement !== button; i++) {
+      await user.tab();
+    }
+    expect(button).toHaveFocus();
+    await user.keyboard("{Enter}");
+    try {
+      expect(
+        await screen.findByText(
+          "Installing Node.js and the Codex ACP adapter…",
+        ),
+      ).toBeVisible();
+      expect(button).toHaveFocus();
+    } finally {
+      await act(async () => {
+        finish(report);
+        await pending;
+      });
+    }
+    expect(await codexRow().findByRole("alert")).toHaveTextContent(
+      "Installation failed",
+    );
+    expect(button).toHaveFocus();
+    const retry = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    install.mockReturnValue(retry);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+    let next: Element | null = null;
+    try {
+      expect(button).toHaveFocus();
+      if (moveFocus) {
+        next = screen.getByRole("button", { name: "Add harness" });
+        for (let i = 0; i < 20 && document.activeElement !== next; i++) {
+          await user.tab();
+        }
+        expect(next).toHaveFocus();
+      }
+      fixture.data.harnessOptions = codexHarnessOptions("ready");
+    } finally {
+      await act(async () => {
+        finish({ ...report, ready: true, error: null });
+        await retry;
+      });
+    }
+    const status = await codexRow().findByText(
+      moveFocus ? "Sign-in needed" : "Ready",
+    );
+    expect(codexRow().queryByRole("button", { name: "Install" })).toBeNull();
+    if (moveFocus) expect(next).toHaveFocus();
+    else expect(status).toHaveFocus();
+  },
+);
+
 it("offers manual copying when clipboard access fails", async () => {
   const user = userEvent.setup();
   setupHarnesses("cli-needed");

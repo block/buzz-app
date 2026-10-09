@@ -948,6 +948,55 @@ fn codex_command_binds_exact_interpreters_and_default_selection() {
 
 #[test]
 #[cfg(unix)]
+fn codex_saved_default_agent_discovers_models_before_advanced_choice() {
+    if !codex_launch_child(
+        "runtime::tests::codex_saved_default_agent_discovers_models_before_advanced_choice",
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (saved, context) = codex_fixture(dir.path());
+    select_codex_cli(&context);
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        dir.path().join("ownership"),
+    );
+    // Default -> Advanced before a model or effort has been chosen.
+    let mut harness = saved.harness.clone();
+    harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: String::new(),
+        },
+    });
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name": saved.name, "systemPrompt": saved.system_prompt, "workspace": saved.workspace,
+        "harness": harness, "environment": {}
+    }))
+    .unwrap();
+    assert!(
+        controller
+            .codex_model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap()
+            == context
+    );
+    assert!(controller
+        .codex_model_context(&saved.id, saved.revision + 1, edit.clone())
+        .is_err());
+    assert_eq!(
+        controller
+            .save(&saved.id, saved.revision, edit)
+            .err()
+            .as_deref(),
+        Some("Choose a model for Advanced Codex configuration")
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn codex_command_applies_advanced_selection_and_never_falls_back() {
     use std::os::unix::fs::PermissionsExt;
     if !codex_launch_child(

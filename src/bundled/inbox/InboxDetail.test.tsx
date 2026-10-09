@@ -881,3 +881,81 @@ it.each([false, true])(
       expect(h.session.unread.attention("room", h.reply.id).forced).toBe(true);
   },
 );
+
+it.each([false, true])(
+  "restores the reply draft after empty-edit deletion across withholding (settles hidden: %s)",
+  async (settlesHidden) => {
+    const h = await fixture(true);
+    const { reader, editor } = await opened(h);
+    act(() => {
+      editor.focus();
+      editor.value = "Saved reply draft";
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+    });
+    fireEvent.input(editor);
+    const row = reader.querySelector<HTMLElement>(
+      `[data-message-id="${h.reply?.id}"]`,
+    );
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit message" }),
+    );
+    await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
+    act(() => {
+      editor.value = "";
+    });
+    fireEvent.input(editor);
+    const form = editor.closest("form");
+    if (!form) throw new Error("Missing edit composer form");
+    fireEvent.submit(form);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    const publication = h.holdPublication();
+    const gate = h.hold();
+    let refresh!: Promise<void>;
+    try {
+      fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+      await waitFor(() => expect(h.publications).toHaveLength(1));
+      expect(h.publications[0]?.kind).toBe(5);
+      expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+      await act(async () => {
+        refresh = h.session.inboxFeed.refresh();
+        await gate.started.promise;
+      });
+      expect(dialog).not.toBeInTheDocument();
+      expect(reader.closest("[hidden][inert]")).not.toBeNull();
+      expect(editor).toBeInTheDocument();
+      if (settlesHidden) {
+        await act(async () => publication.resolve());
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+        await waitFor(() => expect(editor).toHaveValue("Saved reply draft"));
+      }
+      await act(async () => {
+        gate.gate.resolve();
+        await refresh;
+      });
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      if (!settlesHidden) {
+        await act(async () => publication.resolve());
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("textbox", { name: "Edit message" }),
+        ).toBeNull(),
+      );
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(editor).toHaveValue("Saved reply draft");
+      expect(reader).toBeVisible();
+      expect(h.publications).toHaveLength(1);
+    } finally {
+      publication.resolve();
+      gate.gate.resolve();
+    }
+  },
+);

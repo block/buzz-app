@@ -1,3 +1,4 @@
+import type { ChannelDetailsDraft } from "../relay/channel-details-protocol";
 import { addChannelMember, canShareSession } from "../channel-members/members";
 import { archiveHides } from "../relay/identity-archives";
 import type { ChannelSummary } from "../relay/contracts";
@@ -34,6 +35,7 @@ export async function grantSessionAccess(
   signal: AbortSignal,
   onConfirmed: (key: string) => void,
   includeAgents = false,
+  sessionParticipant = true,
 ) {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
@@ -48,7 +50,7 @@ export async function grantSessionAccess(
       signal,
       intent,
       session.outbox,
-      true,
+      sessionParticipant,
       includeAgents,
     );
     onConfirmed(key);
@@ -261,4 +263,46 @@ export async function publishSessionLink(
   });
   await outbox.acknowledge(id);
   return id;
+}
+
+/** Promote in place through the existing signed details owner. A retry checks an
+ * uncertain save; it never republishes it or resets an unchanged cleanup deadline. */
+export async function applySharedChannelDetails(
+  session: RelaySession,
+  id: string,
+  draft: ChannelDetailsDraft,
+  expected: ChannelDetailsDraft,
+  signal: AbortSignal,
+) {
+  const details = session.channelDetails;
+  const matches = (value: ChannelDetailsDraft) =>
+    value.name === draft.name &&
+    value.description === draft.description &&
+    value.visibility === draft.visibility &&
+    value.ttlSeconds === draft.ttlSeconds;
+  const pending = details.snapshot(id);
+  if (pending) {
+    if (!matches(pending.draft) || pending.status !== "unconfirmed")
+      throw new Error(
+        "Finish the existing channel details change before sharing.",
+      );
+    await details.check(id, signal);
+  }
+  const base = await details.load(id, signal);
+  if (!base.canEdit)
+    throw new Error(
+      "You no longer have permission to share this conversation.",
+    );
+  if (!matches(base)) {
+    if (
+      base.name !== expected.name ||
+      base.description !== expected.description ||
+      base.visibility !== expected.visibility ||
+      base.ttlSeconds !== expected.ttlSeconds
+    )
+      throw new Error(
+        "Channel settings changed after sharing. Check them in Messages before continuing.",
+      );
+    await details.save(base, draft, signal);
+  }
 }

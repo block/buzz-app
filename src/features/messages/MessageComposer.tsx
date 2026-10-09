@@ -193,6 +193,7 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
+  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
@@ -293,6 +294,7 @@ function Composer({
   submission,
   sessionConversation,
   personalConversation = false,
+  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -1268,6 +1270,7 @@ function Composer({
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
+          clickOpensPanel={activityClickOpensPanel}
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}

@@ -35,7 +35,11 @@ export function NewSessionView({
         {actions}
       </SessionHeading>
       <div className={styles.start}>
-        <div className={styles.startContent}>{children}</div>
+        <div
+          className={`${styles.startContent} ${personal ? styles.personalStart : ""}`}
+        >
+          {children}
+        </div>
       </div>
     </section>
   );

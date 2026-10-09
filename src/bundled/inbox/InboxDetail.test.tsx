@@ -16,6 +16,7 @@ import type { ComposerInputElement } from "../../features/messages/composer-dom"
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { RelayEvent } from "../../features/relay/events";
 import type { Navigation } from "../../features/navigation/controller";
 import { matchesEvent } from "../../features/relay/projection";
 import {
@@ -113,7 +114,7 @@ async function frame() {
     for (const callback of pending) callback(performance.now());
   });
 }
-async function fixture() {
+async function fixture(ownReply = false) {
   const viewer = keypair(),
     alice = keypair(),
     relay = keypair();
@@ -128,10 +129,17 @@ async function fixture() {
       ["imeta", "url https://fixture.test/image.png", "m image/png"],
     ],
   );
+  const reply = ownReply
+    ? message(viewer, "room", "My Inbox reply", 21, [
+        ["e", root.id, "", "reply"],
+      ])
+    : undefined;
+  const publications: RelayEvent[] = [];
   const events = [
     roster(relay, "room", [viewer.pubkey, alice.pubkey], 10),
     metadata(relay, "room", "Room", 10),
     root,
+    ...(reply ? [reply] : []),
   ];
   let journal: ReadJournal | undefined;
   let live!: LiveCallbacks;
@@ -173,9 +181,13 @@ async function fixture() {
         },
       },
       writer: {
-        kinds: [9],
+        kinds: [9, 40003, 5],
         sign: async (template) => signed(viewer, template),
-        publish: async () => {},
+        publish: async (event) => {
+          publications.push(event);
+          events.push(event);
+          live.receive([event]);
+        },
       },
       subscribe(callbacks) {
         live = callbacks;
@@ -207,6 +219,8 @@ async function fixture() {
     ...owner,
     live,
     root,
+    reply,
+    publications,
     item,
     journal: () => journal,
     scope: { viewer: viewer.pubkey, communityOrigin: "https://relay.test" },
@@ -721,4 +735,58 @@ it("does not restore a control retired by withholding, even when a replacement m
   } finally {
     gate.gate.resolve();
   }
+});
+
+it("edits an owned reply in the Inbox thread using its existing composer", async () => {
+  const h = await fixture(true);
+  const { reader, editor } = await opened(h);
+  const row = reader.querySelector<HTMLElement>(
+    `[data-message-id="${h.reply?.id}"]`,
+  );
+  if (!row) throw new Error("Missing owned reply");
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row).getByRole("button", { name: "More message actions" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit message", exact: true }),
+  );
+  await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
+  expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+  expect(editor).toHaveFocus();
+  act(() => {
+    editor.value = "Corrected from Inbox";
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit composer form");
+  fireEvent.submit(form);
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publications[0]).toMatchObject({
+    kind: 40003,
+    content: "Corrected from Inbox",
+  });
+  expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+  await waitFor(() =>
+    expect(within(row).getByText("Corrected from Inbox")).toBeVisible(),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Edit message" })).toBeNull(),
+  );
+});
+
+it("keeps another person's Inbox message ineligible for edit and deletion", async () => {
+  const h = await fixture();
+  const { row } = await opened(h);
+  if (!row) throw new Error("Missing peer root");
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row as HTMLElement).getByRole("button", {
+      name: "More message actions",
+    }),
+  );
+  await screen.findByRole("menuitem", { name: /Mark (read|unread)/ });
+  expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
 });

@@ -14,6 +14,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export async function buildApp(
   {
     developmentReact,
+    bundledDevelopment,
     pluginFixtures,
     companionFixture,
     agentManagement,
@@ -31,7 +32,9 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
-        bundledHostPlugin(root),
+        ...(bundledDevelopment
+          ? [bundledHostPlugin(root, { builderlabUrl: "" })]
+          : []),
         ...(pairingFixture
           ? [
               {

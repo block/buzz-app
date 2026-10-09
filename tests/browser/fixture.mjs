@@ -78,6 +78,7 @@ export const test = base.extend({
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
+  bundledDevelopment: [false, { option: true, scope: "worker" }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   agentManagement: [false, { option: true, scope: "worker" }],

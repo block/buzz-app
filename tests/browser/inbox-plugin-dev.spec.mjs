@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test.use({
+  bundledDevelopment: true,
   productionBroker: true,
   readState: true,
   threadUnread: true,

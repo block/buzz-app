@@ -12,6 +12,7 @@ import { watchPageErrors } from "./page-errors.mjs";
 // Actual app, composer, session and broker; only the upstream relay is modeled.
 // Ephemeral identities and a network fence prevent any live message or profile write.
 const test = base.extend({
+  bundledDevelopment: [false, { scope: "worker" }],
   developmentReact: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
   agentManagement: [false, { scope: "worker" }],

@@ -24,14 +24,21 @@ it("allows channel drops into Starred without treating it as a create-channel se
     expect(isChannelDropSectionKey(key)).toBe(false);
   expect(isChannelSectionKey("starred")).toBe(false);
 });
-it("keeps an empty Starred target only during a channel drag", () => {
-  expect(sidebarSections([], undefined, new Set(), true)[0]).toEqual({
-    key: "starred",
-    title: "Starred",
-    icon: "★",
-    rows: [],
-  });
+it("hides empty Starred and shows it only for an authorized starred row", () => {
   expect(sidebarSections([]).some(({ key }) => key === "starred")).toBe(false);
+  const preferences = {
+    sections: [],
+    assignments: {},
+    starred: ["alpha"],
+    muted: [],
+  };
+  expect(
+    sidebarSections([], preferences).some(({ key }) => key === "starred"),
+  ).toBe(false);
+  expect(sidebarSections([row("alpha")], preferences)[0]).toMatchObject({
+    key: "starred",
+    rows: [row("alpha")],
+  });
 });
 it("intersects groups/stars with active authorized streams and movable DMs", () => {
   const roster = [

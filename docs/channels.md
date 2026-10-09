@@ -145,9 +145,10 @@ can also be dragged with a pointer onto another saved group, **Starred** or
 placement, rollback notice and Retry.
 Only a channel's select surface starts a drag, the surface its row menu wraps; its
 sessions and session draft do not.
-An empty **Starred** header appears only while dragging, so the first channel can
-be dropped into it. Dropping into Starred stars the channel; dropping out assigns
-the destination and clears its star, just like the row menu. Forums and Direct
+**Starred** accepts drops only when it is already visible; starting a drag does
+not reveal an empty section. Use the row menu to star the first channel.
+Dropping into Starred stars the channel; dropping out assigns the destination
+and clears its star, just like the row menu. Forums and Direct
 messages take no part in dragging, and the row menu remains the keyboard path. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath

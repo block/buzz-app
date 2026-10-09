@@ -14,7 +14,6 @@ export function sidebarSections<T extends ChannelSummary>(
   channels: readonly T[],
   preferences?: SidebarPreferences,
   hiddenDms: ReadonlySet<string> = new Set(),
-  dragging = false,
 ) {
   const active = channels.filter(
     (channel) =>
@@ -112,7 +111,6 @@ export function sidebarSections<T extends ChannelSummary>(
   ].filter(
     (section) =>
       isChannelSectionKey(section.key) ||
-      (dragging && section.key === "starred") ||
       section.key === "dms" ||
       section.rows.length,
   );

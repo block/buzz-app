@@ -322,8 +322,8 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(beta).toHaveCount(0);
 });
 
-// Pointer hit testing, dynamic empty targets and focus relocation need a layout engine.
-test("dragging into empty Starred and out to groups or Channels saves and reloads", async ({
+// Pointer hit testing, drag-time section visibility and focus relocation need a layout engine.
+test("dragging keeps empty Starred hidden and visible Starred moves save and reload", async ({
   page,
   app,
 }) => {
@@ -337,32 +337,31 @@ test("dragging into empty Starred and out to groups or Channels saves and reload
   await saved(page, app, 1);
   await expect(stars).toHaveCount(0);
 
-  // Pull onto a stable existing target first to activate the empty Starred header.
+  // Starting a drag must not reveal a hidden empty Starred section.
   await pull(page, beta, "channels");
-  await expect(stars).toBeVisible();
-  await expect(stars.locator("[data-channel-id]")).toHaveCount(0);
-  // Cancelling never leaves the empty section visible or publishes a move.
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(stars).toHaveCount(0);
+  // Cancelling never publishes a move.
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
   await expect(stars).toHaveCount(0);
   expect(app.report.sidebarPublications).toHaveLength(1);
 
+  // The row menu can star the first channel; only an already-visible section
+  // accepts a drag. Keep Alpha starred while moving Beta into and out of it.
+  const alphaInChannels = page.locator(
+    '[data-sidebar-section="channels"] [data-channel-id="alpha"]',
+  );
+  await openMove(page, alphaInChannels);
+  await menu
+    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .click();
+  await saved(page, app, 2);
+  await expect(alpha).toBeVisible();
+
   async function drag(row, section) {
-    if (section === "starred" && (await stars.count()) === 0) {
-      // Keep the transient header away from the auto-scroll edge while measuring
-      // it; a highlighted target can move out from under a stationary pointer.
-      await sidebar(page).evaluate((element) => {
-        element.scrollTop = 0;
-      });
-      await pull(page, row, "channels");
-      await expect(stars).toBeVisible();
-      const header = stars.locator("summary");
-      const to = await header.boundingBox();
-      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
-        steps: 8,
-      });
-    } else await pull(page, row, section);
+    await pull(page, row, section);
     await expect(
       page.locator(`[data-sidebar-section="${section}"][data-drop-target]`),
     ).toBeVisible();
@@ -372,7 +371,7 @@ test("dragging into empty Starred and out to groups or Channels saves and reload
   await drag(beta, "starred");
   await expect(starred).toBeFocused();
   await expect(beta).toHaveCount(0);
-  await saved(page, app, 2);
+  await saved(page, app, 3);
   expect(app.report.sidebarPublications.at(-1)).toMatchObject({
     coordinate: "channel-stars",
     blob: { channels: { beta: { starred: true } } },
@@ -387,18 +386,18 @@ test("dragging into empty Starred and out to groups or Channels saves and reload
   await expect(page.locator("[data-drop-target]")).toHaveCount(0);
   await page.mouse.up();
   await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
-  expect(app.report.sidebarPublications).toHaveLength(2);
+  expect(app.report.sidebarPublications).toHaveLength(3);
 
   await drag(starred, "group:work");
   await expect(beta).toBeFocused();
-  await saved(page, app, 3); // Assignment already Work; only unstar publishes.
-  await expect(stars).toHaveCount(0);
+  await saved(page, app, 4); // Assignment already Work; only unstar publishes.
+  await expect(alpha).toBeVisible();
   await drag(beta, "starred");
   await expect(starred).toBeFocused();
-  await saved(page, app, 4);
+  await saved(page, app, 5);
   await drag(starred, "channels");
   await expect(rowIn(page, "channels")).toBeFocused();
-  await saved(page, app, 6);
+  await saved(page, app, 7);
   expect(app.report.sidebarPublications.at(-2)).toMatchObject({
     coordinate: "channel-sections",
     blob: { assignments: {} },
@@ -410,7 +409,7 @@ test("dragging into empty Starred and out to groups or Channels saves and reload
   await page.reload();
   await expect(rowIn(page, "channels")).toBeVisible();
   await expect(beta).toHaveCount(0);
-  await expect(stars).toHaveCount(0);
+  await expect(alpha).toBeVisible();
   await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
     1,
   );

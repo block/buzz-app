@@ -526,7 +526,6 @@ function ReadySidebar({
         sidebarChannels,
         displayedPreferences,
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
-        !!draggingChannel,
       )
     : [];
   const focusChannelPlacement = (channelId: string) => {

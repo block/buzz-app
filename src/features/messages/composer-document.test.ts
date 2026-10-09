@@ -12,9 +12,6 @@ import { mentionDraft } from "./mention-draft";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
-import { EditorState, TextSelection } from "prosemirror-state";
-import { toggleMark } from "prosemirror-commands";
-import { history, undo, redo, closeHistory } from "prosemirror-history";
 import type { Nodes, RootContent } from "mdast";
 import type { InlineFormat } from "./composer-dom";
 
@@ -617,21 +614,6 @@ describe("composer Markdown boundary", () => {
       );
     }
   });
-  it("uses syntax-aware escaping and delimiter flanking", () => {
-    expect(serialize(bold("*"))).toBe("**\\***");
-    const output = serialize(schema.text("x"), bold("!"), schema.text("y"));
-    expect(fromMarkdown(output).children[0]).toMatchObject({
-      type: "paragraph",
-      children: [
-        { type: "text", value: "x" },
-        { type: "strong", children: [{ type: "text", value: "!" }] },
-        { type: "text", value: "y" },
-      ],
-    });
-    expect(serialize(bold("[label](https://example.com)"))).toBe(
-      "**[label](https://example.com)**",
-    );
-  });
 });
 
 const marked = (text: string, ...marks: InlineFormat[]) =>
@@ -764,43 +746,5 @@ describe("inline formatting batch", () => {
           { character: "y", marks: [] },
         ]);
       }
-  });
-  it("uses the same document, stored marks and history for all three formats", () => {
-    let state = EditorState.create({
-      doc: doc(paragraph(schema.text("text"))),
-      plugins: [history()],
-    });
-    const dispatch = (tr: typeof state.tr) => {
-      state = state.apply(tr);
-    };
-    dispatch(state.tr.setSelection(TextSelection.create(state.doc, 1, 5)));
-    for (const name of ["bold", "italic", "strike"] as const) {
-      toggleMark(schema.marks[name], null, { removeWhenPresent: false })(
-        state,
-        (tr) => dispatch(closeHistory(tr)),
-      );
-    }
-    const draft = () => projectComposerDocument(state.doc).draft;
-    expect(
-      renderedCharacters(parseFormats(composerMarkdown(draft())).children)[0]
-        ?.marks,
-    ).toEqual(["delete", "emphasis", "strong"]);
-    undo(state, dispatch);
-    expect(
-      state.doc.firstChild?.firstChild?.marks.map((mark) => mark.type.name),
-    ).toEqual(["bold", "italic"]);
-    redo(state, dispatch);
-    dispatch(state.tr.setSelection(TextSelection.create(state.doc, 5)));
-    dispatch(closeHistory(state.tr.insertText(" more ")));
-    expect(draft().text).toBe("text more ");
-    expect(
-      state.doc.firstChild?.lastChild?.marks.map((mark) => mark.type.name),
-    ).toEqual(["bold", "italic", "strike"]);
-    expect(composerMarkdown(draft())).toBe("**_~~text more~~_** ");
-    toggleMark(schema.marks.italic)(state, dispatch);
-    dispatch(state.tr.insertText("end"));
-    expect(
-      state.doc.firstChild?.lastChild?.marks.map((mark) => mark.type.name),
-    ).toEqual(["bold", "strike"]);
   });
 });

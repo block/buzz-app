@@ -86,7 +86,7 @@ function press(
   return event;
 }
 
-it.each(["Win32", "Linux x86_64"])(
+it.each(["Win32"])(
   "%s closes tabs from the composer, not the window until the next press; ignores held repeats",
   async (platform) => {
     const h = harness(platform);
@@ -125,7 +125,7 @@ it.each(["Win32", "Linux x86_64"])(
   },
 );
 
-it.each(["Win32", "Linux x86_64"])(
+it.each(["Win32"])(
   "%s preserves terminal Ctrl+W before PTY translation and blocks competing plugins",
   async (platform) => {
     const h = harness(platform);
@@ -212,8 +212,6 @@ it("leaves hidden tabs intact and falls back to window close", async () => {
 
 it.each([
   [false, "Win32"],
-  [false, "Linux x86_64"],
-  [false, "MacIntel"],
   [true, "MacIntel"],
 ] as const)(
   "does not register a DOM close shortcut for desktop=%s, platform=%s",

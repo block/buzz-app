@@ -58,6 +58,7 @@ afterEach(() => {
 function fixture(
   options: {
     failRoster?: boolean;
+    archivedChannel?: boolean;
     withDm?: boolean;
     withSenders?: boolean;
     holdProfiles?: boolean;
@@ -84,6 +85,8 @@ function fixture(
   let rosterGate: Promise<void> | undefined;
   let rosterStarted = false;
   let evidenceReads = 0;
+  let unreadGate: Promise<void> | undefined;
+  let unreadStarted = false;
   const historyRequests: string[] = [];
   const threadRequests: string[] = [];
   const exactRequests: string[] = [];
@@ -179,7 +182,10 @@ function fixture(
             ["private"],
             ["about", "Buzz session (buzz.sessions/v1)"],
           ]
-        : [["t", "stream"]],
+        : [
+            ["t", "stream"],
+            ...(options.archivedChannel ? [["archived", "true"]] : []),
+          ],
     ),
     profile(alice, { name: "Alice" }),
     ...roots,
@@ -234,6 +240,15 @@ function fixture(
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
       query: async (filters) => {
+        if (
+          filters.some(
+            (filter) =>
+              filter.include_aux && !!filter["#h"] && filter.kinds?.includes(9),
+          )
+        ) {
+          unreadStarted = true;
+          await unreadGate;
+        }
         if (
           filters.some((filter) => !!filter["#p"] && filter.kinds?.includes(9))
         )
@@ -409,6 +424,18 @@ function fixture(
     readSteps,
     evidenceReads: () => evidenceReads,
     historyRequests,
+    unreadStarted: () => unreadStarted,
+    holdUnread() {
+      unreadStarted = false;
+      let release = () => {};
+      unreadGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => {
+        unreadGate = undefined;
+        release();
+      };
+    },
     holdAddressed() {
       addressedGate = new Promise<void>((resolve) => {
         releaseAddressed = resolve;
@@ -563,6 +590,14 @@ function fixture(
       events.push(restored);
       emit([restored, mention, reply, ...roots]);
     },
+    archiveRoom(archived: boolean, time: number) {
+      const state = metadata(relayKey, "room", "Design", time, [
+        ["t", "stream"],
+        ["archived", String(archived)],
+      ]);
+      events.push(state);
+      emit([state]);
+    },
     renameRoom() {
       const renamed = metadata(relayKey, "room", "Renamed", 99, [
         ["t", "stream"],
@@ -597,12 +632,33 @@ const rows = () =>
   ).queryAllByRole("listitem");
 async function chooseFilter(label: string, control = "Activity type") {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: control }));
-  await user.click(await screen.findByRole("option", { name: label }));
+  const trigger = screen.getByRole("button", { name: "Inbox filters" });
+  await user.click(trigger);
+  await screen.findByRole("menu", { name: "Inbox filters" });
+  if (control === "Sender") {
+    const people = screen.getByRole("menuitemcheckbox", { name: "People" });
+    const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
+    // Enable the desired sender before disabling the other: never select none.
+    if (label !== "Agents" && people.getAttribute("aria-checked") !== "true")
+      await user.click(people);
+    if (label !== "Humans" && agents.getAttribute("aria-checked") !== "true")
+      await user.click(agents);
+    if (label === "Agents" && people.getAttribute("aria-checked") === "true")
+      await user.click(people);
+    if (label === "Humans" && agents.getAttribute("aria-checked") === "true")
+      await user.click(agents);
+    await user.keyboard("{Escape}");
+  } else {
+    await user.click(
+      screen.getByRole("menuitemradio", {
+        name: label === "All activity" ? "All" : label,
+      }),
+    );
+  }
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: control })).toHaveTextContent(
-      label,
-    ),
+    expect(
+      screen.queryByRole("menu", { name: "Inbox filters" }),
+    ).not.toBeInTheDocument(),
   );
 }
 async function openRowMenu(
@@ -627,6 +683,182 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it("excludes archived-channel mentions and threads without hiding active DMs", async () => {
+  const h = fixture({ archivedChannel: true, withDm: true });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("A direct reply");
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(0);
+  await chooseFilter("Threads");
+  expect(rows()).toHaveLength(0);
+});
+
+it.each(["Please review", "A thread update"])(
+  "closes selected Inbox detail on channel archive and restores unread intent on unarchive (%s)",
+  async (preview) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const row = rows().find((item) => item.textContent?.includes(preview));
+    if (!row) throw new Error("Missing fixture conversation");
+    fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+    const detail = screen.getByRole("region", { name: "Inbox detail" });
+    await within(detail).findByText(
+      preview === "Please review" ? /Please review/ : "A thread update",
+    );
+    await waitFor(() =>
+      expect(
+        within(row).queryByRole("img", { name: "Unread" }),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Mark unread" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(row).getByRole("img", { name: "Unread" }),
+      ).toBeInTheDocument(),
+    );
+    const journal = h.journal();
+    act(() => h.archiveRoom(true, 100));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    expect(
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+    expect(h.journal()).toEqual(journal);
+    act(() => h.archiveRoom(false, 101));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const restored = rows().find((item) => item.textContent?.includes(preview));
+    if (!restored) throw new Error("Missing restored conversation");
+    expect(
+      within(restored).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(h.journal()).toEqual(journal);
+  },
+);
+
+it.each([false, true])(
+  "retires selected visits only on explicit archive during a held unread refresh (archive=%s)",
+  async (archive) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await waitFor(() =>
+      expect(h.owner.session.unread.inbox().status).toBe("ready"),
+    );
+    await chooseFilter("Mentions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await within(
+      screen.getByRole("region", { name: "Inbox detail" }),
+    ).findByText(/Please review/);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("img", { name: "Unread" }),
+      ).not.toBeInTheDocument(),
+    );
+    const journal = h.journal();
+    const release = h.holdUnread();
+    let refresh: Promise<void> | undefined;
+    try {
+      act(() => {
+        refresh = h.owner.session.unread.refresh();
+      });
+      await waitFor(() => expect(h.unreadStarted()).toBe(true));
+      expect(h.owner.session.unread.inbox().status).toBe("loading");
+      expect(
+        screen.getByRole("region", { name: "Inbox detail" }),
+      ).toBeInTheDocument();
+      if (archive) {
+        act(() => h.archiveRoom(true, 100));
+        await waitFor(() => expect(rows()).toHaveLength(0));
+        expect(
+          screen.queryByRole("region", { name: "Inbox detail" }),
+        ).not.toBeInTheDocument();
+        act(() => h.archiveRoom(false, 101));
+        await waitFor(() => expect(rows()).toHaveLength(1));
+        expect(h.owner.session.unread.inbox().status).toBe("loading");
+        expect(
+          screen.queryByRole("region", { name: "Inbox detail" }),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: "Inbox filters" }),
+        ).toHaveFocus();
+        expect(h.journal()).toEqual(journal);
+      }
+    } finally {
+      await act(async () => {
+        release();
+        await refresh;
+      });
+    }
+    await waitFor(() =>
+      expect(h.owner.session.unread.inbox().status).toBe("ready"),
+    );
+    expect(!!screen.queryByRole("region", { name: "Inbox detail" })).toBe(
+      !archive,
+    );
+    expect(h.journal()).toEqual(journal);
+  },
+);
+
+it("retires a failed captured read on archive during a held unread refresh", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(h.owner.session.unread.inbox().status).toBe("ready"),
+  );
+  await chooseFilter("Mentions");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  const release = h.holdUnread();
+  let refresh: Promise<void> | undefined;
+  try {
+    act(() => {
+      refresh = h.owner.session.unread.refresh();
+    });
+    await waitFor(() => expect(h.unreadStarted()).toBe(true));
+    act(() => h.archiveRoom(true, 100));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    act(() => h.archiveRoom(false, 101));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(h.owner.session.unread.inbox().status).toBe("loading");
+    expect(
+      screen.queryByRole("button", { name: "Retry inbox" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      release();
+      await refresh;
+    });
+  }
+  await waitFor(() =>
+    expect(h.owner.session.unread.inbox().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+});
+
 it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
   const h = fixture();
   render(h.view);
@@ -677,7 +909,7 @@ it("filters real session evidence, opens an exact message and marks it read, and
   expect(
     screen.queryByText(/Marked unread on this device/),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
   expect(rows()).toHaveLength(1);
   await chooseFilter("Threads");
   expect(rows()).toHaveLength(1);
@@ -757,7 +989,7 @@ it("distinguishes same-sender thread choices by their visible safe preview", asy
   }
 });
 
-it("offers Show more only while matching unread conversations remain paginated", async () => {
+it("renders all loaded rows without pagination while preserving unread filtering", async () => {
   const h = fixture();
   const extra = Array.from({ length: 49 }, (_, index) =>
     message(h.alice, "room", `Additional mention ${index}`, 100 + index, [
@@ -773,8 +1005,6 @@ it("offers Show more only while matching unread conversations remain paginated",
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
-  expect(rows()).toHaveLength(50);
-  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
   expect(rows()).toHaveLength(51);
   expect(
     screen.queryByRole("button", { name: "Show more" }),
@@ -782,14 +1012,14 @@ it("offers Show more only while matching unread conversations remain paginated",
   await act(async () => {
     await h.owner.session.unread.markChannelRead("room");
   });
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
   expect(rows()).toHaveLength(0);
   expect(
     screen.queryByRole("button", { name: "Show more" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
-  expect(rows()).toHaveLength(50);
-  expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
+  expect(rows()).toHaveLength(51);
+  expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
 });
 
 it("intersects activity and representative sender evidence without inferring missing profiles", async () => {
@@ -797,11 +1027,8 @@ it("intersects activity and representative sender evidence without inferring mis
   render(h.view);
   await screen.findByText("Agent direct reply");
   expect(
-    screen.getByRole("combobox", { name: "Activity type" }),
-  ).toHaveTextContent("All activity");
-  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
-    "Everyone",
-  );
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("All");
   await chooseFilter("DMs");
   await chooseFilter("Agents", "Sender");
   // Inbox's idle-only ensure reads the shared choices; no filter-owned inventory.
@@ -877,7 +1104,7 @@ it("opens local unread actions with the ContextMenu key without changing selecti
       screen.queryByRole("img", { name: "Unread" }),
     ).not.toBeInTheDocument(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
   const action = await openRowMenu("contextKey");
   expect(action).toHaveTextContent("Mark unread");
   expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
@@ -1032,7 +1259,7 @@ it.each([
       await user.click(within(row).getByRole("button"));
       await waitFor(() => expect(h.saveStarted()).toBe(true));
       expect(h.readSteps.map((step) => step.id)).toEqual([root.id]);
-      const close = screen.getByRole("button", { name: "Close thread" });
+      const close = screen.getByRole("button", { name: "Close detail" });
       if (action === "Close") await user.click(close);
       if (action === "Escape") {
         close.focus();
@@ -1108,7 +1335,7 @@ it.each(["retry", "other", "blur"] as const)(
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
     if (focusOwner === "retry") {
       expect(
-        within(detail).getByRole("button", { name: "Close thread" }),
+        within(detail).getByRole("button", { name: "Close detail" }),
       ).toHaveFocus();
       await user.keyboard("{Escape}");
       expect(detail).not.toBeInTheDocument();
@@ -1158,7 +1385,7 @@ it("a second rejected Retry retains its focused control until a successful recov
     expect(screen.queryByText("disk full")).not.toBeInTheDocument(),
   );
   expect(
-    within(detail).getByRole("button", { name: "Close thread" }),
+    within(detail).getByRole("button", { name: "Close detail" }),
   ).toHaveFocus();
 });
 
@@ -1180,7 +1407,7 @@ it.each([true, false])(
     h.failAux(false);
     const release = h.holdAux();
     const retry = screen.getByRole("button", { name: "Retry inbox" });
-    const other = screen.getByRole("combobox", { name: "Sender" });
+    const other = screen.getByRole("button", { name: "Unread only" });
     try {
       retry.focus();
       await user.keyboard("{Enter}");
@@ -1199,59 +1426,52 @@ it.each([true, false])(
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
     expect(
-      keepFocus
-        ? screen.getByRole("combobox", { name: "Activity type" })
-        : other,
+      keepFocus ? screen.getByRole("button", { name: "Inbox filters" }) : other,
     ).toHaveFocus();
   },
 );
 
-it("shows two accessible filters without removed options, bulk action or coverage boilerplate", async () => {
+it("combines the existing filter choices without placeholder actions", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  expect(screen.getAllByRole("combobox")).toHaveLength(2);
-  expect(
-    screen.getByRole("combobox", { name: "Activity type" }),
-  ).toHaveTextContent("All activity");
-  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
-    "Everyone",
-  );
-  expect(screen.getByText("Activity type")).toHaveClass("sr-only");
-  expect(screen.getByText("Sender", { selector: ".sr-only" })).toHaveClass(
-    "sr-only",
-  );
-  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  const trigger = screen.getByRole("button", { name: "Inbox filters" });
+  expect(trigger).toHaveTextContent("All");
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.queryByRole("tab")).toBeNull();
   expect(
     screen.queryByRole("button", {
       name: /Mark shown as read|Mark as read|Mark unread/,
     }),
-  ).not.toBeInTheDocument();
+  ).toBeNull();
   expect(
     screen.queryByText(
       /Verified recent conversations|Results are bounded|Feed history reached its result limit|Read-state sync is unavailable on this host/,
     ),
-  ).not.toBeInTheDocument();
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  const user = userEvent.setup();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu", { name: "Inbox filters" });
   expect(
-    screen.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeInTheDocument();
+    within(menu).getByRole("menuitemcheckbox", { name: "People" }),
+  ).toBeChecked();
   expect(
-    screen.queryByRole("button", { name: "Refresh" }),
-  ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("combobox", { name: "Activity type" }));
-  for (const label of ["Projects", "Needs action"]) {
+    within(menu).getByRole("menuitemcheckbox", { name: "Agents" }),
+  ).toBeChecked();
+  for (const name of ["All", "Threads", "Mentions", "DMs", "Drafts"])
     expect(
-      screen.queryByRole("option", { name: label }),
-    ).not.toBeInTheDocument();
-  }
-  expect(screen.queryByText("Activity")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("option", { name: "All activity" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("option", { name: "Drafts" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Drafts" })).toBeInTheDocument();
+      within(menu).getByRole("menuitemradio", { name }),
+    ).toBeInTheDocument();
+  for (const name of ["Projects", "Needs action", "Reactions"])
+    expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
 });
 
 it("waits for roster recovery before explicit evidence refresh", async () => {
@@ -1346,7 +1566,7 @@ it("does not accept a second row selection while its explicit read is pending", 
     ).toHaveAttribute("aria-busy", "true");
     fireEvent.click(button);
     expect(
-      screen.getByRole("heading", { name: "DM with Alice" }),
+      screen.getByRole("heading", { name: "Direct message" }),
     ).toBeInTheDocument();
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
   } finally {
@@ -1365,32 +1585,6 @@ it("does not accept a second row selection while its explicit read is pending", 
   await waitFor(() =>
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
   );
-});
-it("Retry repeats a rejected mark-unread mutation, not just evidence refresh", async () => {
-  const h = fixture();
-  render(h.view);
-  await screen.findByText("Please review this");
-  await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("img", { name: "Unread" }),
-    ).not.toBeInTheDocument(),
-  );
-  h.failSave();
-  fireEvent.click(await openRowMenu());
-  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
-  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeUndefined();
-  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
-  await waitFor(() =>
-    expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf(
-      "number",
-    ),
-  );
-  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
-  expect(screen.queryByText("disk full")).not.toBeInTheDocument();
 });
 it("a failed captured read cannot retry after access retirement", async () => {
   const h = fixture();
@@ -1422,7 +1616,7 @@ it("closing a pending failed action cancels its retry intent without cancelling 
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     await waitFor(() => expect(h.saveStarted()).toBe(true));
-    fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
   } finally {
     await act(async () => release());
   }
@@ -2359,7 +2553,7 @@ it.each(["close", "delete", "delete-pending"])(
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
     expect(rows()).toHaveLength(1);
     const release = action === "delete-pending" ? h.holdSave() : () => {};
     try {
@@ -2376,7 +2570,7 @@ it.each(["close", "delete", "delete-pending"])(
           ).not.toBeInTheDocument(),
         );
       if (action === "close")
-        fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+        fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
       else
         act(() =>
           h.emit([
@@ -2402,7 +2596,7 @@ it.each(["close", "delete", "delete-pending"])(
     await waitFor(() => expect(rows()).toHaveLength(0));
     await waitFor(() =>
       expect(
-        screen.getByRole("combobox", { name: "Activity type" }),
+        screen.getByRole("button", { name: "Inbox filters" }),
       ).toHaveFocus(),
     );
   },

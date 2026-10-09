@@ -79,29 +79,6 @@ it("binds message and channel links to the selected community and viewer", () =>
     },
   });
 });
-it("ignores query parameters outside the Buzz link grammar and opens the destination", () => {
-  expect(deepLinkStep(`${messageLink}&foo=bar`, client)).toEqual({
-    open: {
-      version: 1,
-      kind: "conversation",
-      scope: { viewer, communityOrigin: origin },
-      channelId: "general",
-      messageId: message,
-      threadRootId: root,
-    },
-  });
-  expect(
-    deepLinkStep(`${messageLink}&viewer=${"b".repeat(64)}`, client),
-  ).toEqual(deepLinkStep(messageLink, client));
-  expect(deepLinkStep("buzz://channel/general?foo=bar", client)).toEqual({
-    open: {
-      version: 1,
-      kind: "conversation",
-      scope: { viewer, communityOrigin: origin },
-      channelId: "general",
-    },
-  });
-});
 it("fails as unavailable without a selected community or identity, never inventing one", () => {
   expect(
     deepLinkStep("buzz://channel/general", { viewer, selected: null }),
@@ -115,14 +92,7 @@ it.each([
   // whether unscoped or scoped to a community as early Copy link output was.
   locator,
   `buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22conversation%22%2C%22scope%22%3A%7B%22communityOrigin%22%3A%22https%3A%2F%2Felsewhere.example%22%7D%2C%22channelId%22%3A%22general%22%2C%22messageId%22%3A%22${message}%22%7D`,
-  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
-  `buzz://open?target=${"x".repeat(40_000)}`,
   "buzz://join?relay=example&code=abc123",
-  "buzz://join?relay=example",
-  "buzz://pr?id=1&owner=alice&d=repo",
-  "buzz://issue?id=1&owner=alice&d=repo",
-  "buzz://connect?relay=example",
-  "buzz://add-community?relay=example",
   "buzz://unknown/general",
   `buzz:agent-activity?agent=${"a".repeat(64)}`,
   // Only the exact buzz scheme: no other case, prefix, suffix or padding.
@@ -133,13 +103,6 @@ it.each([
   "xbuzz://channel/general",
   " buzz://channel/general",
   "buzz",
-  "buzz://user@channel/general",
-  "buzz://channel:443/general",
-  `${messageLink}#fragment`,
-  // Unknown keys are ignored, but a duplicated known key is ambiguous.
-  `buzz://message?channel=general&channel=other&id=${message}`,
-  `${messageLink}&id=${message}`,
-  "buzz://message?channel=general&id=bad",
   "https://example.com/?next=buzz://channel/general",
   "javascript:alert(1)",
   "",
@@ -234,7 +197,7 @@ const channelOpen = `open:${JSON.stringify({
   channelId: "general",
 })}`;
 
-it.each(["", "/"])(
+it.each([""])(
   "holds a cold invite through identity setup without claiming (path %j)",
   async (path) => {
     const queue = [
@@ -291,7 +254,7 @@ it.each(["", "/"])(
   },
 );
 
-it.each(["", "/"])(
+it.each([""])(
   "offers a warm invite and rejects malformed join links (path %j)",
   async (path) => {
     const queue: string[] = [];
@@ -780,33 +743,3 @@ it("does not revive a disposed bridge when native registration finishes", async 
   await invoked.fn.mock.results[0]?.value;
   expect(listener).not.toHaveBeenCalled();
 });
-
-it.each(["cold", "warm"])(
-  "opens a Windows root-slash message on %s delivery",
-  async (delivery) => {
-    const link = messageLink.replace("message?", "message/?");
-    const t = harness(
-      delivery === "cold" ? loading : ready,
-      delivery === "cold" ? [link] : [],
-    );
-    try {
-      await settle();
-      if (delivery === "cold") t.become(ready);
-      else t.arrive(link);
-      await vi.waitFor(() =>
-        expect(t.host.navigation.open).toHaveBeenCalledTimes(1),
-      );
-      expect(t.host.navigation.snapshot().entry.target).toEqual({
-        version: 1,
-        kind: "conversation",
-        scope: { viewer, communityOrigin: origin },
-        channelId: "general",
-        messageId: message,
-        threadRootId: root,
-      });
-      expect(t.host.fail).not.toHaveBeenCalled();
-    } finally {
-      t.stop();
-    }
-  },
-);

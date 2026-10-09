@@ -84,6 +84,21 @@ fn existing_integrations_expose_policy_without_advertising_unimplemented_modes_o
 }
 
 #[test]
+fn codex_policy_requires_explicit_native_identity() {
+    let managed = HarnessConfigurationPolicy::for_integration(HarnessIntegration::Codex);
+    let basename = HarnessConfigurationPolicy::for_command("codex-acp");
+    assert_eq!(managed.authentication, AuthenticationPolicy::External);
+    assert_eq!(managed.provider, ProviderPolicy::External);
+    assert_eq!(
+        managed.supported_modes,
+        &[ConfigurationMode::Default, ConfigurationMode::Advanced]
+    );
+    assert_eq!(managed.effort_discovery, EffortDiscovery::ModelSpecific);
+    assert!(basename.supported_modes.is_empty());
+    assert_eq!(basename.effort_discovery, EffortDiscovery::Unknown);
+}
+
+#[test]
 fn policy_does_not_migrate_or_reject_legacy_records_on_store_read() {
     for command in [
         "buzz-agent",

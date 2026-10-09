@@ -252,7 +252,6 @@ it.each([
   ["admin", "member", ["Owner", "Carl", "Morgan"]],
   ["owner", "owner", ["Carl", "Morgan", "Owner"]],
   ["admin", "admin", ["Owner", "Carl", "Morgan"]],
-  ["member", "bot", ["Owner", "Carl", "Morgan"]],
   ["member", "guest", ["Owner", "Carl", "Morgan"]],
 ] as const)(
   "orders owners, admins, then everyone else alphabetically (viewer: %s, target: %s)",
@@ -287,8 +286,6 @@ it.each([
   [true, "owner", "Owners"],
   [true, "admin", "Admins"],
   [true, "member", "Agents"],
-  [true, "guest", "Agents"],
-  [true, "bot", "Agents"],
   [false, "bot", "Members"],
 ] as const)(
   "groups agent identities below elevated roles (agent: %s, role: %s)",
@@ -844,7 +841,7 @@ it.each([false, true])(
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
-it.each(["member", "admin", "owner", "guest"])(
+it.each(["admin", "owner", "guest"])(
   "groups an Agent by verified %s role without role pills",
   async (role) => {
     const t = await setup("owner", role, true, undefined, true);

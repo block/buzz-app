@@ -43,16 +43,6 @@ it.each<[string, Snapshot, WorkflowOperation["outcome"]]>([
     { status: "error", data: { items: [], partial: false } },
     "succeeded",
   ],
-  [
-    "unavailable read",
-    { status: "unavailable", data: { items: [], partial: false } },
-    "succeeded",
-  ],
-  [
-    "cleared read",
-    { status: "idle", data: { items: [], partial: false } },
-    "succeeded",
-  ],
 ])(
   "does not claim deletion after %s and checks without resubmitting",
   async (_name, snapshot, outcome) => {

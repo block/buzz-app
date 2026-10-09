@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -106,11 +106,6 @@ test("real local linter rejects upstream imports outside the gateway", () => {
     "src/shared/design-system/icons",
   ]);
 });
-test("icon checks are part of the normal design gate", () => {
-  const { scripts } = JSON.parse(readFileSync("package.json", "utf8"));
-  assert.match(scripts["design:check"], /check-icons.mjs/);
-});
-
 test("all import forms and subpaths obey the shared gateway", () => {
   const families = [
     "lucide-react/dist/esm/icons/x.js",

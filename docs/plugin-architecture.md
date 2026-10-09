@@ -34,6 +34,23 @@ Bundled and local plugins use the same contribution contracts. Within the source
 tree, shared implementation code remains importable without another registration
 layer; this is not a promise that external artifacts can import host source paths.
 
+### Interface composition
+
+Owning a React tree does not require inventing its visual system. Use the
+[design guide's surface recipes](../src/shared/design-system/DESIGN.md#compose-the-whole-surface)
+and [contribution ownership table](../src/shared/design-system/DESIGN.md#plugin-contribution-boundaries)
+before building a page, panel, Settings contribution, dialog, or menu. Establish
+which host supplies the outer surface, header, scrolling, and dismissal before
+adding any of them. The Settings host renders contributed content directly;
+registration metadata does not supply its content heading or group layout.
+
+Source plugins reuse shared components; external artifacts use their supported
+author contract and exposed roles. This is design guidance, not a new component
+SDK or automatic conformance guarantee. Keep specialized layouts and product
+behavior with the plugin, while preserving shared controls, states, and host
+lifecycle. The [adoption review](design-system-adoption.md#composition-review)
+distinguishes reusable examples from existing gaps.
+
 
 ## Code arrangement
 
@@ -351,8 +368,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
-toggle, check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, In progress and Done, with add, a per-item status
+selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
@@ -502,10 +519,10 @@ Plugins can declare host access in `manifest.json`:
 }
 ```
 
-Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id, input?)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
 ID; the program and arguments come only from the plugin's manifest. Native
-execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
+execution uses no shell, accepts no stdin by default, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
 1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
 bound returns `null` without truncation. Existing declarations retain the 4 KiB
@@ -527,6 +544,9 @@ This is a command entry inside `host.commands`. The plugin parses the inventory;
 the host only enforces the declared byte limit.
 
 The direct command invocation has a five-second deadline;
+commands may declare `maxInputBytes` (1–65536) for optional UTF-8 stdin data.
+Undeclared or oversized input is rejected before spawning. Input never changes
+the installed program or arguments, and its delivery shares the existing deadline.
 cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
@@ -994,13 +1014,30 @@ bounded background enrichment through the shared profile directory, not per-key
 network reads or a separate identity cache. Multi-word filtering stays in the
 provider so a delayed name can appear without another editor event.
 
-Channels filters the session's confirmed joined stream/forum roster locally, including
-private channels but excluding archived, cached, read-only and unnamed entries.
-`#` opens at most 20 choices, ranked exact, prefix, then substring with alphabetical
-ties; namesakes include their channel IDs. No typing-driven reads or public-channel
-discovery are added. Empty ready results hide the popup; loading and explicit
-error/retry states remain visible. Selection rechecks current membership and name,
-then inserts an escaped, ID-backed Markdown link without notification recipients.
+Channels filters the session's joined channel roster locally, including private
+channels and joined channels restored from cache (the store marks those
+`readOnly` and `cached` until the relay reconfirms them), but excluding DMs,
+sessions, archived, hidden, unnamed and other read-only entries. After a 180 ms
+typing pause, a query also asks `searchPublic`, through the same
+`usePublicChannelSearch` hook as Command-K, for open channels the viewer has not
+joined; they are labeled "Not joined", and private results are never offered.
+The relay has no name search, so that lookup covers only its newest page of
+channel metadata, which the store reuses while the viewer types. While the next
+lookup runs, the previous one's still-matching rows stay. Names match by the
+channel pickers' rule (`matchName`): exact, prefix, word start, then substring,
+with alphabetical ties. Its fuzzy ranks are left out, because Enter and Tab pick
+the first row while the viewer writes prose. Open channels follow joined ones, as
+in Command-K, so a late search result never moves the first row; when joined
+matches would fill the 20 rows, five stay reserved for open channels. Namesakes
+include their channel IDs. A query containing a space completes only names it
+prefixes, as person names do, so ordinary prose after `#name` closes the popup.
+Empty ready results hide the popup. Loading (only while the channel list is
+loading), open-channel search and explicit error/retry states stay visible; a
+failed open-channel search keeps joined matches and offers a retry. When the
+search covered only the newest page and found no open match, a note says so
+beside the rows already shown. Selection rechecks current membership (or the
+public preview) and name, then inserts an escaped, ID-backed Markdown link
+without notification recipients.
 The shared editor host checks raw Markdown and rich code/link/literal ranges only
 after a Channels syntax match, keeping suggestions in prose (including headings).
 Ordinary typing skips that extra context scan. Popup positioning and keyboard/IME

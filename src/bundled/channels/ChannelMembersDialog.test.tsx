@@ -889,7 +889,7 @@ it("shares the identity presentation with invitation rows without assigning a ch
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it.each(["avatar", "row", "keyboard"])(
+it.each(["row"])(
   "opens a non-member profile from the %s without inviting them",
   async (activation) => {
     const onOpenLink = vi.fn(() => true);

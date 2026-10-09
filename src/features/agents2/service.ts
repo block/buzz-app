@@ -38,6 +38,7 @@ import {
   type AgentEventTemplate,
   type AgentIdentity,
   type AgentsNative,
+  type AgentUpload,
 } from "./native";
 import {
   readRecords,
@@ -83,12 +84,19 @@ export type AgentTab<Config = unknown> = Readonly<{
   title: string;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
-/** The agent as `run` holds it. Publishing works for as long as the agent exists. */
+/** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
   owner: string;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
+  /** Reads the community as the agent, seeing only what it may see. */
+  query(filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Uploads base64 `data`, an image or MP4 video, as the agent. */
+  upload(data: string, mime: string): Promise<AgentUpload>;
+  /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
+   * that entry's `createdAt`, or 0). The owner reads it back. */
+  remember(slug: string, body: string, after: number): Promise<RelayEvent>;
 }>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent or replies to
@@ -836,6 +844,12 @@ export class Agents2Service extends Service implements Agents2 {
         name: agent.name,
         owner: agent.owner,
         publish: (event: AgentEventTemplate) => this.publish(runner, event),
+        query: (filters: readonly object[]) =>
+          this.require().query(agent.pubkey, filters),
+        upload: (data: string, mime: string) =>
+          this.require().upload(agent.pubkey, data, mime),
+        remember: (slug: string, body: string, after: number) =>
+          this.require().remember(agent.pubkey, slug, body, after),
       });
       try {
         await Promise.race([
@@ -865,9 +879,12 @@ export class Agents2Service extends Service implements Agents2 {
     runner.running = false;
   }
 
-  private async publish(runner: Runner, event: AgentEventTemplate) {
+  private require() {
     if (!this.native) throw new Error("Agents run only in the desktop app");
-    const signed = await this.native.publish(runner.pubkey, event);
+    return this.native;
+  }
+  private async publish(runner: Runner, event: AgentEventTemplate) {
+    const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;
   }

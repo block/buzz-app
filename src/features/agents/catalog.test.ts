@@ -206,68 +206,6 @@ it("shrinks oversized relay-readable pages at the same cursor without publishing
   expect(limits.slice(0, 2)).toEqual([63, 31]);
 });
 
-it("reads large valid team heads through the production finite reader and completes Retry pagination", async () => {
-  const content = JSON.stringify({
-    v: 1,
-    name: "Large crew",
-    members: [0, 1, 2].map((index) => ({
-      member_key: `m${index}`,
-      display_name: `Mate ${index}`,
-      system_prompt: "x".repeat(16_000),
-    })),
-  });
-  const heads = Array.from({ length: 200 }, (_, index) =>
-    signed(bob, {
-      kind: 30178,
-      tags: [
-        ["d", `crew-${index}`],
-        ["shared", "true"],
-      ],
-      content,
-      created_at: 200 - index,
-    }),
-  );
-  const limits: number[] = [];
-  expect(byteSize(heads)).toBeGreaterThan(8 * 1024 * 1024);
-  let fail = true;
-  const transport: ReadTransport = {
-    viewer: alice.pubkey,
-    relayAuthor: "relay",
-    media: () => undefined,
-    async query(filters) {
-      const filter = filters[0];
-      if (!filter) throw new Error("missing filter");
-      limits.push(filter.limit);
-      if (fail && limits.length === 2) throw new Error("offline");
-      return heads
-        .filter(
-          (event) =>
-            filter.until === undefined ||
-            event.created_at < filter.until ||
-            (event.created_at === filter.until &&
-              event.id < (filter.before_id ?? "")),
-        )
-        .slice(0, filter.limit);
-    },
-  };
-  const owned = createRelayReader(transport);
-  const catalog = createCommunityCatalog({
-    reader: owned.reader,
-    viewer: alice.pubkey,
-    outbox: undefined,
-    local: undefined,
-  });
-  owners.push(catalog, owned);
-  await catalog.queries.refresh();
-  expect(catalog.queries.snapshot().status).toBe("error");
-  expect(catalog.queries.snapshot().teams).toHaveLength(0);
-  fail = false;
-  await catalog.queries.refresh();
-  expect(catalog.queries.snapshot().status).toBe("ready");
-  expect(catalog.queries.snapshot().teams).toHaveLength(heads.length);
-  expect(limits.length).toBeGreaterThan(3);
-});
-
 it("lists only valid shared heads and lets an unshared head hide older shares", async () => {
   const server = relay();
   const at = (

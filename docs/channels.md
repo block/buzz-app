@@ -139,14 +139,19 @@ sidebar coordinates must match what the sidebar signer produces, and every
 other coordinate must satisfy the recipe contract.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
-belong to this persistent sidebar. Rows in saved groups and **Channels** can also be
-dragged with a pointer onto another saved group or **Channels**; the drop is the same
-Move intent, with the same gate, optimistic placement, rollback notice and Retry.
+belong to this persistent sidebar. Rows in saved groups, **Starred** and **Channels**
+can also be dragged with a pointer onto another saved group, **Starred** or
+**Channels**; the drop is the same Move intent, with the same gate, optimistic
+placement, rollback notice and Retry.
 Only a channel's select surface starts a drag, the surface its row menu wraps; its
 sessions and session draft do not.
-Starred, Forums and Direct messages take no part in dragging, and the row menu
-remains the keyboard path. The session serializes placement, sort and mute
-writes through one queue, retaining one confirmed preferences snapshot beneath
+**Starred** accepts drops only when it is already visible; starting a drag does
+not reveal an empty section. Use the row menu to star the first channel.
+Dropping into Starred stars the channel; dropping out assigns the destination
+and clears its star, just like the row menu. Forums and Direct
+messages take no part in dragging, and the row menu remains the keyboard path. The
+session serializes placement, sort and mute writes through one queue, retaining
+one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
 before reapplying pending intent; failure cannot roll back unrelated confirmed
 state. Field-only confirmations cannot recover a failed full preference read or
@@ -358,7 +363,10 @@ New session and the mute/read group. Lifecycle items use shared leading icons an
 a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Session creation, attention actions and child-session navigation keep
-their existing owners; sessions do not receive lifecycle actions. Move/Star/grouping
+their existing owners. Session-typed channels in Messages use these same permission-checked
+actions, including the standard header menu and Channel Settings. Existing Canvas,
+template and organization entry points come with that shared menu; the session
+transcript layout, Share behavior and recipient rules do not change. Move/Star/grouping
 controls share this popup with independent eligibility; lifecycle actions do not
 change shared-menu styling.
 
@@ -412,7 +420,7 @@ channel** in its tools area, using one fresh lifecycle permission check. Each
 entry follows its own permission result: a last owner can Archive/Delete even
 though Leave is forbidden, while an ordinary admin without owner-agent evidence can Archive but not Delete.
 Forbidden entries are omitted; failed checks offer retry and unsupported
-connections explain unavailability. DMs, sessions and read-only nonmember/cached views have no channel
+connections explain unavailability. DMs and read-only nonmember/cached views have no channel
 lifecycle entries. Archived channels cannot be deleted:
 the relay rejects Delete while archived. A direct owner/admin can restore it with
 **Unarchive channel**, which replaces Archive in the same Settings position, before
@@ -425,9 +433,10 @@ messages, membership and open Settings, replacing Archive with Unarchive after a
 fresh permission read. The conversation stays selected after reload; archived
 write restrictions still apply. When refreshed Settings actions remount, focus
 returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
-joined archived channels remain available by name in search, labeled **Archived
-channel**, but stay out of the sidebar and Recent activity. Open the search result
-and Settings to restore it. This uses the existing membership discovery and exact
+joined archived channels, including session conversations, remain available by name
+in search, labeled **Archived channel**, but stay out of the sidebar and Recent
+activity. After navigating away, open the search result and Settings to restore it.
+This uses the existing membership discovery and exact
 navigation, not a new archived-channel directory.
 
 Search also finds active public channels the viewer has not joined, by name,

@@ -160,6 +160,7 @@ async fn publication_requires_bounded_exact_receipt_and_retries_without_redirect
             auth: "fixture-authorization".into(),
             name: "fixture".into(),
             picture: None,
+            name_pending: false,
             about: None,
             revision: 1,
         };

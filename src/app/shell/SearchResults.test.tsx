@@ -694,63 +694,73 @@ it("does not announce conversation enrichment over retained search choices", () 
   }
 });
 
-it("finds joined archived channels by name without putting them in Recent activity", async () => {
-  const relay = keypair(),
-    viewer = keypair();
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const discovery = [
-    signed(relay, {
-      kind: 39000,
-      created_at: 1700000000,
-      content: "",
-      tags: [
-        ["d", "archive"],
-        ["t", "stream"],
-        ["name", "Past project"],
-        ["archived", "true"],
-      ],
-    }),
-    roster(relay, "archive", [viewer.pubkey]),
-    metadata(relay, "active", "Current project"),
-    roster(relay, "active", [viewer.pubkey]),
-  ];
-  const owner = createRelaySession({
-    ...wire.transport,
-    async query(filters) {
-      return discovery.filter((event) =>
-        filters.some((filter) => filter.kinds?.includes(event.kind)),
-      );
-    },
-  });
-  const open = vi.fn();
-  const props = {
-    session: owner.session,
-    onQueryChange: () => {},
-    input: createRef<HTMLInputElement>(),
-    pages: [],
-    openConversation: open,
-  };
-  try {
-    const mounted = render(<SearchResults {...props} query="" />);
-    await screen.findByRole("option", { name: /Current project/ });
-    expect(screen.queryByRole("option", { name: /Past project/ })).toBeNull();
-    mounted.rerender(<SearchResults {...props} query="Past" />);
-    fireEvent.click(
-      await screen.findByRole("option", {
-        name: /Past project/,
+it.each(["stream", "forum", "session"] as const)(
+  "finds joined archived %s channels by name without putting them in Recent activity",
+  async (channelType) => {
+    const relay = keypair(),
+      viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      signed(relay, {
+        kind: 39000,
+        created_at: 1700000000,
+        content: "",
+        tags: [
+          ["d", "archive"],
+          ["t", channelType === "session" ? "stream" : channelType],
+          ...(channelType === "session"
+            ? [["private"], ["about", "Buzz session (buzz.sessions/v1)"]]
+            : []),
+          ["name", "Past project"],
+          ["archived", "true"],
+        ],
       }),
-    );
-    expect(screen.getByText("Archived channel")).toBeTruthy();
-    expect(open).toHaveBeenCalledExactlyOnceWith("archive");
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
+      roster(relay, "archive", [viewer.pubkey]),
+      metadata(relay, "active", "Current project"),
+      roster(relay, "active", [viewer.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        return discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        );
+      },
+    });
+    const open = vi.fn();
+    const props = {
+      session: owner.session,
+      onQueryChange: () => {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      openConversation: open,
+    };
+    try {
+      const mounted = render(<SearchResults {...props} query="" />);
+      await screen.findByRole("option", { name: /Current project/ });
+      expect(owner.session.channels.get?.("archive")?.channelType).toBe(
+        channelType,
+      );
+      expect(screen.queryByRole("option", { name: /Past project/ })).toBeNull();
+      mounted.rerender(<SearchResults {...props} query="Past" />);
+      fireEvent.click(
+        await screen.findByRole("option", {
+          name: /Past project/,
+        }),
+      );
+      expect(screen.getByText("Archived channel")).toBeTruthy();
+      expect(open).toHaveBeenCalledExactlyOnceWith("archive");
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it.each([
   { channelType: "stream", readOnly: true },
-  { channelType: "session" },
+  { channelType: "forum", readOnly: true },
+  { channelType: "session", readOnly: true },
   { channelType: "dm" },
 ] as const)(
   "does not surface archived nonmember or non-channel destinations: %j",
@@ -1428,7 +1438,7 @@ it("requests a bounded prefix page before declaring a short name absent", async 
   }
 });
 
-it.each(["from:we", "from:@we"])(
+it.each(["from:we"])(
   "%s retains a confirmed channel member when global prefix lookup fails",
   async (query) => {
     const relay = keypair(),

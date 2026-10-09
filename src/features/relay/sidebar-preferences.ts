@@ -46,6 +46,16 @@ export type SidebarAssignmentMutator = (
   signal: AbortSignal,
   source?: "personal",
 ) => Promise<SidebarGroups>;
+export type SidebarGroupSource = "legacy" | "personal";
+export type SidebarSectionRemovalWriter = (
+  sectionId: string,
+  signal: AbortSignal,
+) => Promise<SidebarGroups>;
+export type SidebarSectionRemovalMutator = (
+  sectionId: string,
+  signal: AbortSignal,
+  source: SidebarGroupSource,
+) => Promise<SidebarGroups>;
 export type SidebarStarMutator = (
   intent: Readonly<{ channelId: string; starred: boolean }>,
   signal: AbortSignal,
@@ -226,9 +236,3 @@ export async function readSidebarPreferences(
     );
   }
 }
-
-export type SidebarSectionRemover = (
-  sectionId: string,
-  signal: AbortSignal,
-  source?: "personal",
-) => Promise<SidebarGroups>;

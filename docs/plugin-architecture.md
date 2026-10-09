@@ -607,7 +607,7 @@ bin/pnpm plugin:dev links
 ```
 
 The command discovers the bundled catalog, rather than a separate plugin list.
-Output defaults to `dist-<catalog-name>-dev/manifest.json` and `plugin.js`; an
+Output defaults to `dist-plugins/<catalog-name>/manifest.json` and `plugin.js`; an
 optional second argument selects another output folder. It refuses unrelated files
 in that folder. These are local development artifacts, not ordinary external
 installations; **Load from folder still refuses bundled identities**.
@@ -615,13 +615,14 @@ installations; **Load from folder still refuses bundled identities**.
 In a native development host built from the same checkout:
 
 1. Open Settings → Plugins → Inbox → **Use local dev build** and select
-   `dist-inbox-dev`.
+   `dist-plugins/inbox`.
 2. Review the exact identity, source folder and declared host access, then choose
    **Attach local build**. The same catalog row, page identity and saved enabled
    state are retained. An enabled plugin may run immediately.
-3. Edit `src/bundled/inbox`, run the command again, then disable Inbox, choose
-   **Reload**, and re-enable it. Reload revalidates identity, host compatibility and
-   unchanged declarations; changed declarations require a fresh reviewed attachment.
+3. Edit `src/bundled/inbox`, run the command again, then choose **Reload** on
+   Inbox's row. An enabled local selection stays enabled while its implementation
+   is replaced. Reload revalidates identity, host compatibility and unchanged
+   declarations; changed declarations require a fresh reviewed attachment.
 4. Choose **Use compiled** to restore the compiled implementation. Restarting the
    native app also clears local selection. Neither action rolls back data writes.
 

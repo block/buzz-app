@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, end } from "./timeline.mjs";
 import { selectSettingsSection, openPage } from "./navigation.mjs";
 import { buildBundledDev } from "../../scripts/plugin-dev.mjs";
 import { nativeFixtureSession } from "./native-fixture.mjs";
@@ -30,7 +30,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 // with the production host through attach, reload and revert. Native filesystem
 // operations use one real Rust manager session; the OS picker/IPC and native
 // activation tokens are fixtures, not native WebView/process acceptance.
-test("same-ID Inbox development shares host state across revisions and rejects mismatched hosts", async ({
+test("same-ID Inbox and Links development share host state across revisions and reject mismatched hosts", async ({
   page,
   app,
 }) => {
@@ -38,6 +38,7 @@ test("same-ID Inbox development shares host state across revisions and rejects m
   let native;
   try {
     const out = join(temp, "plugin");
+    const linksOut = join(temp, "links");
     const built = await buildBundledDev({ plugin: "inbox", out });
     native = nativeFixtureSession(join(temp, "home"));
     let activation = 0;
@@ -60,7 +61,7 @@ test("same-ID Inbox development shares host state across revisions and rejects m
         return native.request(command, {
           ...args,
           ...(command === "plugin_development_folder"
-            ? { directory: out }
+            ? { directory: args.id === "buzz.links" ? linksOut : out }
             : {}),
         });
       },
@@ -305,6 +306,99 @@ test("same-ID Inbox development shares host state across revisions and rejects m
     await button(inbox, "Open in origin").click();
     await expect(hostEditor).toContainText("Edited in local Inbox");
     await expect(page.getByText("notes.txt", { exact: true })).toBeVisible();
+
+    // A link contribution replaces inside the host-owned message tree rather
+    // than mounting a page. Reuse this startup/manager for that distinct boundary.
+    const destination = "https://example.test/local-links";
+    app.append("primary", "beta", destination);
+    const link = page.locator(`a[href=${JSON.stringify(destination)}]`);
+    await expect(link).toBeAttached();
+    await end(page);
+    await expect(link).toBeVisible();
+    const compiledLabel = await link.innerText();
+    // Other plugins are part of Links' host fingerprint; undo the Inbox-only
+    // probe in the build checkout before building a matching Links revision.
+    for (const path of [
+      "src/bundled/inbox/index.tsx",
+      "src/bundled/inbox/InboxPage.tsx",
+    ])
+      await cp(join(root, path), join(checkout, path));
+    const linksView = join(checkout, "src/bundled/links/InlineLink.tsx");
+    const linksSource = await readFile(linksView, "utf8");
+    await writeFile(
+      linksView,
+      linksSource.replaceAll(
+        "<span data-link-kind={kind}>",
+        "<span data-link-kind={kind}><span>Local Links A</span>",
+      ),
+    );
+    const linksFirst = await buildBundledDev({
+      plugin: "links",
+      directory: checkout,
+      out: linksOut,
+    });
+    await settings();
+    const linksRow = page.locator("article").filter({ has: toggle("Links") });
+    await linksRow
+      .getByRole("button", { name: "Use local dev build", exact: true })
+      .click();
+    await expect(
+      linksRow.getByRole("region", { name: "Local build preview for Links" }),
+    ).toContainText("buzz.links");
+    await linksRow
+      .getByRole("button", { name: "Attach local build", exact: true })
+      .click();
+    await expect(linksRow.getByRole("status")).toHaveText(
+      "Local dev build · this launch only",
+    );
+    await expect(toggle("Links")).toBeChecked();
+    await expect(toggle("Links")).toHaveCount(1);
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await expect(link).toContainText("Local Links A");
+    await expect(link.locator('[data-link-kind="web"]')).toHaveCount(1);
+    await writeFile(
+      linksView,
+      (await readFile(linksView, "utf8")).replaceAll(
+        "Local Links A",
+        "Local Links B",
+      ),
+    );
+    const linksSecond = await buildBundledDev({
+      plugin: "links",
+      directory: checkout,
+      out: linksOut,
+    });
+    expect(linksSecond.buildId).toBe(linksFirst.buildId);
+    await settings();
+    await linksRow.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(toggle("Links")).toBeChecked();
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await expect(link).toContainText("Local Links B");
+    await expect(link).not.toContainText("Local Links A");
+    await expect(link.locator('[data-link-kind="web"]')).toHaveCount(1);
+    await expect(hostEditor).toContainText("Edited in local Inbox");
+    await expect(page.getByText("notes.txt", { exact: true })).toBeVisible();
+    await settings();
+    await linksRow
+      .getByRole("button", { name: "Use compiled", exact: true })
+      .click();
+    await expect(linksRow.getByRole("status")).toHaveText("Compiled build");
+    await expect(toggle("Links")).toBeChecked();
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await expect(link).toHaveText(compiledLabel);
+    await expect(link.locator('[data-link-kind="web"]')).toHaveCount(1);
+    await expect(
+      page.locator('head style[data-buzz-plugin="buzz.links"]'),
+    ).toHaveCount(0);
   } finally {
     // Catalog polling invokes the native bridge and can recreate its profile.
     // The IPC producer must be closed before removing its filesystem state.

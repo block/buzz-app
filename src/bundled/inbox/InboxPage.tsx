@@ -253,12 +253,23 @@ export function InboxView({
     invokingRow.current = null;
     setRestoringFocus(false);
   }, [selectedTarget, restoringFocus, pending]);
+  const selectedArchived = list.channels.some(
+    (channel) => channel.id === selectedTarget?.channelId && channel.archived,
+  );
   useEffect(() => {
-    if (selectedTarget && !selected && inbox.status !== "loading") {
+    if (
+      selectedTarget &&
+      (selectedArchived || (!selected && inbox.status !== "loading"))
+    ) {
+      if (selectedArchived) {
+        intentRevision.current++;
+        failedMutation.current = undefined;
+        setError(undefined);
+      }
       setRestoringFocus(true);
       setSelectedTarget(undefined);
     }
-  }, [selectedTarget, selected, inbox.status]);
+  }, [selectedTarget, selected, selectedArchived, inbox.status]);
   useEffect(() => {
     if (menu && !items.some((item) => item.id === menu.id)) setMenu(undefined);
   }, [items, menu]);

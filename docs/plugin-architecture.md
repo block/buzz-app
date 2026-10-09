@@ -634,7 +634,9 @@ acceptance environment. Installed-app development support is not implemented her
 Plugin-only edits do not require a host rebuild. Shared host/native changes or newly
 consumed shared exports require rebuilding/restarting the host and rebuilding the
 artifact. Per-plugin fingerprints include shared dependencies and host contracts,
-exclude plugin-private implementation, and fail closed on mismatch. Missing Git
+exclude plugin-private implementation, and fail closed on mismatch. Builderlab
+artifacts also capture the public `BUZZ_BUILDERLAB_URL` target and its exact HTTPS
+origin grant; a different target requires a matching host restart/rebuild. Missing Git
 metadata leaves compiled plugins usable, but prevents attachable artifact builds.
 Artifacts are not portable across arbitrary Buzz versions.
 
@@ -644,11 +646,10 @@ SDK. Plugin-private modules/vendors, literal lazy imports, CSS and fonts are bun
 into one Blob-loadable module; styles are removed on disposal. Shared drafts and
 attachments stay host-owned; transient plugin UI state ends on reload.
 
-Ownership checks reject host imports of plugin-private code and cross-plugin
-implementation imports. The migration baseline can shrink, not grow. Current
-catalog blockers are **Me, Sessions, Emoji, Agents and Channels**; this is unfinished
-migration, not a permanent support exemption. The builder must reject a future
-plugin that violates these boundaries instead of silently claiming support.
+Local builds reject plugin-private implementation consumed by the host or another
+plugin. **Me, Sessions, Emoji, Agents and Channels** currently have such imports.
+The ownership baseline can shrink, not grow; new catalog entries must satisfy
+these same boundaries rather than silently opting out of build support.
 
 Reload waits for Cordis disposal and native process retirement before starting the
 next implementation. Native processes belong to a unique activation, including

@@ -124,8 +124,18 @@ never become duplicate conversations. Current membership gates the feed's
 completeness targets and unread's rows; joining alone does not materialize
 pre-membership history without fresh shared admission. Inbox renders those shared
 conversation rows directly; there is no second project/approval row merge or
-feed-owned reconciliation buffer and deletion-count abort. PR4 owns only
-presentation, filtering and selection. No parallel signing or persistence is
+feed-owned reconciliation buffer and deletion-count abort.
+
+Channel-archived rooms are excluded from the shared Inbox projection in every
+activity view. Signed archive/unarchive metadata invalidates that projection even
+when membership and channel type stay unchanged. Archiving removes their rows and
+closes a selected Inbox detail, without clearing retained evidence or read/local-unread
+intent. Unarchiving makes retained conversations eligible again; it does not
+reopen the detail. Ordinary Channels/search retain member history access and
+archived posting restrictions. This is Inbox eligibility, not access revocation or
+notification policy.
+
+PR4 owns only presentation, filtering and selection. No parallel signing or persistence is
 added. Optional profile enrichment belongs to PR4; access, cache clear and
 session retirement fence these projections. Opening Inbox does not mark rows
 read; selecting an unread row does. Canonical Messages keeps its own reading

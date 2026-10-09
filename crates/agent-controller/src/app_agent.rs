@@ -1,6 +1,7 @@
 //! Identities for agents the app runs through a plugin (Agents2). They are not
 //! harness agents: there is no process, harness setting or controller record.
-//! Native keeps each key and its owner attestation and signs only bounded kinds.
+//! Native keeps each key and its owner attestation and signs only bounded kinds,
+//! bounded requests to its community, and its memory.
 //! The saved identities are the agent list: each row names its type and name.
 use crate::config::{agent_id, canonical_key, canonical_relay};
 use crate::secret::validate_attestation;
@@ -9,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
-/// (9) or an edit of its own message (40003). Its profile (0) is the app's.
-const KINDS: [u16; 4] = [5, 7, 9, 40003];
+/// (9), an edit of its own message (40003), a
+/// channel canvas (40100) or a request to open a DM (41010). Its profile (0)
+/// is the app's, and its memory (30174) is written by `memory`.
+const KINDS: [u16; 6] = [5, 7, 9, 40003, 40100, 41010];
 
 /// One saved identity. The key itself stays in the OS credential store.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,9 +49,19 @@ impl AppAgent {
     fn credential_id(&self) -> String {
         agent_id(&self.pubkey, &self.relay)
     }
-    /// The community's HTTP event endpoint; nothing else is ever posted to.
+    /// The community's HTTP endpoints for writes, reads and uploads; nothing
+    /// else is ever sent to.
     pub fn events_url(&self) -> String {
-        format!("{}/events", self.relay.replacen("wss://", "https://", 1))
+        self.endpoint("/events")
+    }
+    pub fn query_url(&self) -> String {
+        self.endpoint("/query")
+    }
+    pub fn upload_url(&self) -> String {
+        self.endpoint("/upload")
+    }
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{path}", self.relay.replacen("wss://", "https://", 1))
     }
     pub fn read_key(&self, credentials: &dyn Credentials) -> Result<Secret> {
         credentials
@@ -100,12 +113,61 @@ impl AppAgent {
         tags.push(auth);
         Ok(tags)
     }
-    /// NIP-98 authorization for posting `body` to this agent's community.
-    pub fn http_auth(&self, key: &Secret, body: &[u8]) -> Result<serde_json::Value> {
+    /// NIP-98 authorization for posting `body` to this agent's community, as
+    /// a write (`/events`) or a read (`/query`).
+    pub fn http_auth(&self, key: &Secret, url: &str, body: &[u8]) -> Result<serde_json::Value> {
         if key.pubkey() != self.pubkey {
             return Err("Agent identity changed".into());
         }
-        key.profile_auth(&self.events_url(), body)
+        if url != self.events_url() && url != self.query_url() {
+            return Err("Agents post only to their community".into());
+        }
+        key.profile_auth(url, body)
+    }
+    /// Blossom authorization (24242) to upload the blob with this SHA-256 to
+    /// its community, valid for a minute.
+    pub fn upload_auth(&self, key: &Secret, sha256: &str) -> Result<serde_json::Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
+        if !crate::config::canonical_key(sha256) {
+            return Err("Invalid upload hash".into());
+        }
+        let expiration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?
+            .as_secs()
+            + 60;
+        let server = self.relay.trim_start_matches("wss://");
+        key.sign_event_after(
+            24242,
+            "Upload file".into(),
+            vec![
+                vec!["t".into(), "upload".into()],
+                vec!["x".into(), sha256.into()],
+                vec!["expiration".into(), expiration.to_string()],
+                vec!["server".into(), server.into()],
+            ],
+            None,
+        )
+    }
+    /// Its memory entry `slug`, encrypted to its owner and newer than the
+    /// entry it replaces (`after`, that entry's `created_at`).
+    pub fn memory(
+        &self,
+        key: &Secret,
+        slug: &str,
+        body: &str,
+        after: u64,
+    ) -> Result<serde_json::Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?
+            .as_secs();
+        key.memory_event(&self.owner, slug, body, now.max(after.saturating_add(1)))
     }
 }
 

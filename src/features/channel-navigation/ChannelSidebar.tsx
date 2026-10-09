@@ -756,7 +756,7 @@ function ReadySidebar({
           }
         />,
       );
-    if (!surface && channel.channelType !== "session" && !channel.archived) {
+    if (!surface && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"

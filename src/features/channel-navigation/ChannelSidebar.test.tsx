@@ -603,3 +603,44 @@ it.each([true, false])(
     ).toBe(true);
   },
 );
+
+it.each([true, false])(
+  "legacy session row uses verified lifecycle permissions (owner=%s)",
+  async (owner) => {
+    const h = fixture();
+    h.publish("beta", { channelType: "session", private: true });
+    const load = vi.fn(async () => ({
+      channelId: "beta",
+      channelType: "stream" as const,
+      canArchive: owner,
+      canUnarchive: false,
+      canDelete: owner,
+      canLeave: !owner,
+      canHide: false,
+    }));
+    const run = vi.fn();
+    h.session.channelLifecycle = {
+      ...h.session.channelLifecycle,
+      available: true,
+      load,
+      run,
+    };
+    render(h.view("beta"));
+    const row = await screen.findByRole("button", { name: "beta" });
+    const user = userEvent.setup();
+    row.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu", { name: "Actions for beta" });
+    await within(menu).findByRole("menuitem", {
+      name: owner ? "Delete channel" : "Leave channel",
+    });
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Archive channel" }),
+    ).toBe(owner);
+    expect(
+      !!within(menu).queryByRole("menuitem", { name: "Delete channel" }),
+    ).toBe(owner);
+    expect(load).toHaveBeenCalledWith("beta", expect.any(AbortSignal));
+    expect(run).not.toHaveBeenCalled();
+  },
+);

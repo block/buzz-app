@@ -58,6 +58,7 @@ async fn streams_stdin_to_stdout_until_input_closes() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     let handle = processes
@@ -97,6 +98,7 @@ async fn reports_stderr_and_exit_code() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     processes
@@ -121,6 +123,7 @@ async fn only_the_owning_plugin_can_write_or_kill() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     let handle = processes
@@ -156,6 +159,7 @@ async fn kill_ends_the_process_and_its_descendants() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     // The shell ignores the polite signal; its child would outlive it.
@@ -191,11 +195,13 @@ async fn stop_all_ends_every_process() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (first, mut first_events) = channel();
     let (second, mut second_events) = channel();
     let second_activation = processes
         .begin(processes.page(), "b.plugin".into(), "rev".into())
+        .await
         .unwrap();
     processes
         .start(
@@ -231,6 +237,7 @@ async fn a_page_that_stops_listening_stops_the_process() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let channel = Channel::new(|_| Err(tauri::Error::FailedToReceiveMessage));
     let handle = processes
@@ -259,6 +266,7 @@ async fn a_spawn_from_before_a_reload_is_refused() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let page = processes.page();
     processes.stop_all();
@@ -282,6 +290,7 @@ async fn a_process_may_close_its_output_and_carry_on() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     processes
@@ -305,6 +314,7 @@ async fn shutdown_kills_every_group_without_waiting() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (channel, mut events) = channel();
     processes
@@ -373,6 +383,7 @@ async fn retirement_fences_pending_spawns_and_repeated_same_revision_activations
     let processes = HostProcesses::default();
     let first = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (output, mut events) = channel();
     let handle = processes
@@ -388,6 +399,7 @@ async fn retirement_fences_pending_spawns_and_repeated_same_revision_activations
         .unwrap();
     assert!(processes
         .begin(processes.page(), "a.plugin".into(), "new".into())
+        .await
         .is_err());
     assert!(processes
         .write("a.plugin", first + 1, handle, "stale".into(), false)
@@ -399,6 +411,7 @@ async fn retirement_fences_pending_spawns_and_repeated_same_revision_activations
     until_exit(&mut events).await;
     let second = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     assert_ne!(first, second);
     let (late, _) = channel();
@@ -431,6 +444,7 @@ async fn kill_and_retire_wait_for_actual_exit_before_successor_start() {
     let processes = HostProcesses::default();
     let activation = processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
     let (output, mut events) = channel();
     let handle = processes
@@ -454,11 +468,144 @@ async fn kill_and_retire_wait_for_actual_exit_before_successor_start() {
     // Killing one process does not retire the owning activation.
     assert!(processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .is_err());
     processes.retire("a.plugin", activation).await.unwrap();
     processes
         .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
         .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_new_page_activation_waits_for_previous_page_process_exit() {
+    let processes = HostProcesses::default();
+    let activation = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await
+        .unwrap();
+    let (output, mut events) = channel();
+    processes
+        .start(
+            processes.page(),
+            "a.plugin".into(),
+            "rev".into(),
+            activation,
+            "sh",
+            command("sh", &["-c", "trap '' TERM; echo ready; sleep 30"]),
+            output,
+        )
+        .unwrap();
+    assert_eq!(events.recv().await.unwrap()["data"], "ready\n");
+    processes.stop_all();
+    let successor = processes
+        .begin(processes.page(), "a.plugin".into(), "rev".into())
+        .await;
+    let previous_exited = processes.registry().entries.is_empty();
+    // Reap the real process even if admission failed, before reporting the result.
+    until_exit(&mut events).await;
+    assert!(
+        successor.is_ok(),
+        "new page activation failed: {successor:?}"
+    );
+    assert!(
+        previous_exited,
+        "successor admitted before previous process exit"
+    );
+    assert_ne!(successor.unwrap(), activation);
+}
+
+fn pending_exit(processes: &HostProcesses) -> watch::Sender<bool> {
+    let (exited, exit) = watch::channel(false);
+    processes.registry().entries.insert(
+        0,
+        Entry {
+            plugin: "a.plugin".into(),
+            activation: 0,
+            exited: exit,
+            group: None,
+            stdin: None,
+            stop: None,
+        },
+    );
+    exited
+}
+
+#[tokio::test]
+async fn begin_waits_for_cleanup_and_rechecks_the_page_afterward() {
+    use std::future::Future as _;
+    use std::task::Poll;
+
+    for reload_again in [false, true] {
+        let processes = HostProcesses::default();
+        let exited = pending_exit(&processes);
+        processes.stop_all();
+        let page = processes.page();
+        let mut admission = Box::pin(processes.begin(page, "a.plugin".into(), "rev".into()));
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(admission.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        assert!(processes.registry().activations.is_empty());
+        if reload_again {
+            processes.stop_all();
+        }
+        processes.registry().entries.remove(&0);
+        exited.send(true).unwrap();
+        let result = admission.await;
+        if reload_again {
+            assert_eq!(result.err().as_deref(), Some("The page reloaded"));
+            assert!(processes.registry().activations.is_empty());
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+}
+
+#[tokio::test]
+async fn simultaneous_admission_after_cleanup_keeps_one_activation_owner() {
+    use std::future::Future as _;
+    use std::task::Poll;
+
+    let processes = HostProcesses::default();
+    let exited = pending_exit(&processes);
+    processes.stop_all();
+    let mut first = Box::pin(processes.begin(processes.page(), "a.plugin".into(), "rev".into()));
+    let mut second = Box::pin(processes.begin(processes.page(), "a.plugin".into(), "rev".into()));
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    processes.registry().entries.remove(&0);
+    exited.send(true).unwrap();
+    let activation = first.await.unwrap();
+    assert!(second.await.is_err());
+    assert_eq!(processes.registry().activations["a.plugin"].0, activation);
+}
+
+#[tokio::test]
+async fn failed_previous_page_cleanup_does_not_admit_a_successor() {
+    let processes = HostProcesses::default();
+    let exited = pending_exit(&processes);
+    processes.stop_all();
+    drop(exited);
+    assert_eq!(
+        processes
+            .begin(processes.page(), "a.plugin".into(), "rev".into())
+            .await
+            .err()
+            .as_deref(),
+        Some("Process cleanup failed; restart the app")
+    );
+    assert!(processes.registry().activations.is_empty());
 }
 
 #[tokio::test]
@@ -469,6 +616,7 @@ async fn begin_from_a_retired_page_cannot_reserve_an_activation() {
     assert_eq!(
         processes
             .begin(page, "a.plugin".into(), "rev".into())
+            .await
             .err()
             .as_deref(),
         Some("The page reloaded")

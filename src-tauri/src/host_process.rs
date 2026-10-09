@@ -87,7 +87,28 @@ impl HostProcesses {
             _ => Err("No such process".into()),
         }
     }
-    fn begin(&self, page: u64, id: String, revision: String) -> Result<u64, String> {
+    async fn begin(&self, page: u64, id: String, revision: String) -> Result<u64, String> {
+        let exits = {
+            let registry = self.registry();
+            if registry.page != page {
+                return Err("The page reloaded".into());
+            }
+            if registry.activations.contains_key(&id) {
+                return Err(
+                    "Previous plugin activation has not retired; restart if cleanup is stuck"
+                        .into(),
+                );
+            }
+            registry
+                .entries
+                .values()
+                .filter(|entry| entry.plugin == id)
+                .map(|entry| entry.exited.clone())
+                .collect::<Vec<_>>()
+        };
+        for exit in exits {
+            wait_for_exit(exit).await?;
+        }
         let mut registry = self.registry();
         if registry.page != page {
             return Err("The page reloaded".into());
@@ -362,7 +383,7 @@ pub(crate) async fn plugin_activation_begin(
         manager.host_grants(&checked_id, &checked_revision)
     })
     .await?;
-    processes.begin(page, id, revision)
+    processes.begin(page, id, revision).await
 }
 #[tauri::command]
 pub(crate) async fn plugin_activation_retire(

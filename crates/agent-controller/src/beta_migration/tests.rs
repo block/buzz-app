@@ -321,7 +321,7 @@ fn restore_starts_the_whole_group_then_each_member_finishes() {
     let mut control = controller(root.path(), vec![first.clone(), second.clone()]);
     let mut imports = Imports::default();
     let ids = [first.id.clone(), second.id.clone()];
-    let mut preview_now = |control: &Controller, imports: &mut Imports| {
+    let preview_now = |control: &Controller, imports: &mut Imports| {
         control
             .restore_beta_teams_preview(imports, LegacySource::Installed, root.path().into(), &ids)
             .unwrap()

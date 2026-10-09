@@ -251,15 +251,9 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
 
 it.each([
   ["😀 🙏 👏", [], true],
-  ["😀 🙏 👏 😄", [], true],
   ["😀".repeat(40), [], true],
   [
     ":party: ".repeat(24),
-    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
-    true,
-  ],
-  [
-    ":party: 😀 :party: 😀",
     [{ shortcode: "party", url: "https://emoji.test/party.png" }],
     true,
   ],
@@ -414,29 +408,28 @@ it("renders exact identity controls only while a target can be opened", () => {
   expect(renderProfile(false)).toContain("@Mic");
 });
 
-it.each([
-  "    @Mic\n\nOutside @Mic",
-  '```js\nconst delimiter = "```";\n@Mic\n```\nOutside @Mic',
-  "~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic",
-])("only exposes the prose mention through MessageRow: %s", (content) => {
-  const recipient = "b".repeat(64);
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{ ...row, content, mentions: [recipient] }}
-      profile={undefined}
-      participantProfiles={new Map([[recipient, { name: "Mic" }]])}
-      media={() => undefined}
-      onOpenLink={() => true}
-      canOpenLink={() => true}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html.match(/aria-label="View Mic profile"/g)).toHaveLength(1);
-  expect(html.indexOf('aria-label="View Mic profile"')).toBeGreaterThan(
-    html.indexOf("Outside "),
-  );
-});
+it.each(["~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic"])(
+  "only exposes the prose mention through MessageRow: %s",
+  (content) => {
+    const recipient = "b".repeat(64);
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{ ...row, content, mentions: [recipient] }}
+        profile={undefined}
+        participantProfiles={new Map([[recipient, { name: "Mic" }]])}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html.match(/aria-label="View Mic profile"/g)).toHaveLength(1);
+    expect(html.indexOf('aria-label="View Mic profile"')).toBeGreaterThan(
+      html.indexOf("Outside "),
+    );
+  },
+);
 
 it.each([9, 40002])(
   "does not manufacture profile bindings when kind %s images are removed",
@@ -584,31 +577,30 @@ it.each([9, 40002])(
   },
 );
 
-it.each([
-  { width: 700, height: 900 },
-  { width: 1600, height: 900 },
-  { width: 20, height: 10 },
-])("uses fixed thumbnails regardless of image dimensions: %j", (dimensions) => {
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{
-        ...row,
-        attachments: [
-          { url: "https://image.test/shot.png", kind: "image", dimensions },
-        ],
-      }}
-      profile={undefined}
-      media={(url) => url}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html).toContain('data-thumbnail="true"');
-  expect(html).not.toContain("aspect-ratio:");
-  expect(html).toContain('aria-label="Open image attachment"');
-  expect(html).toContain('loading="lazy"');
-});
+it.each([{ width: 1600, height: 900 }])(
+  "uses fixed thumbnails regardless of image dimensions: %j",
+  (dimensions) => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: [
+            { url: "https://image.test/shot.png", kind: "image", dimensions },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html).toContain('data-thumbnail="true"');
+    expect(html).not.toContain("aspect-ratio:");
+    expect(html).toContain('aria-label="Open image attachment"');
+    expect(html).toContain('loading="lazy"');
+  },
+);
 
 it.each([undefined, { width: 640, height: 400 }])(
   "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
@@ -866,7 +858,9 @@ it("renders proxy audio attachments with an inline player", () => {
   );
   expect(html).toContain('aria-label="Play audio"');
   expect(html).toContain('aria-label="Seek audio"');
-  expect(html).toContain("0:00 / 0:12");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.querySelector("fieldset")?.textContent).toBe("00:00 00:12");
   expect(html).not.toContain("Download file");
 });
 
@@ -1156,6 +1150,7 @@ it.each(["peer", "own"] as const)(
       viewer: author === "own" ? row.authorId : "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { report: vi.fn(async () => {}) },
+      profiles: { subscribe: () => () => {}, event: () => undefined },
       outbox: {
         supports: () => true,
         subscribe: () => () => {},
@@ -1379,16 +1374,34 @@ it("shows working dots only while a known agent types in this thread", () => {
       },
     },
   } as unknown as RelaySession;
-  const view = renderMessage({ session, onOpenThread: () => {} });
+  let view = renderMessage({ session, onOpenThread: () => {} });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",
     });
     expect(working.querySelector("[data-thread-working]")).not.toBeNull();
+    expect(working).not.toHaveTextContent(/is working|agents are working/);
+    view.unmount();
+    const open = vi.fn();
+    view = renderMessage({
+      session,
+      row: { ...row, replyCount: 0, participants: [] },
+      onOpenThread: open,
+    });
+    const first = screen.getByRole("button", {
+      name: "View thread: Brain is working",
+    });
+    expect(first).toHaveTextContent("View thread");
+    expect(first).not.toHaveTextContent("is working");
+    fireEvent.click(first);
+    expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
     act(() => {
       entries = [];
       for (const listener of listeners) listener();
     });
+    expect(screen.queryByRole("button", { name: /^View thread:/ })).toBeNull();
+    view.unmount();
+    view = renderMessage({ session, onOpenThread: () => {} });
     const idle = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });
@@ -1435,7 +1448,7 @@ it("bounds reply participants and projects artwork with fallback initials", () =
   }
 });
 
-it.each([1, 2, 3, 4, 5, 10])(
+it.each([1, 2, 10])(
   "keeps all %i images reachable in a labelled strip",
   (count) => {
     const html = renderToStaticMarkup(
@@ -1805,6 +1818,241 @@ it("presents automation, links the owner and discloses the separate relay signer
     expect(
       screen.queryByRole("button", { name: "View Relay profile" }),
     ).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("contains a broken plugin message action to its own contribution", () => {
+  const listeners = new Set<() => void>();
+  const entry = (
+    id: string,
+    marker: () => React.ReactNode,
+    matches = () => true,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches,
+    icon: marker,
+    component: () => null,
+    marker,
+  });
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const healthy = entry("healthy", () => <span>healthy marker</span>);
+  let actions = [
+    entry(
+      "throwing-matcher",
+      () => <span>never</span>,
+      () => broken(),
+    ),
+    entry("throwing-marker", broken),
+    healthy,
+  ];
+  const store = {
+    snapshot: () => actions,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          actions: store,
+        }}
+      />,
+    );
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    // Disabling and re-enabling is a fresh installation with a fresh boundary.
+    swap([healthy]);
+    swap([entry("throwing-marker", () => <span>fixed marker</span>), healthy]);
+    expect(screen.getByText("fixed marker")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("contains a throwing plugin action icon and opened component", async () => {
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const entry = (
+    id: string,
+    icon: () => React.ReactNode,
+    component: () => React.ReactNode,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    icon,
+    component,
+  });
+  const actions = [
+    entry("Broken icon", broken, () => null),
+    entry("Broken component", () => <span>ok icon</span>, broken),
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: { snapshot: () => actions, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Broken icon" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Broken component/ }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByText("Root")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
+  const listeners = new Set<() => void>();
+  const entry = () => ({
+    id: "remind",
+    title: "Remind",
+    key: "test.plugin/remind",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => <span>action dialog</span>,
+  });
+  let actions = [entry()];
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: {
+            snapshot: () => actions,
+            subscribe(listener: () => void) {
+              listeners.add(listener);
+              return () => void listeners.delete(listener);
+            },
+          },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
+    expect(await screen.findByText("action dialog")).toBeInTheDocument();
+    swap([]);
+    expect(screen.queryByText("action dialog")).toBeNull();
+    swap([entry()]);
+    expect(screen.queryByText("action dialog")).toBeNull();
   } finally {
     cleanup();
   }

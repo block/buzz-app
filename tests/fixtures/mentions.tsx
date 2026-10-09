@@ -55,6 +55,16 @@ const admission = new URLSearchParams(location.search).has(
 const dm = new URLSearchParams(location.search).has("dm");
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
+const secondProfile = () =>
+  profile(
+    second,
+    {
+      name: naming && !colliding ? "Other Honey" : "Honey",
+      is_agent: true,
+      picture: "https://avatars.test/app-icon.png",
+    },
+    time,
+  );
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
 const channels = new URLSearchParams(location.search).has("channels");
@@ -73,10 +83,20 @@ const extraChannels = Array.from({ length: channelCount }, (_, index) => [
     ["t", "stream"],
   ]),
 ]).flat();
+// An open channel the viewer has not joined, for `#` public channel search.
+const openChannels = new URLSearchParams(location.search).has("open-channels")
+  ? [
+      roster(relay, "open", [first.pubkey], time),
+      metadata(relay, "open", "Gemstones", time, [["t", "stream"], ["public"]]),
+    ]
+  : [];
 const searches: string[] = [];
 const heldSearches: string[] = [];
 let searchGate: Promise<void> | undefined;
 let releaseSearch = () => {};
+// Exact channel resolves (39000 by `#d`), held to observe a pending lookup.
+let channelGate: Promise<void> | undefined;
+let releaseChannels = () => {};
 // Optional visual preview: real GIF search, with messages still local to this fixture.
 const gifRelay = new URLSearchParams(location.search).get("gif-community");
 const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
@@ -132,6 +152,13 @@ const owner = createRelaySession(
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           await profileGate;
+        if (
+          channelGate &&
+          filters.some(
+            (filter) => filter.kinds?.includes(39000) && filter["#d"],
+          )
+        )
+          await channelGate;
         const search = filters.find((filter) => filter.search)?.search;
         if (search !== undefined) {
           searches.push(search);
@@ -177,13 +204,10 @@ const owner = createRelaySession(
             name: delayed ? "Mary Jane" : "Honey",
             picture: "https://avatars.test/bestie.png",
           }),
-          profile(second, {
-            name: "Honey",
-            is_agent: true,
-            picture: "https://avatars.test/app-icon.png",
-          }),
+          secondProfile(),
           ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
           ...extraChannels,
+          ...openChannels,
           ...publications,
         ];
         return events.filter((event) =>
@@ -326,6 +350,8 @@ Object.assign(window, {
   mentionFixture: {
     async collide(value: boolean) {
       colliding = value;
+      ++time;
+      incoming([secondProfile()]);
       await owner.session.agentLibrary.refresh();
     },
     qualifier: (key: string) => names?.lookup(key)?.qualifier,
@@ -360,6 +386,15 @@ Object.assign(window, {
     releaseSearches() {
       searchGate = undefined;
       releaseSearch();
+    },
+    holdChannelReads() {
+      channelGate = new Promise((resolve) => {
+        releaseChannels = resolve;
+      });
+    },
+    releaseChannelReads() {
+      channelGate = undefined;
+      releaseChannels();
     },
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;

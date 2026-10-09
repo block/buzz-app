@@ -1,5 +1,11 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   harnessPresets,
   harnessKind,
@@ -14,6 +20,7 @@ import {
 import {
   ArrowsClockwiseIcon,
   ArrowSquareOutIcon,
+  CodexLogoIcon,
   CopyIcon,
   GooseLogoIcon,
   HermesLogoIcon,
@@ -30,6 +37,7 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import type { ReactNode } from "react";
@@ -46,14 +54,19 @@ const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",
   "adapter-needed": "Adapter needed",
+  "check-needed": "Check needed",
+  "not-enabled": "Not enabled",
 } as const;
 // Artwork only; native harnessOptions still own availability and configuration.
 const harnessIcons: Record<string, ReactNode> = {
   "buzz-agent": <RobotIcon size={32} className="shrink-0" />,
+  codex: <CodexLogoIcon size={32} className="shrink-0" />,
   goose: <GooseLogoIcon size={32} className="shrink-0" />,
   hermes: <HermesLogoIcon size={32} className="shrink-0" />,
   pi: <PiLogoIcon size={32} className="shrink-0" />,
 };
+const codexAdapterCommand =
+  "npm install -g @agentclientprotocol/codex-acp@2.1.1";
 const commands = [
   ["Pi", "Install Pi", piCommand],
   ["Adapter", "Install the ACP adapter", adapterCommand],
@@ -90,18 +103,12 @@ export function AgentSettings({
   const coreHarnesses = (["buzz-agent", "goose", "pi"] as const).map((id) =>
     options?.find((option) => harnessKind(option.command) === id),
   );
-  const available = coreHarnesses.every((option) => !!option?.status);
-  const pi = coreHarnesses[2];
   const presets =
     options?.filter(
       (option) =>
         !!harnessPreset(option.command) &&
         harnessKind(option.command) !== "claude",
     ) ?? [];
-  const harnesses = [
-    ...coreHarnesses,
-    ...presets.filter((option) => option.available),
-  ];
   const setup =
     harnessPresets.find((preset) => preset.id === selectedPresetId) ??
     harnessPresets[0];
@@ -110,11 +117,72 @@ export function AgentSettings({
     (option) => harnessPreset(option.command) === setup,
   );
   const presetLabel = selected?.label ?? setup?.label ?? "Harness";
+  const codexOption = options?.find((option) => option.id === "codex");
+  const harnesses = [
+    ...coreHarnesses,
+    ...presets.filter((option) => option.available),
+    ...(codexOption ? [codexOption] : []),
+  ];
+  const available = coreHarnesses.every((option) => !!option?.status);
+  const pi = coreHarnesses[2];
+  const codexInstall = state.codexInstall;
+  const codexToolsReady = codexOption?.status === "ready";
+  const [codexAuth, setCodexAuth] = useState<boolean | null | "checking">(
+    "checking",
+  );
+  // Like Claude Code: read the existing CLI login only once its tools are found.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Check again and install completion must trigger this read even when tool presence is unchanged.
+  useEffect(() => {
+    if (!active || !codexToolsReady || codexInstall?.installing) return;
+    let current = true;
+    setCodexAuth("checking");
+    void (control.checkCodexAuth?.() ?? Promise.resolve(null))
+      .catch(() => null)
+      .then((result) => {
+        if (current) setCodexAuth(result);
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    active,
+    codexToolsReady,
+    codexInstall?.installing,
+    codexInstall?.report,
+    authCheck,
+    control,
+  ]);
+  // Like Claude Code: keep keyboard focus when a successful install removes Install.
+  const codexStatusRef = useRef<HTMLSpanElement>(null);
+  const codexInstallRef = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    return () => {
+      if (button.ownerDocument.activeElement === button) {
+        codexStatusRef.current?.focus();
+      }
+    };
+  }, []);
+  const offerCodexInstall =
+    !!control.installCodex &&
+    !!codexOption?.installSupported &&
+    codexOption.status === "adapter-needed";
+  const codexStatus = !codexToolsReady
+    ? codexOption?.status
+      ? labels[codexOption.status]
+      : "Unknown"
+    : codexAuth === "checking"
+      ? "Checking sign-in…"
+      : codexAuth === true
+        ? "Ready"
+        : codexAuth === false
+          ? "Sign-in needed"
+          : "Sign-in unconfirmed";
   const checkDisabled =
     state.status === "unavailable" ||
     state.busy ||
     installingPi ||
-    state.claudeInstall?.installing;
+    state.claudeInstall?.installing ||
+    codexInstall?.installing;
   const checkAgain = () => {
     setChecking(true);
     void control.refresh().finally(() => {
@@ -195,11 +263,16 @@ export function AgentSettings({
               )}
               <ul aria-labelledby="harnesses-title" className={styles.rows}>
                 {harnesses.map((option) => (
-                  <li key={option?.label} className="py-3 text-body-sm">
+                  <li
+                    key={option?.id ?? option?.label}
+                    className="py-3 text-body-sm"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="flex items-center gap-3">
                         {option &&
-                          (harnessIcons[harnessKind(option.command) ?? ""] ?? (
+                          (harnessIcons[
+                            harnessKind(option.command) ?? option.id ?? ""
+                          ] ?? (
                             <TerminalWindowIcon
                               size={32}
                               className="shrink-0"
@@ -208,8 +281,18 @@ export function AgentSettings({
                         <span>{option?.label}</span>
                       </span>
                       <span className="flex items-center gap-2">
-                        <span className="text-secondary">
-                          {option?.status ? labels[option.status] : "Unknown"}
+                        <span
+                          ref={
+                            option?.id === "codex" ? codexStatusRef : undefined
+                          }
+                          tabIndex={option?.id === "codex" ? -1 : undefined}
+                          className="text-secondary"
+                        >
+                          {option?.id === "codex"
+                            ? codexStatus
+                            : option?.status
+                              ? labels[option.status]
+                              : "Unknown"}
                         </span>
                         {option &&
                           harnessKind(option.command) === "pi" &&
@@ -226,6 +309,7 @@ export function AgentSettings({
                                 state.status !== "ready" ||
                                 state.busy ||
                                 state.claudeInstall?.installing ||
+                                codexInstall?.installing ||
                                 installingPi
                               }
                               onClick={() => {
@@ -237,6 +321,25 @@ export function AgentSettings({
                                 : "Install"}
                             </Button>
                           )}
+                        {option?.id === "codex" && offerCodexInstall && (
+                          <Button
+                            ref={codexInstallRef}
+                            size="sm"
+                            type="button"
+                            loading={!!codexInstall?.installing}
+                            disabled={
+                              state.status !== "ready" ||
+                              state.busy ||
+                              installingPi ||
+                              state.claudeInstall?.installing
+                            }
+                            onClick={() => {
+                              void control.installCodex?.().catch(() => {});
+                            }}
+                          >
+                            Install
+                          </Button>
+                        )}
                       </span>
                     </div>
                     {option &&
@@ -260,6 +363,70 @@ export function AgentSettings({
                             </div>
                           </details>
                         </div>
+                      )}
+                    {option?.id === "codex" &&
+                      (codexInstall?.installing ||
+                        codexInstall?.report?.error ||
+                        codexInstall?.error) && (
+                        <div className={`${styles.piSetup} space-y-3`}>
+                          {codexInstall.installing ? (
+                            <p role="status">
+                              Installing Node.js and the Codex ACP adapter…
+                            </p>
+                          ) : (
+                            <div role="alert" className="text-body-sm">
+                              <p className="whitespace-pre-wrap break-words">
+                                {codexInstall.report?.error ||
+                                  codexInstall.error}
+                              </p>
+                              {codexInstall.report && (
+                                <details>
+                                  <summary>
+                                    Codex ACP adapter install log
+                                  </summary>
+                                  <p className="break-all">
+                                    {codexInstall.report.logPath}
+                                  </p>
+                                  <pre
+                                    className={`${styles.command} whitespace-pre-wrap break-all`}
+                                  >
+                                    {codexInstall.report.output ||
+                                      "No output was recorded."}
+                                  </pre>
+                                </details>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    {option?.id === "codex" &&
+                      offerCodexInstall &&
+                      !codexInstall?.installing && (
+                        <div className={`${styles.piSetup} space-y-3`}>
+                          <p role="status" className="m-0 text-secondary">
+                            Click Install. Buzz installs Node.js and the Codex
+                            ACP adapter for you. Your Codex CLI and sign-in are
+                            left untouched.
+                          </p>
+                          <details>
+                            <summary>Manual Codex ACP adapter setup</summary>
+                            <code
+                              className={`${styles.command} mt-3 block text-mono`}
+                            >
+                              {codexAdapterCommand}
+                            </code>
+                          </details>
+                        </div>
+                      )}
+                    {option?.id === "codex" &&
+                      (option.status === "cli-needed" ||
+                        (codexToolsReady &&
+                          (codexAuth === false || codexAuth === null))) && (
+                        <p role="status" className="m-0 mt-2 text-secondary">
+                          {option.status === "cli-needed"
+                            ? "Install the Codex CLI, then use Check again."
+                            : "Run codex login in your terminal, then use Check again."}
+                        </p>
                       )}
                     {option &&
                       harnessKind(option.command) === "pi" &&

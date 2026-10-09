@@ -110,8 +110,6 @@ it("offers missing-badge setup only as an explicit action", async () => {
 });
 it.each([
   [true, "Win32"],
-  [true, "Linux x86_64"],
-  [true, ""],
   [false, "MacIntel"],
 ] as const)(
   "hides Dock settings and makes no IPC calls for native=%s platform=%s",

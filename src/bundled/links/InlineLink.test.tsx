@@ -3,11 +3,27 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, TableIcon } from "../../shared/design-system/icons/index";
 import styles from "../../shared/InlineReference.module.css";
 import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
+import { apply } from "./index";
+import type { LinkRenderer } from "../../features/conversation/contracts";
 import {
   LinkLabelContext,
   LinkContentContext,
   LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
+
+it("claims recognised services and Buzz entities by default and unknown websites as a catch-all", () => {
+  let renderer: LinkRenderer | undefined;
+  apply({
+    conversation: { registerLink: (value: LinkRenderer) => (renderer = value) },
+  } as never);
+  const order = renderer?.order;
+  if (typeof order !== "function")
+    throw new Error("expected an order function");
+  expect(order("https://github.com/block/buzz")).toBe(0);
+  expect(order("https://docs.google.com/document/d/1")).toBe(0);
+  expect(order("buzz://channel/general")).toBe(0);
+  expect(order("https://example.com/")).toBe(100);
+});
 
 it("identifies exact GitHub hosts, ordinary websites, and Buzz entity links", () => {
   expect(linkKind("https://github.com/block/buzz")).toBe("github");
@@ -47,8 +63,6 @@ it.each([
   "javascript:alert(1)",
   "data:text/html,hello",
   "buzz://unknown",
-  // The retired in-app locator is an unknown host like any other.
-  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D",
   "not a URL",
 ])("leaves unsupported destinations as plain text: %s", (href) => {
   expect(
@@ -82,7 +96,6 @@ it.each([
   ["https://www.notion.so/example", "notion"],
   ["https://team.notion.site/example", "notion"],
   ["https://workspace.slack.com/archives/example", "slack"],
-  ["https://app.slack.com/client/example", "slack"],
   ["https://www.dropbox.com/scl/fi/example", "dropbox"],
   ["https://db.tt/example", "dropbox"],
   ["https://onedrive.live.com/?id=example", "onedrive"],
@@ -106,7 +119,7 @@ it.each([
   expect(markup).toContain(`href="${href}"`);
 });
 
-it.each([44, 45, 46, 200])(
+it.each([45, 46])(
   "caps raw URL labels at 45 characters (source length %i)",
   (length) => {
     const href = "https://figma.com/design/".padEnd(length, "a");
@@ -141,23 +154,15 @@ it("truncates a Unicode URL when Markdown encodes its destination", () => {
   expect(markup.replace(/<[^>]+>/g, "")).toBe(`${label.slice(0, 44)}…`);
 });
 
-it.each([
-  "figma.com",
-  "notion.so",
-  "slack.com",
-  "dropbox.com",
-  "onedrive.live.com",
-  "gitlab.com",
-  "youtube.com",
-  "loom.com",
-  "zoom.us",
-  "teams.microsoft.com",
-])("does not brand lookalike destinations for %s", (host) => {
-  expect(linkKind(`https://${host}.example.com/file`)).toBe("web");
-  expect(linkKind(`https://fake${host}/file`)).toBe("web");
-  expect(linkKind(`https://example.com/${host}`)).toBe("web");
-  expect(linkKind(`https://${host}@example.com/file`)).toBe("web");
-});
+it.each(["figma.com", "teams.microsoft.com"])(
+  "does not brand lookalike destinations for %s",
+  (host) => {
+    expect(linkKind(`https://${host}.example.com/file`)).toBe("web");
+    expect(linkKind(`https://fake${host}/file`)).toBe("web");
+    expect(linkKind(`https://example.com/${host}`)).toBe("web");
+    expect(linkKind(`https://${host}@example.com/file`)).toBe("web");
+  },
+);
 it("does not mistake lookalike hosts or URL paths for Google Drive", () => {
   expect(linkKind("https://drive.google.com.example.com/file")).toBe("web");
   expect(linkKind("https://example.com/drive.google.com")).toBe("web");

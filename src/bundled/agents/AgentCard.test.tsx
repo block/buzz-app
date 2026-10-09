@@ -8,6 +8,7 @@ import {
   cleanup,
   fireEvent,
   render,
+  within,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -20,6 +21,76 @@ import { controlFixture } from "../../features/agents/control-testing";
 import { AgentCard } from "./AgentCard";
 
 afterEach(cleanup);
+
+it.each(["tile", "row"] as const)(
+  "shows a restart-required badge when any saved %s setup drifts, but not for unmanaged or legacy cards",
+  (layout) => {
+    const fixture = controlFixture();
+    const drift: AgentView["restartDiff"] = [
+      {
+        field: "systemPrompt",
+        change: { kind: "text", beforeChars: 18, afterChars: 21 },
+      },
+    ];
+    const stable = {
+      ...fixture.agent,
+      id: "stable-fixture-agent",
+      restartDiff: [],
+    } satisfies AgentView;
+    const drifted = {
+      ...fixture.agent,
+      id: "drifted-fixture-agent",
+      relayUrl: "wss://other-relay.example.test",
+      restartDiff: drift,
+    } satisfies AgentView;
+    const card = (editable: AgentView[]) => (
+      <AgentCard
+        name="Agent"
+        identities={[{ pubkey: fixture.agent.pubkey, name: "Agent" }]}
+        editable={editable}
+        layout={layout}
+      />
+    );
+    const view = render(card([stable, drifted]));
+    const article = screen.getByRole("article", { name: "Agent Agent" });
+    const badge = within(article).getByRole("status", {
+      name: "Restart required",
+    });
+
+    expect(badge).toBeVisible();
+    expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+
+    view.rerender(
+      card([
+        {
+          ...stable,
+          restartDiff: [],
+        },
+        {
+          ...drifted,
+          restartDiff: [],
+        },
+      ]),
+    );
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    view.rerender(card([]));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    const legacy = { ...drifted } as Omit<AgentView, "restartDiff"> & {
+      restartDiff?: AgentView["restartDiff"];
+    };
+    delete legacy.restartDiff;
+    view.rerender(card([legacy as AgentView]));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+  },
+);
 
 it("badges a single agent only while live presence is known", () => {
   const pubkey = "a".repeat(64);
@@ -142,23 +213,6 @@ it("re-reads presence after native start or stop until the badge agrees, within 
   } finally {
     vi.useRealTimers();
   }
-});
-
-it("reserves card-header space for a profile-only menu", () => {
-  render(
-    <AgentCard
-      layout="row"
-      name="A very long relay-only identity name"
-      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
-      onViewProfile={() => {}}
-    >
-      <p>Relay-only identity</p>
-    </AgentCard>,
-  );
-
-  expect(
-    screen.getByRole("heading", { level: 3 }).parentElement?.parentElement,
-  ).toHaveClass("pr-6");
 });
 
 it("hands focus from the menu to the opened profile", async () => {
@@ -329,3 +383,25 @@ it.each(["tile", "row"] as const)(
     }
   },
 );
+
+it("routes a managed card Share directly from its menu without a separate Export", async () => {
+  const agent = controlFixture().agent;
+  const share = vi.fn();
+  render(
+    <AgentCard
+      name="Managed"
+      identities={[agent]}
+      editable={[agent]}
+      onEdit={() => {}}
+      onShare={share}
+    >
+      <p>Native controls</p>
+    </AgentCard>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Managed" }));
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).queryByRole("menuitem", { name: "Export" })).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Share" }));
+  expect(share).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(screen.queryByRole("dialog", { name: "Manage Managed" })).toBeNull();
+});

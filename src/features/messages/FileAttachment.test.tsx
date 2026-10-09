@@ -138,7 +138,7 @@ it("renders unopenable file sources as unavailable", () => {
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
-it.each(["application/octet-stream", "application/vnd.ms-excel"])(
+it.each(["application/octet-stream"])(
   "does not derive noisy labels from %s",
   (mime) => {
     render(

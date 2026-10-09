@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/sonner-dom";
 import "@testing-library/jest-dom/vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -73,11 +74,17 @@ beforeEach(() => {
       ) => run({}),
     },
   });
+  // jsdom lacks scrollIntoView; the mention picker keeps its highlight in view.
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator, "locks");
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
 function harness(
@@ -147,7 +154,9 @@ function harness(
         }),
       channelKit: {
         prepare: async (value) => {
-          stored.set("fixture", value);
+          if (value.value.type === "team-payload")
+            throw new Error("Unexpected fixture payload");
+          stored.set("fixture", value as KitRecord);
           return "fixture";
         },
         decode: async (events) =>
@@ -2035,6 +2044,8 @@ it.each(["save", "delete"] as const)(
         expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
           "Remote team",
         );
+        // An unchanged team isn't rewritten, so make a real edit.
+        await user.type(screen.getByRole("textbox", { name: "Name" }), "!");
         await user.click(screen.getByRole("button", { name: "Save team" }));
       } else {
         await user.click(
@@ -2050,7 +2061,11 @@ it.each(["save", "delete"] as const)(
       expect(writes).toHaveLength(1);
       const saved = test.stored.get(writes[0]?.content ?? "");
       expect(saved?.deleted).toBe(action === "delete");
-      expect(saved?.value).toEqual(updated.value);
+      expect(saved?.value).toEqual(
+        action === "save"
+          ? { ...updated.value, name: "Remote team!" }
+          : updated.value,
+      );
     } finally {
       test.dispose();
     }

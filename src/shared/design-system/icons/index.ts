@@ -6,6 +6,7 @@ import {
   GooseLogoArtwork,
   PiLogoArtwork,
   ClaudeLogoArtwork,
+  CodexLogoArtwork,
   HermesLogoArtwork,
 } from "./HarnessLogos";
 
@@ -74,6 +75,8 @@ import TablerArrowsInIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMin
 export const ArrowsInIcon = defineIcon("tabler", TablerArrowsInIcon);
 import TablerArrowsOutIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMaximize.mjs";
 export const ArrowsOutIcon = defineIcon("tabler", TablerArrowsOutIcon);
+import TablerAlarmIcon from "@tabler/icons-react/dist/esm/icons/IconAlarm.mjs";
+export const AlarmIcon = defineIcon("tabler", TablerAlarmIcon);
 import TablerAtIcon from "@tabler/icons-react/dist/esm/icons/IconAt.mjs";
 export const AtIcon = defineIcon("tabler", TablerAtIcon);
 import TablerBellIcon from "@tabler/icons-react/dist/esm/icons/IconBell.mjs";
@@ -117,6 +120,20 @@ import TablerDropboxLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandD
 export const DropboxLogoIcon = defineIcon("tabler", TablerDropboxLogoIcon);
 import TablerEnvelopeIcon from "@tabler/icons-react/dist/esm/icons/IconMail.mjs";
 export const EnvelopeIcon = defineIcon("tabler", TablerEnvelopeIcon);
+import TablerNotificationIcon from "@tabler/icons-react/dist/esm/icons/IconNotification.mjs";
+export const NotificationIcon = defineIcon("tabler", TablerNotificationIcon);
+import { NotificationFilledArtwork } from "./NotificationFilled";
+export const NotificationFilledIcon = defineIcon(
+  "custom",
+  NotificationFilledArtwork,
+  {
+    meaning: "Unread-only filtering enabled",
+    category: "State indicator",
+    provenance:
+      "Designer-requested filled counterpart to the MIT-licensed Tabler Notification icon, preserving its 24px geometry.",
+    intendedSizes: [{ width: 20, height: 20 }],
+  },
+);
 import TablerEnvelopeOpenIcon from "@tabler/icons-react/dist/esm/icons/IconMailOpened.mjs";
 export const EnvelopeOpenIcon = defineIcon("tabler", TablerEnvelopeOpenIcon);
 import TablerEyeIcon from "@tabler/icons-react/dist/esm/icons/IconEye.mjs";
@@ -236,6 +253,8 @@ import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
+import TablerBulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
+export const BulbIcon = defineIcon("tabler", TablerBulbIcon);
 import TablerTerminalWindowIcon from "@tabler/icons-react/dist/esm/icons/IconTerminal2.mjs";
 export const TerminalWindowIcon = defineIcon(
   "tabler",
@@ -396,6 +415,14 @@ export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
   intendedSizes: [{ width: 32, height: 32 }],
 });
 
+export const CodexLogoIcon = defineIcon("custom", CodexLogoArtwork, {
+  meaning: "Codex harness",
+  category: "Custom brand mark",
+  provenance:
+    "OpenAI Blossom mark from OpenAI's brand kit, by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+
 export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
   meaning: "Hermes harness",
   category: "Custom brand mark",
@@ -407,3 +434,11 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
     { width: 48, height: 48 },
   ],
 });
+
+import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
+export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
+
+import TablerCircleIcon from "@tabler/icons-react/dist/esm/icons/IconCircle.mjs";
+export const CircleIcon = defineIcon("tabler", TablerCircleIcon);
+import TablerCircleHalfIcon from "@tabler/icons-react/dist/esm/icons/IconCircleHalf.mjs";
+export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);

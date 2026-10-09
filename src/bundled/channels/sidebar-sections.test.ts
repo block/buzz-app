@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
+import {
+  isChannelDropSectionKey,
+  isChannelSectionKey,
+  sidebarSections,
+} from "./sidebar-sections";
 
 const row = (
   id: string,
@@ -12,6 +16,29 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("starred")).toBe(false);
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
+});
+it("allows channel drops into Starred without treating it as a create-channel section", () => {
+  for (const key of ["starred", "channels", "group:work"])
+    expect(isChannelDropSectionKey(key)).toBe(true);
+  for (const key of ["forums", "dms"])
+    expect(isChannelDropSectionKey(key)).toBe(false);
+  expect(isChannelSectionKey("starred")).toBe(false);
+});
+it("hides empty Starred and shows it only for an authorized starred row", () => {
+  expect(sidebarSections([]).some(({ key }) => key === "starred")).toBe(false);
+  const preferences = {
+    sections: [],
+    assignments: {},
+    starred: ["alpha"],
+    muted: [],
+  };
+  expect(
+    sidebarSections([], preferences).some(({ key }) => key === "starred"),
+  ).toBe(false);
+  expect(sidebarSections([row("alpha")], preferences)[0]).toMatchObject({
+    key: "starred",
+    rows: [row("alpha")],
+  });
 });
 it("intersects groups/stars with active authorized streams and movable DMs", () => {
   const roster = [
@@ -71,7 +98,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       ).toHaveLength(1);
   };
   const expectedProjection = [
-    { key: "starred", ids: ["star", "starred-dm"] },
+    { key: "starred", ids: ["session", "star", "starred-dm"] },
     { key: "group:channels", ids: ["grouped-dm", "work"] },
     { key: "channels", ids: ["other"] },
     { key: "forums", ids: ["forum"] },
@@ -97,7 +124,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       roster.filter((channel) => channel.id !== "starred-dm"),
       new Set(["hidden-dm"]),
     ).find(({ key }) => key === "starred")?.ids,
-  ).toEqual(["star"]);
+  ).toEqual(["session", "star"]);
   expect(sidebarSections([])).toEqual([
     { key: "channels", title: "Channels", icon: undefined, rows: [] },
     { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
@@ -108,6 +135,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
     ),
   ).toEqual([
     "other",
+    "session",
     "star",
     "work",
     "forum",

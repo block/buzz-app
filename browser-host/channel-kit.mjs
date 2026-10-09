@@ -1,13 +1,13 @@
 import { getPublicKey, nip44 } from "nostr-tools";
 import { eventDto } from "../src/features/relay/events.ts";
 import {
-  coordinate,
-  KIT_TAG,
-  parseKitRecord,
+  privateCoordinate,
+  privateTag,
+  parsePrivateRecord,
 } from "../src/features/channel-templates/model.ts";
 
 export function prepareChannelKit(raw, secret, community) {
-  const record = parseKitRecord(raw, community);
+  const record = parsePrivateRecord(raw, community);
   const key = nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
   try {
     return nip44.v2.encrypt(JSON.stringify(record), key);
@@ -20,26 +20,43 @@ export function admitChannelKit(event, secret, community) {
   if (
     event?.kind !== 30078 ||
     typeof event.content !== "string" ||
-    event.content.length > 24 * 1024 ||
+    event.content.length > 64 * 1024 ||
     !Array.isArray(event.tags)
   )
     throw new Error("Invalid private recipe event");
   const key = nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
   try {
-    const record = parseKitRecord(
+    const record = parsePrivateRecord(
       JSON.parse(nip44.v2.decrypt(event.content, key)),
       community,
     );
+    const boundOwner =
+      record.value.type === "team-payload"
+        ? record.value.owner
+        : record.value.type === "team-text"
+          ? record.value.owner
+          : record.version === 2
+            ? record.value.portable?.owner
+            : undefined;
+    if (boundOwner !== undefined && boundOwner !== getPublicKey(secret))
+      throw new Error("Portable team belongs to another viewer");
     const ds = event.tags.filter((t) => t[0] === "d"),
       ts = event.tags.filter((t) => t[0] === "t");
+    // Same tag rules as native admission: every tag is a pair, and a
+    // client id is at most 128 UTF-8 bytes.
     if (
       ds.length !== 1 ||
-      ds[0].length !== 2 ||
-      ds[0][1] !== coordinate(record) ||
+      ds[0][1] !== privateCoordinate(record) ||
       ts.length !== 1 ||
-      ts[0].length !== 2 ||
-      ts[0][1] !== KIT_TAG ||
-      event.tags.some((t) => !["d", "t", "client-id"].includes(t[0]))
+      ts[0][1] !== privateTag(record) ||
+      event.tags.some(
+        (t) =>
+          !Array.isArray(t) ||
+          t.length !== 2 ||
+          !["d", "t", "client-id"].includes(t[0]) ||
+          (t[0] === "client-id" &&
+            (typeof t[1] !== "string" || Buffer.byteLength(t[1]) > 128)),
+      )
     )
       throw new Error("Invalid private recipe coordinate");
     return record;
@@ -51,7 +68,7 @@ export function decodeChannelKit(raw, secret, community) {
   if (
     !Array.isArray(raw) ||
     raw.length > 16 ||
-    Buffer.byteLength(JSON.stringify(raw)) > 512 * 1024
+    Buffer.byteLength(JSON.stringify(raw)) > 1024 * 1024
   )
     throw new Error("Recipe decode capacity exceeded");
   return raw.map((value) => {

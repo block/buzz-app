@@ -1,6 +1,10 @@
 # Builderlab
 
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
+`block.builderlab/builderlab` in Agents2's new-agent type picker.
+This type has empty configuration and no execution handler yet; existing remote
+agents remain in Settings until the later migration.
 
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
@@ -75,6 +79,8 @@ Native code inserts a loopback `redirect_uri` address, opens the browser, and re
 callback parameters to the plugin. Native code generates and validates OAuth
 state; the plugin also uses a random callback path.
 
-The plugin posts the callback code to `/v1/auth/login/exchange`, then verifies
-the returned session credential with `/v1/auth/me` using the
+Each attempt generates a random PKCE verifier held only in memory, sending its
+SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
+posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
+verifies the returned session credential with `/v1/auth/me` using the
 `X-BB-Session-Credential` header. These requests use the shared host transport.

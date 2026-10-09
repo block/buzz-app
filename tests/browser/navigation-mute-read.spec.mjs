@@ -49,10 +49,10 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "Channel actions unavailable",
   );
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "New session",
     "Move channel",
     "Mute",
     "Mark as Read",
+    "Copy link",
     "Retry channel permissions",
   ]);
   await expect(menu.getByRole("separator")).toHaveCount(0);
@@ -277,9 +277,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // dismisses. Open the next menu only after this one has closed.
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  // Removing the session entry preserves the remaining attention and lifecycle
+  // Disabling Me preserves the remaining attention and lifecycle
   // actions in the same divider-free menu.
-  const toggleSessions = async (enabled) => {
+  const toggleMe = async (enabled) => {
     await page
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
@@ -287,7 +287,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     await page.getByRole("button", { name: "Plugins", exact: true }).click();
     const toggle = page
       .getByRole("region", { name: "Plugins", exact: true })
-      .getByRole("switch", { name: "Enable Sessions", exact: true });
+      .getByRole("switch", { name: "Enable Me", exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
     await page
@@ -296,27 +296,27 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       .click();
     await expect(beta).toBeVisible();
   };
-  await toggleSessions(false);
+  await toggleMe(false);
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
     "Mute",
     "Mark as Unread",
+    "Copy link",
     "Retry channel permissions",
   ]);
   await expect(menu.getByRole("separator")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  await toggleSessions(true);
-  // The production broker must expose a valid empty agent library when this
-  // retained row menu opens the session composer (not just in the local-only host).
-  await beta.click({ button: "right" });
-  await menu
-    .getByRole("menuitem", { name: "New session", exact: true })
+  await toggleMe(true);
+  // Conversation creation lives in Me and still uses the production broker.
+  await openPage(page, "Me");
+  await page
+    .getByRole("button", { name: "New conversation", exact: true })
     .click();
   await expect(
-    page.getByRole("textbox", { name: "Message this session", exact: true }),
+    page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();
   expect(app.report.unexpected).toEqual([]);
 });

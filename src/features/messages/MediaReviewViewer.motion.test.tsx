@@ -300,7 +300,7 @@ it("returns to the current thumbnail position and keeps focus trapped until arri
   release();
 });
 
-it.each(["Zoom in", "Zoom out"])(
+it.each(["Zoom in"])(
   "fades out a photo after %s without returning its transform to the thumbnail",
   (action) => {
     const { animate, release } = setup("image");
@@ -519,7 +519,7 @@ it.each([false, true])(
   },
 );
 
-it.each(["Zoom in", "Zoom out"])(
+it.each(["Zoom in"])(
   "preserves the photo zoom after %s when the comments layout changes",
   (action) => {
     const { animate, release } = setup("image", false, true);

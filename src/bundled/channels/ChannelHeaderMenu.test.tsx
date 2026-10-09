@@ -13,6 +13,7 @@ import {
   type ChannelMenuSurface,
 } from "../../features/channel-navigation/ChannelNavigationState";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import type { RegisteredPanel } from "../../features/panels/service";
 import type { RelayData } from "../../features/relay/service";
 
 const channel: ChannelSummary = {
@@ -175,22 +176,21 @@ it("does not expose details editing or recovery from the header", async () => {
     );
   }
 });
-it.each([
-  { readOnly: true as const },
-  { cached: true as const },
-  { channelType: "session" as const },
-])("preserves management eligibility for %j", async (flags) => {
-  const h = harness({ ...channel, ...flags });
-  h.mount();
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await screen.findByRole("menuitem", { name: "View channel details" });
-  expect(h.load).not.toHaveBeenCalled();
-  expect(h.lifecycleLoad).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("menuitem", { name: "Edit details" }),
-  ).not.toBeInTheDocument();
-});
+it.each([{ readOnly: true as const }, { cached: true as const }])(
+  "preserves management eligibility for %j",
+  async (flags) => {
+    const h = harness({ ...channel, ...flags });
+    h.mount();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    await screen.findByRole("menuitem", { name: "View channel details" });
+    expect(h.load).not.toHaveBeenCalled();
+    expect(h.lifecycleLoad).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("menuitem", { name: "Edit details" }),
+    ).not.toBeInTheDocument();
+  },
+);
 it("does not offer lifecycle actions for archived channels", async () => {
   const h = harness({ ...channel, archived: true });
   h.lifecycleLoad.mockResolvedValue({
@@ -291,3 +291,74 @@ it("offers DM Hide using the existing lifecycle permissions, not stream actions"
   ).not.toBeInTheDocument();
   expect(h.run).not.toHaveBeenCalled();
 });
+
+it("launches the exact menu contribution and removes it when unavailable", async () => {
+  const h = harness();
+  const open = vi.fn();
+  const panel = {
+    key: "usage/usage",
+    channelMenu: { label: "View channel usage" },
+  } as RegisteredPanel;
+  const user = userEvent.setup();
+  const snapshot = { session: h.props.session, status: "ready" };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const view = render(
+    <ChannelNavigationProvider relay={relay}>
+      <ChannelHeaderMenu
+        {...h.props}
+        menuPanels={[panel]}
+        openMenuPanel={open}
+      />
+    </ChannelNavigationProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View channel usage" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith(panel);
+  view.rerender(
+    <ChannelNavigationProvider relay={relay}>
+      <ChannelHeaderMenu {...h.props} menuPanels={[]} openMenuPanel={open} />
+    </ChannelNavigationProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  expect(
+    screen.queryByRole("menuitem", { name: "View channel usage" }),
+  ).toBeNull();
+});
+
+it.each([true, false])(
+  "legacy sessions use verified lifecycle permissions (owner=%s)",
+  async (owner) => {
+    const h = harness({ ...channel, channelType: "session", private: true });
+    h.lifecycleLoad.mockResolvedValue({
+      channelId: "alpha",
+      channelType: "stream",
+      canArchive: owner,
+      canDelete: owner,
+      canLeave: !owner,
+      canHide: false,
+    });
+    h.mount();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Channel actions" }));
+    await screen.findByRole("menuitem", {
+      name: owner ? "Delete channel" : "Leave channel",
+    });
+    expect(!!screen.queryByRole("menuitem", { name: "Archive channel" })).toBe(
+      owner,
+    );
+    expect(!!screen.queryByRole("menuitem", { name: "Delete channel" })).toBe(
+      owner,
+    );
+    expect(h.lifecycleLoad).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(AbortSignal),
+    );
+    expect(h.run).not.toHaveBeenCalled();
+  },
+);

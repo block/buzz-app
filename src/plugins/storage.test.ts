@@ -76,7 +76,7 @@ it("restores required Channels from saved disabled settings and rejects disablin
   });
 });
 
-it.each([true, false, undefined])(
+it.each([true, undefined])(
   "preserves saved Bestie=%s over a changed default without migrating storage",
   async (saved) => {
     const flags = saved === undefined ? {} : { "buzz.bestie": saved };

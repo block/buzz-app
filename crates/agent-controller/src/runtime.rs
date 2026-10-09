@@ -43,17 +43,35 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
-            self.executable("goose-acp")?
-        } else if harness.command == "buzz-agent" {
-            self.executable("buzz-agent")?
+        // Like Claude Code, Start resolves the saved binding and launches it;
+        // adapter and login failures surface in the agent log.
+        let codex = (harness.integration == Some(crate::HarnessIntegration::Codex))
+            .then(|| {
+                crate::codex::CodexContext::for_agent(
+                    &harness.command,
+                    Path::new(&agent.workspace),
+                    &agent.environment,
+                )
+            })
+            .transpose()?;
+        let codex = codex.as_ref();
+        let (worker, codex_args) = if let Some(context) = codex {
+            let (worker, args) = context.adapter_launch(&harness.args)?;
+            (worker, Some(args))
         } else {
-            let path = PathBuf::from(&harness.command);
-            if !path.is_absolute() {
-                return Err("Choose the installed harness's absolute executable path".into());
-            }
-            executable(&path)?;
-            path
+            let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+                self.executable("goose-acp")?
+            } else if harness.command == "buzz-agent" {
+                self.executable("buzz-agent")?
+            } else {
+                let path = PathBuf::from(&harness.command);
+                if !path.is_absolute() {
+                    return Err("Choose the installed harness's absolute executable path".into());
+                }
+                executable(&path)?;
+                path
+            };
+            (worker, None)
         };
         let record = &agent.imported["record"];
         if record["backend"]["type"]
@@ -132,47 +150,63 @@ impl RuntimeBundle {
                 command.env(name, value);
             }
         }
-        let pi = (worker.file_name().and_then(|n| n.to_str()) == Some("buzz-pi-acp"))
-            .then(|| {
-                crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
-            })
-            .transpose()?;
+        let pi = (codex.is_none()
+            && worker.file_name().and_then(|n| n.to_str()) == Some("buzz-pi-acp"))
+        .then(|| crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment))
+        .transpose()?;
         let pi = crate::pi::verify_launch(pi, preflight)?;
-        let claude = (crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
-            .then(|| {
-                claude_tools(
-                    &worker,
-                    agent
-                        .environment
-                        .get("CLAUDE_CODE_EXECUTABLE")
-                        .map(String::as_str),
-                )
-            })
-            .transpose()?;
-        let (args, environment, tools_path) = if let Some(pi) = &pi {
+        let claude = (codex.is_none()
+            && crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
+        .then(|| {
+            claude_tools(
+                &worker,
+                agent
+                    .environment
+                    .get("CLAUDE_CODE_EXECUTABLE")
+                    .map(String::as_str),
+            )
+        })
+        .transpose()?;
+        let (args, environment, tools_path) = if let Some(args) = codex_args {
+            (args, None, None)
+        } else if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
-                &pi.environment,
-                pi.path.clone(),
+                Some(&pi.environment),
+                Some(pi.path.clone()),
             )
         } else {
             (
                 goose_args(&harness.command, &agent.harness.args),
-                &agent.environment,
-                if let Some((path, _)) = &claude {
+                Some(&agent.environment),
+                Some(if let Some((path, _)) = &claude {
                     path.clone()
                 } else {
                     tools_path()?
-                },
+                }),
             )
         };
-        let path = std::env::join_paths(
-            std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
-        )
-        .map_err(|_| "Invalid runtime tools path")?;
-        command.envs(environment).env("PATH", &path);
+        let path = tools_path
+            .map(|tools_path| {
+                path::compose(
+                    std::iter::once(self.directory.clone())
+                        .chain(std::env::split_paths(&tools_path))
+                        .chain(
+                            environment
+                                .and_then(|env| env.get("PATH"))
+                                .into_iter()
+                                .flat_map(std::env::split_paths),
+                        ),
+                )
+            })
+            .transpose()?;
+        if let Some(context) = codex {
+            context.apply_launch_environment(&mut command, &self.directory)?;
+        } else if let (Some(environment), Some(path)) = (environment, path.as_ref()) {
+            command.envs(environment).env("PATH", path);
+        }
         if let Some((_, Some(cli))) = &claude {
-            if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
+            if !agent.environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
                 // Do not depend on the SDK's optional native-binary download.
                 command.env("CLAUDE_CODE_EXECUTABLE", cli);
             }
@@ -198,7 +232,14 @@ impl RuntimeBundle {
             )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
-            .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
+            .env(
+                "BUZZ_ACP_MCP_COMMAND",
+                if uses_buzz_dev_mcp(&harness.command) {
+                    self.executable("buzz-dev-mcp")?
+                } else {
+                    PathBuf::new()
+                },
+            )
             .env("BUZZ_ACP_RELAY_OBSERVER", "true");
         if defaults.owner_only {
             command
@@ -207,24 +248,33 @@ impl RuntimeBundle {
         }
         let selected = crate::defaults::selectors(&harness, &agent.environment);
         let model = selected.model;
-        if let Some((model_key, provider_key)) = selected.keys {
+        if codex.is_some() {
+            if matches!(
+                harness.configuration,
+                Some(crate::AiConfiguration::Advanced { .. })
+            ) {
+                command.env("BUZZ_ACP_MODEL", &harness.model);
+            }
+        } else {
+            if let Some((model_key, provider_key)) = selected.keys {
+                if let Some(value) = model {
+                    command.env(model_key, value);
+                }
+                if let Some(value) = selected.provider {
+                    command.env(provider_key, value);
+                }
+            } else if pi.is_none() {
+                crate::HarnessConfigurationPolicy::for_command(&harness.command)
+                    .validate_selection(&harness.provider, &harness.model)?;
+            }
             if let Some(value) = model {
-                command.env(model_key, value);
+                let value = if pi.is_some() && !agent.harness.provider.is_empty() {
+                    format!("{}/{value}", agent.harness.provider)
+                } else {
+                    value.to_owned()
+                };
+                command.env("BUZZ_ACP_MODEL", value);
             }
-            if let Some(value) = selected.provider {
-                command.env(provider_key, value);
-            }
-        } else if pi.is_none() {
-            crate::HarnessConfigurationPolicy::for_command(&harness.command)
-                .validate_selection(&harness.provider, &harness.model)?;
-        }
-        if let Some(value) = model {
-            let value = if pi.is_some() && !agent.harness.provider.is_empty() {
-                format!("{}/{value}", agent.harness.provider)
-            } else {
-                value.to_owned()
-            };
-            command.env("BUZZ_ACP_MODEL", value);
         }
         if respond_to == "allowlist" {
             let values = record["respond_to_allowlist"]
@@ -259,14 +309,22 @@ impl RuntimeBundle {
         if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
-        if matches!(
+        if codex.is_some() {
+            if let Some(workers) = agent.environment.get("BUZZ_ACP_AGENTS") {
+                command.env("BUZZ_ACP_AGENTS", workers);
+            }
+        } else if matches!(
             crate::agent_defaults::harness_kind(&harness.command),
             Some("pi" | "goose")
         ) {
             // Validated user behavior overrides win over saved/imported fields.
             // Tool discovery remains host-owned, including Pi's pinned Node.
-            command.envs(environment).env("PATH", path);
-        } else if let Some(workers) = environment.get("BUZZ_ACP_AGENTS") {
+            command
+                .envs(environment.ok_or("Missing harness environment")?)
+                .env("PATH", path.ok_or("Missing harness path")?);
+        } else if let Some(workers) =
+            environment.and_then(|environment| environment.get("BUZZ_ACP_AGENTS"))
+        {
             // The editable worker count wins over imported parallelism for every harness.
             command.env("BUZZ_ACP_AGENTS", workers);
         }
@@ -321,25 +379,9 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
-/// PATH after the runtime bundle for non-Pi harnesses. Windows keeps its native
-/// PATH, where Git Bash and user tools are installed; Unix uses a fixed floor
-/// plus, on Linux, common user-level install locations.
-fn tools_path() -> Result<std::ffi::OsString> {
-    if cfg!(windows) {
-        return Ok(std::env::var_os("PATH").unwrap_or_default());
-    }
-    let mut dirs = Vec::new();
-    if cfg!(target_os = "linux") {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        dirs.extend(
-            home.filter(|h| h.is_absolute())
-                .map(|h| h.join(".local/bin")),
-        );
-        dirs.push(PathBuf::from("/usr/local/bin"));
-    }
-    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
-}
+pub(crate) mod path;
+use path::tools_path;
+
 /// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
 /// An app-owned adapter keeps using its pinned Node, independently of global tools.
 fn claude_tools(
@@ -401,6 +443,7 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
         "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
+        "codex-acp" => app_data.join("codex-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -439,17 +482,20 @@ pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
 }
 
 fn installed_names(names: &[String]) -> Option<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    dirs.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    dirs.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
+    let dirs: Vec<_> = std::env::split_paths(&tools_path().ok()?).collect();
+    // Preserve Windows discovery; Unix discovery and launch share one PATH.
+    #[cfg(windows)]
+    let dirs = {
+        let mut dirs = dirs;
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.insert(0, PathBuf::from(home).join(".local/bin"));
+        }
+        dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+        dirs
+    };
     dirs.into_iter()
         .filter(|p| p.is_absolute())
         .flat_map(|p| names.iter().map(move |name| p.join(name)))
@@ -554,7 +600,11 @@ impl Controller {
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
-            agent.mcp_command.clone_from(&mcp_command);
+            agent.mcp_command = if uses_buzz_dev_mcp(&agent.harness.command) {
+                mcp_command.clone()
+            } else {
+                None
+            };
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
@@ -633,6 +683,29 @@ impl Controller {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
+    /// Resolve a saved Codex draft only after its revision has been fenced.
+    /// Discovery precedes the Advanced model/effort choice and does not depend
+    /// on it, so validate that intent at Save, as Create does.
+    pub fn codex_model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        mut edit: AgentEdit,
+    ) -> Result<crate::codex::CodexContext> {
+        if matches!(
+            edit.harness.configuration,
+            Some(crate::AiConfiguration::Advanced { .. })
+        ) {
+            edit.harness.configuration = Some(crate::AiConfiguration::Default);
+            edit.harness.model.clear();
+        }
+        let agent = self.edited_agent(id, revision, edit)?;
+        crate::codex::CodexContext::for_agent(
+            &agent.harness.command,
+            Path::new(&agent.workspace),
+            &agent.environment,
+        )
+    }
     pub fn pi_launch_context(
         &self,
         id: &str,
@@ -675,6 +748,15 @@ impl Controller {
         crate::pi::PiContext::new(
             &edit.harness,
             &edit.workspace,
+            &draft_environment(edit.environment),
+        )
+    }
+    /// Resolve an unsaved Codex draft against the same effective defaults used
+    /// by a later save or launch.
+    pub fn draft_codex_model_context(&self, edit: AgentEdit) -> Result<crate::codex::CodexContext> {
+        crate::codex::CodexContext::for_agent(
+            &edit.harness.command,
+            Path::new(&edit.workspace),
             &draft_environment(edit.environment),
         )
     }
@@ -855,6 +937,26 @@ impl Controller {
                 (a.id.clone(), crate::restart::spawn_config(&effective))
             })
             .collect())
+    }
+    /// Kept agents answer only to the owner who authorized them, not to whoever
+    /// signs in next. `signed_in` is `None` when no human identity is available.
+    /// A missing or malformed attestation is refused later by launch validation.
+    pub fn check_owner(&self, id: &str, signed_in: Option<&str>) -> Result<()> {
+        check_owner(self.attested_owner(id)?.as_deref(), signed_in)
+    }
+    /// The human owner named in the agent's saved authorization, if any.
+    pub fn attested_owner(&self, id: &str) -> Result<Option<String>> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        Ok(agent
+            .auth_tag
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+            .and_then(|tag| tag.into_iter().nth(1)))
     }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
         let agents = self.store.agents()?;
@@ -1233,6 +1335,10 @@ fn model_context_with_defaults(
     })
 }
 
+fn uses_buzz_dev_mcp(command: &str) -> bool {
+    crate::HarnessConfigurationPolicy::for_command(command).include_buzz_dev_mcp
+}
+
 // Saved legacy Goose selections may still carry the CLI's ACP subcommand.
 // Explicit external paths keep their original arguments.
 fn goose_args(command: &str, args: &[String]) -> Vec<String> {
@@ -1253,4 +1359,27 @@ fn goose_args(command: &str, args: &[String]) -> Vec<String> {
         normalized.remove(0);
     }
     normalized
+}
+
+/// Kept agents answer to the owner who authorized them, not whoever signs in next.
+pub fn check_owner(attested: Option<&str>, signed_in: Option<&str>) -> Result<()> {
+    match attested {
+        Some(owner) if signed_in != Some(owner) => Err(
+            "This agent belongs to a different Buzz identity. Sign in with its owner's key to start it."
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Sign out's "Also remove my agents", run at launch before the wipe: delete every
+/// local agent's key from the registry at `root`. Repeatable, because deleting an
+/// absent key succeeds; the registry itself is left for the wipe. Import keeps a
+/// local copy of every agent's key, deployed remote ones included, so each copy
+/// goes; the remote deployment itself is neither stopped nor deleted.
+pub fn delete_local_agent_keys(root: PathBuf, credentials: &dyn Credentials) -> Result<()> {
+    for agent in Store::open(root)?.agents()? {
+        credentials.delete(&agent.credential_id, &agent.pubkey)?;
+    }
+    Ok(())
 }

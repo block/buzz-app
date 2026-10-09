@@ -7,6 +7,7 @@ import {
   screen,
   fireEvent,
   act,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentControl } from "./control";
@@ -29,11 +30,13 @@ it("failed automatic start is visible and dismissible without claiming the messa
       new AbortController().signal,
     )(),
   );
-  expect(screen.getByRole("dialog")).toHaveTextContent(
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Message sent, but Fixture agent could not start",
   );
-  expect(screen.getByRole("dialog")).toHaveTextContent("Stop old Buzz");
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Stop old Buzz");
   fireEvent.click(screen.getByRole("button", { name: "Dismiss agent notice" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
   control.dispose();
 });

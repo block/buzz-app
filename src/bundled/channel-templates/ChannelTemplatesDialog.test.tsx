@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -10,6 +11,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AgentControl } from "../../features/agents/control";
+import type { TeamSnapshot } from "../../features/agents/team-bundles";
+import type { RelaySession } from "../../features/relay/session";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import type {
   KitEntry,
@@ -57,6 +61,20 @@ function fixture(
   const save = vi.fn<ChannelKit["save"]>();
   const kit: ChannelKit = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
+    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => {
+      throw new Error("No text fixture prepare");
+    }),
+    publishText: vi.fn(async () => {
+      throw new Error("No text fixture publish");
+    }),
     snapshot: () => state,
     subscribe: () => () => {},
     ensure: vi.fn(),
@@ -132,6 +150,84 @@ it("shows the library on the page and returns from editing without a library dia
   );
   await waitFor(() => expect(trigger).toHaveFocus());
 });
+it("shows preview rejection beside import and clears it on retry", async () => {
+  const previewTeam = vi.fn(async (_content: string): Promise<TeamSnapshot> => {
+    throw new Error("Invalid team snapshot");
+  });
+  const state = { status: "ready" as const, entries: [entry] };
+  const kit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure: vi.fn(),
+    refresh: vi.fn(),
+    save: vi.fn(),
+  } as unknown as ChannelKit;
+  const { container } = render(
+    <TemplateLibrary
+      section="team"
+      kit={kit}
+      active={() => true}
+      catalog={{
+        kit: state,
+        agents: [],
+        agentsReady: true,
+        agentsComplete: true,
+        agentsPending: false,
+        error: undefined,
+        refresh: vi.fn(),
+      }}
+      control={{ previewTeam, create: vi.fn() } as unknown as AgentControl}
+      session={
+        {
+          viewer: "ab".repeat(32),
+          scope: `https://relay.example.test:${"ab".repeat(32)}`,
+          communityCatalog: { available: () => false },
+        } as RelaySession
+      }
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = container.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement;
+  const file = new File(['{"broken":true}'], "team.json", {
+    type: "application/json",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid team snapshot",
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  previewTeam.mockResolvedValueOnce({
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: { name: "Recovered" },
+    members: [],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(
+    await screen.findByRole("dialog", { name: /Import team snapshot/i }),
+  ).toBeInTheDocument();
+  expect(previewTeam).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("opens team creation directly without a chooser", async () => {
+  const user = userEvent.setup();
+  fixture(false, [], "ready", true, "team");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const dialog = screen.getByRole("dialog", { name: "Add team" });
+  expect(
+    within(dialog).getByRole("button", { name: "Save team" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeVisible();
+});
+
 it("delete cancellation leaves the page and saved data intact", async () => {
   const user = userEvent.setup();
   const { save } = fixture(false, [entry], "ready", true, "team");
@@ -198,7 +294,13 @@ it("deletion preserves its revision, locks dismissal while pending and retains e
     within(confirmation).getByRole("button", { name: "Delete" }),
   );
   try {
-    expect(save).toHaveBeenCalledExactlyOnceWith(team, "head", true);
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      team,
+      "head",
+      true,
+      undefined,
+      expect.anything(),
+    );
     expect(
       within(confirmation).getByRole("button", { name: "Cancel" }),
     ).toBeDisabled();
@@ -234,6 +336,9 @@ it("editing saves against the original revision and closes back to its caller", 
   expect(save).toHaveBeenCalledExactlyOnceWith(
     { ...team, name: "Renamed team" },
     "head",
+    false,
+    undefined,
+    expect.anything(),
   );
   expect(close).toHaveBeenCalledExactlyOnceWith(false);
 });
@@ -252,7 +357,7 @@ const templateEntry: KitEntry = {
   eventId: "template-head",
   record: { ...entry.record, value: template },
 };
-it.each(["Saved template", "x".repeat(120)])(
+it.each(["x".repeat(120)])(
   "duplicates %s as an unsaved independent draft",
   async (name) => {
     const user = userEvent.setup();
@@ -309,14 +414,14 @@ it.each(["template", "team"] as const)(
       `New saved ${type}`,
     );
     await user.click(screen.getByRole("button", { name: `Save ${type}` }));
-    expect(save).toHaveBeenCalledWith(
+    expect(save.mock.calls[0]?.slice(0, 2)).toEqual([
       expect.objectContaining({
         type,
         id: expect.any(String),
         name: `New saved ${type}`,
       }),
       undefined,
-    );
+    ]);
     await waitFor(() => expect(trigger).toHaveFocus());
   },
 );
@@ -394,6 +499,20 @@ it("closes the save-as-template editor after successful creation", async () => {
   const close = vi.fn();
   const kit: ChannelKit = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
+    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => {
+      throw new Error("No text fixture prepare");
+    }),
+    publishText: vi.fn(async () => {
+      throw new Error("No text fixture publish");
+    }),
     snapshot: () => state,
     subscribe: () => () => {},
     ensure() {},

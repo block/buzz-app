@@ -1,8 +1,12 @@
 import { expect, it } from "vitest";
 import canvasCases from "../src/features/channel-templates/canvas-signing-contract.json";
+import textCases from "../src/features/channel-templates/team-text-admission-contract.json";
+import { getPublicKey, nip44 } from "nostr-tools";
 import { keypair, signed } from "../src/features/relay/testing.ts";
 import {
   coordinate,
+  privateCoordinate,
+  privateTag,
   KIT_TAG,
   parseKitRecord,
   resolveLineup,
@@ -14,6 +18,7 @@ import {
   validCanvas,
 } from "./channel-kit.mjs";
 
+import { encodeTeamPayload } from "../src/features/channel-templates/team-payload.ts";
 const community = "https://relay.example.test";
 const owner = keypair();
 const record = {
@@ -161,3 +166,113 @@ it("bounds Canvas content in UTF-8 bytes, not JavaScript characters", () => {
   expect(validCanvas({ ...canvas, content })).toBe(true);
   expect(validCanvas({ ...canvas, content: `${content}x` })).toBe(false);
 });
+
+it("encrypts manifest and payload records with exact owner/revision admission", async () => {
+  const snapshot = {
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: { name: "Portable", instructions: "TEAM".repeat(10000) },
+    members: [
+      {
+        format: "buzz-agent-snapshot",
+        version: 1,
+        definition: { name: "Agent", systemPrompt: "INDIVIDUAL" },
+        profile: { displayName: "Agent" },
+        memory: { level: "none", entries: [] },
+      },
+    ],
+  };
+  const { manifest, payloads } = await encodeTeamPayload(
+    snapshot,
+    community,
+    owner.pubkey,
+    "portable",
+  );
+  const records = [
+    {
+      version: 2,
+      community,
+      deleted: false,
+      value: {
+        type: "team",
+        id: "portable",
+        name: "Portable",
+        agents: [keypair().pubkey],
+        portable: manifest,
+      },
+    },
+    ...payloads.map((payload) => ({
+      version: 1,
+      community,
+      deleted: false,
+      value: {
+        ...payload,
+        type: "team-payload",
+        id: `${payload.revision}-${payload.index}`,
+      },
+    })),
+  ];
+  for (const record of records) {
+    const event = signed(owner, {
+      kind: 30078,
+      content: prepareChannelKit(record, owner.secret, community),
+      tags: [
+        ["d", privateCoordinate(record)],
+        ["t", privateTag(record)],
+      ],
+    });
+    expect(event.content).not.toContain("INDIVIDUAL");
+    expect(decodeChannelKit([event], owner.secret, community)).toEqual([
+      { eventId: event.id, record },
+    ]);
+    expect(() =>
+      admitChannelKit(
+        {
+          ...event,
+          tags: [
+            ["d", privateCoordinate(record)],
+            ["t", KIT_TAG],
+          ],
+        },
+        owner.secret,
+        community,
+      ),
+    ).toThrow("coordinate");
+  }
+  const wrong = structuredClone(records[0]);
+  wrong.value.portable.owner = keypair().pubkey;
+  const event = signed(owner, {
+    kind: 30078,
+    content: prepareChannelKit(wrong, owner.secret, community),
+    tags: [
+      ["d", privateCoordinate(wrong)],
+      ["t", privateTag(wrong)],
+    ],
+  });
+  expect(() => admitChannelKit(event, owner.secret, community)).toThrow(
+    "another viewer",
+  );
+});
+
+// The same corpus runs against native admission in `src-tauri/src/relay/kit.rs`.
+it.each(textCases)(
+  "team-text head admission: $name",
+  ({ accepted, record, tags }) => {
+    const textCommunity = "https://relay.test";
+    const bind = (value) =>
+      JSON.parse(JSON.stringify(value).replaceAll("OWNER", owner.pubkey));
+    const key = nip44.v2.utils.getConversationKey(
+      owner.secret,
+      getPublicKey(owner.secret),
+    );
+    const event = signed(owner, {
+      kind: 30078,
+      // Encrypted directly so invalid records reach admission.
+      content: nip44.v2.encrypt(JSON.stringify(bind(record)), key),
+      tags: bind(tags),
+    });
+    const admit = () => admitChannelKit(event, owner.secret, textCommunity);
+    if (accepted) expect(admit()).toEqual(bind(record));
+    else expect(admit).toThrow();
+  },
+);

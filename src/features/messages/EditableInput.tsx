@@ -384,17 +384,17 @@ export function EditableInput({
         decorations(state) {
           const { from, to } = state.selection;
           const ranges: Decoration[] = [];
-          if (!projectComposerDocument(state.doc).draft.text) {
-            state.doc.descendants((node, pos) => {
-              if (node.isTextblock) {
-                ranges.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    "data-placeholder": current.current.placeholder,
-                  }),
-                );
-                return false;
-              }
-            });
+          const first = state.doc.firstChild;
+          if (
+            state.doc.childCount === 1 &&
+            first?.type === composerSchema.nodes.paragraph &&
+            first.content.size === 0
+          ) {
+            ranges.push(
+              Decoration.node(0, first.nodeSize, {
+                "data-placeholder": current.current.placeholder,
+              }),
+            );
           }
           state.doc.descendants((node, pos) => {
             if (

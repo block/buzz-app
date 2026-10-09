@@ -10,6 +10,8 @@ shared data service; the GitHub plugin adds rich reference panels to channels.
 - [`browser-host/`](browser-host/README.md): Node host for browser development
   and tests; not a production browser backend or code shipped in desktop.
 - `src-tauri/`: native Rust host used by desktop development and releases.
+- `crates/`: Rust workspace crates used by the native host, including
+  `plugin-manager` (which also builds the `buzzodz` CLI).
 - `scripts/`: development/build tooling, including Vite developer settings and
   the live setup diagnostic probe.
 

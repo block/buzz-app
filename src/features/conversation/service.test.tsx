@@ -10,6 +10,12 @@ import type { Contribution } from "../../plugins/contributions";
 import * as emoji from "../../bundled/emoji";
 import * as mentions from "../../bundled/mentions";
 import * as links from "../../bundled/links";
+import {
+  formatDayGroupLabel,
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 
 const Component = () => null;
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -43,23 +49,13 @@ it("registers both surfaces under the injecting plugin scope, removes and replac
       expect(conversation.ui.Composer).toBe(conversation.ui.Composer);
       expect(conversation.ui.Message).toBe(conversation.ui.Message);
       expect(conversation.ui.Thread).toBe(conversation.ui.Thread);
-      const now = new Date(2026, 9, 2, 14, 30).getTime() / 1000;
-      expect(conversation.format.dayGroupLabel(now, now)).toBe("Today");
-      expect(
-        conversation.format.itemTimestamp(now - 86_400, {
-          withTime: true,
-          nowSeconds: now,
-        }),
-      ).toBe("Yesterday at 2:30 PM");
-      expect(conversation.format.relativeTimestamp(now - 300, now)).toBe(
-        "5 minutes ago",
-      );
-      expect(conversation.format.fullTimestamp(now)).toBe(
-        new Date(now * 1000).toLocaleString(undefined, {
-          dateStyle: "full",
-          timeStyle: "long",
-        }),
-      );
+      // Plugins get the host's own labels; their output is tested at the owner.
+      expect(conversation.format).toEqual({
+        itemTimestamp: formatItemTimestamp,
+        dayGroupLabel: formatDayGroupLabel,
+        fullTimestamp: formatFullTimestamp,
+        relativeTimestamp,
+      });
       ctx.conversation.registerTool({
         id: "tool",
         title: "Tool",

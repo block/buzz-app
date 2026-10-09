@@ -67,6 +67,79 @@ it("resolves requested runtime IDs through installed harness options", () => {
   });
 });
 
+it("moves Codex-owned settings with requested runtime switches", () => {
+  const { agent } = controlFixture();
+  const harnessOptions: NonNullable<ControlSnapshot["harnessOptions"]> = [
+    {
+      id: "goose",
+      command: "/opt/homebrew/bin/goose",
+      label: "Goose",
+      defaultArgs: [],
+      providers: [],
+    },
+    {
+      id: "codex",
+      command: "/tools/codex-acp",
+      label: "Codex",
+      defaultArgs: [],
+      providers: [],
+    },
+  ];
+  const codexAgent = {
+    ...agent,
+    harness: {
+      ...agent.harness,
+      command: "/tools/codex-acp",
+      args: [],
+      provider: "",
+      model: "gpt-5.5",
+      integration: "codex" as const,
+      configuration: {
+        mode: "advanced" as const,
+        effort: { kind: "value" as const, value: "high" },
+      },
+    },
+  };
+  const request = (runtime: string) =>
+    ({
+      type: "agent_management_request",
+      action: "update",
+      requestId: "request-1",
+      request: {
+        channelId: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+        agentName: "Fixture agent",
+        runtime,
+      },
+    }) as const;
+
+  const toGoose = requestedDraft(codexAgent, request("goose"), harnessOptions);
+  expect(toGoose).toMatchObject({
+    command: "/opt/homebrew/bin/goose",
+    model: "",
+  });
+  expect(toGoose.integration).toBeUndefined();
+  expect(toGoose.configuration).toBeUndefined();
+
+  expect(
+    requestedDraft(agent, request("codex-acp"), harnessOptions),
+  ).toMatchObject({
+    command: "/tools/codex-acp",
+    args: "[]",
+    integration: "codex",
+    configuration: { mode: "default" },
+    provider: "",
+    model: "",
+  });
+
+  expect(
+    requestedDraft(codexAgent, request("codex-acp"), harnessOptions),
+  ).toMatchObject({
+    integration: "codex",
+    configuration: { mode: "advanced", effort: { value: "high" } },
+    model: "gpt-5.5",
+  });
+});
+
 it("requires a successful inventory snapshot before review", async () => {
   const refresh = vi.fn(async () => {});
   expect(

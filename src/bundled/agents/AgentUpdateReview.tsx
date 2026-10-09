@@ -364,13 +364,32 @@ export function requestedDraft(
         );
       })
     : undefined;
+  const codex = runtime?.id === "codex";
+  // Like the Harness picker, entering or leaving Codex resets what it owns.
+  const base: AgentDraft =
+    !runtime || codex === (current.integration === "codex")
+      ? current
+      : codex
+        ? {
+            ...current,
+            integration: "codex",
+            configuration: { mode: "default" },
+            provider: "",
+            model: "",
+          }
+        : {
+            ...current,
+            integration: undefined,
+            configuration: undefined,
+            model: "",
+          };
   return {
-    ...current,
-    name: changes.displayName ?? current.name,
-    systemPrompt: changes.systemPrompt ?? current.systemPrompt,
-    command: runtime?.command ?? changes.runtime ?? current.command,
-    args: runtime ? JSON.stringify(runtime.defaultArgs ?? []) : current.args,
-    provider: changes.provider ?? current.provider,
-    model: changes.model ?? current.model,
+    ...base,
+    name: changes.displayName ?? base.name,
+    systemPrompt: changes.systemPrompt ?? base.systemPrompt,
+    command: runtime?.command ?? changes.runtime ?? base.command,
+    args: runtime ? JSON.stringify(runtime.defaultArgs ?? []) : base.args,
+    provider: changes.provider ?? base.provider,
+    model: changes.model ?? base.model,
   };
 }

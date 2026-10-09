@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
 
 const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
@@ -108,6 +109,28 @@ impl AppAgentHost {
             agent
         })
         .await
+    }
+    /// The environment a process of `plugin` runs with to act as one of its own
+    /// agents: the key, community and owner attestation, named as the harness
+    /// passes them to buzz-acp. Unlike `publish`, whatever holds the key can
+    /// sign any event as the agent.
+    pub(crate) async fn process_identity(
+        &self,
+        pubkey: String,
+        plugin: &str,
+    ) -> Result<Vec<(&'static str, Zeroizing<String>)>, String> {
+        let agent = self.agent(pubkey).await?;
+        if agent.agent_type.split_once('/').map(|(owner, _)| owner) != Some(plugin) {
+            return Err("That agent belongs to another plugin".into());
+        }
+        let (agent, key) = self.key(agent).await?;
+        let hex = key.hex();
+        Ok(vec![
+            ("BUZZ_PRIVATE_KEY", hex.clone()),
+            ("NOSTR_PRIVATE_KEY", hex),
+            ("BUZZ_RELAY_URL", Zeroizing::new(agent.relay.clone())),
+            ("BUZZ_AUTH_TAG", Zeroizing::new(agent.auth.clone())),
+        ])
     }
 }
 

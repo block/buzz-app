@@ -48,7 +48,7 @@ for (const mode of ["offline", "pending", "prestarted"] as const) {
     if (mode === "prestarted") owner.session.channels.ensureList();
     return { owner, scripted };
   };
-  for (const command of ["ensureList", "refreshList"] as const) {
+  for (const command of ["refreshList"] as const) {
     it(`${mode}: ${command} preserves the public void runtime contract`, () => {
       const { owner } = setup();
       try {

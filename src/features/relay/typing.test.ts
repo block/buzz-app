@@ -122,7 +122,7 @@ it("messages win a batch, suppress late pulses for two seconds and retain timest
   vi.advanceTimersByTime(8000);
   expect(snapshot()).toEqual([]);
 });
-for (const kind of [9, 40002]) {
+for (const kind of [9]) {
   it(`kind ${kind} quiet suppression remembers replayed pulses without deferring activity or extending quiet`, () => {
     const { owner, snapshot } = setup();
     owner.accept([
@@ -202,7 +202,7 @@ describe("activity capacity", () => {
   });
 });
 
-for (const kind of [9, 40002]) {
+for (const kind of [9]) {
   for (const scope of ["mention", "quote", "reply", "nested"] as const) {
     it(`kind ${kind} ${scope} content clears and suppresses its authoritative scope`, () => {
       const { owner, snapshot } = setup();

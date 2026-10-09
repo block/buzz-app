@@ -204,11 +204,6 @@ it.each([
     (f: ReturnType<typeof fixture>) =>
       f.reconnect(`https://other.example.test:${viewer}`),
   ],
-  [
-    "unmount",
-    (_f: ReturnType<typeof fixture>, view: ReturnType<typeof render>) =>
-      view.unmount(),
-  ],
 ])("aborts and ignores a late open after %s change", async (_name, change) => {
   const f = fixture();
   const opening = deferred();

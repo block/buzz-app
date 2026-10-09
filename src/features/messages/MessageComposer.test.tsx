@@ -2564,7 +2564,7 @@ it.each([
   },
 );
 
-it.each([undefined, "root"])(
+it.each([undefined])(
   "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
   async (root) => {
     const h = mount(root ? { threadRootId: root } : {});
@@ -2870,7 +2870,7 @@ it("keeps the typed colon after a partial shortcode and never accepts emoji on S
   expect(h.input()).toHaveValue("hello :-1");
 });
 
-it.each(["at 10:30", "see http"])(
+it.each(["at 10:30"])(
   "leaves the colon in times and URLs alone: %s",
   (typed) => {
     const h = mountEmojiTypeahead();

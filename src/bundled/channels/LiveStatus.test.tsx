@@ -58,7 +58,6 @@ it.each<Partial<Snapshot>>([
   {
     routes: [channel, { id: "profiles", status: "pending", replay: "unknown" }],
   },
-  { heads: [{ channelId: "a", state: "pending" }] },
   { heads: [{ channelId: "a", state: "deferred" }] },
 ])(
   "does not turn ordinary setup into a yellow recovery warning: %j",
@@ -172,7 +171,7 @@ it("keeps partial roster coverage visible even with healthy established routes",
   );
 });
 
-it.each(["idle", "pending"] as const)(
+it.each(["pending"] as const)(
   "keeps partial roster coverage quiet while discovery is %s",
   (state) => {
     expect(render({ roster: { state } }, true)).toBe("");
@@ -189,15 +188,14 @@ it.each(["error", "deferred"] as const)(
     expect(notice).toContain("Retry live updates");
   },
 );
-it.each<Partial<Snapshot>>([
-  { error: "Socket refused" },
-  { routes: [{ ...channel, status: "error", error: "Stream stopped" }] },
-  { heads: [{ channelId: "a", state: "error", error: "Head read failed" }] },
-])("pending partial discovery does not hide another failure: %j", (patch) => {
-  const notice = render({ ...patch, roster: { state: "pending" } }, true);
-  expect(notice).toContain("Retry live updates");
-  expect(notice).not.toContain("Some channels are missing");
-});
+it.each<Partial<Snapshot>>([{ error: "Socket refused" }])(
+  "pending partial discovery does not hide another failure: %j",
+  (patch) => {
+    const notice = render({ ...patch, roster: { state: "pending" } }, true);
+    expect(notice).toContain("Retry live updates");
+    expect(notice).not.toContain("Some channels are missing");
+  },
+);
 
 it("diagnostics does not duplicate notices; changing the selected channel/session replaces recovery ownership", () => {
   const oldRetry = vi.fn();

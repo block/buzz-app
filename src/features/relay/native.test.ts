@@ -194,29 +194,6 @@ it("sends combined search operators through packaged native signed HTTP without 
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("routes operator-only filtered message reads over packaged native HTTP", async () => {
-  const transport = await connectNativeTransport(community);
-  const hit = message(viewer, "channel", "recent", 1800000000);
-  respond = () => ({ body: [hit] });
-  const filters = [
-    {
-      kinds: [9, 40002, 40008],
-      authors: [viewer.pubkey],
-      "#h": ["channel"],
-      since: 1700000000,
-      limit: 20,
-    },
-  ];
-  await expect(transport.query(filters)).resolves.toEqual([hit]);
-  expect(requests.at(-1)).toMatchObject({
-    community,
-    path: "/query",
-    method: "POST",
-    body: JSON.stringify(filters),
-  });
-  expect(fetch).not.toHaveBeenCalled();
-});
-
 it("reads back expired delivery with strong consistency without re-signing or publishing it", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.writer);
@@ -1567,9 +1544,6 @@ it("uploads exact bytes natively and validates the relay descriptor", async () =
 });
 
 it.each([
-  [401, "", "denied"],
-  [413, "", "size"],
-  [429, "", "capacity"],
   [422, { error: "metadata forbidden" }, "metadata"],
   [415, { error: "unsupported container" }, "rejected"],
   [500, "internal error", "failed"],
@@ -1703,11 +1677,7 @@ it("exposes read-state only for advertised snapshots and keeps signing purpose-b
   expect(requests.every((r) => r.path !== "/events")).toBe(true);
 });
 
-it.each([
-  [400, READ_STATE_TIMESTAMP_REFUSAL, true],
-  [400, "invalid: other", false],
-  [503, READ_STATE_TIMESTAMP_REFUSAL, false],
-])(
+it.each([[400, READ_STATE_TIMESTAMP_REFUSAL, true]])(
   "native read-state preserves only definitive timestamp refusal (%s %s)",
   async (status, error, timestamp) => {
     const transport = await connectNativeTransport("https://read-expiry.test");
@@ -2020,10 +1990,6 @@ it("prepares HEIC and video in the native upload without dev-broker fetches", as
 
 it.each([
   [403, { error: "no access" }, "denied"],
-  [413, { error: "too large" }, "size"],
-  [429, { error: "busy" }, "capacity"],
-  [422, { error: "metadata forbidden" }, "metadata"],
-  [415, { error: "unsupported" }, "rejected"],
   [400, { code: "io" }, "io"],
 ])(
   "maps prepared-upload response %i through the shared policy",

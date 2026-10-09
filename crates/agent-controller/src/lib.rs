@@ -41,8 +41,8 @@ pub use supervisor::dispatch as dispatch_agent_supervisor;
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
 pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published};
 pub use beta_migration::{
-    beta_team_id, BetaTeamMember, BetaTeamStatus, BetaTeamView, PendingBetaTeam, RestoreChoice,
-    RestoreGroup, RestorePreview,
+    beta_team_id, BetaTeamMember, BetaTeamStatus, BetaTeamView, PendingBetaTeam, RestoreGroup,
+    RestorePreview,
 };
 pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};

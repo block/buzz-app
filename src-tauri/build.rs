@@ -121,6 +121,7 @@ fn main() {
             "agent_control_team_sync",
             "agent_control_beta_teams",
             "agent_control_beta_team_restore_preview",
+            "agent_control_beta_team_restore",
             "agent_control_beta_team_finish",
             "agent_control_snapshot",
             "agent_control_log_challenge",

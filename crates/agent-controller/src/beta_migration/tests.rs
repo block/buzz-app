@@ -85,17 +85,7 @@ fn finish(
     texts: &BTreeMap<String, String>,
 ) -> Result<()> {
     let revision = saved(control, &agent.id).revision;
-    control.finish_beta_team(
-        &Imports::default(),
-        &agent.id,
-        revision,
-        outcome,
-        RELAY,
-        &owner(),
-        heads,
-        texts,
-        None,
-    )
+    control.finish_beta_team(&agent.id, revision, outcome, RELAY, &owner(), heads, texts)
 }
 
 #[test]
@@ -184,7 +174,6 @@ fn removed_or_unreadable_member_stays_pending_without_a_write() {
     // Stale revision.
     assert!(control
         .finish_beta_team(
-            &Imports::default(),
             &me.id,
             me.revision + 1,
             BetaTeamStatus::Completed,
@@ -192,7 +181,6 @@ fn removed_or_unreadable_member_stays_pending_without_a_write() {
             &owner(),
             &heads(&[(&team, vec![&me])]),
             &texts(&[(&team, "BETA")]),
-            None,
         )
         .is_err());
     assert_eq!(std::fs::read(&saved_file).unwrap(), before);
@@ -295,7 +283,7 @@ fn older(key: &str, text: &str) -> Agent {
 }
 
 #[test]
-fn restore_reads_old_buzz_and_starts_migration_through_finish() {
+fn restore_starts_the_whole_group_then_each_member_finishes() {
     let root = tempfile::tempdir().unwrap();
     let first = older("ab", "BETA");
     let second = older("cd", "BETA");
@@ -323,31 +311,32 @@ fn restore_reads_old_buzz_and_starts_migration_through_finish() {
     assert_eq!(group.texts, vec!["BETA".to_owned()]);
     assert_eq!(group.team_id, beta_team_id("crew"));
     let team = group.team_id.clone();
-    let finish_with = |control: &mut Controller, text: &str| {
-        control.finish_beta_team(
-            &imports,
-            &first.id,
-            first.revision,
-            BetaTeamStatus::Completed,
-            RELAY,
-            &owner(),
-            &heads(&[(&team, vec![&first, &second])]),
-            &texts(&[(&team, "BETA")]),
-            Some(&RestoreChoice {
-                token: preview.token.clone(),
-                text: text.into(),
-            }),
-        )
+    let restore = |control: &mut Controller, text: &str| {
+        control.restore_beta_team(&imports, RELAY, &owner(), &preview.token, &team, text)
     };
-    assert!(finish_with(&mut control, "OTHER").is_err());
-    finish_with(&mut control, "BETA").unwrap();
-    let done = saved(&control, &first.id);
-    assert_eq!(done.imported[KEY]["status"], "completed");
-    assert_eq!(done.imported[KEY]["existed"], true);
-    assert_eq!(done.imported[KEY]["source"], "installed");
-    assert_eq!(done.imported["teamBindings"], json!([team]));
+    assert!(restore(&mut control, "OTHER").is_err());
+    restore(&mut control, "BETA").unwrap();
     // Once started, the same restore can't initialize it again.
-    assert!(finish_with(&mut control, "BETA").is_err());
+    assert!(restore(&mut control, "BETA").is_err());
+    // Every member then finishes as a pending agent, each after the other's
+    // finish re-resolved team text across the document.
+    let roster = heads(&[(&team, vec![&first, &second])]);
+    let current = texts(&[(&team, "BETA")]);
+    for member in [&first, &second] {
+        finish(
+            &mut control,
+            member,
+            BetaTeamStatus::Completed,
+            &roster,
+            &current,
+        )
+        .unwrap();
+        let done = saved(&control, &member.id);
+        assert_eq!(done.imported[KEY]["status"], "completed");
+        assert_eq!(done.imported[KEY]["existed"], true);
+        assert_eq!(done.imported[KEY]["source"], "installed");
+        assert_eq!(done.imported["teamBindings"], json!([team]));
+    }
 }
 
 #[test]

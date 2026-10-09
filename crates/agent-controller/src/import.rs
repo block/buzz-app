@@ -205,14 +205,14 @@ impl Imports {
         self.restore = Some(preview.clone());
         Ok(preview)
     }
-    /// The `betaTeam` a restore choice starts, checked against its preview.
+    /// The `betaTeam` a restore choice starts for every member of one group,
+    /// each paired with the revision the preview showed.
     pub(crate) fn restored(
         &self,
         token: &str,
-        id: &str,
-        revision: u64,
+        team_id: &str,
         text: &str,
-    ) -> Result<BetaTeam> {
+    ) -> Result<Vec<(String, u64, BetaTeam)>> {
         let preview = self
             .restore
             .as_ref()
@@ -221,19 +221,12 @@ impl Imports {
         let group = preview
             .groups
             .iter()
-            .find(|group| group.members.iter().any(|member| member.id == id))
-            .ok_or("Agent was not in this restore preview")?;
-        if !group
-            .members
-            .iter()
-            .any(|member| member.id == id && member.revision == revision)
-        {
-            return Err("Agent settings changed; preview the restore again".into());
-        }
+            .find(|group| group.team_id == team_id)
+            .ok_or("Team was not in this restore preview")?;
         if !group.texts.iter().any(|candidate| candidate == text) {
             return Err("Choose one of the previewed team instructions".into());
         }
-        Ok(BetaTeam {
+        let beta = BetaTeam {
             source_id: group.source_id.clone(),
             team_id: group.team_id.clone(),
             name: group.name.clone(),
@@ -241,7 +234,12 @@ impl Imports {
             source: group.source,
             beta_text: text.into(),
             status: BetaTeamStatus::Pending,
-        })
+        };
+        Ok(group
+            .members
+            .iter()
+            .map(|member| (member.id.clone(), member.revision, beta.clone()))
+            .collect())
     }
     pub fn discard(&mut self) {
         self.pending = None;

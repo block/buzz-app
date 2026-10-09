@@ -554,8 +554,38 @@ impl Store {
         }
         Ok(())
     }
-    /// See `Controller::finish_beta_team`. `init` starts an earlier import's
-    /// migration from a restore preview; it is refused once one exists.
+    /// See `Controller::restore_beta_team`. All or nothing.
+    pub(crate) fn start_beta_teams(
+        &mut self,
+        relay: &str,
+        members: Vec<(String, u64, crate::beta_migration::BetaTeam)>,
+    ) -> Result<()> {
+        use crate::beta_migration::{BetaTeam, KEY};
+        let mut doc = self.read()?;
+        for (id, revision, beta) in members {
+            let agent = doc
+                .agents
+                .iter_mut()
+                .find(|a| a.id == id)
+                .ok_or("Agent no longer exists")?;
+            if agent.revision != revision {
+                return Err("Agent settings changed; preview the restore again".into());
+            }
+            if agent.relay_url != relay {
+                return Err("Agent belongs to another community".into());
+            }
+            if BetaTeam::read(agent)?.is_some() {
+                return Err("This agent's team from old Buzz is already set up".into());
+            }
+            if !agent.imported.is_object() {
+                agent.imported = json!({});
+            }
+            agent.imported[KEY] =
+                serde_json::to_value(&beta).map_err(|_| "Could not encode team from old Buzz")?;
+        }
+        self.write(&doc)
+    }
+    /// See `Controller::finish_beta_team`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish_beta_team(
         &mut self,
@@ -565,7 +595,6 @@ impl Store {
         (relay, owner): (&str, &str),
         heads: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
         texts: &std::collections::BTreeMap<String, String>,
-        init: Option<crate::beta_migration::BetaTeam>,
     ) -> Result<()> {
         use crate::beta_migration::{BetaTeam, KEY};
         use crate::BetaTeamStatus::{Completed, Pending, Skipped};
@@ -581,14 +610,7 @@ impl Store {
         if agent.relay_url != relay {
             return Err("Agent belongs to another community".into());
         }
-        let mut beta = match (BetaTeam::read(agent)?, init) {
-            (Some(beta), None) => beta,
-            (None, Some(beta)) => beta,
-            (Some(_), Some(_)) => {
-                return Err("This agent's team from old Buzz is already set up".into())
-            }
-            (None, None) => return Err("This agent has no team from old Buzz".into()),
-        };
+        let mut beta = BetaTeam::read(agent)?.ok_or("This agent has no team from old Buzz")?;
         if beta.status != Pending {
             return Ok(());
         }

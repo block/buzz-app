@@ -1761,6 +1761,32 @@ pub(crate) async fn agent_control_beta_team_restore_preview(
     .await
 }
 
+/// Start one restore-preview group's migration with the chosen text; its
+/// members then finish like any pending agent.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_team_restore(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+    token: String,
+    team_id: String,
+    text: String,
+) -> Result<ControlSnapshot, String> {
+    let owner = identity.inner().viewer().await?;
+    run(state.inner().clone(), move |host| {
+        host.controller.restore_beta_team(
+            &host.imports,
+            &community,
+            &owner,
+            &token,
+            &team_id,
+            &text,
+        )?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
 /// Finish one agent's team from old Buzz against the owner's current catalog.
 /// `teams` maps every readable team to its current text, as for team sync.
 #[tauri::command]
@@ -1773,21 +1799,11 @@ pub(crate) async fn agent_control_beta_team_finish(
     id: String,
     revision: u64,
     outcome: buzz_agent_controller::BetaTeamStatus,
-    restore: Option<buzz_agent_controller::RestoreChoice>,
 ) -> Result<ControlSnapshot, String> {
     let (owner, heads) = crate::relay::current_team_members(identity.inner(), &community).await?;
     run(state.inner().clone(), move |host| {
-        host.controller.finish_beta_team(
-            &host.imports,
-            &id,
-            revision,
-            outcome,
-            &community,
-            &owner,
-            &heads,
-            &teams,
-            restore.as_ref(),
-        )?;
+        host.controller
+            .finish_beta_team(&id, revision, outcome, &community, &owner, &heads, &teams)?;
         Ok(host.snapshot()?.data)
     })
     .await

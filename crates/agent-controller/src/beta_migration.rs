@@ -113,13 +113,6 @@ pub struct RestoreGroup {
     #[serde(skip)]
     pub(crate) source: Option<LegacySource>,
 }
-/// The user's restore choice for one group.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestoreChoice {
-    pub token: String,
-    pub text: String,
-}
 
 impl Controller {
     pub fn pending_beta_teams(&self, community: &str, owner: &str) -> Result<Vec<PendingBetaTeam>> {
@@ -163,6 +156,25 @@ impl Controller {
     ) -> Result<RestorePreview> {
         imports.restore_preview(source, app_data_parent, ids, self.store.agents()?)
     }
+    /// Start the migration of a whole restore group in one native write, using
+    /// the chosen text. Each member must still match the previewed revision;
+    /// afterwards every member finishes like a fresh import's pending agent.
+    pub fn restore_beta_team(
+        &mut self,
+        imports: &crate::Imports,
+        community: &str,
+        owner: &str,
+        token: &str,
+        team_id: &str,
+        text: &str,
+    ) -> Result<()> {
+        let relay = crate::config::canonical_relay(community)?;
+        let members = imports.restored(token, team_id, text)?;
+        for (id, _, _) in &members {
+            self.verify_team_member_owner(id, owner)?;
+        }
+        self.store.start_beta_teams(&relay, members)
+    }
     /// One native write per agent: bind it to its team, resolve every team's
     /// text on the same document, and record the outcome. `Completed` needs the
     /// team readable with the agent on it; `Skipped` needs a team that no
@@ -170,7 +182,6 @@ impl Controller {
     #[allow(clippy::too_many_arguments)]
     pub fn finish_beta_team(
         &mut self,
-        imports: &crate::Imports,
         id: &str,
         revision: u64,
         outcome: BetaTeamStatus,
@@ -178,18 +189,14 @@ impl Controller {
         owner: &str,
         heads: &BTreeMap<String, TeamCatalogEntry>,
         texts: &BTreeMap<String, String>,
-        restore: Option<&RestoreChoice>,
     ) -> Result<()> {
         if texts.len() > 500 || texts.keys().any(|team| team.is_empty() || team.len() > 120) {
             return Err("Invalid team instructions".into());
         }
         self.verify_team_member_owner(id, owner)?;
         let relay = crate::config::canonical_relay(community)?;
-        let init = restore
-            .map(|choice| imports.restored(&choice.token, id, revision, &choice.text))
-            .transpose()?;
         self.store
-            .finish_beta_team(id, revision, outcome, (&relay, owner), heads, texts, init)
+            .finish_beta_team(id, revision, outcome, (&relay, owner), heads, texts)
     }
 }
 #[cfg(test)]

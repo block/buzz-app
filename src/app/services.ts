@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { bindTeamTextSync } from "../features/agents/team-instructions";
 import {
   createIdentity,
   nativeIdentityEnabled,
@@ -77,6 +78,7 @@ export function createServices() {
   const relay = communities.relay;
   const agents2 = new Agents2Service(ctx, relay);
   ctx.effect(() => bindAgentMentions(agentControl, communities));
+  ctx.effect(() => bindTeamTextSync(agentControl, communities));
   const notifications = new NotificationsService(
     ctx,
     navigation,

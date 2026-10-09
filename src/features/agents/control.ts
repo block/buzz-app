@@ -272,23 +272,17 @@ export interface AgentControlHost {
     bundle?: BundleMember,
   ): Promise<ControlSnapshot>;
   exportTeam?(
-    snapshot: TeamSnapshot,
+    team: TeamSnapshot["team"],
     members: string[],
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  applyTeamInstructions?(
-    id: string,
-    revision: number,
-    instructions: string,
-    team: string,
+  /** Writes each team's current text into its members' settings, clears it
+   * for agents no team with text lists, and never restarts anyone. */
+  syncTeamInstructions?(
     community: string,
+    teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
-  captureTeam?(
-    team: TeamSnapshot["team"],
-    members: string[],
-    community: string,
-  ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
@@ -364,23 +358,17 @@ export interface AgentControl {
     bundle?: BundleMember,
   ): Promise<AgentView>;
   exportTeam?(
-    snapshot: TeamSnapshot,
+    team: TeamSnapshot["team"],
     members: string[],
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  applyTeamInstructions?(
-    id: string,
-    revision: number,
-    instructions: string,
-    team: string,
+  /** Writes each team's current text into its members' settings, clears it
+   * for agents no team with text lists, and never restarts anyone. */
+  syncTeamInstructions?(
     community: string,
+    teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
-  captureTeam?(
-    team: TeamSnapshot["team"],
-    members: string[],
-    community: string,
-  ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
@@ -733,52 +721,30 @@ export function createAgentControl(
           },
         }
       : {}),
-    ...(host?.applyTeamInstructions
+    ...(host?.syncTeamInstructions
       ? {
-          applyTeamInstructions: (
-            id: string,
-            revision: number,
-            instructions: string,
-            team: string,
+          syncTeamInstructions: (
             community: string,
+            teams: Record<string, string>,
           ) =>
             run(async (host) => {
-              if (!host.applyTeamInstructions)
+              if (!host.syncTeamInstructions)
                 throw new Error("Team instruction updates are unavailable.");
-              return host.applyTeamInstructions(
-                id,
-                revision,
-                instructions,
-                team,
-                community,
-              );
+              return host.syncTeamInstructions(community, teams);
             }, ready),
-        }
-      : {}),
-    ...(host?.captureTeam
-      ? {
-          captureTeam: (
-            team: TeamSnapshot["team"],
-            members: string[],
-            community: string,
-          ) => {
-            if (!host.captureTeam)
-              throw new Error("Team capture is unavailable.");
-            return host.captureTeam(team, members, community);
-          },
         }
       : {}),
     ...(host?.exportTeam
       ? {
           exportTeam: (
-            snapshot: TeamSnapshot,
+            team: TeamSnapshot["team"],
             members: string[],
             community: string,
             memoryLevel: "none" | "core" | "everything" = "none",
           ) => {
             if (!host.exportTeam)
               throw new Error("Team export is unavailable.");
-            return host.exportTeam(snapshot, members, community, memoryLevel);
+            return host.exportTeam(team, members, community, memoryLevel);
           },
         }
       : {}),

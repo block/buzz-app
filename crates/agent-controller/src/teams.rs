@@ -237,13 +237,11 @@ pub struct TeamCatalogEntry {
     pub members: Vec<String>,
 }
 impl Controller {
-    pub fn reconcile_team_bindings(
-        &mut self,
-        community: &str,
+    fn validate_team_catalog(
+        &self,
         owner: &str,
         teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
     ) -> Result<()> {
-        let relay = crate::config::canonical_relay(community)?;
         if !crate::config::canonical_key(owner)
             || teams.len() > 500
             || teams.values().any(|head| {
@@ -256,30 +254,24 @@ impl Controller {
         {
             return Err("Invalid team catalog".into());
         }
-        self.store.reconcile_team_bindings(&relay, owner, teams)
+        Ok(())
     }
-    pub fn apply_team_instructions(
+    /// Save and app-start sync: release obsolete bindings, then copy each
+    /// readable team's current text to its members. Never restarts an agent.
+    pub fn sync_team_instructions(
         &mut self,
-        id: &str,
-        revision: u64,
-        instructions: &str,
+        community: &str,
         owner: &str,
-        binding: (&str, &str),
-    ) -> Result<bool> {
-        let (team, community) = binding;
-        self.verify_team_member_owner(id, owner)?;
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
-            .find(|a| a.id == id)
-            .ok_or("Agent no longer exists")?;
-        let relay = crate::config::canonical_relay(community)?;
-        if agent.relay_url != relay {
-            return Err("Team member belongs to another community".into());
+        heads: &std::collections::BTreeMap<String, TeamCatalogEntry>,
+        texts: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        if texts.len() > 500 || texts.keys().any(|team| team.is_empty() || team.len() > 120) {
+            return Err("Invalid team instructions".into());
         }
+        self.validate_team_catalog(owner, heads)?;
+        let relay = crate::config::canonical_relay(community)?;
         self.store
-            .team_instructions(id, revision, instructions, team)
+            .sync_team_instructions(&relay, owner, heads, texts)
     }
     pub fn team_member_authorization(&self, id: &str, owner: &str) -> Result<String> {
         self.verify_team_member_owner(id, owner)?;

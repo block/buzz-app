@@ -633,8 +633,7 @@ const rows = () =>
 async function chooseFilter(label: string, control = "Activity type") {
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  trigger.focus();
-  await user.keyboard("{Enter}");
+  await user.click(trigger);
   await screen.findByRole("menu", { name: "Inbox filters" });
   if (control === "Sender") {
     const people = screen.getByRole("menuitemcheckbox", { name: "People" });
@@ -734,9 +733,7 @@ it.each(["Please review", "A thread update"])(
     expect(
       screen.queryByRole("region", { name: "Inbox detail" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Activity type" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
     expect(h.journal()).toEqual(journal);
     act(() => h.archiveRoom(false, 101));
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -798,7 +795,7 @@ it.each([false, true])(
           screen.queryByRole("region", { name: "Inbox detail" }),
         ).not.toBeInTheDocument();
         expect(
-          screen.getByRole("combobox", { name: "Activity type" }),
+          screen.getByRole("button", { name: "Inbox filters" }),
         ).toHaveFocus();
         expect(h.journal()).toEqual(journal);
       }

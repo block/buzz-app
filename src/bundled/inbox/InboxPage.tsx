@@ -517,13 +517,14 @@ export function InboxView({
         onSenderChange={setSenderFilter}
         onUnreadChange={setUnreadOnly}
       />
-      {!drafts && (
+      {!drafts && loading && (
         <div className={styles.headerTitle}>
-          {loading && (
-            <span className={`${styles.refreshStatus} text-caption text-subtle`} role="status">
-              Checking recent activity…
-            </span>
-          )}
+          <span
+            className={`${styles.refreshStatus} text-caption text-subtle`}
+            role="status"
+          >
+            Checking recent activity…
+          </span>
         </div>
       )}
     </header>

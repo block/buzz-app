@@ -290,11 +290,12 @@ tracing fetched events, participation evidence and filtering. Agree mixed/unknow
 sender behavior, mention policy and filter persistence separately. Coordinate
 John's archive/refresh/development work; progressive relay loading is not fixed here.
 
-**Evidence:** the tighter-limit snapshot based on `93b84056` passes 112 Inbox tests,
-2 shared-hook tests, types/design guards/build, and 66 Chromium/WebKit executions
-across Inbox, sidebar and existing shared-panel journeys. The hosted sidebar test
-was repaired for the filter control; the prior JavaScript lane hit its 10-minute
-timeout, which remains a separate CI concern. Common splitter checks stay in Inbox;
-Drafts keeps cross-view width, header alignment, narrow sizing, real editing and
-modal/focus coverage. No browser cases were removed. Human confirmation and hosted
-CI remain gates; local synthetic checks do not attest native/live acceptance.
+**Evidence:** the latest-main integration on `30606adb` preserves John's #757
+archive retirement and #758 refresh status without shifting rows. It passes 118
+Inbox tests, 2 shared-hook tests, types/design guards/build, and 74 Chromium/WebKit
+executions across Inbox, sidebar and existing panel journeys. The hosted sidebar
+selector was repaired; the prior JavaScript lane hit its 10-minute timeout, a
+separate CI concern. Common splitter checks stay in Inbox; Drafts keeps cross-view
+width, header alignment, narrow sizing, editing and modal/focus coverage. No browser
+cases were removed. Human confirmation and hosted CI remain gates; local synthetic
+checks do not attest native/live acceptance.

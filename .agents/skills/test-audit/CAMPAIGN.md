@@ -48,7 +48,8 @@ bin/pnpm exec vitest run --coverage.enabled --coverage.provider=v8 \
   --coverage.include='src/**' --coverage.include='browser-host/**' \
   --coverage.exclude='**/*testing.ts' --coverage.exclude='**/test-*.ts' \
   --coverage.exclude='**/*fixture*' --coverage.exclude='**/*.journey.mjs' \
-  --coverage.reporter=json-summary --coverage.reporter=text-summary \
+  --coverage.reporter=json --coverage.reporter=json-summary \
+  --coverage.reporter=text-summary \
   --coverage.reportsDirectory=<scratch dir>
 ```
 
@@ -60,9 +61,13 @@ bin/pnpm exec vitest run --coverage.enabled --coverage.provider=v8 \
 - Measure each PR at its merge base and its head, and charge that delta
   against one budget for the whole goal. `main` moves between PRs, so a fixed
   baseline mixes in other changes.
-- Diff the per-file entries in `coverage-summary.json`. A newly uncovered line
-  means no remaining Vitest test executes it. Each such line needs one of
-  three explanations:
+- Use `coverage-summary.json` only for the aggregate budget; per-file totals
+  hide losses that gains elsewhere in the same file offset. Find newly
+  uncovered code in `coverage-final.json`: each statement and branch with a
+  nonzero hit count at the merge base and zero at the head. Match locations
+  directly in source files the PR leaves unchanged, and through the PR's diff
+  in files it edits. Newly uncovered code means no remaining Vitest test
+  executes it. Each such statement or branch needs one of three explanations:
   - it carries no contract;
   - it is dead code, deleted in the same PR;
   - a named browser or Rust test covers it.

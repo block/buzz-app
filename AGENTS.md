@@ -199,10 +199,6 @@ off as your effective git identity. Don't change that identity. Credit the other
 party with a `Co-authored-by` trailer: an agent committing as its human credits
 itself, and an agent committing as itself credits its human.
 
-Never add a sign-off to someone else's commit; ask its author to fix it. After
-rebasing or cherry-picking, check every commit against the PR base and verify
-the DCO Check at the new head.
-
 ## Before opening a PR
 
 Open work in progress as a draft PR. Mark it ready for review only when this

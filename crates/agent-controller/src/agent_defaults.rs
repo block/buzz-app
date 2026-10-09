@@ -212,9 +212,16 @@ pub(crate) fn effort(agent: &Agent) -> Option<&str> {
 
 /// Whether a Pi or Goose behavior override picks effort at launch; an empty
 /// value still replaces the saved effort. Its value never leaves native.
+/// Matches names as the launched process does: case-insensitively on Windows.
 pub(crate) fn effort_from_env(agent: &Agent) -> bool {
     matches!(harness_kind(&agent.harness.command), Some("pi" | "goose"))
-        && agent.environment.contains_key("BUZZ_ACP_EFFORT_LEVEL")
+        && agent.environment.keys().any(|key| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case("BUZZ_ACP_EFFORT_LEVEL")
+            } else {
+                key == "BUZZ_ACP_EFFORT_LEVEL"
+            }
+        })
 }
 
 /// Effort the next start applies on an effective clone, unless an

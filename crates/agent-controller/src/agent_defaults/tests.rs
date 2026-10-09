@@ -116,6 +116,25 @@ fn imported_portable_effort_is_saved_and_wins_over_older_sources() {
 }
 
 #[test]
+fn lowercase_effort_override_matches_launch_name_semantics() {
+    let mut agent = fixture();
+    agent.harness.command = "pi".into();
+    agent
+        .extra
+        .insert(crate::config::OWN_EFFORT.into(), "high".into());
+    for value in ["low", ""] {
+        agent.environment = BTreeMap::from([("buzz_acp_effort_level".into(), value.into())]);
+        // Windows process environment names are case-insensitive, so the
+        // lowercase name replaces the saved effort at launch there only.
+        assert_eq!(effort_from_env(&agent), cfg!(windows));
+        assert_eq!(
+            launch_effort(&agent),
+            if cfg!(windows) { None } else { Some("high") }
+        );
+    }
+}
+
+#[test]
 fn selectors_do_not_cross_harnesses_but_environment_does() {
     let mut agent = fixture();
     agent.harness.command = "/opt/tools/goose".into();

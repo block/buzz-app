@@ -106,6 +106,87 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
     page.getByRole("tab", { name: "Agent Activity", exact: true }),
   ).toHaveCount(0);
 });
+// Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.
+test("Me sidebar shares working activity, keyboard preview and local panel navigation", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const event = (kind) => ({
+    kind,
+    seq: 1,
+    timestamp: new Date().toISOString(),
+    channelId: id,
+    sessionId: "S",
+    turnId: "sidebar-me",
+  });
+  app.observer(event("turn_liveness"), key);
+  const badge = alpha.getByRole("img", { name: /working in Alpha$/ });
+  await page.mouse.move(0, 0);
+  await expect(badge).toBeVisible();
+  await expect(alpha.locator("[data-me-working-indicator]")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await alpha.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Activity in Alpha",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await expect(
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await popup.getByRole("button", { name: /Open conversation for/ }).hover();
+  await popup.getByRole("button", { name: /View .+ activity/ }).click();
+  const panel = page.getByRole("region", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(panel.locator("code").first()).toHaveText(getPublicKey(key));
+  await expect(sidebar).toBeVisible();
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await page
+    .getByRole("button", { name: "Close Agent Activity tab", exact: true })
+    .click();
+  await expect(alpha).toBeFocused();
+  await page.mouse.move(0, 0);
+  await alpha.press("Enter");
+  await expect(popup).toBeVisible();
+  const activityAction = popup.getByRole("button", {
+    name: /View .+ activity/,
+  });
+  for (
+    let step = 0;
+    step < 4 &&
+    !(await activityAction.evaluate(
+      (element) => element === document.activeElement,
+    ));
+    step++
+  )
+    await page.keyboard.press("Tab");
+  await expect(activityAction).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeVisible();
+  await page
+    .getByRole("button", { name: "Close Agent Activity tab", exact: true })
+    .click();
+  // Context actions must remain separate from the activity trigger.
+  await alpha.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Rename", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  app.observer(event("turn_completed"), key);
+  await expect(badge).toHaveCount(0);
+});
+
 // Two browser-mounted readers must keep native drafts and signed sends scoped.
 test("Me tabs retain drafts and send to their own conversation with the Messages tool picker", async ({
   page,

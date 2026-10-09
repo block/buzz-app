@@ -344,3 +344,26 @@
     opacity: 0;
   }
 }
+
+/* Working occupies the same trailing action slot as attention, as in Messages. */
+.organizedRow [data-me-working-indicator] {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--session-action-size);
+  pointer-events: none;
+}
+.organizedRow:is(
+    :hover,
+    :focus-within,
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  [data-me-working-indicator] {
+  opacity: 0;
+}
+@media (hover: none) {
+  .organizedRow [data-me-working-indicator] {
+    opacity: 0;
+  }
+}

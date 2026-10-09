@@ -120,7 +120,8 @@ remain visible and controllable; this rule does not move or delete them.
 Local team-linked imports snapshot the deployment team's instructions from the
 chosen library's `agents/teams.json`, alongside the resolved persona prompt.
 The existing ACP team-instructions input receives that snapshot; later edits in
-old Buzz are not synchronized. As in old Buzz, a deleted team or a directory-only
+old Buzz are not synchronized. Teams saved in this app deliver their own text
+through the same input (see **Team instructions** in `docs/agents.md`). As in old Buzz, a deleted team or a directory-only
 legacy binding without a deployment team ID contributes no team instructions.
 Remote backends and relay mesh remain unsupported.
 
@@ -190,6 +191,13 @@ commits typed text, Escape abandons the query. Save, close and reopen to check i
 If no workspace is configured, edit the agent and set **Databricks workspace (HTTPS origin)**
 under **Advanced → Model**. App maintainers can instead supply the nonsecret
 `DATABRICKS_HOST` build default below and rebuild the app.
+
+The native model-request service also has a Codex discovery path keyed by the
+stable integration ID. It reads the selected Codex CLI's `codex debug models`
+catalog, offers only the models Codex lists in its own picker, and reports effort
+choices for only the selected model. It opens no ACP session, sends no prompt,
+and persists no selection.
+See [Codex model and effort discovery](codex-model-discovery.md).
 
 ### Nonsecret build defaults
 
@@ -283,6 +291,7 @@ every provider requires an API key.
 | Buzz Agent | Selected provider | Scalar selector | Existing defaults and overrides |
 | Goose | Harness, with provider-specific overrides | Scalar selector | Existing defaults and overrides |
 | Pi | Harness, with provider-specific overrides | Discovered provider selector | A selected provider requires a model |
+| Codex | Codex CLI | External Codex configuration | Default, or Advanced discovered model and model-specific effort |
 | Custom executable | External executable | External configuration | Existing saved value |
 
 Policy does not migrate saved records or change validation timing. Pi selection
@@ -292,16 +301,26 @@ at launch. Worker selector keys are shared with native launch resolution;
 environment values never appear in the policy. Older hosts without the policy
 retain the existing editor behavior.
 
-`supportedModes` is currently empty for every integration. Legacy blank-field
-inheritance is not managed Default intent. Admission and persistence of explicit
-Default/Advanced modes belong to the later Codex persistence layer. Likewise,
-`effortDiscovery: "unknown"` means no model-specific capability evidence is
-available; it does not mean effort is unsupported. The existing Agent defaults
+`supportedModes` is empty for every integration except Codex, which supports
+Default and Advanced. Legacy blank-field inheritance is not managed Default
+intent. Likewise, `effortDiscovery: "unknown"` means no model-specific capability
+evidence is available; it does not mean effort is unsupported. Codex reports
+`modelSpecific` effort discovery. The existing Agent defaults
 effort suggestions remain editable suggestions, not allowed-value validation.
 
-This is PR 1 of the [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
-Codex registration, binding, discovery, connection validation, and mode controls
-are separate layers.
+Settings lists Codex with a stable native integration identity. New selection
+requires installed CLI and adapter presence. Once both are found, Settings reads
+the existing CLI login with a bounded `codex login status` on opening, Check
+again, and install completion, as it does for Claude Code; ordinary control
+snapshots do not launch it. Start launches the saved binding without a separate
+probe; adapter and login failures appear in the agent log, as for Claude Code.
+Codex discovery and execution resolve their saved context for each operation. **Adapter needed** offers an app-owned Install of
+the ACP adapter only, following Claude Code's setup. See
+[Codex binding readiness](codex-binding-readiness.md).
+
+Create and Save use ordinary persistence without inference validation. Existing
+agents retain their saved adapter. Advanced model/effort selection remains; see
+[Codex persistence and execution](codex-validation-execution.md).
 
 For native acceptance, use the Buzz community in the ordinary development app.
 Open Create, Edit, and Agent defaults for Buzz Agent, Goose, and Pi. Check
@@ -477,7 +496,10 @@ provider, model, effort and environment variables.
 - Provider, model and effort are **looked up at each start** for fields an agent
   leaves blank, only when the agent uses the default harness; per-agent values
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
-  per-agent field: an imported agent's `effort_level` stays its override.
+  per-agent field: effort carried by a portable agent or team import is saved as
+  the agent's own effort and overrides the default, as does an older imported
+  agent's `effort_level`. Effort chosen through `BUZZ_ACP_EFFORT_LEVEL` is never
+  shown or exported; agents and teams relying on it are refused for export.
 - Permitted environment variables merge **per key**; the agent's key wins.
   `BUZZ_ACP_MODEL` inherits only within the default harness, while shared controls
   such as worker count and system prompt can inherit across Pi and Goose.
@@ -522,11 +544,14 @@ agent's saved community without restarting it. Older native hosts without
 `avatarEditingAvailable` retain the display-only avatar.
 
 An omitted picture preserves the saved override; an empty string explicitly removes
-it. A changed picture durably marks `profilePending`, so closing/reloading does not
-lose the Retry action. The native publisher reads and verifies the agent's current
-signed kind-0 profile, changes only picture, and preserves unrelated content and
-non-auth tags. Name/bot initialization is only for a missing profile. A local
-configuration rename is not an implicit published-profile rename.
+it. A changed picture or name durably marks `profilePending` and remains persisted
+across restart/reload until publication is confirmed. A successful profile publication
+clears both pending fields atomically at the same saved revision; failures and
+superseded receipts leave them available for explicit Retry. The native publisher
+reads and verifies the agent's current signed kind-0 profile, changes only
+`name`/`display_name` for a rename (and `picture` when requested), and preserves
+unrelated content and non-auth tags. Name/bot initialization is only for a missing
+profile.
 
 One native publication per agent can run at a time, including across renderer
 reloads. The host verifies current-profile readback after a matching accepted

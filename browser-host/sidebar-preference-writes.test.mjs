@@ -7,6 +7,7 @@ import {
   nip44,
   verifyEvent,
 } from "nostr-tools";
+import { prepareSidebarAssignment } from "./sidebar-preferences.mjs";
 import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarStar } from "./sidebar-toggle.mjs";
@@ -453,5 +454,64 @@ it("serializes different sidebar endpoints through one relay queue", async () =>
     ["/query", "channel-sort"],
     ["/events", "channel-sort"],
     ["/query", "channel-sort"],
+  ]);
+});
+
+it("real broker removal tombstones only the selected section and confirms readback", async () => {
+  const h = await harness();
+  const signal = new AbortController().signal;
+  const id = "11111111-1111-4111-8111-111111111111";
+  h.heads.set(
+    "channel-sections",
+    prepareSidebarAssignment(
+      [],
+      { channelId: "alpha", createSection: { id, name: "Work" } },
+      h.key,
+    ).event,
+  );
+  expect(await h.transport.removeSidebarSection(id, signal)).toMatchObject({
+    sections: [],
+    assignments: {},
+  });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+  const head = h.heads.get("channel-sections");
+  const key = nip44.v2.utils.getConversationKey(h.key, h.viewer);
+  const saved = JSON.parse(nip44.v2.decrypt(head.content, key));
+  key.fill(0);
+  expect(saved.meta.s[id].live[2]).toBe(false);
+  expect(saved.meta.a.alpha[2]).toBeNull();
+});
+it("broker removal rejects invalid envelopes and unconfirmed publication", async () => {
+  const h = await harness();
+  for (const intent of [
+    null,
+    [],
+    { sectionId: "" },
+    { sectionId: "work", extra: true },
+  ])
+    expect(
+      (await h.post(intent, undefined, "sidebar-section-removal")).status,
+    ).toBe(400);
+  const id = "11111111-1111-4111-8111-111111111111";
+  h.heads.set(
+    "channel-sections",
+    prepareSidebarAssignment(
+      [],
+      { channelId: "alpha", createSection: { id, name: "Work" } },
+      h.key,
+    ).event,
+  );
+  h.conflict();
+  await expect(
+    h.transport.removeSidebarSection(id, new AbortController().signal),
+  ).rejects.toThrow("Relay request failed (502)");
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
   ]);
 });

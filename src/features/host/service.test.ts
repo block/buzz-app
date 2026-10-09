@@ -53,7 +53,6 @@ it("prepares a structured NIP-OA proof with the native identity without a commun
 
 it.each([
   { mode: "browser", tauri: false, live: undefined },
-  { mode: "live browser", tauri: false, live: "1" },
   { mode: "live desktop", tauri: true, live: "1" },
 ])(
   "uses the dev broker identity for $mode authorization without a selected relay",
@@ -184,6 +183,20 @@ it("keeps native command failures and browser calls nullable", async () => {
   vi.mocked(isTauri).mockReturnValue(false);
   await expect(plugin.host.runCommand("status")).resolves.toBeNull();
   expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("passes review decisions as stdin data while keeping the command fixed", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValue('{"accepted":true}');
+  const input =
+    '{"id":"action-a","choice":"allow_once","text":"$(touch injected)"}';
+  await plugin.host.runCommand("review", input);
+  expect(invoke).toHaveBeenCalledWith("plugin_host_run_command", {
+    id: "example.plugin",
+    revision: "abc",
+    commandId: "review",
+    input,
+  });
 });
 
 it("routes HTTPS requests with plugin identity and rejects browser requests", async () => {

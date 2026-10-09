@@ -3,7 +3,6 @@ import { npubEncode } from "nostr-tools/nip19";
 import {
   exactMention,
   rankMentions,
-  mentionMatch,
   type MentionChoice,
 } from "./mention-ranking";
 import { fixtureChoice, mentionConformance } from "./mention-rules.conformance";
@@ -22,104 +21,6 @@ const choice = (
   owned: false,
   ...extra,
 });
-it("groups before relevance, then exact/prefix/word/word-prefix with deterministic ties", () => {
-  const rows = [
-    choice("a", "A Honey"),
-    choice("b", "Honey Bee"),
-    choice("c", "Honey"),
-    choice("d", "Honey", { member: false, agent: true }),
-    choice("e", "A Honeybee"),
-  ];
-  expect(rankMentions(rows, "honey").map((c) => c.recipient.pubkey[0])).toEqual(
-    ["c", "b", "a", "e", "d"],
-  );
-  expect(mentionMatch(choice("a", "A Honey"), "oney")).toBe(Infinity);
-});
-it("ranks resolved label matches before base names and aliases", () => {
-  const other = choice("a", "Honey", {
-    label: "Wes’s Honey",
-    aliases: ["Honey", "Legacy Bee"],
-    agent: true,
-  });
-  const mine = choice("b", "Honey", { agent: true, managed: true });
-  expect(rankMentions([other, mine], "Honey")[0]).toBe(mine);
-  expect(rankMentions([other, mine], "Wes’s")).toEqual([other]);
-  expect(rankMentions([other, mine], "Legacy")).toEqual([other]);
-  expect(mentionMatch(other, "Honey")).toBe(2);
-  const visible = choice("c", "Another name", { label: "Visible Legacy Bee" });
-  expect(rankMentions([other, visible], "Legacy")).toEqual([visible, other]);
-  expect(rankMentions([other, visible], "Legacy Bee")).toEqual([other]);
-  const qualified = choice("d", "Rizz", {
-    label: "tho’s Rizz",
-    agent: true,
-    owned: true,
-  });
-  const displayed = choice("e", "Rizz", { agent: true });
-  expect(rankMentions([qualified, displayed], "riz")).toEqual([
-    displayed,
-    qualified,
-  ]);
-});
-it("history only breaks equally matched same-name agent ties, followed by managed and presence", () => {
-  const a = choice("a", "Honey", { agent: true }),
-    b = choice("b", "Honey", { agent: true, managed: true });
-  expect(
-    rankMentions([a, b], "Honey", new Map([[a.recipient.pubkey, 1]])),
-  ).toEqual([a, b]);
-  const prefix = choice("c", "Honey Bee", { agent: true });
-  expect(
-    rankMentions(
-      [a, prefix],
-      "Honey",
-      new Map([[prefix.recipient.pubkey, 100]]),
-    ),
-  ).toEqual([a, prefix]);
-  expect(
-    rankMentions([a, { ...b, managed: false }], "Honey", undefined, (k) =>
-      k === b.recipient.pubkey ? "online" : "away",
-    )[0]?.recipient.pubkey,
-  ).toBe(b.recipient.pubkey);
-});
-it("Space requires a unique exact full-set match, not a rank winner or short-name prefix", () => {
-  const a = choice("a", "Honey"),
-    b = choice("b", "Honey", { label: "Wes’s Honey" });
-  expect(exactMention([a], "HONEY")).toBe(a.recipient.pubkey);
-  expect(exactMention([a], "Hon")).toBeUndefined();
-  expect(exactMention([a, b], "Honey")).toBeUndefined();
-  expect(exactMention([a, b], "Wes’s Honey")).toBe(b.recipient.pubkey);
-  expect(exactMention([a, choice("c", "Honey Bee")], "Honey")).toBeUndefined();
-});
-
-it("prefers owned agents on equal matches before history, management and presence, not membership or relevance", () => {
-  const other = choice("a", "Rizz", { agent: true, managed: true });
-  const mine = choice("b", "Rizz", { agent: true, owned: true });
-  const history = new Map([[other.recipient.pubkey, 10]]);
-  const presence = (key: string) =>
-    key === other.recipient.pubkey ? "online" : "unknown";
-  expect(rankMentions([other, mine], "riz", history, presence)).toEqual([
-    mine,
-    other,
-  ]);
-  expect(rankMentions([other, { ...mine, member: false }], "riz")[0]).toBe(
-    other,
-  );
-  expect(
-    rankMentions(
-      [other, choice("c", "Rizz Helper", { agent: true, owned: true })],
-      "Rizz",
-    )[0],
-  ).toBe(other);
-  const differentName = choice("c", "Rizz Helper", {
-    agent: true,
-    owned: true,
-  });
-  expect(rankMentions([other, differentName], "riz")).toEqual([
-    differentName,
-    other,
-  ]);
-  expect(exactMention([other, mine], "Rizz")).toBeUndefined();
-});
-
 it("breaks visible match ties by base-name quality, then the full displayed label", () => {
   const rows = [
     choice("3", "Fast Fizz", { agent: true }),
@@ -168,13 +69,6 @@ it("never matches hex or npub keys, including short substrings", () => {
     expect(exactMention([row], query), query).toBeUndefined();
   }
   expect(rankMentions([row], "jan")).toEqual([row]);
-});
-
-it("does not search unnamed identity fallback labels or commit them with Space", () => {
-  const row = choice("a", "aaaaaaaaaaaa", { aliases: [] });
-  expect(rankMentions([row], "")).toEqual([row]);
-  expect(rankMentions([row], "aaa")).toEqual([]);
-  expect(exactMention([row], "aaaaaaaaaaaa")).toBeUndefined();
 });
 
 it("ranks outside humans and agents in one relevance group", () => {

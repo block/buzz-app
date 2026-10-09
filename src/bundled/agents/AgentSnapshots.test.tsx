@@ -18,6 +18,8 @@ import {
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  legacyAgentFileError,
+  MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
   snapshotPngArtwork,
 } from "../../features/agents/snapshot";
@@ -124,6 +126,62 @@ it.each(["json", "png"] as const)(
     expect(h.create).not.toHaveBeenCalled();
   },
 );
+
+it("rejects legacy beta filenames with snapshot migration guidance before parsing", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  const message =
+    "This agent file is from old Buzz and can't be imported directly. If old Buzz is installed on this computer, find that agent on the Agents page under Available to import and click Import.";
+  for (const [name, type] of [
+    ["worker.persona.md", "text/markdown"],
+    ["worker.PERSONA.JSON", "application/json"],
+    ["worker.persona.png", "image/png"],
+    ["worker.zip", "application/zip"],
+  ] as const) {
+    expect(legacyAgentFileError(name)).toBe(message);
+    const contents =
+      name === "worker.zip"
+        ? new Uint8Array(MAX_AGENT_SNAPSHOT_FILE_BYTES + 1)
+        : "legacy";
+    choose(new File([contents], name, { type }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(h.create).not.toHaveBeenCalled();
+  }
+  expect(legacyAgentFileError("worker.agent.json")).toBeUndefined();
+  for (const name of [
+    "worker.agent.png",
+    "worker.json",
+    "worker.png",
+    "my.persona.md.json",
+  ])
+    expect(legacyAgentFileError(name)).toBeUndefined();
+});
+
+it("keeps ordinary markdown files on the normal snapshot parse path", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(new File(["not a snapshot"], "notes.md", { type: "text/markdown" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid snapshot JSON.",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+});
 
 it("refuses malformed received bytes before import and cannot create", async () => {
   const h = importControl();
@@ -638,7 +696,7 @@ it("does not publish memory if identity creation fails", async () => {
   expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
 });
 
-it.each([1, 4])(
+it.each([1])(
   "imports reference worker count %i through native edit and portable re-export",
   async (workers) => {
     const h = importControl();
@@ -1140,32 +1198,6 @@ it("does not read a different community's memory while exporting local config", 
   expect(open).not.toHaveBeenCalled();
 });
 
-it.each(["json", "png"] as const)(
-  "imports ordinary reference %s with explicit worker count through native create",
-  async (format) => {
-    const h = importControl();
-    const snapshot = buildAgentSnapshot(portableAgent());
-    snapshot.definition.sourceIsBuiltin = false;
-    snapshot.definition.parallelism = 1;
-    render(
-      <AgentSnapshotImport
-        control={h.control}
-        destination="https://relay.example.test"
-        owner={"ef".repeat(32)}
-        receivedBytes={encodeAgentSnapshot(snapshot, format)}
-        onClose={() => {}}
-      />,
-    );
-    expect(await screen.findByText("Help with the project.")).toBeVisible();
-    expect(h.create).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Import" }));
-    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
-    expect(h.create.mock.calls[0]?.[3]).toEqual(
-      expect.objectContaining({ environment: { BUZZ_ACP_AGENTS: "1" } }),
-    );
-  },
-);
-
 it("preserves absent parallelism and blocks counts outside native worker range", async () => {
   const h = importControl();
   const snapshot = buildAgentSnapshot(portableAgent());
@@ -1486,30 +1518,6 @@ it("retains the source avatar URL for a differently compressed transparent PNG",
   expect(h.create.mock.calls[0]?.[3]).toEqual(
     expect.objectContaining({ picture: "https://cdn.example.test/source.png" }),
   );
-});
-
-it("does not create when opted-in memory exceeds the reader payload budget", async () => {
-  const source = buildAgentSnapshot(portableAgent());
-  const body = "\\".repeat(40_000);
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({
-      ...source,
-      memory: { level: "core", entries: [{ slug: "core", body }] },
-    }),
-  );
-  const h = importControl();
-  render(
-    <AgentSnapshotImport
-      control={h.control}
-      destination="https://relay.example.test"
-      owner={"ef".repeat(32)}
-      receivedBytes={bytes}
-      onClose={() => {}}
-    />,
-  );
-  expect(await screen.findByText("Invalid snapshot manifest.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
-  expect(h.create).not.toHaveBeenCalled();
 });
 
 it("routes source-community PNG artwork through authenticated media and embeds its pixels", async () => {

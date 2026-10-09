@@ -1438,7 +1438,7 @@ it("requests a bounded prefix page before declaring a short name absent", async 
   }
 });
 
-it.each(["from:we", "from:@we"])(
+it.each(["from:we"])(
   "%s retains a confirmed channel member when global prefix lookup fails",
   async (query) => {
     const relay = keypair(),

@@ -1,11 +1,17 @@
+import {
+  deliverTeamTexts,
+  subscribeTeamSyncError,
+  teamSyncError,
+} from "../../features/agents/team-instructions";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
+import type { Resume } from "../../features/channel-templates/capability";
 import type { TeamSnapshot } from "../../features/agents/team-bundles";
 import { decodeTeamFile } from "../../features/agents/team-encoding";
 import { TeamImportDialog } from "../agents/TeamImportDialog";
 import { TeamDeployDialog } from "../agents/TeamDeployDialog";
 import { npubEncode } from "nostr-tools/nip19";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import {
   emptyLineup,
@@ -72,6 +78,9 @@ export function TemplateLibrary({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
+  const syncError = useSyncExternalStore(subscribeTeamSyncError, () =>
+    section === "team" ? teamSyncError(kit) : undefined,
+  );
   const trigger = useRef<HTMLElement | null>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   const newTemplate = useRef<HTMLButtonElement>(null);
@@ -115,16 +124,74 @@ export function TemplateLibrary({
       setDeleteOpen(true);
     } else setEditing(selection);
   };
+  // Phases of the current delete that already finished or were enqueued, so
+  // a retry confirms the same events and only repeats unfinished phases.
+  const removed = useRef<{
+    eventId: string | undefined;
+    teamDone?: boolean;
+    textDone?: boolean;
+    team: Resume;
+    text: Resume;
+  }>(undefined);
   const remove = async () => {
     if (!deleting || busy || !mounted.current || !active()) return;
     setBusy(true);
     setError("");
+    const resume = (): Resume => ({
+      enqueued(id) {
+        this.id = id;
+      },
+    });
+    const run =
+      removed.current && removed.current.eventId === deleting.eventId
+        ? removed.current
+        : { eventId: deleting.eventId, team: resume(), text: resume() };
+    removed.current = run;
     try {
-      await kit.save(deleting.value, deleting.eventId, true);
+      if (!run.teamDone) {
+        await kit.save(
+          deleting.value,
+          deleting.eventId,
+          true,
+          undefined,
+          run.team,
+        );
+        run.teamDone = true;
+      }
+      if (deleting.value.type !== "team") run.textDone = true;
+      let cleanup: unknown;
+      if (!run.textDone)
+        try {
+          // Retire the text head with a tombstone so legacy text never
+          // reappears. No head, or one already retired, needs nothing.
+          const current = run.text.id
+            ? undefined
+            : await kit.readTextHead(deleting.value.id);
+          if (run.text.id || (current && !current.deleted))
+            await kit.publishText(
+              deleting.value.id,
+              null,
+              current?.head,
+              undefined,
+              run.text,
+            );
+          run.textDone = true;
+        } catch (reason) {
+          cleanup = reason;
+        }
+      // Members lose the deleted team's text even if cleanup failed.
+      if (deleting.value.type === "team")
+        await deliverTeamTexts(kit, control, session);
+      if (cleanup) throw cleanup;
       if (mounted.current && active()) setDeleteOpen(false);
     } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
       if (mounted.current && active())
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(
+          run.teamDone && deleting.value.type === "team"
+            ? `Team deleted; instructions cleanup or member update pending: ${message}`
+            : message,
+        );
     } finally {
       if (mounted.current && active()) setBusy(false);
     }
@@ -150,6 +217,11 @@ export function TemplateLibrary({
         />
       )}
       <div className={styles.library}>
+        {syncError && (
+          <p role="alert" className="text-body-sm text-danger">
+            {syncError}
+          </p>
+        )}
         {(state.status !== "ready" ||
           !catalog.agentsReady ||
           catalog.error) && (
@@ -338,7 +410,6 @@ export function TemplateLibrary({
         {deploying && session && (
           <TeamDeployDialog
             team={deploying}
-            kit={kit}
             control={control}
             session={session}
             close={() => setDeploying(undefined)}

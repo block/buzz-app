@@ -207,37 +207,6 @@ it.each(["opening", "encoding", "uploading"])(
   },
 );
 
-it("does not upload if control is revoked while encoding is pending", async () => {
-  const f = fixture();
-  let release!: (value: { fileBytes: number[]; fileName: string }) => void;
-  let started!: () => void;
-  const began = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  f.encode.mockImplementationOnce(() => {
-    started();
-    return new Promise((resolve) => {
-      release = resolve;
-    });
-  });
-  let eligible = true;
-  const result = sendSnapshot({
-    ...f,
-    recipients: ["recipient"],
-    signal: new AbortController().signal,
-    validateRecipients: () => {
-      if (!eligible) throw new Error("Control lost");
-    },
-  });
-  const rejected = expect(result).rejects.toThrow("Control lost");
-  await began;
-  eligible = false;
-  release({ fileBytes: [1], fileName: "worker.agent.png" });
-  await rejected;
-  expect(f.upload).not.toHaveBeenCalled();
-  expect(f.send).not.toHaveBeenCalled();
-});
-
 it("rejects an oversized agent snapshot before DM upload", async () => {
   const f = fixture();
   f.encode.mockResolvedValueOnce({

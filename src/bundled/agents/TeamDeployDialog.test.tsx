@@ -4,7 +4,6 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentControl } from "../../features/agents/control";
-import type { ChannelKit } from "../../features/channel-templates/capability";
 import type { RelaySession } from "../../features/relay/session";
 import { deployTeam } from "../../features/agents/team-deployment";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -31,7 +30,6 @@ function fixture() {
         name: "Saved",
         agents: ["a".repeat(64)],
       }}
-      kit={{} as ChannelKit}
       control={{} as AgentControl}
       session={
         {

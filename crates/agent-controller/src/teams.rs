@@ -43,6 +43,8 @@ pub struct Definition {
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub max_turn_duration_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 fn channel_policy() -> SessionPolicy {
     SessionPolicy::Channel
@@ -196,6 +198,9 @@ impl TeamSnapshot {
             {
                 return Err("Invalid team member snapshot".into());
             }
+            if let Some(effort) = &d.effort {
+                crate::config::validate_effort(effort)?;
+            }
             crate::import::team_text(&json!(d.system_prompt))?;
             for picture in [&member.profile.avatar_data_url, &member.profile.avatar_url]
                 .into_iter()
@@ -227,13 +232,11 @@ pub struct TeamCatalogEntry {
     pub members: Vec<String>,
 }
 impl Controller {
-    pub fn reconcile_team_bindings(
-        &mut self,
-        community: &str,
+    fn validate_team_catalog(
+        &self,
         owner: &str,
         teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
     ) -> Result<()> {
-        let relay = crate::config::canonical_relay(community)?;
         if !crate::config::canonical_key(owner)
             || teams.len() > 500
             || teams.values().any(|head| {
@@ -246,30 +249,24 @@ impl Controller {
         {
             return Err("Invalid team catalog".into());
         }
-        self.store.reconcile_team_bindings(&relay, owner, teams)
+        Ok(())
     }
-    pub fn apply_team_instructions(
+    /// Save and app-start sync: release obsolete bindings, then copy each
+    /// readable team's current text to its members. Never restarts an agent.
+    pub fn sync_team_instructions(
         &mut self,
-        id: &str,
-        revision: u64,
-        instructions: &str,
+        community: &str,
         owner: &str,
-        binding: (&str, &str),
-    ) -> Result<bool> {
-        let (team, community) = binding;
-        self.verify_team_member_owner(id, owner)?;
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
-            .find(|a| a.id == id)
-            .ok_or("Agent no longer exists")?;
-        let relay = crate::config::canonical_relay(community)?;
-        if agent.relay_url != relay {
-            return Err("Team member belongs to another community".into());
+        heads: &std::collections::BTreeMap<String, TeamCatalogEntry>,
+        texts: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        if texts.len() > 500 || texts.keys().any(|team| team.is_empty() || team.len() > 120) {
+            return Err("Invalid team instructions".into());
         }
+        self.validate_team_catalog(owner, heads)?;
+        let relay = crate::config::canonical_relay(community)?;
         self.store
-            .team_instructions(id, revision, instructions, team)
+            .sync_team_instructions(&relay, owner, heads, texts)
     }
     pub fn team_member_authorization(&self, id: &str, owner: &str) -> Result<String> {
         self.verify_team_member_owner(id, owner)?;
@@ -339,17 +336,11 @@ fn snapshot_member(
     let effective = crate::agent_defaults::effective(agent, defaults);
     let runtime = crate::agent_defaults::harness_kind(&effective.harness.command)
         .ok_or("Team member harness is not portable")?;
-    if crate::agent_defaults::effort(&effective).is_some_and(|effort| !effort.is_empty())
-        || (matches!(runtime, "pi" | "goose")
-            && effective
-                .environment
-                .get("BUZZ_ACP_EFFORT_LEVEL")
-                .is_some_and(|effort| !effort.is_empty()))
-    {
-        return Err("Team member effort is not portable".into());
-    }
     if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {
         return Err("Team member environment-selected model or provider is not portable".into());
+    }
+    if crate::agent_defaults::effort_from_env(&effective) {
+        return Err("Team member environment-selected effort is not portable".into());
     }
     let agent = &effective;
     let record = &agent.imported["record"];
@@ -371,6 +362,7 @@ fn snapshot_member(
             parallelism: workers,
             idle_timeout_seconds: record["idle_timeout_seconds"].as_u64(),
             max_turn_duration_seconds: record["max_turn_duration_seconds"].as_u64(),
+            effort: crate::agent_defaults::launch_effort(&effective).map(str::to_owned),
         },
         profile: Profile {
             display_name: agent.name.clone(),

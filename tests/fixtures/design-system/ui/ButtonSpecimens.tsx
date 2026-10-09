@@ -6,6 +6,8 @@ import {
   PlusIcon,
   DotsThreeIcon,
   GearIcon,
+  NotificationIcon,
+  NotificationFilledIcon,
 } from "../../../../src/shared/design-system/icons";
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
 import {
@@ -272,6 +274,7 @@ export function ButtonSpecimen() {
 }
 
 export function IconButtonSpecimen() {
+  const [unread, setUnread] = useState(false);
   return (
     <div className="component-specimen-stack">
       <ExamplePreview
@@ -284,6 +287,22 @@ export function IconButtonSpecimen() {
         <IconButton
           aria-label="Add item"
           icon={<PlusIcon aria-hidden="true" />}
+        />
+      </ExamplePreview>
+      <ExamplePreview
+        label="Glyph-state toggle"
+        code={
+          '<IconButton variant="bare" size="sm" aria-pressed={unread} aria-label="Unread only" icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />} />'
+        }
+      >
+        <IconButton
+          variant="bare"
+          size="sm"
+          aria-label="Unread only"
+          aria-pressed={unread}
+          title="Show unread only"
+          onClick={() => setUnread(!unread)}
+          icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />}
         />
       </ExamplePreview>
       <ButtonMatrix kind="icon" />

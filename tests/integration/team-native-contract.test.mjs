@@ -150,7 +150,13 @@ test("native-validated team boundaries survive the shared parser and real import
   };
 
   async function check(snapshot, accepted, restoreMemory) {
-    const calls = { creates: [], writes: [], saves: [], previews: [] };
+    const calls = {
+      creates: [],
+      writes: [],
+      saves: [],
+      previews: [],
+      texts: [],
+    };
     const values = new Map();
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
@@ -191,6 +197,16 @@ test("native-validated team boundaries survive the shared parser and real import
         calls.saves.push(args);
         return "saved";
       },
+      readTextHead: async () => undefined,
+      prepareText: async (teamId, text, revision) => ({
+        teamId,
+        text,
+        revision,
+      }),
+      publishText: async (...args) => {
+        calls.texts.push(args);
+        return "text-saved";
+      },
     };
     const original = JSON.stringify(snapshot);
     const operation = () =>
@@ -205,6 +221,7 @@ test("native-validated team boundaries survive the shared parser and real import
       assert.equal(calls.creates.length, 0);
       assert.equal(calls.writes.length, 0);
       assert.equal(calls.saves.length, 0);
+      assert.equal(calls.texts.length, 0);
       assert.notEqual(calls.previews[0], 0);
       return;
     }
@@ -228,6 +245,9 @@ test("native-validated team boundaries survive the shared parser and real import
       assert.equal(args[4].instructions, snapshot.team.instructions);
     }
     assert.deepEqual(calls.saves[0][1], canonical);
+    // Every accepted import writes an explicit text head, even when empty.
+    assert.equal(calls.texts.length, 1);
+    assert.equal(calls.texts[0][1].text, canonical.team.instructions ?? "");
     assert.equal(JSON.stringify(snapshot), original);
     if (!restoreMemory) assert.equal(calls.writes.length, 0);
     else {

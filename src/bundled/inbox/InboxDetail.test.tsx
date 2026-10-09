@@ -749,7 +749,7 @@ it("edits an owned reply in the Inbox thread using its existing composer", async
     within(row).getByRole("button", { name: "More message actions" }),
   );
   fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Edit message", exact: true }),
+    await screen.findByRole("menuitem", { name: "Edit message" }),
   );
   await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
   expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);

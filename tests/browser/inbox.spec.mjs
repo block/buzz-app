@@ -26,6 +26,14 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     inbox.getByText("Unread reply 1", { exact: true }),
   ).toBeVisible();
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  // The unselected list must keep the full scroll area after grid simplification.
+  const workspace = inbox.locator('[class*="workspace"]');
+  await expect
+    .poll(
+      async () =>
+        (await inbox.locator('[class*="listPane"]').boundingBox()).height,
+    )
+    .toBe((await workspace.boundingBox()).height);
   const rows = inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");

@@ -233,108 +233,106 @@ export function DraftsView({
   };
   return (
     <div className={styles.workspace} data-selected={!!active || undefined}>
-      <div className={styles.listPane}>
-        {toolbar}
-        <div className={styles.draftList}>
-          {!entries.length && !saved.unavailable && !active && (
-            <p role="status" className={styles.notice}>
-              No drafts
-            </p>
-          )}
-          <ul className={styles.list} aria-label="Drafts">
-            {visible.map((entry) => {
-              const channel = channelFor(entry.coordinates.channelId);
-              const label = destination(channel);
-              const dm = channel?.channelType === "dm";
-              const first = dm ? channel.participants?.[0] : undefined;
-              const artwork = first && profiles.get(first)?.picture;
-              return (
-                <li
-                  key={entry.key}
-                  className={styles.row}
-                  data-selected={selected === entry.key || undefined}
-                >
-                  <NavigationItem
-                    ref={entry === visible[0] ? fallbackRow : undefined}
-                    aria-label={`Open draft for ${label}`}
-                    selected={selected === entry.key}
-                    icon={
-                      dm && first ? (
-                        <Avatar
-                          size="default"
-                          alt=""
-                          fallback={label}
-                          src={artwork ? session.media(artwork) : undefined}
-                          shape={
-                            profiles.get(first)?.isAgent ? "squircle" : "circle"
-                          }
-                        />
-                      ) : (
-                        <HashIcon size={20} aria-hidden="true" />
-                      )
-                    }
-                    label={
-                      <span className={styles.content}>
-                        <strong
-                          className={`text-label-sm text-standard ${styles.sender}`}
+      {toolbar}
+      <div className={styles.draftList}>
+        {!entries.length && !saved.unavailable && !active && (
+          <p role="status" className={styles.notice}>
+            No drafts
+          </p>
+        )}
+        <ul className={styles.list} aria-label="Drafts">
+          {visible.map((entry) => {
+            const channel = channelFor(entry.coordinates.channelId);
+            const label = destination(channel);
+            const dm = channel?.channelType === "dm";
+            const first = dm ? channel.participants?.[0] : undefined;
+            const artwork = first && profiles.get(first)?.picture;
+            return (
+              <li
+                key={entry.key}
+                className={styles.row}
+                data-selected={selected === entry.key || undefined}
+              >
+                <NavigationItem
+                  ref={entry === visible[0] ? fallbackRow : undefined}
+                  aria-label={`Open draft for ${label}`}
+                  selected={selected === entry.key}
+                  icon={
+                    dm && first ? (
+                      <Avatar
+                        size="default"
+                        alt=""
+                        fallback={label}
+                        src={artwork ? session.media(artwork) : undefined}
+                        shape={
+                          profiles.get(first)?.isAgent ? "squircle" : "circle"
+                        }
+                      />
+                    ) : (
+                      <HashIcon size={20} aria-hidden="true" />
+                    )
+                  }
+                  label={
+                    <span className={styles.content}>
+                      <strong
+                        className={`text-label-sm text-standard ${styles.sender}`}
+                      >
+                        {label}
+                      </strong>
+                      <span className={styles.sourceLine}>
+                        <span
+                          className={`text-caption ${styles.source}`}
+                          data-inbox-source=""
                         >
-                          {label}
-                        </strong>
-                        <span className={styles.sourceLine}>
-                          <span
-                            className={`text-caption ${styles.source}`}
-                            data-inbox-source=""
-                          >
-                            <span className={styles.sourceName}>
-                              {entry.coordinates.threadRootId
-                                ? "Reply"
-                                : "Message"}{" "}
-                              · {dm ? "DM" : "Channel"}
-                            </span>
+                          <span className={styles.sourceName}>
+                            {entry.coordinates.threadRootId
+                              ? "Reply"
+                              : "Message"}{" "}
+                            · {dm ? "DM" : "Channel"}
                           </span>
                         </span>
-                        <span
-                          className={`text-body text-subtle ${styles.preview}`}
-                        >
-                          {entry.draft.text}
-                        </span>
                       </span>
-                    }
-                    onClick={(event) => {
-                      if (invoking.current?.key !== entry.key)
-                        invoking.current = {
-                          key: entry.key,
-                          row: event.currentTarget,
-                        };
-                      setSelected(entry.key);
-                      setConfirmDelete(false);
-                      setError(undefined);
-                    }}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-          {!!saved.unavailable && (
-            <p className={styles.notice} role="status">
-              {saved.unavailable} saved drafts exceed the preview size limit.
-              They remain in their conversations.
-            </p>
-          )}
-          {saved.limited && (
-            <p className={styles.notice} role="status">
-              Showing the first 500 saved drafts. Other drafts remain in their
-              conversations.
-            </p>
-          )}
-          {entries.length > limit && (
-            <div className={styles.notice}>
-              <Button onClick={() => setLimit((value) => value + 50)}>
-                Show more
-              </Button>
-            </div>
-          )}
-        </div>
+                      <span
+                        className={`text-body text-subtle ${styles.preview}`}
+                      >
+                        {entry.draft.text}
+                      </span>
+                    </span>
+                  }
+                  onClick={(event) => {
+                    if (invoking.current?.key !== entry.key)
+                      invoking.current = {
+                        key: entry.key,
+                        row: event.currentTarget,
+                      };
+                    setSelected(entry.key);
+                    setConfirmDelete(false);
+                    setError(undefined);
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ul>
+        {!!saved.unavailable && (
+          <p className={styles.notice} role="status">
+            {saved.unavailable} saved drafts exceed the preview size limit. They
+            remain in their conversations.
+          </p>
+        )}
+        {saved.limited && (
+          <p className={styles.notice} role="status">
+            Showing the first 500 saved drafts. Other drafts remain in their
+            conversations.
+          </p>
+        )}
+        {entries.length > limit && (
+          <div className={styles.notice}>
+            <Button onClick={() => setLimit((value) => value + 50)}>
+              Show more
+            </Button>
+          </div>
+        )}
       </div>
       {active && (
         <section

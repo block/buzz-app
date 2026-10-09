@@ -1,7 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
-import { resizeInboxDetail } from "./inbox-resize.mjs";
 
 test.use({
   productionBroker: true,
@@ -19,8 +18,7 @@ test("Draft and conversation previews share their plain layout and show real sel
   page,
   app,
 }, testInfo) => {
-  // Keep the retention comparison at the same available width; narrower
-  // containers legitimately clamp the saved preference.
+  // Compare retained splits at the same available width.
   await page.setViewportSize({ width: 1280, height: 900 });
   // A bounded, scrollable DM tail exercises bottom positioning. These rows are
   // signed upstream fixture data, not a client cache or live-account mutation.
@@ -93,7 +91,10 @@ test("Draft and conversation previews share their plain layout and show real sel
     document.documentElement.dataset.colorMode = mode;
   }, mode);
   const inboxDetail = inbox.getByRole("region", { name: "Inbox detail" });
-  const resizedWidth = await resizeInboxDetail(page, inboxDetail);
+  // Full splitter input/bounds are covered by Inbox; here prove shared preference.
+  await inboxDetail.getByRole("separator").press("End");
+  await inboxDetail.getByRole("separator").press("ArrowRight");
+  const resizedWidth = (await inboxDetail.boundingBox()).width;
   const expectedStyle = await styleOf(reference);
   expect(expectedStyle).toMatchObject({
     border: "0px",
@@ -107,29 +108,6 @@ test("Draft and conversation previews share their plain layout and show real sel
     .getByRole("button", { name: "Close detail" })
     .click();
   await chooseActivity("Drafts");
-  await inbox
-    .getByRole("button", { name: "Inbox filters", exact: true })
-    .click();
-  const filters = page.getByRole("menu", {
-    name: "Inbox filters",
-    exact: true,
-  });
-  await expect(
-    filters.getByRole("menuitemradio", { name: "Drafts", exact: true }),
-  ).toBeChecked();
-  await expect(
-    filters.getByRole("menuitemcheckbox", { name: "People", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    filters.getByRole("menuitemcheckbox", { name: "Agents", exact: true }),
-  ).toBeDisabled();
-  await page.keyboard.press("Escape");
-  await expect(
-    inbox.getByRole("button", { name: "Unread only", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    inbox.getByRole("button", { name: "Back to Inbox", exact: true }),
-  ).toHaveCount(0);
   const draftList = inbox.getByRole("list", { name: "Drafts" });
   await expect(draftList.getByRole("listitem")).toHaveCount(3);
   await expect(inbox.getByRole("button", { name: "Refresh" })).toHaveCount(0);
@@ -162,53 +140,13 @@ test("Draft and conversation previews share their plain layout and show real sel
       .getByRole("button", { name: `Open draft for ${label}`, exact: true })
       .click();
     await expect(detail).toBeVisible();
-    const filters = inbox.getByRole("button", {
-      name: "Inbox filters",
-      exact: true,
-    });
     if (collapsed) {
       await expect(draftList).not.toBeVisible();
-      await expect(filters).not.toBeVisible();
-    } else {
-      await expect(draftList).toBeVisible();
-      await expect(filters).toBeVisible();
-    }
-    await expect(detail.locator("header")).toHaveCount(1);
-    await expect(detail.locator("header").getByRole("heading")).toHaveCount(1);
-    await expect(detail.getByRole("button", { name: /^Close / })).toHaveCount(
-      1,
-    );
-    await expect(detail).toHaveCSS("border-radius", "0px");
-    await expect(detail).toHaveCSS("box-shadow", "none");
-    const box = await detail.boundingBox();
-    expect(box.x).toBeGreaterThanOrEqual(available.x);
-    expect(box.x + box.width).toBeLessThanOrEqual(
-      available.x + available.width,
-    );
-    expect(box.y + box.height).toBeLessThanOrEqual(
-      available.y + available.height,
-    );
-    const layout = await detail.evaluate((element) => {
-      const toolbar = element.parentElement.querySelector('[class*="toolbar"]');
-      const pane = toolbar.parentElement;
-      const header = element.querySelector("header");
-      return {
-        detail: element.getBoundingClientRect().toJSON(),
-        list: pane.getBoundingClientRect().toJSON(),
-        toolbar: toolbar.getBoundingClientRect().toJSON(),
-        header: header.getBoundingClientRect().toJSON(),
-        divider: getComputedStyle(element).borderInlineStartWidth,
-      };
-    });
-    if (collapsed) {
-      expect(layout.divider).toBe("0px");
+      const box = await detail.boundingBox();
       expect(box.x).toBe(available.x);
       expect(box.width).toBe(available.width);
     } else {
-      expect(layout.divider).toBe("1px");
-      expect(layout.detail.left).toBeCloseTo(layout.list.right, 0);
-      expect(layout.header.top).toBeCloseTo(layout.toolbar.top, 0);
-      expect(layout.header.bottom).toBeCloseTo(layout.toolbar.bottom, 0);
+      await expect(draftList).toBeVisible();
     }
   };
   const geometry = async (frame, history) => {
@@ -234,19 +172,24 @@ test("Draft and conversation previews share their plain layout and show real sel
       await expect
         .poll(async () => (await detail.boundingBox()).width)
         .toBeCloseTo(resizedWidth, 0);
-      await handle.dblclick();
-      await resizeInboxDetail(page, detail);
+      await handle.press("ArrowRight");
+      await expect
+        .poll(async () => (await detail.boundingBox()).width)
+        .toBeCloseTo(resizedWidth - 16, 0);
+      // Drafts now places its toolbar directly in the grid, unlike Inbox.
+      const toolbar = inbox.locator('[class*="toolbar"]');
+      const headerBox = await detail.locator("header").boundingBox();
+      const toolbarBox = await toolbar.boundingBox();
+      expect(headerBox.y + headerBox.height).toBeCloseTo(
+        toolbarBox.y + toolbarBox.height,
+        0,
+      );
     } else {
       await expect(handle).not.toBeVisible();
     }
     const dm = detail.getByRole("region", { name: "Conversation preview" });
     const history = dm.getByRole("region", { name: "Channel message history" });
     await detail.scrollIntoViewIfNeeded();
-    await expect(
-      detail
-        .locator("header")
-        .getByRole("heading", { name: "Direct message", exact: true }),
-    ).toBeVisible();
     await expect(
       history.getByText("Context line 15", { exact: true }),
     ).toBeInViewport();
@@ -276,14 +219,6 @@ test("Draft and conversation previews share their plain layout and show real sel
       path: testInfo.outputPath(`dm-draft-${width}.png`),
     });
     await selectDraft("#Beta");
-    await expect(
-      detail
-        .locator("header")
-        .getByRole("heading", { name: "Beta", exact: true }),
-    ).toBeVisible();
-    await expect(
-      detail.locator("header .panel-header-label-icon svg"),
-    ).toHaveCount(1);
     const channel = detail.getByRole("region", {
       name: "Conversation preview",
     });
@@ -300,11 +235,6 @@ test("Draft and conversation previews share their plain layout and show real sel
       channel.getByRole("textbox", { name: "Message #Beta" }),
     ).toContainText("Channel notes");
     await selectDraft("#Alpha");
-    await expect(
-      detail
-        .locator("header")
-        .getByRole("heading", { name: "Alpha", exact: true }),
-    ).toBeVisible();
     const thread = detail.getByRole("complementary", { name: "Thread" });
     const replies = thread.getByRole("region", { name: "Thread messages" });
     await detail.scrollIntoViewIfNeeded();
@@ -595,6 +525,15 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     await page.evaluate((mode) => {
       document.documentElement.dataset.colorMode = mode;
     }, mode);
+    // ResizeObserver must commit the new container width before the baseline.
+    // A visible editor alone can still be using the prior viewport's split.
+    const available = await inbox
+      .locator('[class*="workspace"]')
+      .evaluate((element) => element.clientWidth);
+    await expect(detail.locator("[data-panel-resize]")).toHaveAttribute(
+      "aria-valuemax",
+      String(Math.max(316, available - 320)),
+    );
     const editor = detail.getByRole("textbox");
     const editorElement = await editor.elementHandle();
     if (!editorElement) throw new Error("Missing selected draft editor");

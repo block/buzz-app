@@ -266,64 +266,35 @@ no full scan or shipping-readiness attestation is implied.
 
 ## Visual-only pass (#770)
 
-The 2026-10-09 narrowing starts from current main's already-landed Inbox and
-Drafts. It replaces the two filter selects and separate Drafts button with one
-menu, adds the outline/filled unread toggle, places unread dots inside selected
-rows, and uses adjacent list/detail regions with one shared header. Narrow layouts
-replace the list with the detail. The list/detail divider reuses the app-owned
-`usePanelSplit` and `ResizeHandle` for dragging, arrow keys (Shift for larger
-steps), Home/End and double-click reset. The chosen width stays in memory while
-closing/reopening details and switching to Drafts, clamped to the available space;
-it is not persisted across app restarts. Narrow detail-only layouts hide the
-divider. Draft deletion uses the existing shared centered
-AlertDialog, keeping text-before-attachment cleanup and consent unchanged.
+Built on main's existing Inbox and Drafts: one filter menu, outline/filled unread
+toggle, trailing unread dots, adjacent list/detail with one header, and the shared
+centered draft-delete dialog. The list/detail divider reuses `usePanelSplit` and
+`ResizeHandle`: drag, arrows (Shift for larger steps), Home/End and double-click
+reset. The list stays between 320–420px and the conversation keeps at least 316px.
+Its chosen width is in memory across detail close/reopen and Inbox/Drafts switching,
+not persisted across restarts. At ≤700px available width, detail replaces the list
+and the divider is hidden.
 
-All matching **already-loaded** Inbox rows render without Show more; this removes
-local presentation pagination, not the shared evidence budget. Optional author,
-workflow-owner and DM-participant enrichment stays bounded to the initial 50
-candidates as on main. Uncached names beyond that demand may keep key fallbacks.
-The shared snapshots still supply cached names and classification; there is no new
-profile-demand loop, row cache or history query.
+All matching **already-loaded** Inbox rows render without Show more. Optional
+profile enrichment remains bounded to the first 50 candidates; cached names still
+apply, and uncached later names may keep key fallbacks. No new history demand,
+profile loop, row cache, relay/session/unread/store or native changes.
 
-Main retains ownership of loading, representative-based People/Agents filtering,
-grouped Mentions, selected-read-row visibility, read/retry semantics, workflow
-attribution, thread follows, and Drafts persistence. This PR changes none of the
-relay/session/unread/store implementations. The former broader history/candidate/
-exact-mention work is excluded, not asserted to have landed or been fixed here.
+Main retains loading, representative People/Agents filters, grouped Mentions,
+selected-read visibility, read/retry, workflow attribution, thread follows, exact
+readers and draft persistence. Deletion retains consent and text-before-attachment
+cleanup. The former history/candidate/exact-mention work is excluded.
 
-### Separate engineering follow-ups
+**Separate engineering handoff:** diagnose missing older/agent conversations by
+tracing fetched events, participation evidence and filtering. Agree mixed/unknown
+sender behavior, mention policy and filter persistence separately. Coordinate
+John's archive/refresh/development work; progressive relay loading is not fixed here.
 
-Reliable older/agent conversation loading remains outside this visual PR. Trace
-whether missing conversations were fetched, satisfy participation evidence, and
-match the existing sender filter. Product and engineering should agree separately
-on mixed conversations, unknown senders, mention policy and filter persistence.
-Coordinate with the independent Inbox archive/refresh/development PRs rather than
-folding their behavior into visual polish. No progressive relay loading is claimed.
-
-### Coverage and acceptance
-
-Keep the existing mounted Inbox/Drafts and five browser files, updating only
-control/header/modal/layout assertions, shared resizing and the approved local
-row-cap removal.
-No browser case is added or removed; main's data, read, retry, persistence, exact
-reader, portal and focus assertions remain. Real-browser geometry, pointer states,
-modal focus and responsive behavior stay in Chromium and WebKit, not inferred
-from jsdom. Earlier green results and visual approval on the broader branch do
-not validate this narrowed snapshot; human recheck and hosted CI remain required.
-
-
-On the narrowed tree based on `b61b39ab`, TypeScript, all 112 existing colocated
-Inbox/Drafts tests, 132 design tests, design typecheck/guards/builds, the frontend
-build and all 32 existing Inbox browser executions passed. The initial browser
-run's two failures were stale child Close-thread selectors; the unchanged Retry
-focus assertions passed in both engines after targeting the persistent parent
-Close-detail control. No assertion was relaxed or browser case removed. Source
-review found no scope/correctness blocker (9/10). Light/dark wide/intermediate/
-narrow fixtures were inspected. These are local synthetic checks, not native or
-live-loading acceptance; this narrowed preview still needs human confirmation.
-
-The follow-up resize addition changes only Inbox composition and layout, reusing
-the existing panel owner without modifying it. Browser-only checks exercise drag,
-keyboard bounds/reset, retained width and narrow hiding in the existing journeys.
-Its final rebased check and human confirmation are tracked separately from the
-earlier narrowed results above.
+**Evidence:** the tighter-limit snapshot based on `93b84056` passes 112 Inbox tests,
+2 shared-hook tests, types/design guards/build, and 66 Chromium/WebKit executions
+across Inbox, sidebar and existing shared-panel journeys. The hosted sidebar test
+was repaired for the filter control; the prior JavaScript lane hit its 10-minute
+timeout, which remains a separate CI concern. Common splitter checks stay in Inbox;
+Drafts keeps cross-view width, header alignment, narrow sizing, real editing and
+modal/focus coverage. No browser cases were removed. Human confirmation and hosted
+CI remain gates; local synthetic checks do not attest native/live acceptance.

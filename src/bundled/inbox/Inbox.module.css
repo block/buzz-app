@@ -29,6 +29,7 @@
 .workspace {
   display: grid;
   /* Match usePanelSplit's 320px list reserve and 316px detail minimum. */
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-columns: minmax(320px, 1fr) minmax(
       316px,
       var(--secondary-panel-width, 2fr)
@@ -62,8 +63,8 @@
 }
 
 /* Share the header row even when larger text makes its controls wrap. */
-.workspace[data-selected] {
-  grid-template-rows: auto minmax(0, 1fr);
+.workspace[data-selected] > .detail {
+  grid-column: 2;
 }
 
 .workspace[data-selected] > .listPane,
@@ -110,11 +111,23 @@
   overflow: auto;
 }
 
+/* Drafts places its toolbar/list directly in the same grid, without a wrapper. */
+.workspace > .toolbar,
+.workspace > .draftList {
+  grid-column: 1;
+}
+
+.workspace:not([data-selected]) > .listPane {
+  grid-row: 1 / span 2;
+}
+
 @container (max-width: 700px) {
   .workspace[data-selected] {
     grid-template-columns: minmax(0, 1fr);
   }
-  .workspace[data-selected] > .listPane {
+  .workspace[data-selected] > .listPane,
+  .workspace[data-selected] > .toolbar,
+  .workspace[data-selected] > .draftList {
     display: none;
   }
   .detail > [data-panel-resize] {

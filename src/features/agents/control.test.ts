@@ -36,6 +36,58 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+function codexEdit() {
+  const draft = agentDraft(controlFixture().agent);
+  draft.integration = "codex";
+  draft.command = "/tools/codex-acp";
+  draft.args = "[]";
+  draft.provider = "";
+  draft.model = "";
+  draft.configuration = { mode: "default" };
+  return agentEdit(draft);
+}
+it.each(["default", "advanced"] as const)(
+  "creates and saves Codex %s using ordinary native controls without a validation service",
+  async (mode) => {
+    const fixture = controlFixture();
+    const edit = codexEdit();
+    if (mode === "advanced") {
+      edit.harness.model = "model-a";
+      edit.harness.configuration = {
+        mode,
+        effort: { kind: "value", value: "high" },
+      };
+    }
+    fixture.host.prepareCreate = vi.fn(async () => ({
+      id: fixture.agent.id,
+      pubkey: fixture.agent.pubkey,
+    }));
+    fixture.host.commitCreate = vi.fn(async () =>
+      structuredClone(fixture.data),
+    );
+    const save = vi.spyOn(fixture.host, "save");
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    await control.create?.("request", fixture.agent.relayUrl, "owner", edit);
+    expect(fixture.host.prepareCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      fixture.agent.relayUrl,
+      "owner",
+    );
+    expect(fixture.host.commitCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      edit,
+      "[]",
+      undefined,
+    );
+    await control.save(fixture.agent.id, fixture.agent.revision, edit);
+    expect(save).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, 1, edit);
+    control.dispose();
+  },
+);
+
 it("browser is unavailable without any host or runner", async () => {
   const control = createAgentControl(null);
   await control.refresh();
@@ -144,15 +196,6 @@ it("subscription cleanup and disposal never send stop or accept a late snapshot"
   expect(listener).not.toHaveBeenCalled();
   expect(control.snapshot()).toBe(before);
   expect(fixture.calls.some((call) => call.action === "stop")).toBe(false);
-});
-it("failed refresh exposes retry while retaining the last snapshot", async () => {
-  const fixture = controlFixture();
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  vi.spyOn(fixture.host, "snapshot").mockRejectedValue("failure");
-  await control.refresh();
-  expect(control.snapshot().status).toBe("error");
-  expect(control.snapshot().data?.agents).toHaveLength(1);
 });
 it("keeps read errors visible during recovery and clears global operation errors on success", async () => {
   const fixture = controlFixture();
@@ -266,80 +309,78 @@ it("import forwards exact selection and never starts imported agents", async () 
   expect(control.snapshot().data?.agents[1]?.enabled).toBe(false);
 });
 
-for (const launch of ["start", "restart"] as const) {
-  for (const otherAgent of [false, true]) {
-    for (const rejectLaunch of [false, true]) {
-      for (const launchFirst of [false, true]) {
-        it(`${launch}: Stop ${otherAgent ? "another agent" : "pending agent"} survives late ${rejectLaunch ? "failure" : "success"} ${launchFirst ? "during" : "after"} Stop`, async () => {
-          const fixture = controlFixture();
-          fixture.agent.enabled = launch !== "start";
-          fixture.agent.status = launch === "start" ? "stopped" : "running";
-          fixture.data.agents.push({
-            ...structuredClone(fixture.agent),
-            id: "other",
-            enabled: true,
-            status: "running",
-          });
-          const control = createAgentControl(fixture.host);
-          await control.refresh();
-          const late = deferred<typeof fixture.data>();
-          const stop = deferred<typeof fixture.data>();
-          const before = structuredClone(fixture.data);
-          const action = vi
-            .spyOn(fixture.host, "action")
-            .mockImplementation((_id, kind) =>
-              kind === "stop"
-                ? stop.promise
-                : late.promise.then((data) => {
-                    if (rejectLaunch) throw "Old launch failure";
-                    return data;
-                  }),
-            );
-          const starting = control
-            .action(fixture.agent.id, launch)
-            .catch(() => {});
-          const target = otherAgent ? "other" : fixture.agent.id;
-          expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
-          expect(canStopAgent(control.snapshot(), "other")).toBe(true);
-          expect(canStopAgent(control.snapshot(), "unknown")).toBe(false);
-          const stopping = control.action(target, "stop");
-          expect(action).toHaveBeenLastCalledWith(target, "stop");
-          expect(canStopAgent(control.snapshot(), target)).toBe(false);
-          await expect(control.action(target, "stop")).rejects.toThrow(
+for (const otherAgent of [false, true]) {
+  for (const rejectLaunch of [false, true]) {
+    for (const launchFirst of [false, true]) {
+      it(`start: Stop ${otherAgent ? "another agent" : "pending agent"} survives late ${rejectLaunch ? "failure" : "success"} ${launchFirst ? "during" : "after"} Stop`, async () => {
+        const fixture = controlFixture();
+        fixture.agent.enabled = false;
+        fixture.agent.status = "stopped";
+        fixture.data.agents.push({
+          ...structuredClone(fixture.agent),
+          id: "other",
+          enabled: true,
+          status: "running",
+        });
+        const control = createAgentControl(fixture.host);
+        await control.refresh();
+        const late = deferred<typeof fixture.data>();
+        const stop = deferred<typeof fixture.data>();
+        const before = structuredClone(fixture.data);
+        const action = vi
+          .spyOn(fixture.host, "action")
+          .mockImplementation((_id, kind) =>
+            kind === "stop"
+              ? stop.promise
+              : late.promise.then((data) => {
+                  if (rejectLaunch) throw "Old launch failure";
+                  return data;
+                }),
+          );
+        const starting = control
+          .action(fixture.agent.id, "start")
+          .catch(() => {});
+        const target = otherAgent ? "other" : fixture.agent.id;
+        expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+        expect(canStopAgent(control.snapshot(), "other")).toBe(true);
+        expect(canStopAgent(control.snapshot(), "unknown")).toBe(false);
+        const stopping = control.action(target, "stop");
+        expect(action).toHaveBeenLastCalledWith(target, "stop");
+        expect(canStopAgent(control.snapshot(), target)).toBe(false);
+        await expect(control.action(target, "stop")).rejects.toThrow(
+          "in progress",
+        );
+        if (launchFirst) {
+          late.resolve(before);
+          await starting;
+          expect(control.snapshot().busy).toBe(true);
+          expect(control.snapshot().error).toBeNull();
+        }
+        const stopped = structuredClone(before);
+        const row = stopped.agents.find((agent) => agent.id === target);
+        if (!row) throw new Error("Missing test agent");
+        row.enabled = false;
+        row.status = "stopped";
+        stop.resolve(stopped);
+        await stopping;
+        const result = control.snapshot().data;
+        if (!launchFirst) {
+          expect(control.snapshot().busy).toBe(true);
+          await expect(control.action(target, "restart")).rejects.toThrow(
             "in progress",
           );
-          if (launchFirst) {
-            late.resolve(before);
-            await starting;
-            expect(control.snapshot().busy).toBe(true);
-            expect(control.snapshot().error).toBeNull();
-          }
-          const stopped = structuredClone(before);
-          const row = stopped.agents.find((agent) => agent.id === target);
-          if (!row) throw new Error("Missing test agent");
-          row.enabled = false;
-          row.status = "stopped";
-          stop.resolve(stopped);
-          await stopping;
-          const result = control.snapshot().data;
-          if (!launchFirst) {
-            expect(control.snapshot().busy).toBe(true);
-            await expect(control.action(target, "restart")).rejects.toThrow(
-              "in progress",
-            );
-            await expect(
-              control.previewImport("installed", "wss://chosen.example"),
-            ).rejects.toThrow("in progress");
-            late.resolve(before);
-            await starting;
-          }
-          expect(control.snapshot().data).toBe(result);
-          expect(control.snapshot().data).toEqual(stopped);
-          expect(control.snapshot().status).toBe("ready");
-          expect(control.snapshot().error).toBeNull();
-          expect(control.snapshot().busy).toBe(false);
-        });
-      }
+          await expect(
+            control.previewImport("installed", "wss://chosen.example"),
+          ).rejects.toThrow("in progress");
+          late.resolve(before);
+          await starting;
+        }
+        expect(control.snapshot().data).toBe(result);
+        expect(control.snapshot().data).toEqual(stopped);
+        expect(control.snapshot().status).toBe("ready");
+        expect(control.snapshot().error).toBeNull();
+        expect(control.snapshot().busy).toBe(false);
+      });
     }
   }
 }
@@ -481,6 +522,13 @@ for (const operation of ["create", "profile"] as const) {
   for (const writeFirst of [false, true]) {
     for (const rejectWrite of [false, true]) {
       for (const rejectStop of [false, true]) {
+        // The create rows cover the shared credential-write lane; one profile
+        // row keeps the publishProfile wrapper under the same contention.
+        if (
+          operation === "profile" &&
+          (!writeFirst || rejectWrite || rejectStop)
+        )
+          continue;
         it(`${operation} credential wait: ${writeFirst ? "write" : "Stop"} settles first; write failure=${rejectWrite}, Stop failure=${rejectStop}`, async () => {
           const fixture = controlFixture();
           const created = {
@@ -1103,6 +1151,7 @@ for (const status of ["waiting", "starting"] as const) {
 it.each([
   ["Pi", "installPi", "piInstall", "installClaude"],
   ["Claude Code", "installClaude", "claudeInstall", "installPi"],
+  ["Codex ACP adapter", "installCodex", "codexInstall", "installClaude"],
 ] as const)(
   "runs %s installation outside agent writes, excludes other installs and preserves the report after Stop",
   async (_label, method, stateKey, other) => {

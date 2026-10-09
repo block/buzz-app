@@ -20,8 +20,10 @@ export function AgentHarnessEditor({
   discardEdits = false,
   disabled = false,
   hideHarness = false,
+  hideSetupHints = false,
 }: {
   hideHarness?: boolean;
+  hideSetupHints?: boolean;
   draft: AgentDraft;
   onOpenHarnesses?: (() => void) | undefined;
   discardEdits?: boolean;
@@ -35,11 +37,11 @@ export function AgentHarnessEditor({
   const kind = harnessKind(draft.command);
   const preset = harnessPreset(draft.command);
   const harness =
-    harnessOption(options, draft.command) ??
+    harnessOption(options, draft.command, draft.integration) ??
     (preset
       ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
-  const policy = harnessPolicy(options, draft.command);
+  const policy = harnessPolicy(options, draft.command, draft.integration);
   const isPreset = !!preset;
   // Missing policy preserves older hosts; native policy wins whenever supplied.
   const external = policy
@@ -49,6 +51,17 @@ export function AgentHarnessEditor({
     ? policy.provider === "discovered"
     : kind === "pi";
   const piLoading = discoveredProviders && piProviders === null;
+  const missingPi = options.some(
+    (option) =>
+      harnessKind(option.command) === "pi" && option.available === false,
+  );
+  const missingCodex = options.some(
+    (option) =>
+      option.id === "codex" &&
+      option.available === false &&
+      option.status !== "not-enabled",
+  );
+  const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
       {!hideHarness && (
@@ -86,11 +99,22 @@ export function AgentHarnessEditor({
                     : ["goose", "pi"].includes(
                         harnessKind(option.command) ?? "",
                       )));
+              const wasCodex = draft.integration === "codex";
+              // Rebinding Codex (its option or a custom adapter path) keeps its
+              // saved Default/Advanced settings.
+              if (wasCodex && (!pickedOption || option?.id === "codex")) {
+                onChange({ command });
+                return;
+              }
               onChange({
                 command,
-                ...(pickedOption &&
-                option &&
-                (enteringExternal || external || isPreset)
+                ...(pickedOption
+                  ? {
+                      integration:
+                        option?.id === "codex" ? option.id : undefined,
+                    }
+                  : { integration: undefined, configuration: undefined }),
+                ...(pickedOption && (enteringExternal || external || isPreset)
                   ? {
                       args: JSON.stringify(option?.defaultArgs ?? []),
                       provider: enteringExternal
@@ -99,27 +123,64 @@ export function AgentHarnessEditor({
                       model: "",
                     }
                   : {}),
+                ...(pickedOption && option?.id === "codex"
+                  ? {
+                      args: "[]",
+                      provider: "",
+                      model: "",
+                      configuration: { mode: "default" },
+                    }
+                  : wasCodex
+                    ? {
+                        args: JSON.stringify(option?.defaultArgs ?? []),
+                        model: "",
+                        configuration: undefined,
+                      }
+                    : {}),
               });
             }}
           />
-          {onOpenHarnesses && (
-            <Button
-              type="button"
-              variant="link"
-              disabled={disabled}
-              title={
-                discardEdits
-                  ? "Opening Settings discards unsaved edits."
-                  : undefined
-              }
-              onClick={onOpenHarnesses}
-            >
-              Open Harnesses in Settings
-            </Button>
-          )}
+          {onOpenHarnesses &&
+            (hideSetupHints || missingPi || missingPreset || missingCodex) && (
+              <Button
+                type="button"
+                variant="link"
+                disabled={disabled}
+                title={
+                  discardEdits
+                    ? "Opening Settings discards unsaved edits."
+                    : undefined
+                }
+                onClick={onOpenHarnesses}
+              >
+                Open Harnesses in Settings
+              </Button>
+            )}
         </div>
       )}
-      {!isPreset && (
+      {!hideSetupHints && (
+        <>
+          {missingPi && (
+            <p className="text-body-sm text-secondary">
+              Pi needs its CLI, Node.js and buzz-pi-acp before you can select
+              it.
+            </p>
+          )}
+          {missingCodex && (
+            <p className="text-body-sm text-secondary">
+              Codex needs its CLI and ACP adapter before you can select it. Set
+              it up under Settings → Agents → Harnesses.
+            </p>
+          )}
+          {missingPreset && (
+            <p className="text-body-sm text-secondary">
+              {preset.label} needs its ACP launcher. Set it up under Settings →
+              Agents → Harnesses.
+            </p>
+          )}
+        </>
+      )}
+      {!isPreset && draft.integration !== "codex" && (
         <ConfigChoice
           disabled={disabled || piLoading}
           key={harness?.label ?? draft.command}

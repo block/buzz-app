@@ -32,11 +32,17 @@ beforeEach(() => {
   HTMLElement.prototype.showPopover = function () {
     this.style.display = "block";
   };
+  // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   for (const stop of stops.splice(0)) stop();
 });
 const id = "11111111-1111-4111-8111-111111111111";
@@ -246,7 +252,6 @@ it.each([
   ["admin", "member", ["Owner", "Carl", "Morgan"]],
   ["owner", "owner", ["Carl", "Morgan", "Owner"]],
   ["admin", "admin", ["Owner", "Carl", "Morgan"]],
-  ["member", "bot", ["Owner", "Carl", "Morgan"]],
   ["member", "guest", ["Owner", "Carl", "Morgan"]],
 ] as const)(
   "orders owners, admins, then everyone else alphabetically (viewer: %s, target: %s)",
@@ -281,8 +286,6 @@ it.each([
   [true, "owner", "Owners"],
   [true, "admin", "Admins"],
   [true, "member", "Agents"],
-  [true, "guest", "Agents"],
-  [true, "bot", "Agents"],
   [false, "bot", "Members"],
 ] as const)(
   "groups agent identities below elevated roles (agent: %s, role: %s)",
@@ -838,7 +841,7 @@ it.each([false, true])(
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
-it.each(["member", "admin", "owner", "guest"])(
+it.each(["admin", "owner", "guest"])(
   "groups an Agent by verified %s role without role pills",
   async (role) => {
     const t = await setup("owner", role, true, undefined, true);
@@ -1616,7 +1619,10 @@ it("filters by present groups and resets to All on any search input", async () =
   await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
   await t.user.type(screen.getByRole("searchbox"), "Carl");
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-  expect(within(list).getByText("Carl (you)")).toBeVisible();
+  const carl = within(list).getByText("Carl (you)");
+  expect(carl).toBeVisible();
+  // Only rows you can add show the typed letters; members stay unchanged.
+  expect(carl.querySelector("mark")).toBeNull();
   expect(within(list).queryByText("Morgan")).not.toBeInTheDocument();
   await t.user.clear(screen.getByRole("searchbox"));
   expect(within(list).getByText("Carl (you)")).toBeVisible();

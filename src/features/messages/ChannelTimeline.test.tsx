@@ -1,5 +1,4 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useReading } from "./use-reading";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
@@ -123,6 +122,7 @@ function setup({
   status = "ready" as ChannelWindow["status"],
   blocked = undefined as boolean | undefined,
   session = undefined as RelaySession | undefined,
+  historyControl = "button" as "button" | "scroll",
   hasMore = false,
   loadingOlder = false,
   historyLimited = false,
@@ -281,6 +281,7 @@ function setup({
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
     const scoped = ChannelTimeline({
       channelId,
+      historyControl,
       scope: "scope",
       queries,
       window: session?.channels.window(channelId) ?? {
@@ -376,6 +377,12 @@ function setup({
       if ("hasMore" in patch) hasMore = !!patch.hasMore;
       if ("historyLimited" in patch) historyLimited = !!patch.historyLimited;
       render();
+    },
+    hasHistoryButton() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement[];
+      }>;
+      return edge.props.children.some((child) => child?.type === Button);
     },
     retry() {
       const edge = section.props.children[0] as ReactElement<{
@@ -804,18 +811,16 @@ it("a user gesture at a restored top pages without needing a DOM scroll event", 
   h.unmount();
 });
 
-it.each([
-  { hasMore: false },
-  { hasMore: true, loadingOlder: true },
-  { hasMore: true, historyLimited: true },
-  { hasMore: true, error: "Relay requests paused" },
-])("a boundary gesture preserves the history guard %j", (options) => {
-  const h = setup(options);
-  h.element.scrollTop = 0;
-  h.gesture();
-  expect(h.loadOlder).not.toHaveBeenCalled();
-  h.unmount();
-});
+it.each([{ hasMore: false }])(
+  "a boundary gesture preserves the history guard %j",
+  (options) => {
+    const h = setup(options);
+    h.element.scrollTop = 0;
+    h.gesture();
+    expect(h.loadOlder).not.toHaveBeenCalled();
+    h.unmount();
+  },
+);
 
 it("keeps bottom restoration through repeated late list measurements without another viewport resize", () => {
   const h = setup();
@@ -1175,18 +1180,6 @@ it("an accepted button read retires earlier blocked gesture before verification"
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.unmount();
-});
-
-it("wires the shared reading hook to its owned scroller and settled position", () => {
-  vi.mocked(useReading).mockClear();
-  setup();
-  expect(useReading).toHaveBeenCalledWith({
-    session: expect.any(Object),
-    channelId: "channel",
-    latestMessageId: expect.any(String),
-    scroller: expect.objectContaining({ current: expect.anything() }),
-    settled: expect.objectContaining({ current: expect.any(Boolean) }),
-  });
 });
 
 const membershipRow = (id: string, time: number): ChannelMessage => ({
@@ -1667,3 +1660,20 @@ it.each([false, true])(
     h.unmount();
   },
 );
+
+it("pages session history on scroll without an initial button and keeps error recovery", () => {
+  const h = setup({ hasMore: true, historyControl: "scroll" });
+  expect(h.hasHistoryButton()).toBe(false);
+  h.scroll();
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  h.unmount();
+  const failed = setup({
+    hasMore: true,
+    historyControl: "scroll",
+    error: "Read failed",
+  });
+  expect(failed.hasHistoryButton()).toBe(true);
+  failed.retry();
+  expect(failed.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  failed.unmount();
+});

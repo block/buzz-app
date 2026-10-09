@@ -11,7 +11,13 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
 
-export const inject = ["host", "settingsCards", "relay", "communityReader"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "relay",
+  "communityReader",
+  "agents2",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -22,6 +28,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
+  if (!unavailable)
+    ctx.agents2.register({
+      id: "builderlab",
+      title: "Builderlab",
+      description: "TBD",
+      defaults: () => ({ config: {} }),
+    });
   const session = createOAuthSession((signal) =>
     browserCredential(ctx.host, signal),
   );

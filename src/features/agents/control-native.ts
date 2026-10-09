@@ -11,9 +11,29 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     },
     prepareCreate: (requestId, destination, owner) =>
       invoke("agent_control_create_prepare", { requestId, destination, owner }),
-    commitCreate: (requestId, edit, auth) =>
-      invoke("agent_control_create_commit", { requestId, edit, auth }),
+    commitCreate: (requestId, edit, auth, bundle) =>
+      invoke("agent_control_create_commit", { requestId, edit, auth, bundle }),
+    exportTeam: (snapshot, members, community, memoryLevel = "none") =>
+      invoke("agent_control_team_export", {
+        snapshot,
+        members,
+        community,
+        memoryLevel,
+      }),
+    applyTeamInstructions: (id, revision, instructions, team, community) =>
+      invoke("agent_control_team_instructions", {
+        id,
+        revision,
+        instructions,
+        team,
+        community,
+      }),
+    captureTeam: (team, members, community) =>
+      invoke("agent_control_team_capture", { team, members, community }),
+    previewTeam: (content) => invoke("agent_control_team_preview", { content }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
+    writeSnapshotMemory: (id, entries) =>
+      invoke("agent_control_snapshot_memory_write", { id, entries }),
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),
@@ -34,7 +54,9 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     },
     installPi: () => invoke("pi_install"),
     installClaude: () => invoke("claude_install"),
+    installCodex: () => invoke("codex_install"),
     checkClaudeAuth: () => invoke("claude_auth_status"),
+    checkCodexAuth: () => invoke("codex_auth_status"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
     saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),

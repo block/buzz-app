@@ -21,6 +21,7 @@ export const shellPresentation = {
 // Navigation order is host policy, never plugin activation timing. Match full
 // contribution keys so an external page's local ID cannot claim a bundled slot.
 const bundledOrder = [
+  "buzz.me/me",
   "buzz.channels/channels",
   "buzz.inbox/inbox",
   "buzz.reminders/reminders",

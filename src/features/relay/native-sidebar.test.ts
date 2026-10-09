@@ -565,6 +565,29 @@ it.each([
   },
 );
 
+it("removes only the section register and preserves unrelated sections and channel records", async () => {
+  const transport = await connectNativeTransport(community);
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const other = "22345678-1234-1234-1234-123456789abc";
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c1", createSection: { id, name: "Work" } },
+    signal,
+  );
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c2", createSection: { id: other, name: "Other" } },
+    signal,
+  );
+  const removed = await transport.removeSidebarSection?.(id, signal);
+  expect(removed).toEqual({
+    sections: [{ id: other, name: "Other", order: 0 }],
+    assignments: { c2: other },
+  });
+  expect(await transport.removeSidebarSection?.(id, signal)).toEqual(removed);
+  expect([...records.keys()].every((key) => key === "channel-sections")).toBe(
+    true,
+  );
+});
+
 it("rejects invalid sidebar intents before native reads or signing", async () => {
   const transport = await connectNativeTransport(community);
   vi.mocked(invoke).mockClear();
@@ -589,4 +612,41 @@ it("rejects invalid sidebar intents before native reads or signing", async () =>
     transport.writeSidebarSort?.("section:missing", "recent", [], signal),
   ).rejects.toThrow("Invalid sidebar sort intent");
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("removes a section through native signing and readback without touching other coordinates", async () => {
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "later", name: "Later", order: 1 },
+      ],
+      assignments: { alpha: "work", beta: "later" },
+      preserved: "value",
+    }),
+  );
+  const stars = signedRecord("channel-stars", {
+    version: 1,
+    channels: { alpha: { starred: true, updatedAt: 1 } },
+  });
+  records.set("channel-stars", stars);
+  const transport = await connectNativeTransport(community);
+  if (!transport.removeSidebarSection)
+    throw new Error("Missing removal writer");
+  expect(await transport.removeSidebarSection("work", signal)).toEqual({
+    sections: [{ id: "later", name: "Later", order: 0 }],
+    assignments: { beta: "later" },
+  });
+  expect(records.get("channel-stars")).toBe(stars);
+  const head = records.get("channel-sections");
+  if (!head) throw new Error("Missing sections head");
+  const saved = decode([head])["channel-sections"] as {
+    meta: { s: { work: { live: unknown[] } }; a: { alpha: unknown[] } };
+    preserved: string;
+  };
+  expect(saved.meta.s.work.live[2]).toBe(false);
+  expect(saved.meta.a.alpha[2]).toBeNull();
+  expect(saved.preserved).toBe("value");
 });

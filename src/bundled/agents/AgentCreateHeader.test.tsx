@@ -15,7 +15,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-it("keeps the name under the avatar and expands choices only on request", () => {
+it("keeps the name under the avatar and expands choices only on request", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -53,8 +53,8 @@ it("keeps the name under the avatar and expands choices only on request", () => 
   expect(onChange).toHaveBeenLastCalledWith({ name: "New name" });
   expect(screen.queryByRole("button", { name: "Gloopies 1" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Choose avatar" }));
-  fireEvent.click(screen.getByRole("button", { name: "Gloopies" }));
-  fireEvent.click(screen.getByRole("button", { name: "Gloopies 1" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Gloopies$/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Gloopies 1" }));
   expect(onChange).toHaveBeenLastCalledWith({
     picture: expect.stringMatching(/^https:/),
   });

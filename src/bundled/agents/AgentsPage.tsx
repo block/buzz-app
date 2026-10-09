@@ -100,7 +100,11 @@ export function AgentsPage({
         {(entry, active) => {
           const Teams = entry.teams;
           return Teams ? (
-            <Teams session={connection.session} active={active} />
+            <Teams
+              session={connection.session}
+              control={control}
+              active={active}
+            />
           ) : null;
         }}
       </OwnedContribution>
@@ -324,6 +328,11 @@ export function AgentsPage({
                   {control ? (
                     <AgentControlPanel
                       control={control}
+                      session={
+                        connection.status === "ready"
+                          ? connection.session
+                          : undefined
+                      }
                       importTab={tab === "import"}
                       onImported={() => setTab("yours")}
                       headerActions={headerActions}
@@ -377,6 +386,7 @@ export function AgentsPage({
                         onUseHere,
                         onImport,
                         newAgent,
+                        onShare,
                       ) =>
                         state.status === "unavailable" ? (
                           <>
@@ -385,6 +395,7 @@ export function AgentsPage({
                           </>
                         ) : state.data?.parked !== undefined ? (
                           <UnifiedInventory
+                            onShare={onShare}
                             importTab={tab === "import"}
                             key={connection.viewer ?? "offline"}
                             teams={teams}
@@ -411,6 +422,8 @@ export function AgentsPage({
                           />
                         ) : (
                           <ManagedAgents
+                            newAgent={newAgent}
+                            onShare={onShare}
                             onUseHere={onUseHere}
                             key={`${connection.scope}:${connection.generation}`}
                             state={state}
@@ -461,9 +474,11 @@ export function AgentsPage({
   );
 }
 function ManagedAgents({
+  newAgent,
   state,
   edit,
   duplicate,
+  onShare,
   remove,
   importedId,
   control,
@@ -475,10 +490,12 @@ function ManagedAgents({
   onUseHere,
   teams,
 }: {
+  newAgent?: React.ReactNode;
   label(agent: AgentView): string;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;
+  onShare(agent: AgentView): void;
   remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
@@ -508,6 +525,7 @@ function ManagedAgents({
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
       )}
       <div className="agent-grid">
+        {newAgent}
         {state.data?.agents.map((agent) => {
           const identity = snapshot.identities.find(
             (entry) => entry.pubkey === agent.pubkey,
@@ -536,6 +554,7 @@ function ManagedAgents({
               }
               onEdit={edit}
               onDuplicate={duplicate}
+              onShare={onShare}
               onDelete={control.delete ? remove : undefined}
               onViewProfile={
                 sameCommunityAgents([agent], connection.scope ?? "").length

@@ -190,7 +190,7 @@ it("retries failed inventory without offering import for relay-only identities",
   });
   await screen.findByText(/Community inventory could not be checked/);
   expect(screen.queryByRole("button", { name: "Use here" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   const group = await screen.findByRole("region", {
     name: "Relay-only agents",
   });
@@ -226,7 +226,7 @@ it("preserves placement and independent setup and Clone after a read failure", a
   const cards = within(section).getAllByRole("article");
   expect(cards).toHaveLength(2);
   request.mockRejectedValue(Error("Access denied"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await screen.findByText(/Community inventory could not be checked/);
   expect(section).toBeVisible();
   for (const card of cards) {
@@ -484,7 +484,7 @@ it("reads unvisited joined communities, deduplicates identities, and retries onl
   request.mockImplementation(async (_id, route) =>
     route === "query" ? [] : { identities: [key] },
   );
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await waitFor(() =>
     expect(screen.queryByText(/could not be checked/)).toBeNull(),
   );
@@ -571,7 +571,7 @@ it("keeps the last public name for a retained identity when its community read f
   request.mockImplementation(async () => {
     throw Error("unavailable");
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await screen.findByText(/could not be checked for https:\/\/other.example/);
   expect(
     screen.getByRole("article", { name: "Agent Docs writer" }),
@@ -717,7 +717,7 @@ it("keeps discovery visible when public profiles fail and retries from Refresh a
     ).toBe(true),
   );
   failed = false;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await screen.findByRole("article", { name: "Agent Recovered profile" });
 });
 
@@ -807,7 +807,7 @@ it("keeps source discovery after profile failure, retries enrichment, and fences
     screen.getByRole("article", { name: `Agent ${key.pubkey.slice(0, 12)}` }),
   ).toBeVisible();
   fail = false;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   await waitFor(() =>
     expect(
       request.mock.calls.filter(([, route]) => route === "query"),
@@ -1380,7 +1380,7 @@ it("asks for archive permission again on Refresh agents after a failed read", as
   fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   refuse = false;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
   // The same mounted card offers Archive once the new read succeeds.
   await openMenuItem(card, "Fixture agent", "Archive agent");
   expect(

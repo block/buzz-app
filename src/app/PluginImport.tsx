@@ -17,10 +17,14 @@ function hostGrants(manifest: PluginManifest): string[] {
   return [
     ...(manifest.host?.commands ?? []).map(
       (command) =>
-        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
+        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
     ),
     ...(manifest.host?.networkOrigins ?? []).map(
       (origin) => `HTTPS origin: ${origin}`,
+    ),
+    ...(manifest.host?.processes ?? []).map(
+      (process) =>
+        `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])} and any further arguments · stdin, full user access`,
     ),
   ];
 }

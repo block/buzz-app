@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,6 +114,204 @@ test("runtime preparation builds missing resources, reuses verified files, and r
     assert.match(run(), /Agent runtime ready/);
     assert.equal(count(), before + 2);
   }
+});
+
+test("desktop dev builds Goose with the dev profile; packaged preparation keeps the pinned one", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  assert.notEqual(spec.gooseDevProfile, spec.goose.profile);
+  const run = (...args) => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/build-agent-runtime.mjs", ...args],
+      { cwd: directory, encoding: "utf8", timeout: 10_000 },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  const calls = () =>
+    readFileSync(path.join(directory, "build-calls.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  const recorded = () =>
+    JSON.parse(
+      readFileSync(
+        path.join(directory, "src-tauri/resources/agent-runtime/manifest.json"),
+        "utf8",
+      ),
+    ).goose;
+  const sources = path.join(directory, "target/agent-runtime-src");
+  // Packaging after desktop dev must replace the dev bundle, never accept it.
+  for (const [args, profile] of [
+    [[], spec.goose.profile],
+    [["--dev"], spec.gooseDevProfile],
+    [[], spec.goose.profile],
+  ]) {
+    assert.match(run(...args), /Verified inputs staged/);
+    assert.deepEqual(recorded(), { ...spec.goose, profile });
+    const gooseBuild = calls().at(-1);
+    assert.equal(
+      gooseBuild.args[gooseBuild.args.indexOf("--profile") + 1],
+      profile,
+    );
+    assert.match(run(...args), /Agent runtime ready/);
+  }
+  // Rebuilds reuse stable source checkouts, so Cargo can skip unchanged crates.
+  assert.deepEqual(
+    [...new Set(calls().map((call) => call.cwd))],
+    [path.join(sources, "buzz"), path.join(sources, "goose")].map((dir) =>
+      realpathSync(dir),
+    ),
+  );
+});
+
+// Starts dev preparation and resolves once its first compiler call is held open.
+async function heldPreparation(t, directory, options = {}) {
+  const server = createServer();
+  const started = once(server, "connection");
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+  writeFileSync(
+    path.join(directory, "hold-build"),
+    String(server.address().port),
+  );
+  const child = spawn(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs", "--dev"],
+    { cwd: directory, stdio: ["ignore", "ignore", "pipe"], ...options },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completed = once(child, "close");
+  const [socket] = await Promise.race([
+    started,
+    completed.then(([code]) => {
+      throw new Error(
+        `Preparation exited before reaching the compiler (${code}): ${stderr}`,
+      );
+    }),
+  ]);
+  return { child, socket, completed, stderr: () => stderr };
+}
+
+test("overlapping preparation cannot replace another build's source checkout", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const { socket, completed, stderr } = await heldPreparation(t, directory);
+  const marker = path.join(
+    directory,
+    "target/agent-runtime-src/buzz/broken-checkout",
+  );
+  try {
+    writeFileSync(marker, "owned by the first preparation");
+    const competing = spawnSync(
+      process.execPath,
+      ["scripts/build-agent-runtime.mjs"],
+      {
+        cwd: directory,
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
+    assert.ifError(competing.error);
+    assert.notEqual(
+      competing.status,
+      0,
+      "overlapping preparation must be rejected",
+    );
+    assert.match(competing.stderr, /Runtime preparation already in progress/);
+    assert.equal(
+      readFileSync(marker, "utf8"),
+      "owned by the first preparation",
+    );
+    assert.equal(
+      readFileSync(path.join(directory, "build-calls.jsonl"), "utf8")
+        .trim()
+        .split("\n").length,
+      1,
+    );
+  } finally {
+    socket.end("release");
+    const [code] = await completed;
+    assert.equal(code, 0, stderr());
+  }
+  // A force-killed preparation's lock is retained until explicitly cleared.
+  const lock = path.join(directory, "target/agent-runtime-prepare.lock");
+  mkdirSync(lock);
+  const abandoned = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  assert.ifError(abandoned.error);
+  assert.notEqual(abandoned.status, 0);
+  assert.match(
+    abandoned.stderr,
+    /stop its Git\/Cargo processes before removing this lock/,
+  );
+  assert.ok(existsSync(marker));
+  rmSync(lock, { recursive: true });
+  const next = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  assert.equal(next.status, 0, next.stderr);
+  const manifest = JSON.parse(
+    readFileSync(
+      path.join(directory, "src-tauri/resources/agent-runtime/manifest.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.goose.profile, "lean");
+  assert.ok(
+    !existsSync(marker),
+    "the later preparation can repair its own checkout",
+  );
+});
+
+test("interrupting preparation releases its lock", {
+  skip: process.platform === "win32" && "POSIX process-group signal",
+}, async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  // Its own process group, like a terminal's foreground job.
+  const { child, socket, completed } = await heldPreparation(t, directory, {
+    detached: true,
+  });
+  const lock = path.join(directory, "target/agent-runtime-prepare.lock");
+  assert.ok(existsSync(lock));
+  const compilerStopped = once(socket, "close");
+  // Ctrl-C signals the whole foreground process group, compiler included.
+  process.kill(-child.pid, "SIGINT");
+  const [[code]] = await Promise.all([completed, compilerStopped]);
+  assert.notEqual(code, 0);
+  assert.ok(!existsSync(lock));
+  const next = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs", "--dev"],
+    { cwd: directory, encoding: "utf8", timeout: 10_000 },
+  );
+  assert.equal(next.status, 0, next.stderr);
 });
 
 test("runtime output ignores a user-level build target and survives an interrupted build", (t) => {

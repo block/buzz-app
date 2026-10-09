@@ -32,10 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "macOS": {
-      "infoPlist": "Info.plist",
-      "entitlements": "Entitlements.plist"
-    },
+    "macOS": { "entitlements": "entitlements.plist" },
     "resources": { "resources/agent-runtime/": "agent-runtime/" },
     "icon": [
       "icons/32x32.png",

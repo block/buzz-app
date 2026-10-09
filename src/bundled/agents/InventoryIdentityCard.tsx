@@ -21,7 +21,7 @@ import {
   useManagedAgentActions,
 } from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
 import {
   type ArchiveAction,
@@ -49,6 +49,7 @@ export function InventoryIdentityCard({
   sourceProfiles,
   edit,
   duplicate,
+  onShare,
   remove,
   removeRelay,
   archive,
@@ -72,6 +73,7 @@ export function InventoryIdentityCard({
   sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   /** Undefined when this connection cannot remove relay-only agents. */
   removeRelay?:
@@ -225,6 +227,7 @@ export function InventoryIdentityCard({
         }
         onEdit={setups.length ? edit : undefined}
         onDuplicate={setups.length ? duplicate : undefined}
+        onShare={setups.length ? onShare : undefined}
         onDelete={setups.length ? remove : undefined}
         archived={!!archive?.archived}
         archive={
@@ -306,16 +309,17 @@ export function InventoryIdentityCard({
         }
       >
         {setups.map((agent) => (
-          <ManagedAgentActions
-            action={actions(agent)}
-            key={agent.id}
-            agent={agent}
-            // A section already names its own community; other setups still show theirs.
-            showCommunity={row.localSetups.get(community) !== agent}
-            state={state}
-            control={control}
-            imported={agent.id === importedId}
-          />
+          <Fragment key={agent.id}>
+            <ManagedAgentActions
+              action={actions(agent)}
+              agent={agent}
+              // A section already names its own community; other setups still show theirs.
+              showCommunity={row.localSetups.get(community) !== agent}
+              state={state}
+              control={control}
+              imported={agent.id === importedId}
+            />
+          </Fragment>
         ))}
         {row.unconfiguredSetups.map((agent) => (
           <p

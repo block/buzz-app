@@ -89,6 +89,8 @@ fn profile(origin: &str) -> CreationProfile {
         auth: json!(["auth", "owner", "", "signature"]).to_string(),
         name: "Fixture".into(),
         picture: Some("https://images.example/a.png".into()),
+        name_pending: false,
+        about: None,
         revision: 1,
     }
 }
@@ -144,6 +146,10 @@ async fn actual_http_query_publish_and_verified_readback() {
             1 => {
                 assert_eq!(request.path, "/events");
                 let event: Value = serde_json::from_slice(&request.body).unwrap();
+                let content: Value =
+                    serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+                assert_eq!(content["name"], "Luna");
+                assert_eq!(content["display_name"], "Luna");
                 *seen.lock().unwrap() = event.clone();
                 json_reply(json!({"accepted":true,"event_id":event["id"]}))
             }
@@ -154,9 +160,12 @@ async fn actual_http_query_publish_and_verified_readback() {
         }
     });
     *origin_ref.lock().unwrap() = origin.clone();
+    let mut publication = profile(&origin);
+    publication.name = "Luna".into();
+    publication.name_pending = true;
     publish(
         &client(),
-        &profile(&origin),
+        &publication,
         &Secret::parse(KEY, PUB).unwrap(),
         || async { Ok(()) },
     )
@@ -227,6 +236,58 @@ async fn refused_malformed_or_unbounded_reads_and_wrong_receipts_do_not_succeed(
 }
 
 #[tokio::test]
+async fn native_rename_publishes_luna_and_clears_pending_after_verified_readback() {
+    use crate::agents::{publish_acquired, tests::fixture};
+    let (dir, owner, _app, _view) = fixture();
+    let auth = test_attestation();
+    let id = format!("{PUB}-733db93c5a38b650794422a480fab67f1dd8f6f40112c360f9814dfaec3bfcbb");
+    std::fs::write(dir.path().join("store/agents.json"), serde_json::to_vec(&json!({"version":1,"agents":[{
+        "id":id,"pubkey":PUB,"relayUrl":"wss://relay.example","name":"GLM","picture":null,"systemPrompt":"test","workspace":dir.path().to_str().unwrap(),
+        "harness":{"command":"buzz-agent","args":[],"model":"test","provider":"test"},"environment":{},"revision":1,"enabled":false,"credentialId":"fixture","authTag":auth,"imported":{}
+    }]})).unwrap()).unwrap();
+    let edit = serde_json::from_value(json!({"name":"Luna","systemPrompt":"test","workspace":dir.path().to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"test","provider":"test"},"environment":{}})).unwrap();
+    owner
+        .with(|host| host.controller.save(&id, 1, edit).map(|_| ()))
+        .unwrap();
+    assert!(owner
+        .with(|host| Ok(host.controller.snapshot()?.agents[0].profile_pending))
+        .unwrap());
+
+    let mut saved = Value::Null;
+    let (origin, worker) = server(3, move |index, request| match index {
+        0 => json_reply(json!([])),
+        1 => {
+            saved = serde_json::from_slice(&request.body).unwrap();
+            let content: Value = serde_json::from_str(saved["content"].as_str().unwrap()).unwrap();
+            assert_eq!(content["name"], "Luna");
+            assert_eq!(content["display_name"], "Luna");
+            json_reply(json!({"accepted":true,"event_id":saved["id"]}))
+        }
+        _ => json_reply(json!([saved.clone()])),
+    });
+    let (publication, mut profile, _) = owner.begin_profile(&id).await.unwrap();
+    profile.url = format!("{origin}/events");
+    publish_acquired(
+        &owner,
+        &id,
+        &profile,
+        &Secret::parse(KEY, PUB).unwrap(),
+        &client(),
+        publication,
+    )
+    .await
+    .unwrap();
+    worker.join().unwrap();
+    assert!(!owner
+        .with(|host| Ok(host.controller.snapshot()?.agents[0].profile_pending))
+        .unwrap());
+    let stored: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("store/agents.json")).unwrap())
+            .unwrap();
+    assert!(stored["agents"][0].get("profileNamePending").is_none());
+}
+
+#[tokio::test]
 async fn native_owner_blocks_overlap_during_held_post_and_keeps_newer_save_pending() {
     use crate::agents::{publish_acquired, tests::fixture};
     let (dir, owner, _app, _view) = fixture();
@@ -288,4 +349,37 @@ async fn native_owner_blocks_overlap_during_held_post_and_keeps_newer_save_pendi
 fn test_attestation() -> String {
     // Public test owner key 2 signs authorization for public test agent key 1.
     json!(["auth", "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5", "", "84b950c7e85f31970af2891d7660a938eab65681a1c1603f93efa99184a3766c86e506a34be52aec64d73f9375311729a44c2841f7b0873643d24dee4d8f361e"]).to_string()
+}
+
+#[tokio::test]
+async fn snapshot_memory_publication_authenticates_body_and_requires_matching_receipt() {
+    for mode in ["accepted", "rejected", "wrong-id", "oversized"] {
+        let origin_ref = Arc::new(Mutex::new(String::new()));
+        let expected = origin_ref.clone();
+        let (origin, worker) = server(1, move |_, request| {
+            assert_eq!(request.path, "/events");
+            auth(&request, &expected.lock().unwrap());
+            let event: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(event["kind"], 30174);
+            assert_ne!(event["content"], "private fixture core");
+            match mode {
+                "oversized" => Reply {
+                    status: 200,
+                    body: vec![b' '; 16 * 1024 + 1],
+                },
+                _ => json_reply(json!({
+                    "accepted": mode != "rejected",
+                    "event_id": if mode == "wrong-id" { json!("00".repeat(32)) } else { event["id"].clone() }
+                })),
+            }
+        });
+        *origin_ref.lock().unwrap() = origin.clone();
+        let key = Secret::parse(KEY, PUB).unwrap();
+        let event = key
+            .memory_event(PUB, "core", "private fixture core", 1_700_000_000)
+            .unwrap();
+        let result = publish_memory(&client(), &profile(&origin), &key, event).await;
+        assert_eq!(result.is_ok(), mode == "accepted", "{mode}");
+        worker.join().unwrap();
+    }
 }

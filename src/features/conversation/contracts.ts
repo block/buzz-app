@@ -1,7 +1,8 @@
 // FOUNDATION: Preview conversation contribution contract; data and delivery stay session-owned.
 import type { ComponentType } from "react";
-import type { Contribution } from "../../plugins/contributions";
-import type { ChannelMessage } from "../relay/contracts";
+import type { Contribution, MatchOrder } from "../../plugins/contributions";
+import type { VoiceRecording } from "../relay/voice-media";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
@@ -28,7 +29,25 @@ export type ComposerToolProps = Readonly<{
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
   insertResource(resource: ComposerResource): true | string;
+  capture?(
+    component: ComponentType<ComposerCaptureProps>,
+  ): (() => void) | false;
   focus(): void;
+}>;
+export type ComposerCaptureProps = Readonly<{
+  accept(recording: VoiceRecording): boolean;
+  cancel(): void;
+}>;
+export type AttachmentRendererProps = Readonly<{
+  attachment: Attachment;
+  source: string;
+  onRemove?: (() => void) | undefined;
+}>;
+export type AttachmentRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(attachment: Attachment): boolean;
+  component: ComponentType<AttachmentRendererProps>;
 }>;
 export type ReactionToolProps = Readonly<{
   session: RelaySession;
@@ -68,6 +87,8 @@ export type LinkRenderer = Readonly<{
   id: string;
   title: string;
   matches(url: string): boolean;
+  /** Claim strength when several renderers match a URL; see `MatchOrder`. */
+  order?: MatchOrder | undefined;
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;
@@ -117,6 +138,7 @@ export type MessageAction = Readonly<{
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
 export type ConversationExtensions = Readonly<{
+  attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;
   accessories?: ContributionReader<ComposerAccessory>;

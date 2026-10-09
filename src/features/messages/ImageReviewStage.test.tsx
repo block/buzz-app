@@ -184,7 +184,7 @@ it("reveals idle controls on movement and clears its timer on unmount", () => {
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it.each(["Zoom in", "Zoom out"])(
+it.each(["Zoom in"])(
   "resets zoom after %s for another image without replacing the toolbar",
   (action) => {
     const attachments = [

@@ -15,7 +15,7 @@ from the catalog, through Buzz's existing picture field and media path, so other
 clients can display them. No filesystem or app-local URL is published to a relay.
 The original WebM and HEVC variants are bundled and checksum-verified against
 the same upstream manifest. WebKit uses alpha HEVC and Chromium uses WebM.
-Only the selected creation avatar plays; picker thumbnails stay still. Reduced
+The creation preview, picker choices, and agent cards use animated variants. Reduced
 motion and playback failures use the poster. Saved profiles remain portable PNG
 URLs, so animation never changes the relay profile format.
 

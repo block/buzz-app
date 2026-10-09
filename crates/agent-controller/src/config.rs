@@ -71,12 +71,19 @@ pub struct AgentView {
     pub respond_to: Option<String>,
     /// Imported provider backend id; local agents have none.
     pub backend: Option<String>,
+    /// Names only. Never expose imported records or team instructions through IPC.
+    pub snapshot_export_limitations: Vec<&'static str>,
     pub acp_command: Option<String>,
     pub mcp_command: Option<String>,
     /// Model/provider the next start passes to the worker from saved selectors,
     /// agent defaults or build defaults; `None` when an environment override decides it.
     pub launch_model: Option<String>,
     pub launch_provider: Option<String>,
+    /// Effective listener worker count, including the Buzz Agent default of 1.
+    /// Numeric projection only; other environment values never leave native.
+    pub launch_parallelism: Option<u32>,
+    /// Effort level the next start applies; `None` when the harness decides.
+    pub launch_effort: Option<String>,
     /// Environment key deciding that selector. Its value never leaves native.
     pub launch_model_env: Option<&'static str>,
     pub launch_provider_env: Option<&'static str>,
@@ -89,9 +96,15 @@ pub struct AgentView {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessView {
+    /// Stable native integration identity. Absent preserves legacy/custom behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integration: Option<crate::HarnessIntegration>,
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Explicit managed model/effort intent. Absent preserves legacy behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     pub environment_keys: Vec<String>,
     pub databricks: Option<crate::connection::DatabricksSettings>,
@@ -106,7 +119,7 @@ pub enum ProcessStatus {
     Stopping,
     Failed,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
@@ -120,16 +133,113 @@ pub struct AgentEdit {
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
+    /// Absence preserves; a value replaces. Set by portable imports.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+/// Saved key for an agent's own effort level.
+pub(crate) const OWN_EFFORT: &str = "effort";
+/// Effort levels are short harness names, as for agent defaults.
+pub(crate) fn validate_effort(effort: &str) -> Result<()> {
+    // Same rule as the app's snapshot parser (`EFFORT`), so an export never
+    // writes an effort that import would reject.
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if effort.is_empty() || effort.len() > 64 || !effort.chars().all(allowed) {
+        return Err("Effort level is empty, too long or invalid".into());
+    }
+    Ok(())
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HarnessEdit {
+    /// Stable native integration identity. Editable command names do not grant it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration: Option<crate::HarnessIntegration>,
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Explicit model/effort intent for native managed integrations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     #[serde(default)]
     pub databricks: Option<crate::connection::DatabricksSettings>,
+}
+
+/// Explicit managed model/effort intent, distinct from legacy blank inheritance.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AiConfiguration {
+    /// Delegate model and effort selection to the integration.
+    Default,
+    /// Apply and validate one explicit model and effort choice.
+    Advanced { effort: EffortSelection },
+}
+
+/// An explicit effort choice, including confirmed absence of an effort control.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum EffortSelection {
+    /// Stable adapter value, never its display label.
+    Value { value: String },
+    /// The integration explicitly reported no effort choices for this model.
+    Unsupported,
+}
+
+impl HarnessEdit {
+    fn validate_configuration(&self) -> Result<()> {
+        if self.integration == Some(crate::HarnessIntegration::Codex) && !self.args.is_empty() {
+            return Err("Native Codex does not accept custom adapter arguments".into());
+        }
+        match (self.integration, &self.configuration) {
+            (None, None) => Ok(()),
+            (Some(crate::HarnessIntegration::Codex), Some(AiConfiguration::Default)) => {
+                if !self.model.is_empty() {
+                    return Err(
+                        "Default Codex configuration must not contain a model override".into(),
+                    );
+                }
+                if !self.provider.is_empty() {
+                    return Err("Codex uses its own provider configuration".into());
+                }
+                Ok(())
+            }
+            (
+                Some(crate::HarnessIntegration::Codex),
+                Some(AiConfiguration::Advanced { effort }),
+            ) => {
+                if self.model.trim().is_empty() {
+                    return Err("Choose a model for Advanced Codex configuration".into());
+                }
+                if !self.provider.is_empty() {
+                    return Err("Codex uses its own provider configuration".into());
+                }
+                if let EffortSelection::Value { value } = effort {
+                    if value.trim().is_empty() || value.chars().any(char::is_control) {
+                        return Err("Choose a valid Codex effort value".into());
+                    }
+                    text(value, 128, "Codex effort")?;
+                }
+                Ok(())
+            }
+            (Some(crate::HarnessIntegration::Codex), None) => {
+                Err("Choose Default or Advanced Codex configuration".into())
+            }
+            (None, Some(_)) => Err("Managed configuration requires a native integration".into()),
+            (Some(_), _) => {
+                Err("This native integration does not support saved managed configuration".into())
+            }
+        }
+    }
+
+    pub(crate) fn codex_effort(&self) -> Option<&str> {
+        match &self.configuration {
+            Some(AiConfiguration::Advanced {
+                effort: EffortSelection::Value { value },
+            }) if self.integration == Some(crate::HarnessIntegration::Codex) => Some(value),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,9 +291,11 @@ impl Agent {
             session_policy: self.selected_session_policy(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
+                integration: self.harness.integration,
                 command: self.harness.command.clone(),
                 args: self.harness.args.clone(),
                 model: self.harness.model.clone(),
+                configuration: self.harness.configuration.clone(),
                 provider: self.harness.provider.clone(),
                 environment_keys: self.environment.keys().cloned().collect(),
                 databricks: self.harness.databricks.clone(),
@@ -195,17 +307,86 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             configured: self.configured(),
-            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
+            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true))
+                || self.extra.get("profileNamePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
                 .then(|| self.imported["record"]["backend"]["id"].as_str())
                 .flatten()
                 .map(str::to_owned),
+            snapshot_export_limitations: {
+                let record = &self.imported["record"];
+                let mut limits = Vec::new();
+                if crate::import::team_text(&self.imported["teamInstructions"])
+                    .map_or(true, |text| !text.is_empty())
+                {
+                    limits.push("team instructions");
+                }
+                if !record["idle_timeout_seconds"].is_null() {
+                    limits.push("idle timeout");
+                }
+                if !record["max_turn_duration_seconds"].is_null() {
+                    limits.push("turn timeout");
+                }
+                if effective.environment.keys().any(|key| {
+                    (key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
+                        || (crate::agent_defaults::harness_kind(&effective.harness.command)
+                            == Some("buzz-agent")
+                            && matches!(
+                                key.as_str(),
+                                "BUZZ_AGENT_SYSTEM_PROMPT"
+                                    | "BUZZ_AGENT_SYSTEM_PROMPT_FILE"
+                                    | "BUZZ_AGENT_MAX_ROUNDS"
+                                    | "BUZZ_AGENT_MAX_OUTPUT_TOKENS"
+                                    | "BUZZ_AGENT_MAX_TOKEN_RECOVERIES"
+                                    | "BUZZ_AGENT_LLM_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_TOOL_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_MCP_INIT_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_MCP_RESTART_MAX_ATTEMPTS"
+                                    | "BUZZ_AGENT_MCP_RESTART_BASE_MS"
+                                    | "BUZZ_AGENT_MCP_RESTART_MAX_MS"
+                                    | "BUZZ_AGENT_MAX_SESSIONS"
+                                    | "BUZZ_AGENT_MAX_LINE_BYTES"
+                                    | "BUZZ_AGENT_MAX_HISTORY_BYTES"
+                                    | "BUZZ_AGENT_MAX_TOOL_RESULT_TEXT_BYTES"
+                                    | "BUZZ_AGENT_MAX_CONTEXT_TOKENS"
+                                    | "BUZZ_AGENT_MAX_HANDOFFS"
+                                    | "BUZZ_AGENT_MAX_PARALLEL_TOOLS"
+                                    | "BUZZ_AGENT_MAX_PENDING_PERMISSIONS"
+                                    | "BUZZ_AGENT_PERMISSION_TIMEOUT_SECS"
+                                    | "BUZZ_AGENT_HOOK_TIMEOUT_MS"
+                                    | "BUZZ_AGENT_STOP_MAX_REJECTIONS"
+                                    | "BUZZ_AGENT_REQUIRE_REPLY"
+                                    | "BUZZ_AGENT_NO_HINTS"
+                                    | "BUZZ_AGENT_THINKING_EFFORT"
+                                    | "BUZZ_AGENT_THINKING_SUMMARY"
+                                    | "BUZZ_AGENT_PROMPT_CACHING"
+                            ))
+                }) {
+                    limits.push("behavioral environment overrides");
+                }
+                limits
+            },
             acp_command: None,
             mcp_command: None,
             launch_model: launch.model,
             launch_provider: launch.provider,
+            launch_parallelism: effective
+                .environment
+                .get("BUZZ_ACP_AGENTS")
+                .and_then(|value| value.parse::<u32>().ok())
+                .or_else(|| {
+                    self.imported["record"]["parallelism"]
+                        .as_u64()
+                        .and_then(|count| u32::try_from(count).ok())
+                })
+                .or_else(|| {
+                    (crate::agent_defaults::harness_kind(&self.harness.command)
+                        == Some("buzz-agent"))
+                    .then_some(1)
+                }),
+            launch_effort: crate::agent_defaults::launch_effort(&effective).map(str::to_owned),
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
@@ -269,6 +450,8 @@ impl Agent {
             && !record["backend_agent_id"].is_null()
     }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
+        visible_agent_text(&edit.name, false)?;
+        visible_agent_text(&edit.system_prompt, true)?;
         if let Some(picture) = edit.picture {
             validate_picture(&picture)?;
             if self.picture.as_ref() != Some(&picture) {
@@ -277,6 +460,10 @@ impl Agent {
                     .insert("profilePending".into(), Value::Bool(true));
             }
         }
+        if self.name != edit.name {
+            self.extra
+                .insert("profileNamePending".into(), Value::Bool(true));
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
         if let Some(policy) = edit.session_policy {
@@ -284,7 +471,17 @@ impl Agent {
             self.session_policy_inherit = policy.is_none();
         }
         self.workspace = edit.workspace;
+        let harness_changed = crate::agent_defaults::harness_kind(&self.harness.command)
+            != crate::agent_defaults::harness_kind(&edit.harness.command);
         self.harness = edit.harness;
+        if let Some(effort) = edit.effort {
+            validate_effort(&effort)?;
+            self.extra.insert(OWN_EFFORT.into(), Value::String(effort));
+        } else if harness_changed {
+            // Effort names belong to one harness, as for agent defaults. Null
+            // also retires an old Buzz import's `effort_level`.
+            self.extra.insert(OWN_EFFORT.into(), Value::Null);
+        }
         for (key, value) in edit.environment {
             if let Some(value) = value {
                 validate_env_key(&key, &self.harness.command)?;
@@ -338,11 +535,16 @@ impl Agent {
             }
         }
         text(&self.harness.model, 512, "Model")?;
+        self.harness.validate_configuration()?;
         text(&self.harness.provider, 128, "Provider")?;
         if let Some(settings) = &self.harness.databricks {
             settings.validate()?;
         }
-        validate_environment(&self.environment, &self.harness.command)
+        validate_environment(&self.environment, &self.harness.command)?;
+        if self.harness.integration == Some(crate::HarnessIntegration::Codex) {
+            crate::codex::validate_native_environment(&self.environment)?;
+        }
+        Ok(())
     }
 }
 pub(crate) fn canonical_key(key: &str) -> bool {
@@ -378,6 +580,75 @@ pub(crate) fn agent_id(pubkey: &str, relay: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{pubkey}-{:x}", Sha256::digest(relay.as_bytes()))
 }
+// Executable instructions must remain visible in both the preview and persisted config.
+// Emoji joiners/selectors are allowed only when they compose visible emoji.
+pub(crate) fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
+    use std::sync::LazyLock;
+    static PICTOGRAPHIC: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^\p{Extended_Pictographic}$").expect("Unicode property is supported")
+    });
+    static SCRIPT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^[\p{L}\p{M}]$").expect("Unicode property is supported")
+    });
+    static PUNCTUATION: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^\p{P}$").expect("Unicode property is supported"));
+    let chars: Vec<char> = value.chars().collect();
+    for (i, &ch) in chars.iter().enumerate() {
+        let code = ch as u32;
+        let pictographic = |c: char| PICTOGRAPHIC.is_match(&c.to_string());
+        let emoji_format = match ch {
+            '\u{fe0f}' | '\u{fe0e}' => {
+                i > 0
+                    && (pictographic(chars[i - 1]) || matches!(chars[i - 1], '#' | '*' | '0'..='9'))
+            }
+            '\u{200c}' | '\u{200d}'
+                if i > 0
+                    && chars
+                        .get(i + 1)
+                        .is_some_and(|c| !c.is_ascii() && SCRIPT.is_match(&c.to_string()))
+                    && !chars[i - 1].is_ascii()
+                    && SCRIPT.is_match(&chars[i - 1].to_string()) =>
+            {
+                true
+            }
+            '\u{200d}'
+                if i >= 2
+                    && chars[i - 1] == '\u{0d4d}'
+                    && matches!(chars[i - 2] as u32, 0x0d15..=0x0d39)
+                    && chars.get(i + 1).is_none_or(|c| {
+                        c.is_whitespace()
+                            || c.is_ascii_punctuation()
+                            || PUNCTUATION.is_match(&c.to_string())
+                    }) =>
+            {
+                true
+            }
+            '\u{200d}' => {
+                let previous = chars[..i].iter().rev().find(|&&c| {
+                    c != '\u{fe0f}' && c != '\u{fe0e}' && !matches!(c as u32, 0x1f3fb..=0x1f3ff)
+                });
+                previous.is_some_and(|&c| pictographic(c))
+                    && chars.get(i + 1).is_some_and(|&c| pictographic(c))
+            }
+            _ => false,
+        };
+        let ignorable = matches!(code,
+            0x00ad | 0x034f | 0x061c | 0x115f..=0x1160 | 0x17b4..=0x17b5 |
+            0x180b..=0x180f | 0x200b..=0x200f | 0x202a..=0x202e |
+            0x2060..=0x206f | 0x3164 | 0xfe00..=0xfe0f | 0xfeff |
+            0xffa0 | 0xfff0..=0xfff8 | 0x1bca0..=0x1bca3 |
+            0x1d173..=0x1d17a | 0xe0000..=0xe0fff);
+        if (ch.is_control() && !(prompt && matches!(ch, '\n' | '\r' | '\t')))
+            || (ignorable && !emoji_format)
+        {
+            return Err(format!(
+                "Agent text contains prohibited invisible character U+{code:04X}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn text(value: &str, limit: usize, label: &str) -> Result<()> {
     if value.len() > limit || value.contains('\0') {
         Err(format!("{label} is too long or contains a NUL byte"))
@@ -465,7 +736,7 @@ pub(crate) fn validate_env_key(key: &str, command: &str) -> Result<()> {
     }
 }
 
-fn validate_picture(value: &str) -> Result<()> {
+pub(crate) fn validate_picture(value: &str) -> Result<()> {
     if value.is_empty() {
         return Ok(());
     }
@@ -481,4 +752,22 @@ fn validate_picture(value: &str) -> Result<()> {
         }
     }
     Err("Avatar must be an HTTPS image URL without credentials".into())
+}
+
+#[cfg(test)]
+mod snapshot_visible_text_tests {
+    use super::visible_agent_text;
+
+    #[test]
+    fn rejects_review_invisible_instruction_characters_but_preserves_visible_emoji() {
+        for ch in ['\u{202e}', '\u{200b}', '\u{e0061}'] {
+            assert!(visible_agent_text(&format!("Review{ch} code"), true).is_err());
+            assert!(visible_agent_text(&format!("Reviewer{ch}"), false).is_err());
+        }
+        for value in ["Review 👩‍💻", "Review ❤️", "Review 🧑🏽‍💻", "“അവന്‍” അവന്‍।"]
+        {
+            assert!(visible_agent_text(value, true).is_ok());
+        }
+        assert!(visible_agent_text("Review\n\tcode", true).is_ok());
+    }
 }

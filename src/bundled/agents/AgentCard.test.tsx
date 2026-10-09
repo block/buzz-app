@@ -6,6 +6,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import {
   act,
   cleanup,
+  within,
   fireEvent,
   render,
   screen,
@@ -346,4 +347,26 @@ it("keeps model picker interaction separate from management", async () => {
   await user.click(screen.getByRole("button", { name: "Choose model" }));
   expect(pick).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("routes a managed card Share directly from its menu without a separate Export", async () => {
+  const agent = controlFixture().agent;
+  const share = vi.fn();
+  render(
+    <AgentCard
+      name="Managed"
+      identities={[agent]}
+      editable={[agent]}
+      onEdit={() => {}}
+      onShare={share}
+    >
+      <p>Native controls</p>
+    </AgentCard>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Managed" }));
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).queryByRole("menuitem", { name: "Export" })).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Share" }));
+  expect(share).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(screen.queryByRole("dialog", { name: "Manage Managed" })).toBeNull();
 });

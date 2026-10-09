@@ -1,24 +1,45 @@
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { channelIcon } from "../channels/channel-icon";
-import type { ReactNode, RefObject } from "react";
+import type { ReactNode } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import styles from "./Sessions.module.css";
 
 export function NewSessionView({
   children,
   parentName,
+  actions,
+  personal = false,
 }: {
+  actions?: ReactNode;
+  personal?: boolean;
   children: ReactNode;
   parentName?: string | undefined;
 }) {
   return (
     <section
       className={styles.work}
-      aria-label={parentName ? `New session in ${parentName}` : "New session"}
+      aria-label={
+        parentName
+          ? `New session in ${parentName}`
+          : personal
+            ? "New conversation"
+            : "New session"
+      }
     >
-      <SessionHeading channel={{ name: "New session" }} />
+      <SessionHeading
+        channel={{ name: personal ? "New conversation" : "New session" }}
+      >
+        {actions}
+      </SessionHeading>
       <div className={styles.start}>
-        <div className={styles.startContent}>{children}</div>
+        <div
+          className={`${styles.startContent} ${personal ? styles.personalStart : ""}`}
+        >
+          {children}
+        </div>
       </div>
     </section>
   );
@@ -32,29 +53,43 @@ export function SessionColumn({
   children: ReactNode;
   enabled?: boolean;
 }) {
-  return enabled ? <div className={styles.column}>{children}</div> : children;
+  return enabled ? (
+    <div data-session-column="" className={styles.column}>
+      {children}
+    </div>
+  ) : (
+    children
+  );
 }
 
 export function SessionHeading({
   channel,
-  headingRef,
   children,
+  actions,
 }: {
+  /** Management actions remain available when the conversation is archived. */
+  actions?: ReactNode;
   channel: Pick<ChannelSummary, "name" | "archived" | "private">;
   parentName?: string | undefined;
-  headingRef?: RefObject<HTMLHeadingElement | null> | undefined;
   children?: ReactNode;
 }) {
   const Icon = channelIcon(channel);
+  const status = channel.archived ? <span>Archived</span> : children;
   return (
     <PanelHeader
-      icon={<Icon size="1rem" />}
       title={
-        <h2 ref={headingRef} tabIndex={-1} className="m-0 truncate text-label">
-          {channel.name}
-        </h2>
+        <PanelHeaderLabel title={channel.name} icon={<Icon size="1rem" />} />
       }
-      actions={channel.archived ? <span>Archived</span> : children}
+      actions={
+        actions ? (
+          <>
+            {status}
+            {actions}
+          </>
+        ) : (
+          status
+        )
+      }
     />
   );
 }

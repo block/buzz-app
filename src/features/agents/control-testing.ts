@@ -26,6 +26,7 @@ export function controlFixture() {
     startOnAppLaunch: true,
     respondTo: "owner-only",
     backend: null,
+    snapshotExportLimitations: [],
     acpCommand: "/fixture/bin/buzz-acp",
     mcpCommand: "/fixture/bin/buzz-dev-mcp",
     launchModel: "fixture-model",
@@ -100,6 +101,10 @@ export function controlFixture() {
       }
       Object.assign(agent, {
         name: edit.name,
+        ...(edit.name !== agent.name ||
+        (edit.picture !== undefined && edit.picture !== agent.picture)
+          ? { profilePending: true }
+          : {}),
         ...(edit.picture === undefined || edit.picture === agent.picture
           ? {}
           : { picture: edit.picture, profilePending: true }),

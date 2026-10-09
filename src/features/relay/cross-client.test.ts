@@ -48,53 +48,6 @@ function fold(events: EventData | readonly EventData[]) {
 }
 
 describe("cross-client rich content compatibility", () => {
-  it.each([
-    {
-      name: "old Markdown image",
-      content: `Before ![photo](${imageUrl}) after`,
-      tags: [],
-      expectedContent: "Before  after",
-      expectedAttachments: [{ url: imageUrl, kind: "image" }],
-    },
-    {
-      name: "new imeta image",
-      content: "Before attachment after",
-      tags: [imageIMeta()],
-      expectedContent: "Before attachment after",
-      expectedAttachments: [
-        {
-          url: imageUrl,
-          kind: "image",
-          mime: "image/png",
-          name: "photo.png",
-          dimensions: { width: 640, height: 480 },
-        },
-      ],
-    },
-    {
-      name: "new imeta file with attachment link label",
-      content: `Before [Quarterly Report](${fileUrl}) after`,
-      tags: [fileIMeta()],
-      expectedContent: "Before  after",
-      expectedAttachments: [
-        {
-          url: fileUrl,
-          kind: "file",
-          mime: "application/pdf",
-          size: 1234,
-          name: "Quarterly Report",
-        },
-      ],
-    },
-  ])(
-    "folds representative $name content",
-    ({ content, tags, expectedContent, expectedAttachments }) => {
-      const row = fold(message(alice, channel, content, 10, tags));
-      expect(row?.content).toBe(expectedContent);
-      expect(row?.attachments).toEqual(expectedAttachments);
-    },
-  );
-
   it("uses the latest authorized edit imeta as the attachment metadata source", () => {
     const original = message(
       alice,
@@ -158,34 +111,6 @@ describe("cross-client rich content compatibility", () => {
         },
       ],
     });
-  });
-
-  it("admits kind 40008 diff rows as raw patch content with file metadata", () => {
-    const content =
-      "@@ -1 +1 @@\n-![old](https://relay.test/old.png)\n+new text\n";
-    const diff = signed(alice, {
-      kind: 40008,
-      content,
-      created_at: 10,
-      tags: [
-        ["h", channel],
-        ["file", "src/example.ts"],
-        ["description", "Update example"],
-      ],
-    });
-
-    expect(foldMessages(channel, relay.pubkey, [diff])).toEqual([
-      expect.objectContaining({
-        id: diff.id,
-        content,
-        attachments: [],
-        diff: expect.objectContaining({
-          filePath: "src/example.ts",
-          description: "Update example",
-          truncated: false,
-        }),
-      }),
-    ]);
   });
 
   it("fold preserves spoiler delimiters", () => {

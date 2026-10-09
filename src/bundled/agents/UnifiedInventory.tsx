@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import type { ReactNode } from "react";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { InventoryView } from "./InventoryView";
@@ -28,13 +29,14 @@ import { removeRelayAgent } from "../../features/agents/relay-removal";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
 export function UnifiedInventory({
-  importTab = false,
+  importTab,
   state,
   control,
   connection,
   client,
   edit,
   duplicate,
+  onShare,
   remove,
   importedId,
   resolveProfile,
@@ -44,7 +46,7 @@ export function UnifiedInventory({
   teams,
   newAgent,
 }: {
-  importTab?: boolean;
+  importTab?: boolean | undefined;
   teams?: ReactNode;
   newAgent?: ReactNode;
   headerActions?: HTMLElement | null;
@@ -54,6 +56,7 @@ export function UnifiedInventory({
   client?: ClientSnapshot | undefined;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
   resolveProfile?: ProfileResolver | undefined;
@@ -110,7 +113,7 @@ export function UnifiedInventory({
     connection.viewer && connection.scope?.endsWith(`:${connection.viewer}`)
       ? relayOrigin(connection.scope.slice(0, -(connection.viewer.length + 1)))
       : "";
-  const refresh = 0;
+  const [refresh, setRefresh] = useState(0);
   // Hide confirmed removals at once and for as long as this view lives. A
   // removal is per community, so the key includes the destination.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
@@ -304,6 +307,7 @@ export function UnifiedInventory({
       sourceProfiles={sourceProfiles}
       edit={edit}
       duplicate={duplicate}
+      onShare={onShare}
       remove={remove}
       removeRelay={removeRelay}
       archive={
@@ -326,6 +330,7 @@ export function UnifiedInventory({
       teams={importTab ? undefined : teams}
       newAgent={newAgent}
     >
+      {(errors.length > 0 || profileErrors.length > 0 || archives.snapshot().status === "error") && <Button onClick={() => { setRefresh((value) => value + 1); void archives.refresh(); }}>Retry inventory</Button>}
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">
           {warning} Retry local discovery by reopening the app.

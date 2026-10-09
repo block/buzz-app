@@ -5,6 +5,10 @@ export function isChannelSectionKey(key: string) {
   return key === "channels" || key.startsWith("group:");
 }
 
+export function isChannelDropSectionKey(key: string) {
+  return key === "starred" || isChannelSectionKey(key);
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections<T extends ChannelSummary>(
   channels: readonly T[],
@@ -13,9 +17,7 @@ export function sidebarSections<T extends ChannelSummary>(
 ) {
   const active = channels.filter(
     (channel) =>
-      !channel.archived &&
-      channel.channelType !== "session" &&
-      (!channel.hidden || channel.channelType === "dm"),
+      !channel.archived && (!channel.hidden || channel.channelType === "dm"),
   );
   const streams = active.filter(
     (channel) =>

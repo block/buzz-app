@@ -25,7 +25,8 @@ import { ProviderApiKeyField } from "./ProviderApiKeyField";
 import { harnessPreset } from "../../features/agents/harness-presets";
 import { PresetSetupHint } from "../../features/agents/PresetSetupHint";
 import { Button } from "../../shared/design-system/ui/Button";
-import { harnessPolicy } from "./harness-policy";
+import { CodexConfigurationFields } from "./CodexConfigurationFields";
+import { harnessOption, harnessPolicy } from "./harness-policy";
 
 // Draft → Agent defaults → build floor, as native resolves it; null when a
 // saved or global BUZZ_AGENT_PROVIDER override hides the effective value.
@@ -56,8 +57,8 @@ function providerApiKey(
   data: AgentControlState["data"],
 ) {
   if (
-    harnessPolicy(data?.harnessOptions, draft.command)?.authentication ===
-    "external"
+    harnessPolicy(data?.harnessOptions, draft.command, draft.integration)
+      ?.authentication === "external"
   )
     return undefined;
   if (draft.command.split("/").at(-1) === "buzz-pi-acp")
@@ -126,7 +127,19 @@ export function AgentSettingsFields({
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const preset = harnessPreset(draft.command);
-  const policy = harnessPolicy(state.data?.harnessOptions, draft.command);
+  const policy = harnessPolicy(
+    state.data?.harnessOptions,
+    draft.command,
+    draft.integration,
+  );
+  const option = harnessOption(
+    state.data?.harnessOptions,
+    draft.command,
+    draft.integration,
+  );
+  const integration =
+    draft.integration ?? (option?.id === "codex" ? undefined : option?.id);
+  const codex = draft.integration === "codex";
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -257,6 +270,7 @@ export function AgentSettingsFields({
             </legend>
             <div hidden={!showOptions} className="space-y-4">
               <AgentHarnessEditor
+                hideSetupHints={cardLayout}
                 disabled={disabled}
                 draft={draft}
                 options={state.data?.harnessOptions ?? []}
@@ -360,16 +374,18 @@ export function AgentSettingsFields({
                           }
                         />
                       </Field>
-                      <Field label="Arguments (JSON array)">
-                        <Textarea
-                          rows={3}
-                          value={draft.args}
-                          disabled={disabled}
-                          onChange={(event) =>
-                            onChange({ args: event.target.value })
-                          }
-                        />
-                      </Field>
+                      {!codex && (
+                        <Field label="Arguments (JSON array)">
+                          <Textarea
+                            rows={3}
+                            value={draft.args}
+                            disabled={disabled}
+                            onChange={(event) =>
+                              onChange({ args: event.target.value })
+                            }
+                          />
+                        </Field>
+                      )}
                       <AgentEnvironmentEditor
                         keys={environmentKeys}
                         patch={draft.environment}
@@ -421,14 +437,25 @@ export function AgentSettingsFields({
       {((!cardLayout && !hideName) || !hideInstructions) && (
         <div className="space-y-4">
           {!cardLayout && !hideName && nameField}
-          {!hideInstructions && (
-            <AgentInstructions
-              onBusyChange={onInstructionBusyChange}
-              disabled={disabled}
-              value={draft.systemPrompt}
-              onChange={(systemPrompt) => onChange({ systemPrompt })}
-            />
-          )}
+          {!hideInstructions &&
+            (cardLayout ? (
+              <AgentInstructions
+                onBusyChange={onInstructionBusyChange}
+                disabled={disabled}
+                value={draft.systemPrompt}
+                onChange={(systemPrompt) => onChange({ systemPrompt })}
+              />
+            ) : (
+              <Field label="Agent instructions">
+                <Textarea
+                  value={draft.systemPrompt}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onChange({ systemPrompt: event.target.value })
+                  }
+                />
+              </Field>
+            ))}
         </div>
       )}
       {state.data?.agentDefaults?.ownerOnly && (
@@ -472,8 +499,21 @@ export function AgentSettingsFields({
           </div>,
           null,
         )
+      ) : codex ? (
+        renderSections(
+          <CodexConfigurationFields
+            id={id}
+            savedRevision={savedRevision}
+            draft={draft}
+            control={control}
+            disabled={disabled}
+            onChange={change}
+          />,
+          null,
+        )
       ) : (
         <AgentModelPicker
+          integration={integration}
           compact={cardLayout && !customize}
           catalogProvider={buzzProvider ?? undefined}
           onAdvanced={

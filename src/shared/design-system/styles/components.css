@@ -112,7 +112,8 @@
         [data-disabled],
         [data-icon-variant="chrome"],
         [data-icon-variant="avatar"],
-        [data-icon-variant="media"]
+        [data-icon-variant="media"],
+        [data-icon-variant="bare"]
       ) {
       background: var(--interaction-hover);
     }
@@ -140,7 +141,8 @@
   ):not(
     [data-disabled],
     [data-icon-variant="avatar"],
-    [data-icon-variant="media"]
+    [data-icon-variant="media"],
+    [data-icon-variant="bare"]
   ) {
     background: var(--interaction-pressed);
   }
@@ -253,6 +255,18 @@
     [data-disabled]
   ) {
     background: var(--interaction-selected);
+  }
+
+  /* Glyph-state toggles stay unfilled; their caller supplies outline/filled art.
+     Keep the 32px small hit area with slightly larger 20px artwork. */
+  .buzz-button[data-icon-variant="bare"] {
+    background: transparent;
+  }
+  .buzz-button[data-icon-variant="bare"][data-size="sm"]
+    .buzz-button-label
+    > svg {
+    width: var(--space-5);
+    height: var(--space-5);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */
@@ -910,6 +924,37 @@
     color: var(--text-standard);
   }
 
+  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  .chrome-navigation {
+    @apply glass-primary;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    height: 2.5rem;
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"] {
+    width: auto;
+    min-height: 2rem;
+    height: 2rem;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+    @apply text-label;
+  }
+  .chrome-navigation
+    .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
+    background: var(--bg-glass-primary-hover);
+    color: var(--text-standard);
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
+  .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
+    background: var(--bg-chrome-selected);
+    color: var(--text-standard);
+    box-shadow: var(--shadow-xs);
+  }
+
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;
@@ -1091,6 +1136,9 @@
     --text-metadata: var(--text-standard);
     background: var(--interaction-row-hover);
   }
+  .buzz-menu-item[data-selection="highlight"][data-checked] {
+    background: var(--affordance-popover-selected);
+  }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
   }
@@ -1126,6 +1174,9 @@
   .buzz-menu-group-label {
     padding: var(--space-2) var(--space-2) var(--space-1);
     color: var(--text-subtle);
+  }
+  .buzz-menu-group-label[data-emphasis="quiet"] {
+    color: var(--text-metadata);
   }
   .buzz-menu-separator {
     height: 1px;

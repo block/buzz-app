@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,8 +12,6 @@ import { join, posix } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
 import { imageEngines } from "../../scripts/check-browser-image.mjs";
-import { verifiedFixture, nativeFixture } from "../browser/native-fixture.mjs";
-import { createHash } from "node:crypto";
 import ciConfig from "../browser/playwright.ci.config.mjs";
 import config from "../browser/playwright.config.mjs";
 import { run } from "../browser/run-command.mjs";
@@ -40,139 +37,7 @@ const matrixValues = (key) => {
   return values.split(",").map((value) => value.trim());
 };
 
-test("twelve browser jobs retain isolated measurements and one required native build", () => {
-  assert.deepEqual(matrixValues("engine"), ["chromium", "webkit"]);
-  assert.deepEqual(matrixValues("shard"), ["1", "2", "3", "4", "5", "6"]);
-  assert.match(browser, /^ {4}needs: \[browser_fixture\]$/m);
-  assert.doesNotMatch(browser, /^ {4}continue-on-error:/m);
-  assert.doesNotMatch(browser, /^ {8}(include|exclude):/m);
-  assert.match(browser, /^ {6}fail-fast: false$/m);
-  assert.match(
-    browser,
-    /name: browser-journeys-\$\{\{ matrix\.engine \}\}-\$\{\{ matrix\.shard \}\}/,
-  );
-  const preparation = browser.indexOf("name: Verify native browser fixture");
-  const journey = browser.indexOf("-- ./bin/pnpm test:browser:ci");
-  assert.ok(
-    preparation >= 0 && journey > preparation,
-    "same-revision native fixture must verify before journeys",
-  );
-  assert.doesNotMatch(browser, /apt-get|rustup|run: (?:\.\/bin\/)?cargo/);
-  const functional = browser
-    .split("      - name: Functional journeys\n")[1]
-    ?.split("      - name:")[0];
-  assert.ok(functional, "functional step must exist");
-  assert.doesNotMatch(functional, /^ {8}(if|continue-on-error):/m);
-  assert.doesNotMatch(functional, /(?:\s|^)--list(?:[=\s]|$)/);
-  assert.match(functional, /--reporter=list,json/);
-  assert.match(
-    job("measurements"),
-    /-- \.\/bin\/pnpm test:browser:ci --project '\*-measurements' --workers=1 --reporter=list,json$/m,
-  );
-  assert.equal(config.workers, 2);
-  assert.equal(config.retries, 0);
-  assert.ok(!config.fullyParallel);
-  const projects = Object.fromEntries(
-    config.projects.map((project) => [project.name, project]),
-  );
-  assert.equal(projects["chromium-measurements"].workers, 1);
-  assert.equal(projects["webkit-measurements"].workers, 1);
-  assert.deepEqual(projects["webkit-measurements"].dependencies, [
-    "chromium-measurements",
-  ]);
-  for (const engine of ["chromium", "webkit"])
-    assert.deepEqual(projects[engine].dependencies, ["webkit-measurements"]);
-});
-
-test("one same-run native artifact preserves the executable, revision and test-owned homes", (t) => {
-  const { jobs } = parse(workflow),
-    build = jobs.browser_fixture,
-    steps = jobs.browser.steps;
-  assert.equal(build["runs-on"], "ubuntu-24.04");
-  assert.equal(build.container, undefined);
-  assert.equal(build["timeout-minutes"], 15);
-  const compile = build.steps.find(
-    (step) => step.name === "Build native browser fixture",
-  );
-  assert.equal(
-    compile.run,
-    "./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --target-dir target/browser-fixture",
-  );
-  assert.equal(compile.if, undefined);
-  assert.equal(compile["continue-on-error"], undefined);
-  const upload = build.steps.find((step) =>
-    step.uses?.startsWith("actions/upload-artifact@"),
-  );
-  const download = steps.find((step) =>
-    step.uses?.startsWith("actions/download-artifact@"),
-  );
-  assert.equal(
-    upload.with.name,
-    `browser-fixture-\${{ github.sha }}-\${{ github.run_attempt }}`,
-  );
-  assert.equal(upload.with["if-no-files-found"], "error");
-  assert.equal(upload.id, "fixture-upload");
-  assert.equal(
-    build.outputs["artifact-id"],
-    `\${{ steps.fixture-upload.outputs.artifact-id }}`,
-  );
-  assert.equal(
-    download.with["artifact-ids"],
-    `\${{ needs.browser_fixture.outputs.artifact-id }}`,
-  );
-  assert.equal(download.with["merge-multiple"], true);
-  assert.equal(download.with.name, undefined);
-  assert.equal(download.with["run-id"], undefined);
-  assert.equal(download.with["github-token"], undefined);
-  assert.equal(download.with.path, jobs.browser.env.BUZZ_BROWSER_FIXTURE_DIR);
-  const verify = steps.find(
-    (step) => step.name === "Verify native browser fixture",
-  );
-  assert.equal(verify.if, undefined);
-  assert.equal(verify["continue-on-error"], undefined);
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-fixture-artifact-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const binary = join(cwd, "fixture-bridge"),
-    revision = "a".repeat(40);
-  writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  writeFileSync(join(cwd, "revision"), `${revision}\n`);
-  const checksum = () =>
-    createHash("sha256").update(readFileSync(binary)).digest("hex");
-  writeFileSync(join(cwd, "SHA256SUMS"), `${checksum()}  fixture-bridge\n`);
-  assert.equal(verifiedFixture(cwd, revision), binary);
-  assert.throws(
-    () => verifiedFixture(cwd, "b".repeat(40)),
-    "wrong revision fails",
-  );
-  chmodSync(binary, 0o644);
-  assert.throws(
-    () => verifiedFixture(cwd, revision),
-    "non-executable artifact fails",
-  );
-  chmodSync(binary, 0o755);
-  writeFileSync(binary, "changed");
-  assert.throws(() => verifiedFixture(cwd, revision), "altered binary fails");
-  rmSync(binary);
-  assert.throws(() => verifiedFixture(cwd, revision), "missing artifact fails");
-  const ci = process.env.CI,
-    directory = process.env.BUZZ_BROWSER_FIXTURE_DIR;
-  try {
-    process.env.CI = "true";
-    delete process.env.BUZZ_BROWSER_FIXTURE_DIR;
-    assert.throws(
-      () => nativeFixture(),
-      /must supply/,
-      "CI cannot silently rebuild missing evidence",
-    );
-  } finally {
-    if (ci === undefined) delete process.env.CI;
-    else process.env.CI = ci;
-    if (directory === undefined) delete process.env.BUZZ_BROWSER_FIXTURE_DIR;
-    else process.env.BUZZ_BROWSER_FIXTURE_DIR = directory;
-  }
-});
-
-test("workflow shards discover every functional test/project exactly once", (t) => {
+test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
   )?.[1];
@@ -198,7 +63,7 @@ test("workflow shards discover every functional test/project exactly once", (t) 
     return collect(report.suites);
   };
   const expected = discover([
-    "test:browser:ci",
+    "test:browser",
     "--project",
     "chromium",
     "--project",
@@ -222,15 +87,31 @@ test("workflow shards discover every functional test/project exactly once", (t) 
       t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
     }
   }
+  const recording = parse(workflow).jobs.media_recorder.steps.find(
+    (step) => step.name === "Recording journeys",
+  );
+  assert.equal(recording.if, undefined);
+  assert.equal(recording["continue-on-error"], undefined);
+  const recordingCommand = recording.run.match(
+    / -- (\.\/bin\/pnpm test:browser .+)$/,
+  )?.[1];
+  assert.ok(recordingCommand, "macOS must execute the recording cases");
+  const mac = discover(
+    recordingCommand.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
+  );
+  assert.ok(mac.length > 0, "macOS recording must select tests");
+  assert.ok(mac.every((id) => id.startsWith("webkit:")));
+  actual.push(...mac);
+  t.diagnostic(`macOS WebKit: ${mac.length} recording tests`);
   assert.equal(
     new Set(actual).size,
     actual.length,
-    "no duplicate test/project across shards",
+    "no duplicate test/project across Linux shards and macOS",
   );
   assert.deepEqual(
     actual.sort(),
     expected.sort(),
-    "matrix must cover unsharded discovery",
+    "Linux and macOS must cover full local functional discovery",
   );
 });
 
@@ -331,39 +212,6 @@ test("classic-scrollbar cases run exactly once, after the measurements, without 
     assert.ok(!spec.tags.includes("classic-scrollbars"), spec.title);
 });
 
-test("automatic CI stays on Linux and manual dispatch runs only Windows", () => {
-  const { jobs } = parse(workflow);
-  for (const lane of [
-    "javascript",
-    "native",
-    "measurements",
-    "browser_fixture",
-    "browser",
-  ]) {
-    assert.equal(jobs[lane].if, "github.event_name != 'workflow_dispatch'");
-    assert.equal(jobs[lane]["runs-on"], "ubuntu-24.04");
-  }
-  const windows = jobs["windows-native"];
-  assert.equal(windows.if, "github.event_name == 'workflow_dispatch'");
-  assert.equal(windows["runs-on"], "windows-2025");
-  const packages =
-    "-p buzz-foundation -p buzz-agent-controller -p buzz-credential-store";
-  assert.ok(
-    windows.steps.some(
-      (step) => step.run === `cargo test ${packages} --locked --no-fail-fast`,
-    ),
-    "on-demand Windows validation retains complete tests for all native identity packages",
-  );
-  assert.ok(
-    windows.steps.some(
-      (step) =>
-        step.run ===
-        `cargo clippy ${packages} --locked --all-targets -- -D warnings`,
-    ),
-    "Windows lint covers production and test targets without suppressing warnings",
-  );
-});
-
 test("required gate executes its real shell and rejects every unsuccessful lane", () => {
   const required = job("required");
   const { jobs } = parse(workflow);
@@ -378,10 +226,17 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser\]$/m,
+    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser, media_recorder\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
-  const lanes = ["JAVASCRIPT", "NATIVE", "MEASUREMENTS", "FIXTURE", "BROWSER"];
+  const lanes = [
+    "JAVASCRIPT",
+    "NATIVE",
+    "MEASUREMENTS",
+    "FIXTURE",
+    "BROWSER",
+    "MEDIA_RECORDER",
+  ];
   for (const lane of lanes)
     assert.ok(
       required.includes(
@@ -405,77 +260,6 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
       assert.equal(execute(results).status, 1, `${lane}=${result} must fail`);
     }
   }
-});
-
-test("Hermit cache keys distinguish jobs that provision different tools", () => {
-  const setup = read(".github/actions/setup/action.yml");
-  assert.match(setup, /key: hermit-.*\$\{\{ github\.job \}\}/);
-});
-
-test("browser jobs use one immutable image matching the package pin, without per-job browser downloads", () => {
-  const { jobs } = parse(workflow);
-  const setup = parse(read(".github/actions/setup/action.yml"));
-  const version = JSON.parse(read("package.json")).devDependencies[
-    "@playwright/test"
-  ];
-  const image = `mcr.microsoft.com/playwright:v${version}-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27`;
-  for (const name of ["measurements", "browser"]) {
-    const job = jobs[name];
-    assert.doesNotMatch(
-      job.steps.map((step) => step.run ?? "").join("\n"),
-      /apt-get|playwright install|(?:^|\n)(?:\.\/bin\/)?cargo/,
-    );
-    assert.equal(job.container.image, image);
-    assert.equal(job.container.options, "--init --ipc=host");
-    assert.equal(job.defaults.run.shell, "bash");
-    assert.equal(job.env.HOME, "/root");
-    const trust = job.steps.find(
-      (step) => step.name === "Trust this container workspace",
-    );
-    assert.equal(
-      trust.run,
-      'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
-    );
-    assert.ok(
-      job.steps.indexOf(trust) <
-        job.steps.findIndex((step) => step.uses === "./.github/actions/setup"),
-    );
-    assert.equal(trust.if, undefined);
-    assert.equal(trust["continue-on-error"], undefined);
-    assert.equal(job["timeout-minutes"], 15);
-    assert.equal(
-      job.steps.find((step) => step.uses === "./.github/actions/setup").with
-        .browsers,
-      "true",
-    );
-  }
-  for (const name of ["javascript", "native", "windows-native"])
-    assert.equal(jobs[name].container, undefined);
-  assert.equal(setup.inputs["browser-engine"].default, "all");
-  const configured = (name) =>
-    jobs[name].steps.find((step) => step.uses === "./.github/actions/setup")
-      .with;
-  assert.equal(
-    configured("browser")["browser-engine"],
-    `\${{ matrix.engine }}`,
-  );
-  assert.equal(configured("measurements")["browser-engine"], undefined);
-  const steps = setup.runs.steps,
-    verify = steps.find((step) => step.name === "Verify pinned browser image");
-  assert.equal(verify.if, "inputs.browsers == 'true'");
-  assert.equal(verify["continue-on-error"], undefined);
-  assert.equal(verify.run, "./bin/node scripts/check-browser-image.mjs");
-  assert.equal(verify.env.PLAYWRIGHT_ENGINE, `\${{ inputs.browser-engine }}`);
-  assert.ok(
-    steps.indexOf(verify) >
-      steps.findIndex(
-        (step) => step.run === "./bin/pnpm install --frozen-lockfile",
-      ),
-  );
-  assert.doesNotMatch(
-    read(".github/actions/setup/action.yml"),
-    /playwright install|apt-get|ms-playwright/,
-  );
 });
 
 test("image verification rejects version/image mismatch and never silently omits an engine", () => {

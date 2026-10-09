@@ -82,7 +82,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   const actions = page.getByRole("menu", { name: "Actions for Beta" });
   await expect(
     actions.getByRole("menuitem", { name: "New session", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     actions.getByRole("menuitem", { name: "Move channel", exact: true }),
   ).toBeVisible();
@@ -322,6 +322,148 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(beta).toHaveCount(0);
 });
 
+// Pointer hit testing, drag-time section visibility and focus relocation need a layout engine.
+test("dragging keeps empty Starred hidden and visible Starred moves save and reload", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const stars = page.locator('[data-sidebar-section="starred"]');
+  const beta = rowIn(page, "group:work");
+  const starred = rowIn(page, "starred");
+  const alpha = stars.locator('[data-channel-id="alpha"]');
+  const menu = await openMove(page, alpha);
+  await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
+  await saved(page, app, 1);
+  await expect(stars).toHaveCount(0);
+
+  // Starting a drag must not reveal a hidden empty Starred section.
+  await pull(page, beta, "channels");
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(stars).toHaveCount(0);
+  // Cancelling never publishes a move.
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+  await expect(stars).toHaveCount(0);
+  expect(app.report.sidebarPublications).toHaveLength(1);
+
+  // The row menu can star the first channel; only an already-visible section
+  // accepts a drag. Keep Alpha starred while moving Beta into and out of it.
+  const alphaInChannels = page.locator(
+    '[data-sidebar-section="channels"] [data-channel-id="alpha"]',
+  );
+  await openMove(page, alphaInChannels);
+  await menu
+    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .click();
+  await saved(page, app, 2);
+  await expect(alpha).toBeVisible();
+
+  async function drag(row, section) {
+    await pull(page, row, section);
+    await expect(
+      page.locator(`[data-sidebar-section="${section}"][data-drop-target]`),
+    ).toBeVisible();
+    await page.mouse.up();
+  }
+
+  await drag(beta, "starred");
+  await expect(starred).toBeFocused();
+  await expect(beta).toHaveCount(0);
+  await saved(page, app, 3);
+  expect(app.report.sidebarPublications.at(-1)).toMatchObject({
+    coordinate: "channel-stars",
+    blob: { channels: { beta: { starred: true } } },
+  });
+  await page.reload();
+  await expect(starred).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  ).not.toHaveAttribute("aria-busy");
+  await pull(page, starred, "starred");
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+  expect(app.report.sidebarPublications).toHaveLength(3);
+
+  await drag(starred, "group:work");
+  await expect(beta).toBeFocused();
+  await saved(page, app, 4); // Assignment already Work; only unstar publishes.
+  await expect(alpha).toBeVisible();
+  await drag(beta, "starred");
+  await expect(starred).toBeFocused();
+  await saved(page, app, 5);
+  await drag(starred, "channels");
+  await expect(rowIn(page, "channels")).toBeFocused();
+  await saved(page, app, 7);
+  expect(app.report.sidebarPublications.at(-2)).toMatchObject({
+    coordinate: "channel-sections",
+    blob: { assignments: {} },
+  });
+  expect(app.report.sidebarPublications.at(-1)).toMatchObject({
+    coordinate: "channel-stars",
+    blob: { channels: { beta: { starred: false } } },
+  });
+  await page.reload();
+  await expect(rowIn(page, "channels")).toBeVisible();
+  await expect(beta).toHaveCount(0);
+  await expect(alpha).toBeVisible();
+  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
+    1,
+  );
+});
+
+test("a rejected drag into collapsed Starred rolls back and retries the same move", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  const starred = rowIn(page, "starred");
+  await page.locator('[data-sidebar-section="starred"] summary').click();
+  const held = gate(),
+    started = gate();
+  await page.route("**/sidebar-star", async (route) => {
+    started.resolve();
+    await held.promise;
+    app.report.sidebarStarFailures ??= [];
+    app.report.sidebarStarFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Star save failed; retry" }),
+    });
+  });
+  try {
+    await pull(page, beta, "starred");
+    await expect(
+      page.locator('[data-sidebar-section="starred"][data-drop-target]'),
+    ).toBeVisible();
+    await page.mouse.up();
+    await started.promise;
+    await expect(starred).toBeFocused();
+    await expect(beta).toHaveCount(0);
+  } finally {
+    held.resolve();
+  }
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the move for Beta" });
+  await expect(error).toContainText("Relay request failed (502)");
+  await expect(beta).toBeVisible();
+  await expect(starred).toHaveCount(0);
+  expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  await page.unroute("**/sidebar-star");
+  await error.getByRole("button", { name: "Retry move" }).click();
+  await expect(starred).toBeFocused();
+  await saved(page, app, 1);
+  await page.reload();
+  await expect(starred).toBeVisible();
+  await expect(beta).toHaveCount(0);
+});
+
 // Sessions sit outside their channel's drag surface, as they sit outside its menu.
 const sessionParent = "11111111-1111-4111-8111-111111111111";
 const sessionSidebar = test.extend({
@@ -329,7 +471,7 @@ const sessionSidebar = test.extend({
   sessionParents: { alpha: sessionParent },
 });
 sessionSidebar(
-  "dragging a session or a session draft leaves its channel in place, while the channel still moves",
+  "moving a channel leaves its legacy child as a standalone row",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -342,29 +484,8 @@ sessionSidebar(
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(
-      page.getByRole("complementary", { name: "Channel sidebar" }),
-    ).not.toHaveAttribute("aria-busy");
-    async function pullsNothing(row) {
-      await pull(page, row, "group:work");
-      await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
-      await expect(page.locator("[data-drop-target]")).toHaveCount(0);
-      await page.mouse.up();
-      await expect(parent).toBeVisible();
-      await expect(parentIn("group:work")).toHaveCount(0);
-    }
-
-    await pullsNothing(child);
-    await parent.click({ button: "right" });
-    await page
-      .getByRole("menuitem", { name: "New session", exact: true })
-      .click();
-    const draft = sidebar(page).getByRole("button", {
-      name: /New session draft in/,
-    });
-    await expect(draft).toBeVisible();
-    await pullsNothing(draft);
-    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
-
+      page.getByRole("button", { name: /New session draft in/ }),
+    ).toHaveCount(0);
     await pull(page, parent, "group:work");
     await expect(
       page.locator('[data-sidebar-section="group:work"][data-drop-target]'),
@@ -376,7 +497,7 @@ sessionSidebar(
       page.locator(
         '[data-sidebar-section="group:work"] [data-channel-id="alpha"]',
       ),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await saved(page, app, 1);
     expect(app.report.sidebarPublications[0].blob.assignments).toEqual({
       beta: "work",
@@ -995,11 +1116,11 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
-    // Sessions remains independently eligible when group writes are unavailable.
+    // Nested creation stays unavailable regardless of the grouping source.
     const actions = page.getByRole("menu", { name: `Actions for ${id}` });
     await expect(
       actions.getByRole("menuitem", { name: "New session", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(actions).toHaveCount(0);
     // Dragging shares the Move gate: a pull neither lifts the row nor saves.
@@ -1036,7 +1157,7 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
-    // Sessions remains independently eligible when group writes are unavailable.
+    // Nested creation stays unavailable regardless of the grouping source.
     const retainedActions = page.getByRole("menu", {
       name: `Actions for ${id}`,
     });
@@ -1045,7 +1166,7 @@ test.describe("new personal schema", () => {
         name: "New session",
         exact: true,
       }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(retainedActions).toHaveCount(0);
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);

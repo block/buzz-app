@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+/// Marks a beta import whose prompt no longer needs the baked-team cut.
+pub(crate) const CLEANED: &str = "teamSuffixCleaned";
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -138,6 +140,56 @@ impl Store {
         };
         store.read()?;
         Ok(store)
+    }
+    /// Imports made before the import-time cut kept old Buzz's baked team
+    /// section in their saved prompt. Only beta imports carry `imported.global`,
+    /// so prompts written in this app are never touched, and a prompt is cut
+    /// only while it still equals the retained original. Each agent is cleaned
+    /// once: `imported.teamSuffixCleaned` is saved in the same write, and new
+    /// imports carry it already. Unreadable storage stays fatal; a failed write
+    /// only returns a warning, so one prompt cannot disable the controller.
+    pub fn clean_imported_prompts(&mut self) -> Result<Option<String>> {
+        let mut doc = self.read()?;
+        let mut changed = false;
+        for agent in &mut doc.agents {
+            if agent.imported.get("global").is_none()
+                || agent.imported.get(CLEANED) == Some(&Value::Bool(true))
+            {
+                continue;
+            }
+            // Cut only a prompt still exactly as imported; an owner edit made
+            // in this app, or an unreadable original, is left untouched.
+            let original = match agent.imported.get("definition") {
+                Some(definition) if !definition.is_null() => definition,
+                _ => &agent.imported["record"],
+            };
+            let unedited = original.get("system_prompt").and_then(Value::as_str)
+                == Some(agent.system_prompt.as_str());
+            let prompt = crate::import::imported_prompt(&agent.system_prompt);
+            if unedited && prompt.len() != agent.system_prompt.len() {
+                agent.system_prompt = prompt.to_owned();
+                agent.revision = agent
+                    .revision
+                    .checked_add(1)
+                    .ok_or("Agent revision exhausted")?;
+            }
+            agent.imported[CLEANED] = Value::Bool(true);
+            changed = true;
+        }
+        if !changed {
+            return Ok(None);
+        }
+        let Err(error) = self.write(&doc) else {
+            return Ok(None);
+        };
+        eprintln!("buzz: could not clean imported agent prompts: {error}");
+        // The new file may have landed before a later step such as the
+        // directory sync failed. Either way the saved file must still read
+        // back cleanly, and the error (which says which case) is shown.
+        self.read()?;
+        Ok(Some(format!(
+            "Could not finish removing old Buzz team text from imported agent prompts: {error}"
+        )))
     }
     pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {
         self.importing
@@ -409,6 +461,149 @@ impl Store {
             system_prompt: agent.system_prompt,
         })
     }
+    pub(crate) fn team_instructions(
+        &mut self,
+        id: &str,
+        revision: u64,
+        instructions: &str,
+        team: &str,
+    ) -> Result<bool> {
+        let instructions = crate::import::team_text(&json!(instructions))?.to_owned();
+        if team.is_empty() || team.len() > 120 {
+            return Err("Invalid team binding".into());
+        }
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent settings changed. Refresh before deploying the team".into());
+        }
+        let mut bindings: Vec<String> =
+            serde_json::from_value(agent.imported["teamBindings"].clone()).unwrap_or_default();
+        let changed = agent.imported["teamInstructions"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            != instructions;
+        if changed
+            && bindings.is_empty()
+            && agent.imported.get("teamBindings").is_none()
+            && agent.imported["teamInstructions"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty())
+        {
+            return Err("This agent has unassigned shared instructions; deploy a team with matching instructions before changing them".into());
+        }
+        if changed && bindings.iter().any(|binding| binding != team) {
+            return Err("This agent is deployed with another team's instructions; use an independent imported copy".into());
+        }
+        if agent.imported.is_null() {
+            agent.imported = json!({});
+        }
+        if !bindings.iter().any(|binding| binding == team) {
+            if bindings.len() >= 100 {
+                return Err("Too many team bindings for this agent".into());
+            }
+            bindings.push(team.into());
+            agent.imported["teamBindings"] = json!(bindings);
+        }
+        agent.imported["teamInstructions"] = json!(instructions);
+        if !changed {
+            self.write(&doc)?;
+            return Ok(false);
+        }
+        agent.revision = agent
+            .revision
+            .checked_add(1)
+            .ok_or("Agent revision exhausted")?;
+        self.write(&doc)?;
+        Ok(true)
+    }
+    /// Only known live/tombstoned catalog records release a binding. Missing
+    /// records may be pending imports and must not be interpreted as deletion.
+    pub(crate) fn reconcile_team_bindings(
+        &mut self,
+        relay: &str,
+        owner: &str,
+        teams: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+    ) -> Result<()> {
+        let mut doc = self.read()?;
+        let scope = format!("{owner}@{relay}");
+        let mut catalogs: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+        > = doc
+            .extra
+            .get("teamCatalogHeads")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()
+            .map_err(|_| "Invalid saved team catalog heads")?
+            .unwrap_or_default();
+        let heads = catalogs.entry(scope).or_default();
+        // Validate all incoming heads before releasing any binding. Reads happen
+        // outside controller admission and can complete in the opposite order.
+        for (team, incoming) in teams {
+            if let Some(saved) = heads.get(team) {
+                if incoming.created_at < saved.created_at
+                    || (incoming.created_at == saved.created_at
+                        && incoming.event_id > saved.event_id)
+                    || (incoming.created_at == saved.created_at
+                        && incoming.event_id == saved.event_id
+                        && incoming.members != saved.members)
+                {
+                    return Err("Team catalog changed; refresh before deploying".into());
+                }
+            }
+        }
+        let mut changed = false;
+        for (team, incoming) in teams {
+            if heads.get(team) != Some(incoming) {
+                heads.insert(team.clone(), incoming.clone());
+                changed = true;
+            }
+        }
+        for agent in &mut doc.agents {
+            if agent.relay_url != relay {
+                continue;
+            }
+            let authorized = agent
+                .auth_tag
+                .as_deref()
+                .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
+                .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
+            if !authorized {
+                continue;
+            }
+            let Some(raw) = agent.imported.get("teamBindings") else {
+                continue;
+            };
+            let bindings: Vec<String> =
+                serde_json::from_value(raw.clone()).map_err(|_| "Invalid saved team bindings")?;
+            let retained: Vec<_> = bindings
+                .iter()
+                .filter(|team| match teams.get(*team) {
+                    Some(head) => head.members.contains(&agent.pubkey),
+                    None => true,
+                })
+                .cloned()
+                .collect();
+            if bindings != retained {
+                agent.imported["teamBindings"] = json!(retained);
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(());
+        }
+        doc.extra.insert(
+            "teamCatalogHeads".into(),
+            serde_json::to_value(catalogs).map_err(|_| "Invalid team catalog heads")?,
+        );
+        self.write(&doc)
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc
@@ -537,6 +732,8 @@ impl Store {
             return Err("Saved settings changed; retry the profile".into());
         }
         agent.extra.remove("profilePending");
+        agent.extra.remove("profileNamePending");
+        agent.extra.remove("importAboutPending");
         self.write(&doc)
     }
     /// One atomic import batch; repairs add only the missing team snapshot.

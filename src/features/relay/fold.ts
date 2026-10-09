@@ -138,6 +138,18 @@ export function parseAttachments(
         : {}),
       ...(name ? { name } : {}),
       ...(duration !== undefined ? { duration } : {}),
+      ...(kind === "audio" &&
+      detectionName?.toLowerCase().startsWith("voice-note-")
+        ? { voiceNote: true as const }
+        : {}),
+      ...(() => {
+        const waveform = fields.waveform?.trim().split(/\s+/).map(Number);
+        return waveform?.length &&
+          waveform.length <= 100 &&
+          waveform.every((n) => Number.isInteger(n) && n >= 0 && n <= 100)
+          ? { waveform }
+          : {};
+      })(),
       ...(blurhash ? { blurhash } : {}),
       ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),

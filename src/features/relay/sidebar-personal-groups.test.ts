@@ -1,8 +1,15 @@
+import { applySessionSetup } from "../sessions/workspace";
+import { createMePreferences } from "./me-preferences";
+import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import {
   coordinate,
   KIT_TAG,
+  ME_KIT_TAG,
+  kitTag,
+  kitRecordFits,
+  parseKitRecord,
   type Groups,
   type KitRecord,
 } from "../channel-templates/model";
@@ -45,7 +52,7 @@ function fixture(personal = true) {
         created_at: time++,
         tags: [
           ["d", coordinate(record)],
-          ["t", KIT_TAG],
+          ["t", kitTag(record)],
         ],
         content: JSON.stringify(record),
       }),
@@ -64,10 +71,21 @@ function fixture(personal = true) {
     legacy = { ...legacy, assignments };
     return legacy;
   });
+  const removal = vi.fn(async (sectionId: string) => {
+    legacy = {
+      ...legacy,
+      sections: legacy.sections.filter(({ id }) => id !== sectionId),
+      assignments: Object.fromEntries(
+        Object.entries(legacy.assignments).filter(([, id]) => id !== sectionId),
+      ),
+    };
+    return legacy;
+  });
   const star = vi.fn(async ({ channelId, starred }) => {
     legacy = { ...legacy, starred: starred ? [channelId] : [] };
     return legacy.starred;
   });
+  const sort = vi.fn(async () => ({}));
   const publish = vi.fn(async (event: RelayEvent) => {
     events.push(event);
   });
@@ -83,7 +101,9 @@ function fixture(personal = true) {
       query,
       decodeSidebarPreferences: async () => legacy,
       writeSidebarAssignment: assignment,
+      removeSidebarSection: removal,
       writeSidebarStar: star,
+      writeSidebarSort: sort,
       channelKit: {
         decode: async (rows) =>
           rows.map((event) => ({
@@ -104,6 +124,8 @@ function fixture(personal = true) {
     ...owner,
     query,
     assignment,
+    removal,
+    sort,
     star,
     publish,
     prepare,
@@ -269,7 +291,11 @@ it("retries a personal catalog read cancelled by initial roster authority", asyn
     const catalog = owner.session.channelKit.refresh();
     await flush();
     const interrupted = wire.next();
-    expect(interrupted.filters[0]?.["#t"]).toEqual([KIT_TAG]);
+    expect(interrupted.filters[0]?.["#t"]).toEqual([
+      KIT_TAG,
+      TEAM_MANIFEST_TAG,
+      ME_KIT_TAG,
+    ]);
     owner.session.channels.ensureList();
     await flush();
     wire.next().respond([roster(relay, channel, [viewer.pubkey])]);
@@ -304,6 +330,452 @@ it.each(["clearCache", "dispose"] as const)(
       expect(wire.pending).toHaveLength(0);
     } finally {
       owner.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "removes only the section in the active store (personal=%s)",
+  async (personal) => {
+    const f = fixture(personal);
+    try {
+      await f.preferences.ensure();
+      await f.preferences.removeSection("work");
+      expect(f.sort).toHaveBeenCalledWith(
+        "section:work",
+        "alpha",
+        ["work"],
+        expect.any(AbortSignal),
+      );
+      expect(f.preferences.snapshot().data).toMatchObject({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      });
+      if (personal) {
+        expect(f.removal).not.toHaveBeenCalled();
+        const event = f.publish.mock.calls.at(-1)?.[0];
+        if (!event) throw new Error("Missing personal group publication");
+        const saved = JSON.parse(event.content);
+        expect(saved.deleted).toBe(false);
+        expect(saved.value).toMatchObject({
+          type: "groups",
+          id: "personal",
+          groups: [],
+          assignments: {},
+        });
+        await f.preferences.refresh();
+        expect(f.preferences.snapshot().data?.groupSource).toBe("personal");
+      } else {
+        expect(f.removal).toHaveBeenCalledOnce();
+        expect(f.publish).not.toHaveBeenCalled();
+      }
+      expect(f.assignment).not.toHaveBeenCalled();
+      expect(f.star).not.toHaveBeenCalled();
+    } finally {
+      f.dispose();
+    }
+  },
+);
+it("rejects stale-source removal even when both stores use the same section ID", async () => {
+  const f = fixture(false);
+  try {
+    await f.preferences.ensure();
+    f.install(groups);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      /source changed/,
+    );
+    expect(f.removal).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("explains same-second personal section removal without enqueuing, then permits explicit retry", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    vi.mocked(Date.now).mockReturnValue(1_700_000_000_000);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "This section was just saved. Wait a second, then choose Remove section again.",
+    );
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    vi.mocked(Date.now).mockReturnValue(1_700_000_001_000);
+    await f.preferences.removeSection("work");
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.preferences.snapshot().data?.sections).toEqual([]);
+  } finally {
+    f.dispose();
+  }
+});
+it("names the personal section's exact-event recovery path and fences a fresh retry after failed delivery", async () => {
+  const f = fixture();
+  try {
+    await f.preferences.ensure();
+    f.publish.mockRejectedValue(new Error("offline"));
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "Channel settings → Diagnostics → Outbox",
+    );
+    expect(f.preferences.snapshot().data?.sections).toHaveLength(1);
+    expect(f.prepare).toHaveBeenCalledOnce();
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      "A section removal or other personal-group save is unresolved.",
+    );
+    expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.session.outbox?.snapshot()).toHaveLength(1);
+    expect(f.removal).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+it("removes active personal groups without altering legacy groups or channel membership", async () => {
+  const h = fixture();
+  await h.session.sidebarPreferences.ensure();
+  expect(h.session.sidebarPreferences.snapshot().data?.groupSource).toBe(
+    "personal",
+  );
+  await h.session.sidebarPreferences.removeSection("work");
+  expect(h.session.sidebarPreferences.snapshot().data?.sections).toEqual([]);
+  expect(h.session.sidebarPreferences.snapshot().data?.assignments).toEqual({});
+  expect(h.assignment).not.toHaveBeenCalled();
+  h.dispose();
+});
+
+it("rejects section deletion when another device changes the active group source", async () => {
+  const h = fixture(false);
+  try {
+    await h.preferences.ensure();
+    h.install(structuredClone(groups));
+    await expect(h.preferences.removeSection("work")).rejects.toThrow(
+      "active group source changed",
+    );
+    expect(h.publish).not.toHaveBeenCalled();
+    await h.preferences.refresh();
+    expect(h.preferences.snapshot().data?.sections).toHaveLength(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it("starts Me empty and changes only the distinct Me catalog coordinate", async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  const me = createMePreferences(f.session.channelKit, controller.signal);
+  try {
+    await me.queries.ensure();
+    expect(me.queries.snapshot().data?.sections).toEqual([]);
+    await me.queries.createAndAssign(channel, { id: "work", name: "Me work" });
+    expect(me.queries.snapshot().data?.assignments).toEqual({
+      [channel]: "work",
+    });
+    expect(me.queries.starWritable).toBe(false);
+    const writes = f.publish.mock.calls.map(([event]) => event);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.tags).toContainEqual(["t", ME_KIT_TAG]);
+    expect(
+      writes[0] &&
+        matchesEvent(writes[0], {
+          "#t": [KIT_TAG, TEAM_MANIFEST_TAG],
+          limit: 500,
+        }),
+    ).toBe(false);
+    await f.preferences.ensure();
+    expect(f.preferences.snapshot().data?.sections[0]?.name).toBe(
+      "Personal work",
+    );
+    await me.queries.removeSection("work");
+    expect(me.queries.snapshot().data?.sections).toEqual([]);
+    expect(f.star).not.toHaveBeenCalled();
+    expect(f.assignment).not.toHaveBeenCalled();
+  } finally {
+    controller.abort();
+    me.dispose();
+    f.dispose();
+  }
+});
+
+it("retains Me tombstone revision and never creates over an unread catalog", async () => {
+  const f = fixture();
+  f.install({ type: "groups", id: "me", groups: [], assignments: {} }, true);
+  const controller = new AbortController();
+  const me = createMePreferences(f.session.channelKit, controller.signal);
+  try {
+    await expect(
+      me.queries.createAndAssign(channel, { id: "new", name: "New" }),
+    ).rejects.toThrow();
+    expect(f.publish).not.toHaveBeenCalled();
+    await me.queries.ensure();
+    await me.queries.createAndAssign(channel, { id: "new", name: "New" });
+    expect(me.queries.snapshot().data?.sections[0]?.name).toBe("New");
+  } finally {
+    controller.abort();
+    me.dispose();
+    f.dispose();
+  }
+});
+
+it("invalidates the session-owned Me projection on refreshed heads, including tombstones", async () => {
+  const f = fixture();
+  const me = f.session.mePreferences;
+  const value: Groups = {
+    type: "groups",
+    id: "me",
+    groups: [{ id: "work", name: "Me work", defaultTemplateId: "" }],
+    assignments: { [channel]: "work" },
+  };
+  try {
+    await me.ensure();
+    await f.preferences.ensure();
+    expect(me.snapshot().data?.sections).toEqual([]);
+    f.install(value);
+    await f.session.channelKit.refresh();
+    await vi.waitFor(() =>
+      expect(me.snapshot().data?.sections[0]?.name).toBe("Me work"),
+    );
+    f.install({
+      ...value,
+      groups: [
+        { id: "work", defaultTemplateId: "", name: "Renamed elsewhere" },
+      ],
+    });
+    await f.session.channelKit.refresh();
+    await vi.waitFor(() =>
+      expect(me.snapshot().data?.sections[0]?.name).toBe("Renamed elsewhere"),
+    );
+    f.install(value, true);
+    await f.session.channelKit.refresh();
+    await vi.waitFor(() => {
+      expect(me.snapshot().data?.sections).toEqual([]);
+      expect(me.snapshot().data?.assignments).toEqual({});
+    });
+    expect(f.preferences.snapshot().data?.sections[0]?.name).toBe(
+      "Personal work",
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.assignment).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("round-trips independent Me placement and preserves it through group removal", async () => {
+  const f = fixture();
+  try {
+    await f.session.mePlacement.set(channel, true);
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    await f.session.mePreferences.ensure();
+    await f.session.mePreferences.createAndAssign(channel, {
+      id: "g",
+      name: "Work",
+    });
+    await f.session.mePreferences.removeSection("g");
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    await f.session.mePlacement.set(other, true);
+    await f.session.mePlacement.set(channel, false);
+    expect(f.session.mePlacement.has(channel)).toBe(false);
+    expect(f.session.mePlacement.has(other)).toBe(true);
+    expect(
+      JSON.parse(f.publish.mock.calls.at(-1)?.[0].content ?? "null").value
+        .channels,
+    ).toEqual([other]);
+    expect(f.publish.mock.calls.every(([event]) => event.kind === 30078)).toBe(
+      true,
+    );
+    expect(f.assignment).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("does not overwrite Me placement when a refresh fails, and reconciles retries against the fresh head", async () => {
+  const f = fixture();
+  try {
+    f.install({
+      type: "groups",
+      id: "me",
+      groups: [],
+      assignments: {},
+      channels: [other],
+    });
+    await f.session.mePlacement.refresh();
+    f.query.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.session.mePlacement.set(channel, true)).rejects.toThrow();
+    expect(f.publish).not.toHaveBeenCalled();
+    await f.session.mePlacement.set(channel, true);
+    expect(f.session.mePlacement.has(other)).toBe(true);
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    const count = f.publish.mock.calls.length;
+    await f.session.mePlacement.set(channel, true);
+    expect(f.publish).toHaveBeenCalledTimes(count);
+  } finally {
+    f.dispose();
+  }
+});
+
+it("serializes simultaneous Me placement and group edits without losing either", async () => {
+  const f = fixture();
+  try {
+    await f.session.mePreferences.ensure();
+    await Promise.all([
+      f.session.mePlacement.set(channel, true),
+      f.session.mePreferences.createAndAssign(channel, {
+        id: "g",
+        name: "Work",
+      }),
+    ]);
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    expect(f.session.mePreferences.snapshot().data?.assignments[channel]).toBe(
+      "g",
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
+it("confirms native-shaped reordered assignment maps without losing group order", async () => {
+  const f = fixture();
+  try {
+    f.install({ ...groups, id: "me", channels: [other] });
+    f.prepare.mockImplementation(async (record) =>
+      JSON.stringify(record, (_key, value) =>
+        value && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+            )
+          : value,
+      ),
+    );
+    await f.session.mePreferences.ensure();
+    await f.session.mePreferences.assign(channel, "work");
+    expect(f.session.mePreferences.snapshot().data?.assignments).toEqual({
+      [channel]: "work",
+      [other]: "work",
+    });
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("saves initial Me placement and frozen section together within one clock second", async () => {
+  const f = fixture();
+  try {
+    vi.mocked(Date.now).mockReturnValue(1_800_000_000_000);
+    f.install({ ...groups, id: "me", channels: [] });
+    await f.session.mePlacement.set(channel, true, { sectionId: "work" });
+    await applySessionSetup(
+      {
+        ...f.session,
+        canvas: {
+          ...f.session.canvas,
+          read: async () => undefined,
+        },
+      },
+      channel,
+      { sectionId: "work", canvas: "", agents: [] },
+      () => true,
+      true,
+    );
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    expect(f.session.mePreferences.snapshot().data?.assignments[channel]).toBe(
+      "work",
+    );
+    await f.session.mePlacement.set(channel, true, { sectionId: "work" });
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("does not place a new Me channel into a deleted section", async () => {
+  const f = fixture();
+  try {
+    await expect(
+      f.session.mePlacement.set(channel, true, { sectionId: "gone" }),
+    ).rejects.toThrow("The section was removed");
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("repairs a frozen initial section without duplicating existing Me placement", async () => {
+  const f = fixture();
+  try {
+    f.install({ ...groups, id: "me", channels: [channel] });
+    await f.session.mePlacement.set(channel, true, { sectionId: "work" });
+    expect(f.session.mePlacement.has(channel)).toBe(true);
+    const last = f.publish.mock.calls.at(-1)?.[0];
+    if (!last) throw new Error("Missing repair");
+    expect(JSON.parse(last.content).value.channels).toEqual([channel]);
+    await f.session.mePreferences.refresh();
+    expect(f.session.mePreferences.snapshot().data?.assignments[channel]).toBe(
+      "work",
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
+it.each([false, true])(
+  "checks the exact Me capacity before saving (grouped=%s) and reclaims moved placement",
+  async (grouped) => {
+    const f = fixture();
+    const value: Groups = {
+      type: "groups",
+      id: "me",
+      groups: grouped
+        ? [{ id: "work", name: "Work", defaultTemplateId: "" }]
+        : [],
+      assignments: {},
+      channels: [],
+    };
+    const record = () => ({
+      version: 1 as const,
+      community,
+      deleted: false,
+      value,
+    });
+    let id = "";
+    for (let i = 1; i < 1000; i++) {
+      id = `00000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`;
+      value.channels?.push(id);
+      if (grouped) value.assignments[id] = "work";
+      if (!kitRecordFits(record())) {
+        value.channels?.pop();
+        delete value.assignments[id];
+        break;
+      }
+    }
+    parseKitRecord(record(), community);
+    f.install(value);
+    const options = { sectionId: grouped ? "work" : undefined };
+    try {
+      await expect(f.session.mePlacement.admit(id, options)).rejects.toThrow(
+        "Me storage is full",
+      );
+      await expect(
+        f.session.mePlacement.set(id, true, options),
+      ).rejects.toThrow("Me storage is full");
+      expect(f.publish).not.toHaveBeenCalled();
+      const removed = value.channels?.[0];
+      if (!removed) throw new Error("Missing placement");
+      await f.session.mePlacement.set(removed, false);
+      await f.session.mePlacement.admit(id, options);
+      await f.session.mePlacement.set(id, true, options);
+      expect(f.session.mePlacement.has(id)).toBe(true);
+      expect(f.session.mePlacement.has(removed)).toBe(false);
+      await f.session.mePreferences.ensure();
+      expect(
+        f.session.mePreferences.snapshot().data?.assignments[removed],
+      ).toBeUndefined();
+    } finally {
+      f.dispose();
     }
   },
 );

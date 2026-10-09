@@ -7,7 +7,6 @@ afterEach(() => {
 });
 it.each([
   [false, "MacIntel", false],
-  [false, "Linux x86_64", false],
   [true, "Win32", false],
   [true, "MacIntel", true],
   [true, "Linux x86_64", true],

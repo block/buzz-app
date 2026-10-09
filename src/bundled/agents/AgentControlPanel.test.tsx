@@ -144,7 +144,7 @@ it.each(["retry", "source"])(
       recovery === "retry" ? "development" : "installed",
       "https://relay.example.test",
     );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(f.calls.some((call) => call.action === "import")).toBe(false);
   },
 );
@@ -226,7 +226,7 @@ it("dialog actions choose the destination record when several local setups share
   expect(f.calls.find((call) => call.action === "localClone")?.payload).toEqual(
     { id: "fixture-agent" },
   );
-  fireEvent.click(within(create).getByRole("button", { name: "Cancel" }));
+  fireEvent.click(within(create).getByRole("button", { name: "Close" }));
   fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
   const setupDialog = await screen.findByRole("dialog", {
     name: "Set up agent here",
@@ -286,27 +286,6 @@ it("dialog Clone in a third community reads the configured setup the card shows"
   expect(f.calls.find((call) => call.action === "localClone")?.payload).toEqual(
     { id: "fixture-agent" },
   );
-});
-
-it("keeps the installation browser available on an older host", async () => {
-  const f = controlFixture();
-  delete f.data.parked;
-  const control = createAgentControl(f.host);
-  disposals.push(() => control.dispose());
-  render(
-    <AgentControlPanel
-      control={control}
-      importDestination="https://relay.example.test"
-    />,
-  );
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: "Import from another installation",
-    }),
-  );
-  expect(
-    await screen.findByRole("button", { name: "Import Fixture agent" }),
-  ).toBeEnabled();
 });
 
 it("does not expose installation browsing on a modern host", async () => {

@@ -14,12 +14,8 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 
 ### Implemented compatibility view
 
-- The live development broker (macOS and Linux) and packaged native host read the installed Buzz library at
-  `~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`
-  (on Linux, `$XDG_DATA_HOME/xyz.block.buzz.app/agents/managed-agents.json`,
-  defaulting to `~/.local/share`).
-  It does not search/merge the separate `.dev` library, read agent keys from
-  Keychain, write the file, run migrations, or call old loaders with side effects.
+- The live development broker reads saved Buzz 1.0 agents from `~/Library/Application Support/dev.local.buzz.foundation/agent-controller/agents.json` (on Linux, `$XDG_DATA_HOME/dev.local.buzz.foundation/agent-controller/agents.json`, defaulting to `~/.local/share`). It projects each saved exact identity, including stopped agents, and safe artwork. Parked legacy import candidates and Classic profiles are excluded; an empty current store stays empty. Missing or invalid storage offers Retry without falling back to Classic. The reader does not write configuration, migrate identities, retrieve agent credentials, or manage processes.
+- The packaged native compatibility/import reader still reads the Classic post-fold library at `xyz.block.buzz.app/agents/managed-agents.json`; native management uses its existing app-owned controller. Explicit legacy input remains supported by the development projection, but the development broker never searches or merges Classic stores.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
@@ -96,8 +92,7 @@ including authoritative empty/loading/error states without legacy fallback;
 legacy identities only on hosts without native controls. Template refresh never
 waits for an unused legacy inventory. Native process
 status is not selection eligibility; stopped/native-only agents remain selectable.
-`agentLibrary` remains the old-library compatibility/import source. Agents management
-and the shared display-name resolver keep their own distinct presentation contracts.
+`agentLibrary` is the read-only host inventory source: saved Buzz 1.0 agents in the development browser, and the compatibility/import library in the packaged native host. Agents management and the shared display-name resolver keep their own distinct presentation contracts.
 
 Do not build another agent inventory in a plugin. Retain the shared projection only
 while needed; explicit Refresh retries source failures. Retaining choices preserves
@@ -409,21 +404,27 @@ feedback on them. Broader agent architecture proposals are outside the V1 scope.
 
 ## Agent Activity plugin
 
-**Agent Activity** is an independently toggleable bundled plugin. Compact
-avatar/name/status rows sit below messages and above the thread composer. The
-channel composer instead shows a collapsed **Channel-wide activity** summary
-with an agent count. Expand it to inspect all channel activity, including work
-in threads and unknown statuses; it does not imply another job is running in
-the channel conversation. Sidebar and thread-summary working dots are unchanged.
-Working-state turns have no thread identity, so thread typing never hides channel
-telemetry for that agent, including simultaneous work. Channel navigation resets
-the disclosure; ordinary activity updates preserve its open state while activity
-remains. When the last evidence disappears, the disclosure unmounts and resets.
-Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
-opens that exact agent's activity in the right panel: **channel activity**
-(including work in other threads) from the channel composer, or that thread's
-transcript from a thread composer. Optional names and avatars reuse shared background profile
-queries; key fragments distinguish identities without profiles.
+**Agent Activity** is an independently toggleable bundled plugin that owns capture
+and the transcript panel. Conversation presentation uses a compact, floating
+avatar control above the composer, without a reserved strip or permanent avatar
+container. Hover, click, tap or keyboard opens **Working now**, reusing the sidebar's
+working-agent row. The row opens its known thread (or channel when no unique thread
+is known); a separate **View activity** action opens the agent's transcript.
+
+The channel control includes work in threads. A thread control includes only
+exact-root evidence, never unconfirmed work. Current owner-visible turns provide
+brief tool status; unknown scopes fall back to channel activity. Multiple concurrent
+scopes never choose an arbitrary transcript thread. Public typing for the viewer's
+own `agentChoices` identities remains visible without telemetry; someone else's
+self-declared agent remains ordinary typing, without this owner-activity doorway.
+All projections consume existing stores and loaded profiles/channel rows, not new
+capture leases, relay reads or timers. A persistent, visually hidden status region
+announces working/typing transitions even when visual controls are absent.
+
+The popup resets on conversation changes and when current work ends. Idle and
+historical activity remain accessible from profiles and the activity panel rather
+than lingering above the composer. Compact status labels omit raw arguments and
+full paths; the transcript retains the detail.
 
 Thread indicators consume the existing kind-20002 typing signal with the resolved
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
@@ -452,7 +453,8 @@ seconds after the signed timestamp and stays quiet for two seconds after the
 typer's message. It is display-only evidence, not ownership; while the plugin is
 off, the channel popover lists such an agent without a **View activity** action.
 A timeline thread summary shows the same dots from this source while one of the
-viewer's agents types in that thread; a thread with no replies yet has no summary to mark.
+viewer's agents types in that thread; before the first reply it offers **View thread**.
+The visual working label is reduced to dots; its accessible name retains the status.
 No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.

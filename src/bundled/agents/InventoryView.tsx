@@ -61,10 +61,10 @@ function communitySections(group: string, identities: InventoryEntry[]) {
     }));
 }
 
-function orderedGroups(entries: InventoryEntry[]) {
+function orderedGroups(entries: InventoryEntry[], combineImports: boolean) {
   const groups = new Map<string, InventoryEntry[]>();
   for (const entry of entries) {
-    const group = [relayGroup, importGroup].includes(entry.decision.group)
+    const group = combineImports && [relayGroup, importGroup].includes(entry.decision.group)
       ? localHereGroup
       : entry.decision.group;
     groups.set(group, [...(groups.get(group) ?? []), entry]);
@@ -85,7 +85,7 @@ function orderedGroups(entries: InventoryEntry[]) {
 
 /** Final inventory presentation; discovery and transport lifetime stay with the caller. */
 export function InventoryView({
-  importTab = false,
+  importTab,
   state,
   control,
   session,
@@ -95,6 +95,7 @@ export function InventoryView({
   sourceProfiles,
   edit,
   duplicate,
+  onShare,
   remove,
   removeRelay,
   archive,
@@ -107,7 +108,7 @@ export function InventoryView({
   teams,
   newAgent,
 }: {
-  importTab?: boolean;
+  importTab?: boolean | undefined;
   state: AgentControlState;
   control: AgentControl;
   session: RelaySession;
@@ -118,6 +119,7 @@ export function InventoryView({
   sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   removeRelay?:
     | ((pubkey: string, signal: AbortSignal) => Promise<void>)
@@ -172,7 +174,7 @@ export function InventoryView({
     const decision = inventoryDecision(row, destination);
     const needsImport =
       decision.group === relayGroup || decision.group === importGroup;
-    if (needsImport !== importTab) continue;
+    if (importTab !== undefined && needsImport !== importTab) continue;
     (archive?.archived.has(row.pubkey) ? archived : active).push({
       row,
       decision,
@@ -190,7 +192,7 @@ export function InventoryView({
   function renderGroups(entries: InventoryEntry[], nested = false) {
     const GroupHeading = nested ? "h3" : "h2";
     const CommunityHeading = nested ? "h4" : "h3";
-    const groups = orderedGroups(entries);
+    const groups = orderedGroups(entries, importTab !== undefined);
     if (
       !nested &&
       newAgent &&
@@ -245,6 +247,7 @@ export function InventoryView({
                     sourceProfiles={sourceProfiles}
                     edit={edit}
                     duplicate={duplicate}
+                    onShare={onShare}
                     remove={remove}
                     removeRelay={removeRelay}
                     nested={nested}

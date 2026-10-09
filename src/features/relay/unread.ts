@@ -909,7 +909,12 @@ export function createUnread({
     const items: InboxItem[] = [];
     if (!closed)
       for (const channel of channels.list().channels) {
-        if (channel.cached || !channel.members?.includes(viewer)) continue;
+        if (
+          channel.cached ||
+          channel.archived ||
+          !channel.members?.includes(viewer)
+        )
+          continue;
         const dm = channel.channelType === "dm";
         const groups = new Map<string, Evidence[]>();
         for (const entry of byChannel.get(channel.id) ?? []) {
@@ -1155,7 +1160,19 @@ export function createUnread({
         .filter((channel) => channel.cached)
         .map((channel) => channel.id),
     );
+  const inboxArchiveKey = (list: ReturnType<ChannelQueries["list"]>) =>
+    list.channels
+      .filter(
+        (channel) =>
+          channel.archived &&
+          !channel.cached &&
+          channel.members?.includes(viewer),
+      )
+      .map((channel) => channel.id)
+      .sort()
+      .join(",");
   const initialList = channels.list();
+  let archivedKey = inboxArchiveKey(initialList);
   let cachedChannels = cachedIds(initialList);
   let channelTypes = types(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
@@ -1173,8 +1190,12 @@ export function createUnread({
     );
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
+    // Channel archive changes Inbox eligibility, not membership or read intent.
+    const nextArchived = inboxArchiveKey(list);
+    const archiveChanged = nextArchived !== archivedKey;
+    archivedKey = nextArchived;
     if (next === accessKey) {
-      if (changed.size) publish(changed);
+      if (changed.size || archiveChanged) publish(changed);
     } else {
       accessKey = next;
       purge();

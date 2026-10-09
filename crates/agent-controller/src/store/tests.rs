@@ -850,13 +850,21 @@ fn cleaned(dir: &Path) -> (Vec<Agent>, Option<String>) {
 fn cleanup_cuts_beta_imports_once_at_the_last_delimiter() {
     let dir = tempfile::tempdir().unwrap();
     let twice = format!("role{D}old{D}team");
-    let beta = serde_json::json!({"record": {}, "global": {}});
+    let beta = serde_json::json!({"record": {"system_prompt": twice}, "global": {}});
     let mut store = Store::open(dir.path().to_owned()).unwrap();
     store
         .insert(vec![
-            beta_agent("01", &twice, beta.clone()),
-            beta_agent("02", &twice, serde_json::json!({"record": {}})),
-            beta_agent("03", "role only", beta),
+            beta_agent("01", &twice, beta),
+            beta_agent(
+                "02",
+                &twice,
+                serde_json::json!({"record": {"system_prompt": twice}}),
+            ),
+            beta_agent(
+                "03",
+                "role only",
+                serde_json::json!({"record": {"system_prompt": "role only"}, "global": {}}),
+            ),
         ])
         .unwrap();
     let before = store.agents().unwrap();
@@ -897,6 +905,45 @@ fn cleanup_leaves_later_owner_edits_alone() {
     assert_eq!(after[0].system_prompt, format!("mine{D}also mine"));
 }
 #[test]
+fn cleanup_keeps_prompts_edited_before_upgrade_or_without_an_original() {
+    let dir = tempfile::tempdir().unwrap();
+    let edited = format!("role{D}my own team notes");
+    let original = format!("role{D}baked team");
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![
+            beta_agent(
+                "01",
+                &edited,
+                serde_json::json!({"record": {"system_prompt": original}, "global": {}}),
+            ),
+            beta_agent(
+                "02",
+                &edited,
+                serde_json::json!({
+                    "record": {"system_prompt": edited},
+                    "definition": {"system_prompt": original},
+                    "global": {},
+                }),
+            ),
+            beta_agent(
+                "03",
+                &original,
+                serde_json::json!({"record": {}, "global": {}}),
+            ),
+        ])
+        .unwrap();
+    let before = store.agents().unwrap();
+    drop(store);
+    let (after, warning) = cleaned(dir.path());
+    assert_eq!(warning, None);
+    for (agent, prior) in after.iter().zip(&before) {
+        assert_eq!(agent.system_prompt, prior.system_prompt);
+        assert_eq!(agent.revision, prior.revision);
+        assert_eq!(agent.imported[CLEANED], true);
+    }
+}
+#[test]
 fn failed_cleanup_write_warns_and_sets_no_mark() {
     let dir = tempfile::tempdir().unwrap();
     let baked = format!("role{D}team");
@@ -905,7 +952,7 @@ fn failed_cleanup_write_warns_and_sets_no_mark() {
         .insert(vec![beta_agent(
             "01",
             &baked,
-            serde_json::json!({"global": {}}),
+            serde_json::json!({"record": {"system_prompt": baked}, "global": {}}),
         )])
         .unwrap();
     drop(store);

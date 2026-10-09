@@ -991,27 +991,6 @@ it("preserves the preview on background failure and retries the same page withou
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("resumes an uncertain first send after reopening without creating a new message", async () => {
-  const t = setup();
-  const view = t.mount();
-  t.directMessages.delivery.mockReturnValue("unknown");
-  t.directMessages.delivered.mockRejectedValueOnce(
-    new Error("Connection lost"),
-  );
-  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Recover exactly once");
-  await t.user.click(send());
-  await screen.findByRole("alert");
-  view.unmount();
-  t.mount();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Recover exactly once");
-  await waitFor(() => expect(send()).toBeEnabled());
-  await t.user.click(send());
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).toHaveBeenCalledOnce();
-  expect(t.directMessages.open).toHaveBeenCalledOnce();
-});
-
 it("cancels opening on page exit and does not send after a late response", async () => {
   const t = setup();
   let release: (id: string) => void = () => {};

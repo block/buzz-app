@@ -35,6 +35,10 @@ pub struct HostGrants {
     pub commands: Vec<HostCommand>,
     #[serde(default)]
     pub network_origins: Vec<String>,
+    /// Programs the plugin may start as long-lived processes. Unlike a command,
+    /// a process takes stdin and the caller appends its own arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub processes: Vec<HostProcess>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +53,26 @@ pub struct HostCommand {
     )]
     pub max_output_bytes: Option<u64>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostProcess {
+    pub id: String,
+    pub program: String,
+    /// Fixed leading arguments; the caller's arguments follow them.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+fn valid_program(program: &str, args: &[String]) -> bool {
+    !program.is_empty()
+        && program.len() <= 80
+        && program
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && args.len() <= 16
+        && args
+            .iter()
+            .all(|argument| argument.len() <= 1024 && !argument.contains('\0'))
+}
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
         valid_id(&self.id)?;
@@ -59,28 +83,31 @@ impl Manifest {
             return Err("Only page plugin API version 1 is supported".into());
         }
         if let Some(host) = &self.host {
-            if host.commands.len() > 16 || host.network_origins.len() > 16 {
+            if host.commands.len() > 16
+                || host.network_origins.len() > 16
+                || host.processes.len() > 16
+            {
                 return Err("Too many host declarations".into());
             }
             let mut command_ids = std::collections::HashSet::new();
             for command in &host.commands {
                 valid_id(&command.id)?;
                 if !command_ids.insert(&command.id)
-                    || command.program.is_empty()
-                    || command.program.len() > 80
-                    || !command.program.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                    })
-                    || command.args.len() > 16
+                    || !valid_program(&command.program, &command.args)
                     || command
                         .max_output_bytes
                         .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&limit))
-                    || command
-                        .args
-                        .iter()
-                        .any(|argument| argument.len() > 1024 || argument.contains('\0'))
                 {
                     return Err("Invalid host command declaration".into());
+                }
+            }
+            let mut process_ids = std::collections::HashSet::new();
+            for process in &host.processes {
+                valid_id(&process.id)?;
+                if !process_ids.insert(&process.id)
+                    || !valid_program(&process.program, &process.args)
+                {
+                    return Err("Invalid host process declaration".into());
                 }
             }
             let mut origins = std::collections::HashSet::new();
@@ -181,6 +208,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
+            .expect("agents2 manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -224,6 +253,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.reminders"
             | "buzz.projects"
             | "buzz.agents"
+            | "buzz.agents2"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"
@@ -1296,6 +1326,32 @@ mod tests {
             .unwrap()
             .push(manifest["host"]["commands"][0].clone());
         assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+
+        let mut processes = manifest.clone();
+        processes["host"]["processes"] = serde_json::json!([
+            {"id":"agent","program":"example-cli"},
+            {"id":"install","program":"bash","args":["-c","echo install"]}
+        ]);
+        assert!(artifact_from_text(&processes.to_string(), "export const x = 1".into()).is_ok());
+        let parsed: Manifest = serde_json::from_value(processes.clone()).unwrap();
+        assert_eq!(
+            parsed.host.as_ref().unwrap().processes[0].args,
+            Vec::<String>::new()
+        );
+        for (field, value) in [
+            ("program", serde_json::json!("/bin/sh")),
+            ("program", serde_json::json!("")),
+            ("id", serde_json::json!("Agent")),
+            ("args", serde_json::json!(["a\0b"])),
+            ("shell", serde_json::json!(true)),
+        ] {
+            let mut invalid = processes.clone();
+            invalid["host"]["processes"][0][field] = value;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        let mut duplicate = processes.clone();
+        duplicate["host"]["processes"][1]["id"] = serde_json::json!("agent");
+        assert!(artifact_from_text(&duplicate.to_string(), "export const x = 1".into()).is_err());
     }
 
     #[test]

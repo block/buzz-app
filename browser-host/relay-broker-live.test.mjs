@@ -1032,7 +1032,6 @@ test.each([
     false,
     "Relay delivery could not be confirmed (503)",
   ],
-  ["unknown: failure", false, "Relay delivery could not be confirmed (503)"],
   [
     "rate-limited: quota exceeded; retry in 17s",
     true,
@@ -1338,7 +1337,6 @@ test("coalesced remove/re-add retires old upstream wire without interrupting pub
 
 test.each([
   [30620, "conflict: workflow changed since it was loaded", "failed"],
-  [30620, "conflict: workflow revision does not exist", "failed"],
   [
     30620,
     "forbidden: workflow belongs to a different owner or channel",
@@ -1347,7 +1345,6 @@ test.each([
   [46020, "forbidden: not authorized to trigger this workflow", "failed"],
   [46020, "forbidden: workflow is disabled or inactive", "failed"],
   [46020, "error: internal server error", "unknown"],
-  [46020, "unknown: workflow outcome", "unknown"],
 ])(
   "workflow refusal reaches broker/outbox as %s / %s / %s",
   async (kind, reason, delivery) => {

@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ChannelSummary } from "../../features/relay/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ChannelSummary } from "../relay/contracts";
+import type { RelaySession } from "../relay/session";
+
+const none: readonly ChannelSummary[] = [];
 
 type Result = {
-  owner: object;
+  /** The lookup that produced this result: its session, query and attempt. */
+  owner: { session: RelaySession };
   channels: readonly ChannelSummary[];
   partial: boolean;
   error?: string;
 };
 
-/** Public channels the viewer has not joined, found by name for this palette.
- * The store resolves each match, so opening one reaches the read-only preview. */
+/** Public channels the viewer has not joined, found by name for Command-K and
+ * the composer's `#` completion. The store resolves each match, so opening one
+ * reaches the read-only preview. */
 export function usePublicChannelSearch(
   session: RelaySession,
   query: string,
@@ -55,14 +59,30 @@ export function usePublicChannelSearch(
     };
   }, [query, ready, search, exact, owner]);
   const current = result?.owner === owner ? result : undefined;
+  const loading = !!query && ready && !!search && !current;
+  // While the next lookup runs, keep the last answer's rows that still
+  // match, so open channels don't vanish and return on every keystroke. The
+  // store keeps that answer: the composer remounts this hook per edit.
+  const match = session.channels.matchPublic;
+  const found = useMemo(() => {
+    if (current) return current.channels;
+    if (!loading || !match) return none;
+    const kept = match(query, { exact });
+    return kept.length ? kept : none;
+  }, [current, loading, match, query, exact]);
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
   return {
-    loading: !!query && ready && !!search && !current,
+    loading,
     // A channel joined or removed since the lookup leaves this result set.
-    channels: (current?.channels ?? []).filter(
+    channels: found.filter(
       (channel) => session.channels.get?.(channel.id)?.readOnly,
     ),
+    /** The lookup's channels, or the previous lookup's still-matching ones
+     * while it runs: the same array until either changes. Callers that keep
+     * it must recheck each channel themselves. */
+    found,
     partial: !!current?.partial,
     error: current?.error,
-    retry: () => setAttempt((value) => value + 1),
+    retry,
   };
 }

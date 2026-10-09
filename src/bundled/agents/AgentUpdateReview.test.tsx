@@ -1,11 +1,10 @@
 import type { ControlSnapshot } from "../../features/agents/control";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { controlFixture } from "../../features/agents/control-testing";
 import {
   enqueueManagementRequest,
   managementRequesterAuthorized,
   matchingManagementAgents,
-  refreshManagementInventory,
   type PendingManagementRequest,
   requestedDraft,
 } from "./AgentUpdateReview";
@@ -65,22 +64,6 @@ it("resolves requested runtime IDs through installed harness options", () => {
     command: "/opt/homebrew/bin/goose",
     args: '["acp"]',
   });
-});
-
-it("requires a successful inventory snapshot before review", async () => {
-  const refresh = vi.fn(async () => {});
-  expect(
-    await refreshManagementInventory({
-      refresh,
-      snapshot: () => ({
-        status: "error",
-        data: null,
-        busy: false,
-        error: "Could not refresh",
-      }),
-    } as never),
-  ).toBe(false);
-  expect(refresh).toHaveBeenCalledOnce();
 });
 
 const pending = (

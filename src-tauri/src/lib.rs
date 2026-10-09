@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_models;
 mod agents;
+mod app_agents;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -27,6 +28,7 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_process;
 mod host_request;
 mod identity;
 mod image_clipboard;
@@ -82,6 +84,9 @@ use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
+use host_process::{
+    plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
+};
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -494,10 +499,23 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_host_process_spawn,
+        plugin_host_process_write,
+        plugin_host_process_kill,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
         agent_control_create_prepare,
+        app_agents::app_agent_list,
+        app_agents::app_agent_create,
+        app_agents::app_agent_rename,
+        app_agents::app_agent_delete,
+        app_agents::app_agent_forget,
+        app_agents::app_agent_publish,
+        app_agents::app_agent_publish_profile,
+        app_agents::app_agent_query,
+        app_agents::app_agent_upload,
+        app_agents::app_agent_remember,
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
@@ -651,7 +669,19 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources, agent_identity));
+            app.manage(app_agents::AppAgentHost::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map_err(Clone::clone),
+            ));
+            let agent_owner = agents::owner::Owner::select(
+                agent_identity,
+                tauri::is_dev(),
+                std::env::var("BUZZ_DEV_VIEWER").ok().as_deref(),
+                app.config().build.dev_url.as_ref(),
+            );
+            app.manage(AgentHost::initialize(paths, resources, agent_owner));
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -680,6 +710,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
+        .manage(HostProcesses::default())
         .manage(OAuthCallbackHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
@@ -713,6 +744,8 @@ pub fn run() {
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
+                // Processes belong to the page that started them.
+                webview.state::<HostProcesses>().stop_all();
             }
             browser::page_load(webview, payload);
         })
@@ -758,6 +791,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();
     app.state::<HarnessSetup>().shutdown();
+    app.state::<HostProcesses>().shutdown();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");

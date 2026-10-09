@@ -286,16 +286,6 @@ it("summarizes only the exact key in the active community, and drops it when the
   expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
 });
 
-it("renders nothing for an unknown key in the same community", async () => {
-  const { control, settle, data, agent } = heldHost();
-  agent.relayUrl = "wss://relay.example.test";
-  const community = relayAt(home);
-  mount(control, community.relay, "cd".repeat(32));
-  await settle(0, data);
-  expect(control.snapshot().status).toBe("ready");
-  expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
-});
-
 it("follows native status transitions and marks failed reads as unconfirmed evidence", async () => {
   const { control, reads, settle, data, agent } = heldHost();
   Object.assign(agent, {

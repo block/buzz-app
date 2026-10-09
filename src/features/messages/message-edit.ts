@@ -1,7 +1,23 @@
 import { projectMarkdownAttachments } from "../relay/message-content";
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { npubEncode } from "nostr-tools/nip19";
+import type { MentionRecipient } from "./mention-draft";
 import { profileMentionParts } from "./profile-mentions";
+
+/** Display-only identity link: literal one-line label, exact profile target, no
+ * recipient. CommonMark unescapes every ASCII punctuation mark, so escaping all
+ * of them keeps a name from authoring emphasis, code, entities or links. */
+export function profileMentionLink(label: string, target: string) {
+  const text = label
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[!-/:-?[-`{-~]/g, "\\$&");
+  return `[${text}](${target})`;
+}
+
+/** Picker selection during an edit becomes the same link as a preserved mention. */
+export const editMentionText = ({ pubkey, name }: MentionRecipient) =>
+  `${profileMentionLink(`@${name}`, `nostr:${npubEncode(pubkey)}`)} `;
 
 /** Keep attachment Markdown and turn already-bound names into explicit identities.
  * Edited legacy prose remains unbound; the editor never invents recipients. */
@@ -17,7 +33,7 @@ export function messageEditText(
     agents,
   )
     .map(({ text, target }) =>
-      target ? `[${text.replace(/[\\[\]]/g, "\\$&")}](${target})` : text,
+      target ? profileMentionLink(text, target) : text,
     )
     .join("");
 }

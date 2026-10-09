@@ -259,7 +259,17 @@ separate limitations.
 
 Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
 (Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
-native private-key controls. Without the pin, supported desktop development uses
+native private-key controls. `just desktop` passes Vite's effective public pin
+(including an explicitly empty shell override) to the native agent host. Agent
+starts in this mode read the existing broker's signer-derived public identity
+from the final configured loopback development URL and require it to match both
+the pin and the saved agent owner. Unavailable or mismatched broker identity
+blocks startup without falling back to native credentials. The public pin alone
+is not authorization. Packaged builds always use native identity, ignoring the
+pin. This reuses the broker's trusted-local-process boundary; it does not copy
+keys or introduce another signing protocol.
+
+Without the pin, supported desktop development uses
 the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
 synchronize copies automatically; neither operation is in this scope. Sign out

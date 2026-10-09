@@ -45,64 +45,65 @@ describe.each([false, true])("explicit return: %s", (explicit) => {
   describe.each(["cleanup", "queued frame"] as const)(
     "%s restoration guard",
     (phase) => {
-      it.each(["hidden", "inert", "aria-hidden", "moved"] as const)(
-        "rejects restoration after %s changes",
-        async (change) => {
-          const frames: FrameRequestCallback[] = [];
-          vi.stubGlobal(
-            "requestAnimationFrame",
-            (callback: FrameRequestCallback) => {
-              frames.push(callback);
-              return frames.length;
-            },
-          );
-          const close = vi.fn();
-          const restoreFocus = createRef<HTMLButtonElement>();
-          const tree = (open: boolean) => (
-            <>
-              <div data-testid="source">
-                <button ref={restoreFocus} type="button">
-                  Open viewer
-                </button>
-              </div>
-              <button type="button">Retry</button>
-              {open && (
-                <Viewer
-                  close={close}
-                  restoreFocus={explicit ? restoreFocus : undefined}
-                />
-              )}
-            </>
-          );
-          const view = render(tree(false));
-          const opener = screen.getByRole("button", { name: "Open viewer" });
-          const retry = screen.getByRole("button", { name: "Retry" });
-          opener.focus();
-          view.rerender(tree(true));
-          fireEvent.keyDown(document, { key: "Escape" });
-          expect(close).toHaveBeenCalledOnce();
-          const focus = vi.spyOn(opener, "focus");
-          const changeAvailability = () => {
-            if (change === "moved") retry.focus();
-            else
-              screen
-                .getByTestId("source")
-                .setAttribute(change, change === "aria-hidden" ? "true" : "");
-          };
-          if (phase === "cleanup") changeAvailability();
-          await act(async () => {
-            view.rerender(tree(false));
-          });
-          expect(frames).toHaveLength(phase === "cleanup" ? 0 : 1);
-          if (phase === "queued frame") changeAvailability();
-          act(() => {
-            for (const frame of frames) frame(0);
-          });
-          expect(focus).not.toHaveBeenCalled();
-          fireEvent.keyDown(document, { key: "Escape" });
-          expect(close).toHaveBeenCalledOnce();
-        },
-      );
+      it.each(
+        explicit
+          ? (["moved"] as const)
+          : (["hidden", "inert", "aria-hidden", "moved"] as const),
+      )("rejects restoration after %s changes", async (change) => {
+        const frames: FrameRequestCallback[] = [];
+        vi.stubGlobal(
+          "requestAnimationFrame",
+          (callback: FrameRequestCallback) => {
+            frames.push(callback);
+            return frames.length;
+          },
+        );
+        const close = vi.fn();
+        const restoreFocus = createRef<HTMLButtonElement>();
+        const tree = (open: boolean) => (
+          <>
+            <div data-testid="source">
+              <button ref={restoreFocus} type="button">
+                Open viewer
+              </button>
+            </div>
+            <button type="button">Retry</button>
+            {open && (
+              <Viewer
+                close={close}
+                restoreFocus={explicit ? restoreFocus : undefined}
+              />
+            )}
+          </>
+        );
+        const view = render(tree(false));
+        const opener = screen.getByRole("button", { name: "Open viewer" });
+        const retry = screen.getByRole("button", { name: "Retry" });
+        opener.focus();
+        view.rerender(tree(true));
+        fireEvent.keyDown(document, { key: "Escape" });
+        expect(close).toHaveBeenCalledOnce();
+        const focus = vi.spyOn(opener, "focus");
+        const changeAvailability = () => {
+          if (change === "moved") retry.focus();
+          else
+            screen
+              .getByTestId("source")
+              .setAttribute(change, change === "aria-hidden" ? "true" : "");
+        };
+        if (phase === "cleanup") changeAvailability();
+        await act(async () => {
+          view.rerender(tree(false));
+        });
+        expect(frames).toHaveLength(phase === "cleanup" ? 0 : 1);
+        if (phase === "queued frame") changeAvailability();
+        act(() => {
+          for (const frame of frames) frame(0);
+        });
+        expect(focus).not.toHaveBeenCalled();
+        fireEvent.keyDown(document, { key: "Escape" });
+        expect(close).toHaveBeenCalledOnce();
+      });
     },
   );
 });

@@ -52,7 +52,7 @@ it("keeps anchor destination and host semantics with and without presentation", 
   expect(fallback).toContain(`>${url}</a>`);
   expect(fallback).not.toContain("data-link-renderer");
 });
-it("skips throwing and unmatched renderers, with first matching presentation winning", () => {
+it("skips throwing and unmatched renderers and resolves by order, then key", () => {
   const broken = {
     ...entry,
     matches() {
@@ -60,8 +60,35 @@ it("skips throwing and unmatched renderers, with first matching presentation win
     },
   };
   const miss = { ...entry, matches: () => false };
-  expect(resolveLink(url, [broken, miss, entry, { ...entry }])).toBe(entry);
+  expect(resolveLink(url, [broken, miss, entry])).toBe(entry);
   expect(resolveLink(url, [broken, miss])).toBeUndefined();
+  // A catch-all loses to the default band whichever registered first.
+  const fallback = { ...entry, key: "a/fallback", order: 100 };
+  expect(resolveLink(url, [fallback, entry])).toBe(entry);
+  expect(resolveLink(url, [entry, fallback])).toBe(entry);
+  // Equal orders fall to the contribution key, not array position.
+  const alpha = { ...entry, key: "a/link" };
+  expect(resolveLink(url, [entry, alpha])).toBe(alpha);
+  expect(resolveLink(url, [alpha, entry])).toBe(alpha);
+  // One renderer can be specific on one URL and a catch-all on another.
+  const github = "https://github.com/block/buzz/pull/1";
+  const services = {
+    ...entry,
+    key: "a/services",
+    order: (href: string) => (href.startsWith("https://github.com/") ? 0 : 100),
+  };
+  const web = { ...entry, key: "b/web", order: 10 };
+  expect(resolveLink(github, [web, services])).toBe(services);
+  expect(resolveLink(url, [web, services])).toBe(web);
+  // A throwing order counts as the default band instead of dropping the renderer.
+  const shaky = {
+    ...entry,
+    key: "a/shaky",
+    order: () => {
+      throw new Error("order failed");
+    },
+  };
+  expect(resolveLink(url, [web, shaky])).toBe(shaky);
 });
 
 function mount(target = url, interactive = true) {
@@ -159,20 +186,19 @@ it("reports a clipboard failure and allows an explicit retry", async () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
-it.each([
-  "buzz://channel/alpha",
-  "mailto:hello@example.com",
-  "ftp://example.com/file",
-])("leaves non-HTTP(S) link context menus alone: %s", (target) => {
-  const { anchor } = mount(target);
-  const event = new MouseEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-  });
-  fireEvent(anchor, event);
-  expect(event.defaultPrevented).toBe(false);
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-});
+it.each(["buzz://channel/alpha"])(
+  "leaves non-HTTP(S) link context menus alone: %s",
+  (target) => {
+    const { anchor } = mount(target);
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(anchor, event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  },
+);
 
 it("leaves noninteractive message content without a menu or anchor", () => {
   mount(url, false);

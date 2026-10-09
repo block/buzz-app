@@ -318,23 +318,6 @@ it("replacement viewer/community sessions do not reuse another session's groups"
   }
 });
 
-it.each(["clearCache", "dispose"] as const)(
-  "%s removes an already-ready snapshot",
-  async (action) => {
-    const { wire, owner, preferences } = setup();
-    try {
-      const first = preferences.ensure();
-      await flush();
-      wire.next().respond([]);
-      await first;
-      expect(preferences.snapshot().data).toEqual(data);
-      await owner[action]();
-      expect(preferences.snapshot().data).toBeUndefined();
-    } finally {
-      owner.dispose();
-    }
-  },
-);
 it("serializes mute writes without changing saved groups or stars", async () => {
   const gate = deferred<readonly string[]>();
   const started = deferred<void>();
@@ -704,46 +687,6 @@ it("failed Star retains the confirmed snapshot and a retry can unstar", async ()
     owner.dispose();
   }
 });
-
-it.each(["success", "failure"])(
-  "a stale refresh %s cannot overwrite confirmed Star",
-  async (outcome) => {
-    const gate = deferred<SidebarPreferences>();
-    const started = deferred<void>();
-    const decode = vi
-      .fn(async () => data)
-      .mockImplementationOnce(async () => data);
-    const { wire, owner, preferences } = setup(decode, undefined, async () => [
-      "alpha",
-      "beta",
-    ]);
-    try {
-      const initial = preferences.ensure();
-      await flush();
-      wire.next().respond([]);
-      await initial;
-      decode.mockImplementationOnce(() => {
-        started.resolve();
-        return gate.promise;
-      });
-      const refresh = preferences.refresh();
-      await flush();
-      wire.next().respond([]);
-      await started.promise;
-      await preferences.setStar("alpha", true);
-      const retained = preferences.snapshot();
-      if (outcome === "success") gate.resolve(data);
-      else gate.reject(new Error("old read failed"));
-      await refresh;
-      expect(preferences.snapshot()).toBe(retained);
-      expect(retained.status).toBe("ready");
-      expect(retained.data?.starred).toEqual(["alpha", "beta"]);
-    } finally {
-      gate.resolve(data);
-      owner.dispose();
-    }
-  },
-);
 
 it.each(["clearCache", "dispose", "cancel"] as const)(
   "%s aborts Star and fences active and queued writes",

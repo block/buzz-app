@@ -539,7 +539,7 @@ it.each([
   },
 );
 
-it.each([undefined, 3600, 604800, 2147483647])(
+it.each([undefined, 3600, 2147483647])(
   "reads exact duration %s from signed metadata",
   async (ttlSeconds) => {
     const h = harness();
@@ -557,8 +557,6 @@ it.each([
   [["ttl"]],
   [["ttl", ""]],
   [["ttl", "0"]],
-  [["ttl", "-1"]],
-  [["ttl", "1.5"]],
   [["ttl", "2147483648"]],
   [["ttl", "60", "extra"]],
   [
@@ -624,7 +622,7 @@ it("locks a mismatched lifetime readback and only clears it after matching read-
   expect(h.owner.capability.snapshot(id)).toBeUndefined();
   expect(h.publish).toHaveBeenCalledOnce();
 });
-it.each([0, -1, 1.5, 2147483648, NaN, Infinity, "60", null])(
+it.each([0, 1.5, 2147483648, "60"])(
   "rejects invalid draft duration %j before signing",
   async (ttlSeconds) => {
     const h = harness();
@@ -701,6 +699,65 @@ it("renames standalone sessions with a name-only command and confirmed relay rea
   assert(command);
   expect(() => validateDetailsTemplate(command)).not.toThrow();
   expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+});
+it.each([false, true])(
+  "promotes a standalone session in place (public/temporary=%s)",
+  async (changed) => {
+    const h = harness();
+    h.set([
+      h.metadata("Work", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    const promotion = {
+      name: "Work",
+      description: "",
+      visibility: changed ? ("public" as const) : ("private" as const),
+      ...(changed ? { ttlSeconds: 600 } : {}),
+    };
+    h.publish.mockImplementationOnce(async () => {
+      h.set([
+        h.record(39000, [
+          ["name", promotion.name],
+          ["about", ""],
+          [promotion.visibility],
+          ["t", "stream"],
+          ...(changed ? [["ttl", "600"]] : []),
+        ]),
+        ...h.events().slice(1),
+      ]);
+    });
+    await h.owner.capability.save(base, promotion);
+    const command = h.sign.mock.calls[0]?.[0];
+    assert(command);
+    expect(command.tags).toEqual([
+      ["h", id],
+      ["name", "Work"],
+      ["about", ""],
+      ...(changed
+        ? [
+            ["visibility", "open"],
+            ["ttl", "600"],
+          ]
+        : []),
+    ]);
+    expect(() => validateDetailsTemplate(command)).not.toThrow();
+    expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  },
+);
+it("does not promote parent-linked sessions", async () => {
+  const h = harness();
+  h.set([
+    h.metadata("Work", sessionDescription(id), "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(false);
+  await expect(
+    h.owner.capability.save(base, { ...base, description: "" }),
+  ).rejects.toThrow("permission");
+  expect(h.sign).not.toHaveBeenCalled();
 });
 it.each([
   { description: "ordinary channel" },

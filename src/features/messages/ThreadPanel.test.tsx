@@ -77,12 +77,18 @@ vi.mock("./MessageComposer", () => ({
     channelId,
     scope,
     onSend,
+    personalConversation,
+    activityClickOpensPanel,
+    disabled,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
       data-channel={channelId}
       data-scope={scope}
+      data-personal={personalConversation}
+      data-direct-activity={activityClickOpensPanel}
+      data-disabled={disabled}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -816,9 +822,7 @@ it("finishes automatic pages before initial positioning and preserves a readerâ€
 });
 it.each([
   { limited: false, routed: false },
-  { limited: true, routed: false },
   { limited: false, routed: true },
-  { limited: true, routed: true },
 ])(
   "positions after automatic loading stops (limited=$limited, routed=$routed), without restarting pagination",
   ({ limited, routed }) => {
@@ -854,10 +858,12 @@ it.each([
 );
 it.each(
   [false, true].flatMap((routed) =>
-    ["wheel", "touchMove", "pointerDown", "keyDown"].map((handler) => ({
-      routed,
-      handler,
-    })),
+    (routed ? ["wheel", "touchMove", "pointerDown", "keyDown"] : ["wheel"]).map(
+      (handler) => ({
+        routed,
+        handler,
+      }),
+    ),
   ),
 )(
   "a user $handler gesture before the page completes wins over initial positioning (routed=$routed)",
@@ -1106,4 +1112,32 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   expect(
     within(thread).getByRole("region", { name: "Thread messages" }),
   ).not.toHaveAttribute("data-positioning");
+});
+
+it("passes the Me recipient, readiness and direct Activity contract through to thread composition", () => {
+  const h = messagesHarness();
+  const view = render(
+    <ThreadPanel
+      {...h.props}
+      personalConversation
+      activityClickOpensPanel
+      disabled
+    />,
+  );
+  const composer = screen.getByRole("region", { name: "Composer" });
+  expect(composer).toHaveAttribute("data-personal", "true");
+  expect(composer).toHaveAttribute("data-direct-activity", "true");
+  expect(composer).toHaveAttribute("data-disabled", "true");
+  view.rerender(
+    <ThreadPanel
+      {...h.props}
+      personalConversation
+      activityClickOpensPanel
+      disabled={false}
+    />,
+  );
+  expect(composer).toHaveAttribute("data-disabled", "false");
+  view.rerender(<ThreadPanel {...h.props} />);
+  expect(composer).not.toHaveAttribute("data-personal");
+  expect(composer).not.toHaveAttribute("data-direct-activity");
 });

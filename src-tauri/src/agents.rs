@@ -1,4 +1,5 @@
 //! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
+pub(crate) mod owner;
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
     LegacySource, NewAgent, PlatformCredentials, ProcessStatus, RuntimeBundle, Store,
@@ -656,13 +657,13 @@ pub(crate) struct AgentHost(
     Arc<AtomicBool>,
     Arc<tokio::sync::Mutex<()>>,
     /// Starts compare each agent's attested owner with the signed-in human.
-    crate::identity::IdentityHost,
+    owner::Owner,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
-        identity: crate::identity::IdentityHost,
+        identity: owner::Owner,
     ) -> Self {
         buzz_agent_controller::warm_tools_path();
         Self::initialize_with(identity, move || {
@@ -679,7 +680,7 @@ impl AgentHost {
         })
     }
     fn initialize_with(
-        identity: crate::identity::IdentityHost,
+        identity: owner::Owner,
         open: impl FnOnce() -> Result<Host, String> + Send + 'static,
     ) -> Self {
         let state = Arc::new(Mutex::new(Err(
@@ -1277,9 +1278,20 @@ async fn start_guarded(
     // ticket while the OS owns its dialog; a late key cannot start a listener.
     // Kept agents answer to the owner who authorized them, not whoever signs in
     // next: a mismatch is refused before the agent's key is read.
-    let signed_in = owner.3.viewer().await.ok();
-    let ready = buzz_agent_controller::check_owner(attested.as_deref(), signed_in.as_deref())
-        .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
+    let ready = match owner.3.viewer().await {
+        Ok(signed_in) => buzz_agent_controller::check_owner(attested.as_deref(), Some(&signed_in)),
+        Err(error) => Err(error),
+    }
+    .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
+    let target = id.clone();
+    run(owner.clone(), move |host| {
+        host.starts
+            .get(&target)
+            .filter(|pending| pending.ticket == ticket)
+            .ok_or(START_CANCELLED)?;
+        Ok(())
+    })
+    .await?;
     let acquired = if let Err(error) = ready {
         Err(error)
     } else {
@@ -1590,7 +1602,7 @@ pub(crate) async fn agent_control_snapshot_memory_write(
 pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
 mod snapshot_memory;
 
-mod profile_http;
+pub(crate) mod profile_http;
 
 #[cfg(test)]
 pub(crate) mod tests;

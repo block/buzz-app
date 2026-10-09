@@ -1,4 +1,5 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
@@ -54,7 +55,11 @@ import { createTyping } from "./typing";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
-import type { IncomingListener, IncomingMessage } from "./incoming";
+import type {
+  IncomingListener,
+  IncomingMessage,
+  LiveListener,
+} from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
@@ -247,6 +252,7 @@ export function createRelaySession(
   );
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
+  const liveEventListeners = new Set<LiveListener>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
@@ -1163,6 +1169,10 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const mePreferences = createMePreferences(
+    channelKit.capability,
+    lifetime.signal,
+  );
   const reminders =
     transport?.reminders && writer
       ? createReminders({
@@ -1272,13 +1282,20 @@ export function createRelaySession(
     })(),
   );
   let groupHead: string | undefined;
+  let meHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
     const head = personalGroups(state.entries)?.eventId;
-    if (head === groupHead) return;
-    groupHead = head;
-    void sidebarPreferences.queries.refresh();
+    if (head !== groupHead) {
+      groupHead = head;
+      void sidebarPreferences.queries.refresh();
+    }
+    const nextMe = meGroups(state.entries)?.eventId;
+    if (nextMe !== meHead) {
+      meHead = nextMe;
+      void mePreferences.queries.refresh();
+    }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
   let setupNotices: readonly SetupNotice[] = [];
@@ -1591,6 +1608,16 @@ export function createRelaySession(
         incomingListeners.delete(listener);
       };
     },
+    /** Verified, access-filtered live-phase events of any kind, after reconciliation.
+     * Never replay, finite reads or local intent. Includes the viewer's own echoes.
+     * Overlapping routes can deliver one event more than once; listeners dedupe by id. */
+    subscribeLive(listener: LiveListener) {
+      if (closed) return () => {};
+      liveEventListeners.add(listener);
+      return () => {
+        liveEventListeners.delete(listener);
+      };
+    },
     typing: typing.capability,
     channelCreation,
     channelKit: channelKit.capability,
@@ -1640,6 +1667,8 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    mePreferences: mePreferences.queries,
+    mePlacement: mePreferences.placement,
     reminders: reminders?.capability,
     live,
     profiling,
@@ -2357,6 +2386,27 @@ export function createRelaySession(
       )
         channelActivity.accept(visible);
       if (
+        provenance?.phase === "live" &&
+        liveEventListeners.size &&
+        visible.length &&
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration
+      ) {
+        const batch = Object.freeze({
+          events: Object.freeze([...visible]),
+          ...(provenance?.channelId ? { channelId: provenance.channelId } : {}),
+        });
+        for (const listener of liveEventListeners) {
+          if (closed || epoch !== accessEpoch) break;
+          try {
+            listener(batch);
+          } catch (error) {
+            console.error("Live listener failed", error);
+          }
+        }
+      }
+      if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
@@ -2563,6 +2613,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
+        mePreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2604,6 +2655,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
+      mePreferences.dispose();
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();
@@ -2613,6 +2665,7 @@ export function createRelaySession(
       traffic?.dispose();
       liveListeners.clear();
       incomingListeners.clear();
+      liveEventListeners.clear();
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();

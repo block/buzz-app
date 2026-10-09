@@ -2096,6 +2096,49 @@ it("renders built-in own bubbles and keeps only the last grouped avatar", () => 
   }
 });
 
+it.each(["timeline", "thread", "continuation"] as const)(
+  "retains a focused grouped avatar until focus leaves in %s rows",
+  (layout) => {
+    const render = (stackNext: boolean) => (
+      <>
+        <button type="button">Elsewhere</button>
+        <MessageRow
+          row={{ ...row, authorId: "ab".repeat(32) }}
+          profile={{ name: "author" }}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+          layout={layout}
+          stackNext={stackNext}
+        />
+      </>
+    );
+    try {
+      const view = renderDom(render(false));
+      const avatar = screen.getByRole("button", {
+        name: "View author profile",
+      });
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      act(() => avatar.focus());
+      view.rerender(render(true));
+      expect(avatar).toHaveFocus();
+      act(() => elsewhere.focus());
+      expect(avatar).not.toBeInTheDocument();
+      expect(elsewhere).toHaveFocus();
+      view.rerender(render(false));
+      view.rerender(render(true));
+      expect(
+        screen.queryByRole("button", { name: "View author profile" }),
+      ).toBeNull();
+      expect(elsewhere).toHaveFocus();
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it.each(["image", "video", "file", "audio"] as const)(
   "places %s attachments outside the text bubble and omits empty bubbles",
   (kind) => {

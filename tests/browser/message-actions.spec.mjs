@@ -525,3 +525,66 @@ test("historical single-day DMs and their threads expose dates without hover", a
   });
   await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
 });
+
+// Browser-only: live timeline/thread grouping must preserve real native focus
+// and Tab's next destination while the focused avatar retires on blur.
+test("live grouped appends preserve avatar focus in channel and thread", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  for (const mode of ["channel", "thread"]) {
+    let container = page.locator("[data-channel-timeline]");
+    let composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    if (mode === "thread") {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      container = panel;
+      composer = panel.getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      });
+    }
+    const append = (text) =>
+      app.append(
+        "primary",
+        "alpha",
+        text,
+        true,
+        true,
+        mode === "thread" ? root.id : undefined,
+      );
+    const first = append(`Focused ${mode} message`);
+    const row = container.locator(`[data-message-id="${first.id}"]`);
+    const avatar = row
+      .getByRole("button", { name: /^View .* profile$/ })
+      .first();
+    await avatar.focus();
+    const second = append(`Next ${mode} message`);
+    await expect(row.locator("[data-stack-next]")).toBeVisible();
+    await expect(avatar).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      row.getByRole("button", { name: "React with 👍", exact: true }),
+    ).toBeFocused();
+    await expect(avatar).toHaveCount(0);
+    await composer.focus();
+    append(`Another ${mode} message`);
+    await expect(
+      container.locator(`[data-message-id="${second.id}"] [data-stack-next]`),
+    ).toBeVisible();
+    await expect(composer).toBeFocused();
+  }
+});

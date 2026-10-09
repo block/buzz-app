@@ -32,7 +32,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
-import { SessionAgentControl } from "../sessions/SessionAgentControl";
+import { useAgentChoices } from "../agents/use-choices";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
@@ -193,6 +193,8 @@ export type MessageComposerProps = {
   label?: string | undefined;
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
+  personalConversation?: boolean | undefined;
+  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
@@ -218,6 +220,8 @@ export type MessageComposerProps = {
     initialDraft?: MentionDraft | string | undefined;
     /** A durable operation overrides disposable view state during recovery. */
     recoveredDraft?: MentionDraft | undefined;
+    /** Confirm/retry an already submitted operation without fresh admission. */
+    receiptOnly?: boolean;
     locked: boolean;
     disabled: boolean;
     submit: (draft: MentionDraft) => void;
@@ -226,16 +230,33 @@ export type MessageComposerProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
+  const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
+    props.session,
+    props.scope,
+    props.channelId,
+    props.threadRootId,
+  )}`;
+  return props.personalConversation ? (
+    <PersonalComposer key={key} {...props} />
+  ) : (
+    <Composer key={key} {...props} />
+  );
+}
+
+function PersonalComposer(props: MessageComposerProps) {
+  const choices = useAgentChoices(props.session, true, true);
   return (
-    <Composer
-      key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.threadRootId,
-      )}`}
-      {...props}
-    />
+    <DraftMentionRoster.Provider value={choices.selectable}>
+      <Composer {...props} />
+      {choices.error && (
+        <p role="alert">
+          {choices.error}{" "}
+          <Button onClick={() => void props.session.agentChoices.refresh()}>
+            Retry agents
+          </Button>
+        </p>
+      )}
+    </DraftMentionRoster.Provider>
   );
 }
 
@@ -273,6 +294,8 @@ function Composer({
   disabled: requestedDisabled = false,
   submission,
   sessionConversation,
+  personalConversation = false,
+  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -312,7 +335,6 @@ function Composer({
     (threadRootId
       ? `draft:${channelId}:thread:${threadRootId}`
       : `draft:${channelId}`);
-  const [selectedAgent, setSelectedAgent] = useState("");
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -328,7 +350,8 @@ function Composer({
     (item) => item.id === channelId,
   )?.parentChannelId;
   const mentionRoster = useContext(DraftMentionRoster);
-  const agentChoices = inviteAgents || !!sessionConversation;
+  const agentChoices =
+    inviteAgents || !!sessionConversation || personalConversation;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
@@ -919,25 +942,39 @@ function Composer({
     permitted.current &&
     !sendAttempt.current?.signal.aborted &&
     session.channels.list().channels.find((item) => item.id === channelId)
-      ?.parentChannelId === parentChannelId;
+      ?.parentChannelId === parentChannelId &&
+    (!personalConversation || session.mePlacement.has(channelId));
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.workSessions.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = [
-      ...sessionRecipients(
-        channel,
-        session.profiles.snapshot(),
-        session.agentChoices.snapshot(),
-        session.viewer,
-        explicit,
-      ),
-    ];
+    const recipients = personalConversation
+      ? [...explicit]
+      : [
+          ...sessionRecipients(
+            channel,
+            session.profiles.snapshot(),
+            session.agentChoices.snapshot(),
+            session.viewer,
+            explicit,
+          ),
+        ];
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
+      // Classification no longer depends on inventory; refresh before admission.
       await session.agentChoices.refresh();
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
+      if (
+        personalConversation &&
+        missing.some(
+          (key) =>
+            !session.agentChoices
+              .snapshot()
+              .selectable.some((agent) => agent.pubkey === key),
+        )
+      )
+        throw new Error("Only your available agents can be mentioned in Me.");
       await session.workSessions.addAgents(
         channelId,
         missing,
@@ -948,15 +985,10 @@ function Composer({
     }
     return recipients;
   }
-  function selectAgent(key: string) {
-    if (!permitted.current || admission.current) return;
-    setSelectedAgent(key);
-    setError(undefined);
-  }
   function requireCompletedSessionStart() {
     if (pendingSessionDraft(scope, channelId))
       throw new Error(
-        "Finish setting up this session in Sessions before sending messages.",
+        "Finish setting up this conversation in Me before sending messages.",
       );
   }
   async function send() {
@@ -1012,9 +1044,25 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     try {
+      if (submission?.receiptOnly) {
+        submission.submit(captured);
+        return;
+      }
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
+        );
+      if (
+        personalConversation &&
+        captured.recipients.some(
+          (person) =>
+            !session.agentChoices
+              .snapshot()
+              .selectable.some((agent) => agent.pubkey === person.pubkey),
+        )
+      )
+        throw new Error(
+          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
         );
       if (submission) {
         submission.submit(captured);
@@ -1022,12 +1070,8 @@ function Composer({
       }
       requireCompletedSessionStart();
       let references: readonly string[] = [];
-      let recipients = captured.recipients.length
-        ? captured.recipients.map((item) => item.pubkey)
-        : selectedAgent
-          ? [selectedAgent]
-          : [];
-      if (sessionConversation) {
+      let recipients = captured.recipients.map((item) => item.pubkey);
+      if (sessionConversation || personalConversation) {
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
@@ -1227,6 +1271,7 @@ function Composer({
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
+          clickOpensPanel={activityClickOpensPanel}
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
@@ -1593,18 +1638,7 @@ function Composer({
               )}
             </ComposerFormattingTools>
           )}
-          {active &&
-            !editing.target &&
-            (trailingTool ??
-              (sessionConversation ? (
-                <SessionAgentControl
-                  session={session}
-                  channelId={channelId}
-                  value={selectedAgent}
-                  onChange={selectAgent}
-                  disabled={editingDisabled}
-                />
-              ) : null))}
+          {active && !editing.target && trailingTool}
           <IconButton
             variant={
               draft.trim() || attachments.items.length ? "primary" : "ghost"

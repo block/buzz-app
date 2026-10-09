@@ -177,6 +177,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
+  const [avatarFocused, setAvatarFocused] = useState(false);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const threadUnread = useThreadUnread(
@@ -407,6 +408,8 @@ export const MessageRow = memo(function MessageRow({
       size={layout === "timeline" ? "default" : "sm"}
       shape="round"
       aria-label={`View ${name} profile`}
+      onFocus={() => setAvatarFocused(true)}
+      onBlur={() => setAvatarFocused(false)}
       aria-describedby={
         [
           presence !== "unknown" && presenceId,
@@ -507,7 +510,10 @@ export const MessageRow = memo(function MessageRow({
             />
           )}
           <div className={styles.messageContent}>
-            {!stackNext && <div className={styles.messageAvatar}>{avatar}</div>}
+            {/* A live append must not remove the reader's current focus target. */}
+            {(!stackNext || avatarFocused) && (
+              <div className={styles.messageAvatar}>{avatar}</div>
+            )}
             <div className={styles.messageHeader}>
               {!row.membership && (
                 <MessageActionBar

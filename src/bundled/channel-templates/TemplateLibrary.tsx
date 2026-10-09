@@ -117,33 +117,38 @@ export function TemplateLibrary({
       setDeleteOpen(true);
     } else setEditing(selection);
   };
-  // Phases of the current delete that already finished, so a retry only
-  // repeats the unfinished ones.
+  // Phases of the current delete that already finished or were enqueued, so
+  // a retry confirms the same events and only repeats unfinished phases.
   const removed = useRef<{
     eventId: string | undefined;
     teamDone?: boolean;
     textDone?: boolean;
+    team: Resume;
     text: Resume;
   }>(undefined);
   const remove = async () => {
     if (!deleting || busy || !mounted.current || !active()) return;
     setBusy(true);
     setError("");
+    const resume = (): Resume => ({
+      enqueued(id) {
+        this.id = id;
+      },
+    });
     const run =
       removed.current && removed.current.eventId === deleting.eventId
         ? removed.current
-        : {
-            eventId: deleting.eventId,
-            text: {
-              enqueued(id: string) {
-                this.id = id;
-              },
-            } as Resume,
-          };
+        : { eventId: deleting.eventId, team: resume(), text: resume() };
     removed.current = run;
     try {
       if (!run.teamDone) {
-        await kit.save(deleting.value, deleting.eventId, true);
+        await kit.save(
+          deleting.value,
+          deleting.eventId,
+          true,
+          undefined,
+          run.team,
+        );
         run.teamDone = true;
       }
       if (deleting.value.type !== "team") run.textDone = true;

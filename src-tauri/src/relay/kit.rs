@@ -724,6 +724,27 @@ mod team_text_tests {
             "tags":[["d",record(&other,community).unwrap()],["t",TEXT_TAG]]});
         assert!(validate_ciphertext(&host, &event, community).await.is_err());
     }
+    /// The same corpus runs against browser admission in
+    /// `browser-host/channel-kit.test.mjs`.
+    #[test]
+    fn team_text_heads_match_the_shared_admission_corpus() {
+        let owner = "ab".repeat(32);
+        let corpus = include_str!(
+            "../../../src/features/channel-templates/team-text-admission-contract.json"
+        )
+        .replace("OWNER", &owner);
+        let cases: Vec<Value> = serde_json::from_str(&corpus).unwrap();
+        assert!(cases.len() > 10);
+        for case in cases {
+            let event = serde_json::json!({"tags": case["tags"]});
+            assert_eq!(
+                admission(&event, &case["record"], "https://relay.test").is_ok(),
+                case["accepted"] == true,
+                "{}",
+                case["name"]
+            );
+        }
+    }
     #[test]
     fn team_text_heads_reject_bad_shapes() {
         let owner = "ab".repeat(32);

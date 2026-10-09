@@ -294,7 +294,13 @@ it("deletion preserves its revision, locks dismissal while pending and retains e
     within(confirmation).getByRole("button", { name: "Delete" }),
   );
   try {
-    expect(save).toHaveBeenCalledExactlyOnceWith(team, "head", true);
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      team,
+      "head",
+      true,
+      undefined,
+      expect.anything(),
+    );
     expect(
       within(confirmation).getByRole("button", { name: "Cancel" }),
     ).toBeDisabled();

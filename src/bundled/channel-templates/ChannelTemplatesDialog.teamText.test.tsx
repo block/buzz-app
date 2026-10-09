@@ -91,6 +91,9 @@ function setup(
     save,
     savePortable,
     readText,
+    readTextHead: vi.fn(async (id: string) =>
+      texts[id] === undefined ? undefined : { head: `${id}-text` },
+    ),
     prepareText,
     publishText,
     loadTeam: vi.fn(async (team: Team) => team.id),
@@ -130,6 +133,8 @@ function setup(
     { wrapper: ToastProvider },
   );
   return {
+    kitState,
+    texts,
     save,
     savePortable,
     readText,
@@ -216,12 +221,22 @@ it("adds text to an ordinary team without converting or rewriting it", async () 
 it.each([
   ["an empty team", []],
   ["a mixed team of non-exportable members", [member, second]],
+  [
+    "a 200-member team",
+    [
+      member,
+      ...Array.from({ length: 199 }, (_, i) =>
+        i.toString(16).padStart(64, "0"),
+      ),
+    ],
+  ],
 ])("saves text on %s", async (_, agents) => {
   const team = { ...ordinary, agents };
-  const { publishText, savePortable } = setup(team, [entryOf(team)], {});
+  const { save, publishText, savePortable } = setup(team, [entryOf(team)], {});
   await userEvent.type(await loaded(""), "SHARED");
   await saveTeam();
   await waitFor(() => expect(publishText).toHaveBeenCalledOnce());
+  expect(save).not.toHaveBeenCalled();
   expect(savePortable).not.toHaveBeenCalled();
 });
 
@@ -360,6 +375,51 @@ it("checks the in-between roster against the old text too", async () => {
   await saveTeam();
   expect(await screen.findByRole("alert")).toHaveTextContent('"Reviewers"');
   expect(save).not.toHaveBeenCalled();
+});
+
+it.each(["text", "members"] as const)(
+  "a retry rechecks conflicts after another team's %s change",
+  async (change) => {
+    const other: Team = {
+      ...ordinary,
+      id: "other",
+      name: "Reviewers",
+      agents: change === "text" ? [member] : [second],
+    };
+    const f = setup(ordinary, [entryOf(ordinary), entryOf(other)], {
+      ordinary: "OLD",
+      other: change === "text" ? "NEW" : "OTHER",
+    });
+    f.publishText.mockRejectedValueOnce(new Error("relay offline"));
+    const field = await loaded("OLD");
+    await userEvent.clear(field);
+    await userEvent.type(field, "NEW");
+    await saveTeam();
+    expect(await screen.findByRole("alert")).toHaveTextContent("relay offline");
+    if (change === "text") f.texts.other = "DIFFERENT";
+    else f.kitState.entries[1] = entryOf({ ...other, agents: [member] });
+    await saveTeam();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      'also on "Reviewers", which has different team instructions',
+    );
+    expect(f.publishText).toHaveBeenCalledOnce();
+  },
+);
+
+it("a combined save checks the text head before changing members", async () => {
+  const f = setup(ordinary, [entryOf(ordinary)], { ordinary: "OLD" });
+  const field = await loaded("OLD");
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await userEvent.clear(field);
+  await userEvent.type(field, "NEW");
+  // Another device retired the text head after the dialog loaded it.
+  delete f.texts.ordinary;
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "instructions changed",
+  );
+  expect(f.save).not.toHaveBeenCalled();
+  expect(f.prepareText).not.toHaveBeenCalled();
 });
 
 it("can't certify a save when an overlapping team is unreadable", async () => {

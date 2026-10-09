@@ -259,8 +259,9 @@ dialog, refresh, and reopen the current team before retrying; stale drafts never
 silently overwrite a newer revision.
 
 **Team instructions** are shared text every member gets after its own
-instructions. Any saved team can have them; adding text to an ordinary team moves
-it to the portable team record, which older app versions do not show. Saving a
+instructions. Any saved team can have them. The text lives in its own private
+record keyed by the team, so the team record itself never changes format; older
+app versions still show the team, just without its instructions. Saving a
 team writes its current text into each member's local settings and clears it for
 agents no team with text lists any longer. Save never restarts an agent: a running
 member shows **Restart required** until it is restarted. The same pass runs after

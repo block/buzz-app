@@ -1,5 +1,5 @@
 import type { AgentControl } from "./control";
-import type { ChannelKit } from "../channel-templates/capability";
+import type { ChannelKit, Resume } from "../channel-templates/capability";
 import { encodeTeamPayload } from "../channel-templates/team-payload";
 import {
   importTeamMembers,
@@ -84,13 +84,19 @@ export async function importTeamSnapshot(
     );
   }
   // An explicit text head, even when empty, so later reads never fall back
-  // to bundle text. A head that exists already (an earlier attempt or an
-  // edit since) is left alone.
-  if (!(await kit.readText(receipt.id))) {
+  // to bundle text. The receipt keeps its revision and enqueued head, so a
+  // retry confirms that same event. Any other head is a later edit (or an
+  // earlier session's) and is left alone.
+  const current = await kit.readTextHead(receipt.id);
+  if (!current || current.head === receipt.textHead) {
+    const resume: Resume = {
+      id: receipt.textHead,
+      enqueued: (id) => receipt.textEnqueued(id),
+    };
     const manifest = await kit.prepareText(
       receipt.id,
       validated.team.instructions ?? "",
-      crypto.randomUUID(),
+      receipt.text,
     );
     const team = kit
       .snapshot()
@@ -100,7 +106,13 @@ export async function importTeamSnapshot(
           entry.record.value.type === "team" &&
           entry.record.value.id === receipt.id,
       );
-    await kit.publishText(receipt.id, manifest, undefined, team?.eventId);
+    await kit.publishText(
+      receipt.id,
+      manifest,
+      undefined,
+      team?.eventId,
+      resume,
+    );
   }
   const memories: {
     pubkey: string;

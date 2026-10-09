@@ -41,6 +41,48 @@ const entryOf = (team: Team, deleted = false): KitEntry => ({
   record: { version: 2, community, deleted, value: team },
 });
 
+function renderLibrary(
+  kit: ChannelKit,
+  state: { status: "ready"; entries: KitEntry[] },
+  control: object,
+) {
+  render(
+    <TemplateLibrary
+      section="team"
+      kit={kit}
+      active={() => true}
+      catalog={{
+        kit: state,
+        agents: [
+          { pubkey: member, name: "Member", managed: false, avatar: undefined },
+        ],
+        agentsReady: true,
+        agentsComplete: true,
+        agentsPending: false,
+        error: undefined,
+        refresh: vi.fn(),
+      }}
+      control={control as unknown as AgentControl}
+      session={
+        {
+          viewer,
+          scope: `${community}:${viewer}`,
+          communityCatalog: { available: () => false },
+        } as unknown as RelaySession
+      }
+    />,
+    { wrapper: ToastProvider },
+  );
+}
+async function openDelete(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Actions for Crew" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete team…" }),
+  );
+  const confirmation = screen.getByRole("dialog", { name: "Delete “Crew”?" });
+  return within(confirmation).getByRole("button", { name: "Delete" });
+}
+
 it("deleting a team retires its text head and releases only that team; a retry repeats only unfinished phases", async () => {
   const user = userEvent.setup();
   const crew = portableTeam("crew", "Crew");
@@ -94,39 +136,8 @@ it("deleting a team retires its text head and releases only that team; a retry r
       members: [],
     }),
   );
-  render(
-    <TemplateLibrary
-      section="team"
-      kit={kit}
-      active={() => true}
-      catalog={{
-        kit: state,
-        agents: [
-          { pubkey: member, name: "Member", managed: false, avatar: undefined },
-        ],
-        agentsReady: true,
-        agentsComplete: true,
-        agentsPending: false,
-        error: undefined,
-        refresh: vi.fn(),
-      }}
-      control={{ syncTeamInstructions, previewTeam } as unknown as AgentControl}
-      session={
-        {
-          viewer,
-          scope: `${community}:${viewer}`,
-          communityCatalog: { available: () => false },
-        } as unknown as RelaySession
-      }
-    />,
-    { wrapper: ToastProvider },
-  );
-  await user.click(screen.getByRole("button", { name: "Actions for Crew" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Delete team…" }),
-  );
-  const confirmation = screen.getByRole("dialog", { name: "Delete “Crew”?" });
-  const remove = within(confirmation).getByRole("button", { name: "Delete" });
+  renderLibrary(kit, state, { syncTeamInstructions, previewTeam });
+  const remove = await openDelete(user);
   await user.click(remove);
   // Text cleanup failed and so did delivery, which still ran.
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -134,8 +145,16 @@ it("deleting a team retires its text head and releases only that team; a retry r
   );
   expect(syncTeamInstructions).toHaveBeenCalledTimes(1);
   await user.click(remove);
-  await waitFor(() => expect(confirmation).not.toBeInTheDocument());
-  expect(save).toHaveBeenCalledExactlyOnceWith(crew, "crew-head", true);
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(save).toHaveBeenCalledExactlyOnceWith(
+    crew,
+    "crew-head",
+    true,
+    undefined,
+    expect.anything(),
+  );
   expect(publishText).toHaveBeenCalledTimes(2);
   for (const call of publishText.mock.calls)
     expect(call.slice(0, 4)).toEqual(["crew", null, "crew-text", undefined]);
@@ -148,4 +167,62 @@ it("deleting a team retires its text head and releases only that team; a retry r
     "pair",
     "pair",
   ]);
+});
+
+it("a retry after a lost tombstone confirmation confirms that same tombstone, then cleans up", async () => {
+  const user = userEvent.setup();
+  const crew = portableTeam("crew", "Crew");
+  const state = { status: "ready" as const, entries: [entryOf(crew)] };
+  // The first attempt enqueues the tombstone, then loses its confirmation.
+  const save = vi.fn<ChannelKit["save"]>(
+    async (value, _expected, deleted, _signal, resume) => {
+      if (!resume?.id) {
+        resume?.enqueued("tombstone");
+        throw new Error("Save is awaiting exact relay confirmation");
+      }
+      state.entries = [entryOf(value as Team, deleted)];
+      return resume.id;
+    },
+  );
+  const publishText = vi
+    .fn<ChannelKit["publishText"]>()
+    .mockResolvedValue("crew-text-tombstone");
+  const kit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure: vi.fn(),
+    refresh: vi.fn(),
+    save,
+    loadTeam: vi.fn(),
+    readText: vi.fn(),
+    readTextHead: vi.fn(async () => ({ head: "crew-text", deleted: false })),
+    publishText,
+  } as unknown as ChannelKit;
+  const syncTeamInstructions = vi.fn(async () => ({}));
+  renderLibrary(kit, state, { syncTeamInstructions });
+  const remove = await openDelete(user);
+  await user.click(remove);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "awaiting exact relay confirmation",
+  );
+  expect(publishText).not.toHaveBeenCalled();
+  await user.click(remove);
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  // The retry passed the same resume record, so it confirmed the enqueued
+  // tombstone rather than writing against a now-stale expected head.
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[1]?.[4]).toBe(save.mock.calls[0]?.[4]);
+  expect(save.mock.calls[1]?.[4]?.id).toBe("tombstone");
+  expect(publishText.mock.calls[0]?.slice(0, 4)).toEqual([
+    "crew",
+    null,
+    "crew-text",
+    undefined,
+  ]);
+  expect(syncTeamInstructions).toHaveBeenCalledExactlyOnceWith(community, {
+    crew: "",
+  });
 });

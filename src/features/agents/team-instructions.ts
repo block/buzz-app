@@ -52,12 +52,16 @@ export async function teamExportMeta(
   };
 }
 
-/** Current text of every saved team. A deleted team has no members and no
- * text, so the sync releases it without loading any payload. */
+/** Current text of every saved team, from a fresh catalog read so rosters
+ * are never stale. A deleted team has no members and no text, so the sync
+ * releases it without loading any payload. */
 export async function readTeamTexts(
   kit: ChannelKit,
   control: AgentControl | undefined,
 ): Promise<TeamText[]> {
+  await kit.refresh();
+  if (kit.snapshot().status !== "ready")
+    throw new Error("Teams can't be read right now");
   const texts: TeamText[] = [];
   for (const { record } of kit.snapshot().entries) {
     if (record.value.type !== "team") continue;

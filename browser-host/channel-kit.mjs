@@ -42,14 +42,21 @@ export function admitChannelKit(event, secret, community) {
       throw new Error("Portable team belongs to another viewer");
     const ds = event.tags.filter((t) => t[0] === "d"),
       ts = event.tags.filter((t) => t[0] === "t");
+    // Same tag rules as native admission: every tag is a pair, and a
+    // client id is at most 128 UTF-8 bytes.
     if (
       ds.length !== 1 ||
-      ds[0].length !== 2 ||
       ds[0][1] !== privateCoordinate(record) ||
       ts.length !== 1 ||
-      ts[0].length !== 2 ||
       ts[0][1] !== privateTag(record) ||
-      event.tags.some((t) => !["d", "t", "client-id"].includes(t[0]))
+      event.tags.some(
+        (t) =>
+          !Array.isArray(t) ||
+          t.length !== 2 ||
+          !["d", "t", "client-id"].includes(t[0]) ||
+          (t[0] === "client-id" &&
+            (typeof t[1] !== "string" || Buffer.byteLength(t[1]) > 128)),
+      )
     )
       throw new Error("Invalid private recipe coordinate");
     return record;

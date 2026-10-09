@@ -968,6 +968,24 @@ it("refuses unreadable text instead of reporting it absent", async () => {
   await expect(f.capability.readText("team")).rejects.toThrow("unavailable");
 });
 
+it("an invalid head that later disappears stays unreadable, never legacy", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  await saveText(f, "SHARED", undefined, team);
+  const index = f.events.findIndex((event) =>
+    event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
+  );
+  const head = f.events[index];
+  if (!head) throw new Error("No text head");
+  // A fresh session (no earlier successful read) sees only an invalid head.
+  const g = fixture();
+  g.events.push(...f.events);
+  g.events[index] = { ...head, content: '{"version":9}' };
+  await expect(g.capability.readText("team")).rejects.toThrow();
+  g.events.splice(index, 1);
+  await expect(g.capability.readText("team")).rejects.toThrow("unavailable");
+});
+
 it("publishes a live text head only against the expected live team head", async () => {
   const f = fixture();
   const team = await savedTeam(f);

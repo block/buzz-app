@@ -54,7 +54,7 @@ function fixture() {
     refresh: vi.fn(),
     snapshot: () => ({ entries: [] }),
     savePortable,
-    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
     prepareText: vi.fn(async () => "text-manifest"),
     publishText: vi.fn(async () => "text-head"),
   } as unknown as ChannelKit;
@@ -109,14 +109,14 @@ it("retains the same creation requests on memory failure and reports per-member 
     snapshot.members[0]?.memory.entries,
   );
 });
+const textOptions = {
+  destination: "https://relay.example",
+  owner: "b".repeat(64),
+  keepAllowlist: false,
+};
 it("writes the imported text as an explicit text head, and leaves an existing one alone", async () => {
   const { control, kit } = fixture();
-  const options = {
-    destination: "https://relay.example",
-    owner: "b".repeat(64),
-    keepAllowlist: false,
-  };
-  const result = await importTeamSnapshot(control, kit, snapshot, options);
+  const result = await importTeamSnapshot(control, kit, snapshot, textOptions);
   expect(vi.mocked(kit.prepareText).mock.calls[0]?.slice(0, 2)).toEqual([
     result.id,
     snapshot.team.instructions ?? "",
@@ -126,7 +126,57 @@ it("writes the imported text as an explicit text head, and leaves an existing on
     "text-manifest",
     undefined,
   ]);
-  vi.mocked(kit.readText).mockResolvedValueOnce({ text: "EDITED", head: "h" });
-  await importTeamSnapshot(control, kit, snapshot, options);
+  vi.mocked(kit.readTextHead).mockResolvedValueOnce({
+    head: "f".repeat(64),
+    deleted: false,
+  });
+  await importTeamSnapshot(control, kit, snapshot, textOptions);
   expect(kit.publishText).toHaveBeenCalledOnce();
+});
+const enqueuedHead = "e".repeat(64);
+/** First attempt enqueues the text head, then loses its confirmation. */
+function uncertainText(kit: ChannelKit) {
+  vi.mocked(kit.publishText).mockImplementationOnce(
+    async (_id, _manifest, _expected, _team, resume) => {
+      resume?.enqueued(enqueuedHead);
+      throw new Error("Save is awaiting exact relay confirmation");
+    },
+  );
+}
+it.each([
+  ["not visible yet", undefined],
+  ["visible", { head: enqueuedHead, deleted: false }],
+])(
+  "a retry confirms an enqueued imported text head that is %s, with the same revision",
+  async (_, visible) => {
+    const { control, kit } = fixture();
+    uncertainText(kit);
+    await expect(
+      importTeamSnapshot(control, kit, snapshot, textOptions),
+    ).rejects.toThrow("awaiting exact relay confirmation");
+    vi.mocked(kit.readTextHead).mockResolvedValueOnce(visible);
+    await importTeamSnapshot(control, kit, snapshot, textOptions);
+    const [first, retry] = vi.mocked(kit.publishText).mock.calls;
+    expect(retry?.[4]?.id).toBe(enqueuedHead);
+    const revisions = vi
+      .mocked(kit.prepareText)
+      .mock.calls.map((call) => call[2]);
+    expect(revisions[1]).toBe(revisions[0]);
+    expect(first?.[0]).toBe(retry?.[0]);
+  },
+);
+it("a retry never overwrites a text edit made after the import enqueued its head", async () => {
+  const { control, kit } = fixture();
+  uncertainText(kit);
+  await expect(
+    importTeamSnapshot(control, kit, snapshot, textOptions),
+  ).rejects.toThrow();
+  // The user edited the team's text since; that head is not the import's.
+  vi.mocked(kit.readTextHead).mockResolvedValueOnce({
+    head: "d".repeat(64),
+    deleted: false,
+  });
+  await importTeamSnapshot(control, kit, snapshot, textOptions);
+  expect(kit.publishText).toHaveBeenCalledOnce();
+  expect(kit.prepareText).toHaveBeenCalledOnce();
 });

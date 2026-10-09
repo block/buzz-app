@@ -259,8 +259,10 @@ export function createChannelKit({
         throw new Error("This team's saved instructions are unavailable");
       return undefined;
     }
-    const record = await decodeText(event, readSignal);
+    // Seen counts before decoding: an invalid head that later disappears
+    // stays unreadable rather than unlocking the legacy fallback.
     knownText.add(teamId);
+    const record = await decodeText(event, readSignal);
     return { record, head: event.id };
   }
   /** Exact revision reads only. Never include chunks in recipe discovery. */

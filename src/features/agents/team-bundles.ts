@@ -71,7 +71,16 @@ export async function resumeTeamImport(
   owner: string,
   channelId = "",
   keepAllowlist = false,
-): Promise<{ id: string; requests: string[]; complete(): void }> {
+): Promise<{
+  id: string;
+  requests: string[];
+  /** Revision for the team's text head. */
+  text: string;
+  /** The text head this import enqueued, once it has. */
+  textHead: string | undefined;
+  textEnqueued(id: string): void;
+  complete(): void;
+}> {
   const bytes = new TextEncoder().encode(
     JSON.stringify([destination, owner, channelId, keepAllowlist, snapshot]),
   );
@@ -84,7 +93,12 @@ export async function resumeTeamImport(
         id: crypto.randomUUID(),
         requests: snapshot.members.map(() => crypto.randomUUID()),
       };
-  const value = receipt as { id?: unknown; requests?: unknown };
+  const value = receipt as {
+    id?: unknown;
+    requests?: unknown;
+    text?: unknown;
+    textHead?: unknown;
+  };
   const uuid = (id: unknown): id is string =>
     typeof id === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
@@ -92,10 +106,27 @@ export async function resumeTeamImport(
     !uuid(value.id) ||
     !Array.isArray(value.requests) ||
     value.requests.length !== snapshot.members.length ||
-    !value.requests.every(uuid)
+    !value.requests.every(uuid) ||
+    (value.text !== undefined && !uuid(value.text)) ||
+    (value.textHead !== undefined &&
+      (typeof value.textHead !== "string" ||
+        !/^[0-9a-f]{64}$/.test(value.textHead)))
   )
     throw new Error("Saved team import receipt is invalid.");
-  const result = { id: value.id, requests: value.requests as string[] };
+  // Receipts from before team-text heads get a text revision on resume.
+  const result = {
+    id: value.id,
+    requests: value.requests as string[],
+    text: value.text ?? crypto.randomUUID(),
+    textHead: value.textHead as string | undefined,
+  };
   localStorage.setItem(key, JSON.stringify(result));
-  return { ...result, complete: () => localStorage.removeItem(key) };
+  return {
+    ...result,
+    textEnqueued(id: string) {
+      result.textHead = id;
+      localStorage.setItem(key, JSON.stringify(result));
+    },
+    complete: () => localStorage.removeItem(key),
+  };
 }

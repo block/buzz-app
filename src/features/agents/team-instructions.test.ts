@@ -72,7 +72,9 @@ it("reads each team's current text by precedence", async () => {
     broken: new Error("chunk missing"),
   };
   const kit = {
+    refresh: vi.fn(async () => {}),
     snapshot: () => ({
+      status: "ready",
       entries: [
         entry({ type: "team", id: "head", name: "", agents: [a], portable }),
         entry({ type: "team", id: "empty", name: "", agents: [a], portable }),
@@ -145,6 +147,7 @@ it("syncs team text once per session after teams and agents load", async () => {
       subscribe,
       snapshot: () => kitState,
       ensure: vi.fn(),
+      refresh: vi.fn(async () => {}),
       readText: vi.fn(async () => undefined),
     },
     channels: { subscribeList: subscribe, list: () => channelList },

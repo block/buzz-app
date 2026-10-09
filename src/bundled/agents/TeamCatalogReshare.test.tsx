@@ -128,6 +128,8 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
     // Adoption writes the text record; re-sharing reads it back.
     readText: async (id: string) =>
       texts.has(id) ? { text: texts.get(id), head: "text-head" } : undefined,
+    readTextHead: async (id: string) =>
+      texts.has(id) ? { head: "text-head", deleted: false } : undefined,
     prepareText: async (_id: string, text: string) => text,
     publishText: async (id: string, text: string) => {
       texts.set(id, text);

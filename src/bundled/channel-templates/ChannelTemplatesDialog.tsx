@@ -181,19 +181,33 @@ export function ChannelTemplatesDialog({
           throw new Error(
             "A team imported from a file needs at least one member.",
           );
-        if (!run.checked && control && (rosterChanged || textChanged)) {
-          // Saving goes members first, then text, so check the in-between
-          // state as well as the final one.
+        // Rechecked before every phase not yet enqueued, retries included:
+        // other teams and this team's text can change between attempts.
+        // Saving goes members first, then text, so the in-between state is
+        // checked too. Enqueued phases replay their exact events instead.
+        const recheck = async () => {
+          if (!control) return;
           const others = await readTeamTexts(kit, control);
+          if (textChanged && !run.textDone) {
+            const current = await kit.readTextHead(draft.id);
+            if (current?.head !== saved.head)
+              throw new Error(
+                "This team's instructions changed. Refresh and review them before saving.",
+              );
+          }
           const conflict =
-            (rosterChanged && teamTextConflict(others, draft, saved.text)) ||
+            (rosterChanged &&
+              !run.teamDone &&
+              teamTextConflict(others, draft, saved.text)) ||
             teamTextConflict(others, draft, text);
           if (conflict) throw new Error(conflict);
-          run.checked = true;
+        };
+        if (textChanged && !run.manifest) {
+          await recheck();
+          run.manifest = await kit.prepareText(draft.id, text, run.revision);
         }
-        if (textChanged)
-          run.manifest ??= await kit.prepareText(draft.id, text, run.revision);
         if (rosterChanged && !run.teamDone) {
+          if (!run.team.id) await recheck();
           run.teamHead = await kit.save(
             draft,
             run.teamHead,
@@ -205,6 +219,7 @@ export function ChannelTemplatesDialog({
           savedTeam.current = draft;
         }
         if (run.manifest && !run.textDone) {
+          if (!run.text.id) await recheck();
           const head = await kit.publishText(
             draft.id,
             run.manifest,
@@ -492,7 +507,6 @@ export function ChannelTemplatesDialog({
 type Attempt = {
   revision: string;
   teamHead: string | undefined;
-  checked?: boolean;
   manifest?: Awaited<ReturnType<ChannelKit["prepareText"]>>;
   teamDone?: boolean;
   textDone?: boolean;

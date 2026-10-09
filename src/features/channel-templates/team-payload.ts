@@ -219,6 +219,8 @@ const TEXT_PREFIX = "v1:";
 export function parseTextManifest(raw: unknown): TeamManifest {
   const manifest = parseTeamManifest(raw);
   if (
+    // Exactly the six manifest fields, as native admission requires.
+    Object.keys(raw as object).length !== 6 ||
     manifest.bytes < TEXT_PREFIX.length ||
     manifest.bytes > TEXT_PREFIX.length + TEAM_TEXT_BYTES
   )

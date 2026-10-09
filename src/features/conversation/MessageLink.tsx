@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type MouseEvent,
 } from "react";
-import type { Contribution } from "../../plugins/contributions";
+import { resolveMatch, type Contribution } from "../../plugins/contributions";
 import type { ContributionReader, LinkRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import {
@@ -43,20 +43,12 @@ const empty: readonly Contribution<LinkRenderer>[] = [];
 const snapshot = () => empty;
 const subscribe = () => () => {};
 
-/** First active match wins, like panels. A broken matcher leaves other candidates eligible. */
-export function resolveLink(
+/** Lowest `order` among active matches wins, like panels; a broken matcher
+ * leaves other candidates eligible and never prevents opening a link. */
+export const resolveLink = (
   url: string,
   renderers: readonly Contribution<LinkRenderer>[],
-) {
-  for (const renderer of renderers) {
-    try {
-      if (renderer.matches(url)) return renderer;
-    } catch {
-      // An optional renderer must not prevent opening a link.
-    }
-  }
-  return undefined;
-}
+) => resolveMatch(renderers, url);
 
 export function MessageLink({
   url,

@@ -77,6 +77,7 @@ function setup(thread: readonly EventData[] = []) {
     upload: vi.fn(),
     remember: vi.fn(),
   };
+  const workingUntil = vi.fn();
   const deliver = (trigger: Delivery["trigger"]) =>
     runtime.run({
       trigger,
@@ -84,10 +85,21 @@ function setup(thread: readonly EventData[] = []) {
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
+      workingUntil,
     } as Delivery);
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
-  return { runtime, deliver, published, claudes, fake, read, data, agent };
+  return {
+    runtime,
+    deliver,
+    published,
+    claudes,
+    fake,
+    read,
+    data,
+    agent,
+    workingUntil,
+  };
 }
 
 it("hands a mention to its thread's session", async () => {
@@ -247,6 +259,32 @@ it("shows a thread's later turns only what the session has not seen", async () =
   );
 });
 
+it("keeps the agent shown as typing until its turn settles", async () => {
+  const mention = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, deliver, claudes, workingUntil } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  spare.hold = true;
+  await deliver({ type: "mention", event: mention });
+  expect(workingUntil).toHaveBeenCalledTimes(1);
+  let settled = false;
+  void Promise.resolve(workingUntil.mock.calls[0]?.[0]).finally(
+    () => (settled = true),
+  );
+  await flush(10);
+  expect(settled).toBe(false);
+  spare.exit(1, "Error: Invalid API key\n");
+  await flush(10);
+  expect(settled).toBe(true);
+});
+
 it("says so in the thread when a turn fails", async () => {
   const mention = message("2", "@Claude hi", {
     tags: [
@@ -322,6 +360,7 @@ it("acts only on its owner's messages unless told to answer anyone", async () =>
     },
     config: { ...DEFAULT_CONFIG, respondTo: "anyone" },
     signal: new AbortController().signal,
+    workingUntil: vi.fn(),
   } as unknown as Delivery);
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);

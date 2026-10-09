@@ -139,7 +139,13 @@ export class ClaudeRuntime {
     this.agents.clear();
   }
 
-  async run({ trigger, agent, config: raw, channelId }: Delivery) {
+  async run({
+    trigger,
+    agent,
+    config: raw,
+    channelId,
+    workingUntil,
+  }: Delivery) {
     const settings = config(raw);
     if (
       trigger.type !== "timer" &&
@@ -194,6 +200,8 @@ export class ClaudeRuntime {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
     });
+    // The turn outlives `run`; keep the agent shown as typing until it settles.
+    workingUntil(done);
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error);

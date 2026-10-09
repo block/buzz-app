@@ -1025,8 +1025,8 @@ fn native_export_refuses_and_hides_pi_goose_effort_overrides() {
 #[test]
 fn native_export_refuses_effort_the_app_import_parser_rejects() {
     let mut agent = crate::store::tests::fixture();
-    let defaults = crate::agent_defaults::AgentDefaults::default();
-    let snapshot = |agent: &Agent| TeamSnapshot {
+    let mut defaults = crate::agent_defaults::AgentDefaults::default();
+    let snapshot = |agent: &Agent, defaults: &crate::agent_defaults::AgentDefaults| TeamSnapshot {
         format: "buzz-team-snapshot".into(),
         version: 1,
         team: TeamMeta {
@@ -1034,23 +1034,25 @@ fn native_export_refuses_effort_the_app_import_parser_rejects() {
             description: None,
             instructions: None,
         },
-        members: vec![snapshot_member(agent, &defaults).unwrap()],
+        members: vec![snapshot_member(agent, defaults).unwrap()],
     };
     for effort in ["low", "high", "xhigh", "max", "off"] {
         agent.extra.insert("effort".into(), effort.into());
-        snapshot(&agent).validate().unwrap();
+        snapshot(&agent, &defaults).validate().unwrap();
     }
     // Saved before the effort rule matched the app's parser, which rejects these.
     for effort in ["high\u{200b}low", "\u{d15}\u{d4d}\u{200d}$"] {
         agent.extra.insert("effort".into(), effort.into());
-        assert!(snapshot(&agent).validate().is_err());
+        assert!(snapshot(&agent, &defaults).validate().is_err());
     }
     // A device default that breaks the rule is refused the same way.
     agent.extra.remove("effort");
-    agent
-        .extra
-        .insert("inheritedEffort".into(), "\u{d15}\u{d4d}\u{200d}$".into());
-    assert!(snapshot(&agent).validate().is_err());
+    snapshot(&agent, &defaults).validate().unwrap();
+    defaults.harness = crate::agent_defaults::harness_kind(&agent.harness.command)
+        .unwrap()
+        .into();
+    defaults.effort = "\u{d15}\u{d4d}\u{200d}$".into();
+    assert!(snapshot(&agent, &defaults).validate().is_err());
 }
 
 #[test]

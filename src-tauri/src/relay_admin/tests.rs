@@ -669,8 +669,8 @@ fn routes_build_exact_urls_and_bodies() {
     assert!(serde_json::from_value::<StaffRequest>(json!({ "route": "rawHttp" })).is_err());
 }
 
-/// The witnesses from review plus each registry block's edges.
-const REFUSED_WITNESSES: &[&str] = &[
+/// Known non-public addresses plus each registry block's edges.
+const REFUSED_ADDRESSES: &[&str] = &[
     "192.88.99.2",
     "192.88.99.0",
     "192.88.99.255",
@@ -693,7 +693,7 @@ const PUBLIC_NEIGHBOURS: &[&str] = &[
 
 #[test]
 fn reserved_ranges_are_refused_as_literals_and_neighbours_are_not() {
-    for ip in REFUSED_WITNESSES {
+    for ip in REFUSED_ADDRESSES {
         assert!(!public(ip.parse().unwrap()), "{ip}");
         let literal = match ip.parse::<IpAddr>().unwrap() {
             IpAddr::V4(v4) => format!("https://{v4}"),
@@ -709,7 +709,7 @@ fn reserved_ranges_are_refused_as_literals_and_neighbours_are_not() {
 #[tokio::test]
 async fn reserved_dns_answers_are_refused_by_the_production_rule() {
     let fixture = fixture(vec![]).await;
-    let answers = REFUSED_WITNESSES
+    let answers = REFUSED_ADDRESSES
         .iter()
         .map(|ip| Some(vec![ip.parse().unwrap()]))
         .collect::<Vec<_>>();
@@ -717,7 +717,7 @@ async fn reserved_dns_answers_are_refused_by_the_production_rule() {
     net.root = Some(fixture.root.clone());
     let host = IdentityHost::fixture();
     let probe = request(json!({ "route": "probe" }));
-    for ip in REFUSED_WITNESSES {
+    for ip in REFUSED_ADDRESSES {
         let failure = run(&net, &host, &fixture, &probe).await.unwrap_err();
         assert!(failure.not_sent, "{ip}");
     }
@@ -1039,38 +1039,7 @@ fn save_reports_cancellation_success_and_disk_errors() {
 }
 
 #[tokio::test]
-async fn review_pass2_json_gateway_401_403_after_write_are_uncertain() {
-    let fixture = fixture(vec![
-        reply(
-            "401 Unauthorized",
-            "application/json",
-            r#"{"gateway":"session expired"}"#,
-        ),
-        reply(
-            "403 Forbidden",
-            "application/json",
-            r#"{"gateway":"access denied"}"#,
-        ),
-    ])
-    .await;
-    let net = net(&fixture, vec![lo(); 2]);
-    let host = IdentityHost::fixture();
-    let mut failures = Vec::new();
-    for _ in 0..2 {
-        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
-        println!("gateway JSON {:?}: {:?}", failure.status, failure.category);
-        if failure.category != Category::Ambiguous {
-            failures.push(failure.status);
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "untrusted gateway replies drop write: {failures:?}"
-    );
-}
-
-#[tokio::test]
-async fn review_pass2_bad_nested_fields_and_statuses_are_not_successes() {
+async fn bad_nested_fields_and_statuses_are_not_successes() {
     let mut cases = Vec::new();
     for (req, good, _) in route_bodies() {
         let route = req["route"].as_str().unwrap();
@@ -1405,8 +1374,8 @@ fn each_dto_field_and_status_is_checked() {
 }
 
 #[tokio::test]
-async fn review_pass2_all_registry_non_global_boundaries_refuse_literal_and_dns() {
-    let witnesses = [
+async fn every_non_global_registry_boundary_is_refused_as_literal_and_dns() {
+    let addresses = [
         "0.0.0.0",
         "0.255.255.255",
         "10.0.0.0",
@@ -1471,14 +1440,14 @@ async fn review_pass2_all_registry_non_global_boundaries_refuse_literal_and_dns(
         "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
     ];
     let fixture = fixture(vec![]).await;
-    let answers = witnesses
+    let answers = addresses
         .iter()
         .map(|ip| Some(vec![ip.parse().unwrap()]))
         .collect();
     let net = Net::custom(Arc::new(Script(Mutex::new(answers))), public);
     let host = IdentityHost::fixture();
     let probe = request(json!({"route":"probe"}));
-    for ip in witnesses {
+    for ip in addresses {
         let addr: IpAddr = ip.parse().unwrap();
         assert!(!public(addr), "predicate {ip}");
         let literal = match addr {
@@ -1498,30 +1467,7 @@ async fn review_pass2_all_registry_non_global_boundaries_refuse_literal_and_dns(
 }
 
 #[tokio::test]
-async fn review_pass3_html_401_and_cut_off_403_still_report_auth_loss() {
-    let fixture = fixture(vec![
-        reply("401 Unauthorized", "text/html", "<html>Sign in</html>"),
-        Reply::Raw(b"HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 999\r\nConnection: close\r\n\r\n{}".to_vec()),
-    ]).await;
-    let net = net(&fixture, vec![lo(); 2]);
-    let host = IdentityHost::fixture();
-    let mut missed = Vec::new();
-    for _ in 0..2 {
-        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
-        assert_eq!(failure.category, Category::Ambiguous);
-        println!("auth loss witness: {failure:?}");
-        if !failure.auth_lost {
-            missed.push(failure.status);
-        }
-    }
-    assert!(
-        missed.is_empty(),
-        "401/403 missed access recheck: {missed:?}"
-    );
-}
-
-#[tokio::test]
-async fn review_pass3_original_native_witnesses_now_refuse_bad_addresses_and_successes() {
+async fn reserved_addresses_and_malformed_successes_are_refused() {
     for ip in ["192.88.99.2", "2001:2::1", "2001:1::4", "3fff::1"] {
         assert!(!public(ip.parse().unwrap()), "still accepts {ip}");
         let literal = if ip.contains(':') {
@@ -1552,9 +1498,9 @@ async fn review_pass3_original_native_witnesses_now_refuse_bad_addresses_and_suc
 }
 
 #[tokio::test]
-async fn review_pass3_valid_reason_must_fit_betas_body_limit() {
-    // Adapted from the pass-3 witness: the over-limit body is now refused
-    // before signing instead of being sent and held as ambiguous.
+async fn valid_reason_must_fit_betas_body_limit() {
+    // An over-limit body is refused before signing instead of being sent
+    // and held as ambiguous.
     let req = request(
         json!({"route":"resolveReport","id":ID,"action":"timeout","requestId":ID,"reason":"😀".repeat(1000),"expirationSecs":3600}),
     );

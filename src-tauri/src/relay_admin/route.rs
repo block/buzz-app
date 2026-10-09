@@ -64,7 +64,7 @@ pub(crate) enum DirectAction {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
-pub(super) enum ReportStatus {
+pub(crate) enum ReportStatus {
     Open,
     Processing,
     Resolved,
@@ -77,10 +77,6 @@ pub(super) enum ReportStatus {
 pub(crate) struct ReportsQuery {
     community_id: Option<String>,
     status: Option<ReportStatus>,
-    report_type: Option<String>,
-    target_kind: Option<String>,
-    before: Option<String>,
-    after: Option<String>,
     limit: Option<u32>,
     scope: Option<Scope>,
 }
@@ -258,15 +254,6 @@ fn cursor(value: &Option<String>) -> Result<()> {
         .map_or(Ok(()), |c| text(c, CURSOR_MAX, "Cursor"))
 }
 
-fn timestamp(value: &Option<String>) -> Result<()> {
-    match value {
-        Some(v) if chrono::DateTime::parse_from_rfc3339(v).is_err() => {
-            Err("Expected an RFC 3339 time".into())
-        }
-        _ => Ok(()),
-    }
-}
-
 fn body(fields: Value) -> Vec<u8> {
     // Drop absent optionals so the relay's `deny_unknown_fields` sees only set keys.
     let Value::Object(map) = fields else {
@@ -321,17 +308,8 @@ impl StaffRequest {
                 if let Some(id) = &q.community_id {
                     uuid(id)?;
                 }
-                for value in [&q.report_type, &q.target_kind].into_iter().flatten() {
-                    text(value, 64, "Filter")?;
-                }
-                timestamp(&q.before)?;
-                timestamp(&q.after)?;
                 put("communityId", q.community_id.clone());
                 put("status", q.status.map(|s| enum_text(&s)));
-                put("reportType", q.report_type.clone());
-                put("targetKind", q.target_kind.clone());
-                put("after", q.after.clone());
-                put("before", q.before.clone());
                 put("limit", bounded(q.limit, 500)?.map(|n| n.to_string()));
                 put("scope", q.scope.map(|_| "all".into()));
                 ("GET", "/reports".into(), None, SUCCESS_CAP)

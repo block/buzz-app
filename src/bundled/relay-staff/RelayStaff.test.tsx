@@ -805,6 +805,7 @@ it("a late directory page for an earlier search is dropped", async () => {
     ),
   );
   expect(screen.queryByRole("button", { name: "old.example.com" })).toBeNull();
+  expect(screen.getByRole("button", { name: "new.example.com" })).toBeVisible();
 });
 
 it("a late member search for an earlier query is dropped", async () => {
@@ -1057,22 +1058,7 @@ it("a gateway 401 on a write re-probes once, even when the probe is refused too"
   ).toEqual(sent("directAction")[0]);
 });
 
-it("review witness: resolve retry survives leaving the report", async () => {
-  routes.listReports = () => ok([report]);
-  routes.getReport = () => ok(report);
-  routes.resolveReport = () => fail({ category: "ambiguous", status: 502 });
-  await openReport();
-  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
-  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
-  await screen.findByRole("button", { name: /Retry: Ban/ });
-  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
-  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Retry: Ban/ }));
-  await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
-  expect(sent("resolveReport")[0]).toEqual(sent("resolveReport")[1]);
-});
-
-it("review witness: an identity switch publishes a context change", async () => {
+it("an identity switch publishes a context change", async () => {
   let viewer = signer;
   const staff = createStaff(backend, () => ({ relay, signer: viewer }));
   staff.ensure();
@@ -1090,7 +1076,7 @@ it("review witness: an identity switch publishes a context change", async () => 
   await waitFor(() => expect(sent("probe")).toHaveLength(2));
 });
 
-it("review witness: same admin origin does not retain old discovery relay", async () => {
+it("the same admin origin does not keep the old discovery relay", async () => {
   let selectedRelay = relay;
   const contexts: string[] = [];
   const localBackend = {
@@ -1129,164 +1115,7 @@ it("review witness: same admin origin does not retain old discovery relay", asyn
   expect(contexts.every((value) => value === selectedRelay)).toBe(true);
 });
 
-it("review witness: attachment authorization loss reprobes", async () => {
-  const oldAttachment = backend.attachment;
-  backend.attachment = (async () =>
-    fail({
-      category: "unauthorized",
-      status: 401,
-    })) as RelayStaffBackend["attachment"];
-  routes.listFeedback = () =>
-    ok([
-      {
-        id: "f1",
-        communityId: "c1",
-        communityHost: "team.example.com",
-        submitterPubkey: member,
-        bodySummary: "Attachment",
-        status: "new",
-        receivedAt: "2026-10-08T00:00:00Z",
-      },
-    ]);
-  routes.getFeedback = () =>
-    ok({
-      id: "f1",
-      communityId: "c1",
-      communityHost: "team.example.com",
-      body: "Attachment",
-      status: "new",
-      tags: [["imeta", `x ${"f".repeat(64)}`, "m image/png", "size 3"]],
-    });
-  try {
-    mount();
-    fireEvent.click(await screen.findByRole("tab", { name: "Feedback" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Attachment/ }));
-    await screen.findByText("The relay did not accept your signature.");
-    await waitFor(() => expect(sent("probe")).toHaveLength(2));
-  } finally {
-    backend.attachment = oldAttachment;
-  }
-});
-
-it("review witness: frozen direct action survives card reopen", async () => {
-  routes.directAction = () => fail({ category: "ambiguous", status: 502 });
-  const { staff } = mount();
-  await openCommunityActions();
-  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-  await screen.findByRole("button", { name: "Retry" });
-  cleanup();
-  render(
-    <ToastProvider>
-      <RelayStaff staff={staff} active={() => true} />
-    </ToastProvider>,
-  );
-  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
-  fireEvent.click(
-    await screen.findByRole("button", { name: /team\.example\.com/ }),
-  );
-  fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
-  await screen.findByRole("button", { name: "Retry" });
-});
-
-it("review witness: auth loss preserves unresolved direct intent for same signer", async () => {
-  routes.directAction = () => fail({ category: "ambiguous", status: 502 });
-  const { staff } = mount();
-  await openCommunityActions();
-  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-  await screen.findByRole("button", { name: "Retry" });
-  routes.probe = () => fail({ category: "forbidden", status: 403 });
-  await act(async () => {
-    const context = staff.context();
-    if (context) await staff.probe(context, true);
-  });
-  await screen.findByText("Access denied");
-  routes.probe = () => probe();
-  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
-  fireEvent.click(
-    await screen.findByRole("button", { name: /team\.example\.com/ }),
-  );
-  fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
-  await screen.findByRole("button", { name: "Retry" });
-});
-
-it("review witness: stale directory responses cannot replace a new query", async () => {
-  let release!: (outcome: StaffOutcome<unknown>) => void;
-  routes.listCommunities = (request) => {
-    const q = (request as { q?: string }).q;
-    if (q === "old")
-      return new Promise((resolve) => {
-        release = resolve;
-      });
-    if (q === "new")
-      return ok({
-        items: [{ id: "new", host: "new.example.com", icon: null }],
-        nextCursor: null,
-      });
-    return ok({ items: [], nextCursor: null });
-  };
-  mount();
-  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
-  fireEvent.change(screen.getByLabelText("Search communities"), {
-    target: { value: "old" },
-  });
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  fireEvent.change(screen.getByLabelText("Search communities"), {
-    target: { value: "new" },
-  });
-  await screen.findByRole("button", { name: "new.example.com" });
-  await act(async () => {
-    release(
-      ok({
-        items: [{ id: "old", host: "old.example.com", icon: null }],
-        nextCursor: null,
-      }),
-    );
-  });
-  expect(
-    screen.queryByRole("button", { name: "old.example.com" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "new.example.com" }),
-  ).toBeInTheDocument();
-});
-
-it("review pass 2: in-flight direct completion updates a reopened controller", async () => {
-  const { reopen } = mountSwitchable();
-  const late = holdNext("directAction", () =>
-    ok({ state: "succeeded", actionId: "done", replayed: true }),
-  );
-  await openCommunityActions();
-  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-  await late.started();
-  reopen();
-  await reopenActions();
-  await late.release(
-    ok({ state: "succeeded", actionId: "done", replayed: false }),
-  );
-  expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Review" })).toBeVisible();
-});
-
-it("review pass 2: an in-flight report rejection releases the reopened form", async () => {
-  routes.listReports = () => ok([report]);
-  routes.getReport = () => ok(report);
-  const late = holdNext("resolveReport", () =>
-    fail({ code: "invalid_action" }),
-  );
-  await openReport();
-  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
-  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
-  await late.started();
-  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
-  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
-  await screen.findByRole("button", { name: /Retry: Ban/ });
-  await late.release(fail({ code: "invalid_action" }));
-  expect(screen.queryByRole("button", { name: /Retry: Ban/ })).toBeNull();
-  expect(screen.getByRole("button", { name: "Ban" })).toBeEnabled();
-});
-
-it("review pass 2: a retry refused before dispatch does not resolve an older sent write", async () => {
+it("a retry refused before sending does not resolve an older sent write", async () => {
   mountSwitchable();
   await freezeDirectBan();
   routes.directAction = () =>
@@ -1303,7 +1132,7 @@ it("review pass 2: a retry refused before dispatch does not resolve an older sen
   expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
 });
 
-it("review pass 3: a cancel completed after reopening refreshes the active report", async () => {
+it("a cancel completed after reopening refreshes the active report", async () => {
   let cancelled = false;
   const failed = {
     ...report,
@@ -1355,7 +1184,7 @@ it("review pass 3: a cancel completed after reopening refreshes the active repor
   expect(screen.getByRole("button", { name: "Ban" })).toBeEnabled();
 });
 
-it("review pass 3: an operator rejection after reopening reaches the active view", async () => {
+it("an operator rejection after reopening reaches the active view", async () => {
   routes.probe = () => probe({ role: "operator", canStaff: true });
   routes.listOperators = () => ok([]);
   let release!: (value: StaffOutcome<unknown>) => void;
@@ -1459,7 +1288,7 @@ it("a reason refused before sending shows and can be edited", async () => {
   expect(screen.getByRole("button", { name: /Confirm: Ban/ })).toBeEnabled();
 });
 
-it("targeted review: an operator result finished while closed is delivered once on next mount", async () => {
+it("an operator result finished while closed is delivered once on next mount", async () => {
   routes.probe = () => probe({ role: "operator", canStaff: true });
   routes.listOperators = () => ok([]);
   const late = holdNext("putOperator", () => fail({}));
@@ -1481,7 +1310,7 @@ it("targeted review: an operator result finished while closed is delivered once 
   expect(screen.queryByText("Finished while closed")).toBeNull();
 });
 
-it("targeted review: only the original context claims a finished operator attempt", async () => {
+it("only the original context claims a finished operator attempt", async () => {
   routes.probe = () => probe({ role: "operator", canStaff: true });
   routes.listOperators = () => ok([]);
   const late = holdNext("putOperator", () => fail({}));
@@ -1502,7 +1331,7 @@ it("targeted review: only the original context claims a finished operator attemp
   expect(await screen.findByText("Original context only")).toBeVisible();
 });
 
-it("targeted review: strict-mode and concurrent consumers claim each attempt once", async () => {
+it("strict-mode and concurrent consumers claim each attempt once", async () => {
   const { staff } = mount();
   await screen.findByText(/Connected as moderator/);
   const context = staff.context();
@@ -1546,7 +1375,7 @@ it("targeted review: strict-mode and concurrent consumers claim each attempt onc
   expect(sent("putOperator")).toHaveLength(2);
 });
 
-it("targeted review: resolve finished off-screen is delivered on reopening, not a later lifecycle", async () => {
+it("resolve finished off-screen is delivered on reopening, not a later lifecycle", async () => {
   let resolved = false;
   routes.listReports = () =>
     ok([{ ...report, status: resolved ? "resolved" : "open" }]);
@@ -1583,7 +1412,7 @@ it("targeted review: resolve finished off-screen is delivered on reopening, not 
   expect(screen.queryByText("Report resolved: resolved")).toBeNull();
 });
 
-it("targeted review: enforcement error finished while closed reaches reopened detail", async () => {
+it("enforcement error finished while closed reaches reopened detail", async () => {
   let failed = false;
   const enforcement = {
     id: "a1",

@@ -1,7 +1,10 @@
 use super::*;
+#[cfg(unix)]
 use tauri::ipc::InvokeResponseBody;
+#[cfg(unix)]
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
 fn channel() -> (
     Channel<ProcessEvent>,
     mpsc::UnboundedReceiver<serde_json::Value>,
@@ -16,6 +19,7 @@ fn channel() -> (
     (channel, receiver)
 }
 
+#[cfg(unix)]
 fn command(program: &str, args: &[&str]) -> Command {
     let mut command = Command::new(program);
     command
@@ -30,6 +34,7 @@ fn command(program: &str, args: &[&str]) -> Command {
 }
 
 /// Collects output until the exit event, which it returns last.
+#[cfg(unix)]
 async fn until_exit(
     events: &mut mpsc::UnboundedReceiver<serde_json::Value>,
 ) -> (String, String, serde_json::Value) {

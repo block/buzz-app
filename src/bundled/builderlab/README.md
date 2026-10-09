@@ -52,6 +52,16 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   Successful deletion retires failed or confirmed registration receipts.
   Deletion does not archive identities, remove channel memberships, erase history,
   or clean registrations in other communities.
+- `known-communities/` keeps the account's community list in step with this
+  device through the `knownCommunities` capability while signed in, in native
+  builds with a configured service. The list is an account-scoped set behind
+  three idempotent JSON routes under `/v1/buzz/known-communities/`: `list`
+  (`{}` → `{ communities: [{ relay_url }] }`), `add` and `remove` (each
+  `{ relay_url }`; adding a saved destination or removing an absent one
+  succeeds, and the account holds at most 1,000). Each sign-in merges the
+  complete list, then sends each destination's latest queued join or leave one
+  at a time, retrying failures as sent, and reports its state for the rail's
+  not-synced indicator. See [communities](../../../docs/communities.md#known-communities).
 
 Deletion follow-ups requiring shared relay/outbox support:
 

@@ -1969,11 +1969,12 @@ fn legacy_guard_is_process_path_evidence_not_name_substring_or_coexistence_claim
     for listing in [
         " 100 /Applications/Buzz.app/Contents/MacOS/buzz-desktop",
         " 200 /checkout/target/debug/buzz-desktop",
+        " 300 /Applications/Buzz Dev.app/Contents/MacOS/renamed",
     ] {
         assert!(refuse_legacy_listing(listing).is_err());
     }
     assert!(refuse_legacy_listing(
-        "123 /tmp/buzz-agent\n456 /tmp/buzz-foundation\n789 /tmp/buzz-desktop-notes"
+        "123 /tmp/buzz-agent\n456 /Applications/Buzz.app/Contents/MacOS/buzz\n789 /tmp/buzz-desktop-notes"
     )
     .is_ok());
 }

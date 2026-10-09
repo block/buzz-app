@@ -1620,10 +1620,11 @@ fn refuse_legacy_listing(listing: &str) -> Result<(), String> {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        if name == "buzz-desktop"
-            || executable.contains("/Buzz.app/Contents/MacOS/")
-            || executable.contains("/Buzz Dev.app/Contents/MacOS/")
-        {
+        // Our own bundle is also `Buzz.app`; only its `buzz` binary lives there.
+        let legacy_bundle = name != "buzz"
+            && (executable.contains("/Buzz.app/Contents/MacOS/")
+                || executable.contains("/Buzz Dev.app/Contents/MacOS/"));
+        if name == "buzz-desktop" || legacy_bundle {
             return Err(
                 "Stop old Buzz before starting agents here; simultaneous ownership is unsupported"
                     .into(),

@@ -608,75 +608,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
-name = "buzz-agent"
-version = "0.1.0"
-source = "git+https://github.com/block/buzz.git?rev=4f51b9e1010e086a16c099cd8d8218ca974a5e18#4f51b9e1010e086a16c099cd8d8218ca974a5e18"
-dependencies = [
- "arc-swap",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "dirs",
- "fs2",
- "getrandom 0.4.3",
- "hex",
- "nix 0.31.3",
- "reqwest",
- "rmcp",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "webbrowser",
-]
-
-[[package]]
-name = "buzz-agent-controller"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bech32 0.11.1",
- "buzz-credential-store",
- "dotenvy",
- "getrandom 0.3.4",
- "hmac",
- "libc",
- "nix 0.31.3",
- "nostr 0.45.5",
- "regex",
- "secp256k1 0.31.1",
- "security-framework",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "strip-ansi-escapes",
- "tempfile",
- "tungstenite",
- "url",
- "windows-sys 0.61.2",
- "zeroize",
-]
-
-[[package]]
-name = "buzz-credential-store"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "keyring",
- "nix 0.31.3",
- "security-framework",
- "sha2 0.10.9",
- "tempfile",
- "zeroize",
-]
-
-[[package]]
-name = "buzz-foundation"
+name = "buzz"
 version = "0.0.0"
 dependencies = [
  "arboard",
@@ -742,6 +674,74 @@ dependencies = [
  "windows-sys 0.61.2",
  "wry",
  "zbus 5.19.0",
+ "zeroize",
+]
+
+[[package]]
+name = "buzz-agent"
+version = "0.1.0"
+source = "git+https://github.com/block/buzz.git?rev=4f51b9e1010e086a16c099cd8d8218ca974a5e18#4f51b9e1010e086a16c099cd8d8218ca974a5e18"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "dirs",
+ "fs2",
+ "getrandom 0.4.3",
+ "hex",
+ "nix 0.31.3",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "webbrowser",
+]
+
+[[package]]
+name = "buzz-agent-controller"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bech32 0.11.1",
+ "buzz-credential-store",
+ "dotenvy",
+ "getrandom 0.3.4",
+ "hmac",
+ "libc",
+ "nix 0.31.3",
+ "nostr 0.45.5",
+ "regex",
+ "secp256k1 0.31.1",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "strip-ansi-escapes",
+ "tempfile",
+ "tungstenite",
+ "url",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
+name = "buzz-credential-store"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "keyring",
+ "nix 0.31.3",
+ "security-framework",
+ "sha2 0.10.9",
+ "tempfile",
  "zeroize",
 ]
 

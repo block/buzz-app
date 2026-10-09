@@ -42,7 +42,7 @@ function fixture(dir, version = "0.0.0-preview.22.1") {
     readFileSync(script, "utf8").replace(publicKeyBase64, encodedKey),
   );
   const archive = join(dir, "archive.tar.gz");
-  const binary = join(dir, "buzz-foundation");
+  const binary = join(dir, "buzz");
   const sig = join(dir, "archive.sig");
   const manifest = join(dir, "manifest.json");
   writeFileSync(archive, "fixture archive bytes");

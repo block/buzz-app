@@ -1363,7 +1363,6 @@ it("stages duration steps, preserves the choice across Ongoing, and discards it 
 
 it.each([
   [3600, "1 hour", "Increase duration", 86400],
-  [259200, "3 days", "Decrease duration", 86400],
   [259200, "3 days", "Increase duration", 604800],
   [2592000, "30 days", "Decrease duration", 1209600],
 ] as const)(

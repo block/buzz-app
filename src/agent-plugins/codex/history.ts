@@ -1,5 +1,6 @@
 import type { EventData, ReadFilter } from "../../features/relay/events";
 import { foldMessages } from "../../features/relay/fold";
+import { compareMessages, eventMs } from "../../features/relay/message-order";
 import type { Conversation } from "./prompt";
 
 /** Reuse the message owner's edits/deletions projection on verified relay reads. */
@@ -34,13 +35,26 @@ export async function conversationHistory(
         },
       ])
     : [];
-  const messages = foldMessages(channelId, "", [...found, ...changes], {
+  const cutoff = {
+    id: event.id,
+    createdAt: event.created_at,
+    createdAtMs: eventMs(event),
+  };
+  // Relay `until` is inclusive to the second. Apply Buzz's full ordering before
+  // folding so later same-second messages, edits and deletions cannot leak in.
+  const earlier = [...found, ...changes].filter(
+    (item) =>
+      compareMessages(
+        { id: item.id, createdAt: item.created_at, createdAtMs: eventMs(item) },
+        cutoff,
+      ) < 0,
+  );
+  const messages = foldMessages(channelId, "", earlier, {
     includeReplies: true,
   })
     .filter(
       (message) =>
-        message.id !== event.id &&
-        (!root || message.id === root || message.threadRootId === root),
+        !root || message.id === root || message.threadRootId === root,
     )
     .slice(-50)
     .map((message) => ({

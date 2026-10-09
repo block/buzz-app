@@ -149,7 +149,7 @@ function setupHarnesses(
   return { fixture, control };
 }
 
-it.each(["cli-needed", "adapter-needed", "ready"] as const)(
+it.each(["cli-needed", "ready"] as const)(
   "shows Harnesses and keeps manual Pi commands collapsed until requested (%s)",
   async (piStatus) => {
     const user = userEvent.setup();
@@ -407,10 +407,8 @@ it("keeps the last statuses and offers Check again after a failed read", async (
 
 it.each([
   ["cli-needed", true, true],
-  ["adapter-needed", true, true],
   ["ready", true, false],
   ["cli-needed", false, false],
-  ["adapter-needed", false, false],
 ] as const)(
   "shows Pi Install only when needed and supported (%s, %s)",
   async (status, supported, visible) => {

@@ -1266,17 +1266,19 @@ export function createRelaySession(
     })(),
     options.persistence,
     (() => {
-      const remove = transport?.removeSidebarSection;
-      return remove
-        ? activeSidebarSectionRemoval(channelKit.capability, (id, signal) =>
-            remove(
-              id,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            ),
+      const write = transport?.removeSidebarSection;
+      return write
+        ? activeSidebarSectionRemoval(
+            channelKit.capability,
+            (sectionId, signal) =>
+              write(
+                sectionId,
+                AbortSignal.any([
+                  lifetime.signal,
+                  AbortSignal.timeout(20_000),
+                  signal,
+                ]),
+              ),
           )
         : undefined;
     })(),
@@ -2511,6 +2513,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               communityCatalog.reconnect();
               activityRosterKey = undefined;

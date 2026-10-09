@@ -1,19 +1,55 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useSyncExternalStore } from "react";
 import { channelIcon } from "../../features/channels/channel-icon";
-import type { ComposerCompletionProps } from "../../features/conversation/contracts";
+import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
+import type {
+  CompletionSuggestion,
+  ComposerCompletionProps,
+} from "../../features/conversation/contracts";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { matchName } from "../../features/search/match";
 
-function eligible(channel: ChannelSummary, viewer: string | undefined) {
+const LIMIT = 20;
+/** Rows kept for open channels when joined matches would fill the list. */
+const OPEN_SLOTS = 5;
+
+function referable(channel: ChannelSummary) {
   return (
-    !!viewer &&
     !!channel.name.trim() &&
     !/[\r\n]/.test(channel.name) &&
     !channel.archived &&
-    !channel.cached &&
-    !channel.readOnly &&
-    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.hidden &&
+    channel.channelType !== "dm" &&
+    channel.channelType !== "session"
+  );
+}
+
+/** Joined channels, including ones restored from cache while the relay
+ * reconfirms them: the store marks those read-only until then, but a
+ * reference names a channel, it grants nothing. */
+function joined(channel: ChannelSummary, viewer: string | undefined) {
+  return (
+    !!viewer &&
+    referable(channel) &&
+    (!channel.readOnly || !!channel.cached) &&
     !!channel.members?.includes(viewer)
   );
+}
+
+/** An open channel the viewer can preview but hasn't joined. */
+function open(channel: ChannelSummary) {
+  return !!channel.readOnly && !channel.private && referable(channel);
+}
+
+/** The channel name rule the other channel pickers use (`matchName`), without
+ * its fuzzy ranks: Enter and Tab pick the first row while the viewer is
+ * writing prose, so a scattered-letter match must not capture a `#word`. A
+ * query with a space matches only from the start of a name, as person names
+ * do, so ordinary prose after `#name` closes the popup. */
+function rank(name: string, needle: string) {
+  const found = matchName(name, needle)?.rank;
+  if (found === undefined || found > 3) return undefined;
+  if (/\s/u.test(needle) && found > 1) return undefined;
+  return found;
 }
 
 export function ChannelCompletion({
@@ -21,82 +57,127 @@ export function ChannelCompletion({
   query,
   publish,
 }: ComposerCompletionProps) {
+  const needle = query.query.toLowerCase();
+  const listReady = useSyncExternalStore(
+    session.channels.subscribeList,
+    () => session.channels.list().status === "ready",
+  );
+  // Open channels the viewer hasn't joined. Joined matches still complete
+  // when this fails: open-channel search is best effort.
+  const search = usePublicChannelSearch(session, needle, listReady);
+  const { loading: searching, found: discovered, partial, error } = search;
+  const retrySearch = search.retry;
   useLayoutEffect(() => {
     let withdraw: (() => void) | false | undefined;
     const update = () => {
       // Withdraw at the data boundary, not after a later React render.
       if (withdraw) withdraw();
       const list = session.channels.list();
-      const needle = query.query.toLowerCase();
       const names = new Map<string, number>();
-      const matches = list.channels
-        .filter((channel) => eligible(channel, session.viewer))
+      const ranked = (channel: ChannelSummary) => {
+        const name = channel.name.toLowerCase();
+        names.set(name, (names.get(name) ?? 0) + 1);
+        const found = rank(channel.name, needle);
+        return found === undefined ? [] : [{ channel, rank: found }];
+      };
+      const order = (
+        a: { channel: ChannelSummary; rank: number },
+        b: { channel: ChannelSummary; rank: number },
+      ) =>
+        a.rank - b.rank ||
+        a.channel.name.localeCompare(b.channel.name) ||
+        a.channel.id.localeCompare(b.channel.id);
+      const mine = list.channels
+        .flatMap((channel) =>
+          joined(channel, session.viewer) ? ranked(channel) : [],
+        )
+        .sort(order);
+      const ids = new Set(mine.map(({ channel }) => channel.id));
+      // A search result joined or removed since the lookup leaves this set.
+      const others = discovered
         .flatMap((channel) => {
-          const name = channel.name.toLowerCase();
-          names.set(name, (names.get(name) ?? 0) + 1);
-          if (!name.includes(needle)) return [];
-          return [
-            {
-              channel,
-              rank: name === needle ? 0 : name.startsWith(needle) ? 1 : 2,
-            },
-          ];
+          const current = session.channels.get?.(channel.id);
+          return current && !ids.has(current.id) && open(current)
+            ? ranked(current)
+            : [];
         })
-        .sort(
-          (a, b) =>
-            a.rank - b.rank ||
-            a.channel.name.localeCompare(b.channel.name) ||
-            a.channel.id.localeCompare(b.channel.id),
+        .sort(order);
+      // Open channels follow joined ones, so a late search result never
+      // moves the row Enter or Tab would pick. A few rows stay reserved for
+      // them when joined matches alone would fill the list.
+      const shownMine = mine.slice(
+        0,
+        LIMIT - Math.min(others.length, OPEN_SLOTS),
+      );
+      const shown = [
+        ...shownMine.map(({ channel }) => ({ channel, member: true })),
+        ...others
+          .slice(0, LIMIT - shownMine.length)
+          .map(({ channel }) => ({ channel, member: false })),
+      ];
+      const settling = list.status === "loading" || list.status === "idle";
+      const item = (
+        channel: ChannelSummary,
+        member: boolean,
+      ): CompletionSuggestion => {
+        const Icon = channelIcon(channel);
+        const duplicate = (names.get(channel.name.toLowerCase()) ?? 0) > 1;
+        const label = `#${channel.name}`.replace(/[\\`*_[\]()#<>~&]/g, "\\$&");
+        const id = encodeURIComponent(channel.id).replace(
+          /[!'()*]/g,
+          (char) => `%${char.charCodeAt(0).toString(16)}`,
         );
+        const detail = [
+          channel.private ? "Private channel" : "",
+          member ? "" : "Not joined",
+          duplicate ? channel.id : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return {
+          id: channel.id,
+          label: channel.name,
+          ...(detail ? { detail } : {}),
+          preview: <Icon size={22} />,
+          edit: { text: `[${label}](buzz://channel/${id})` },
+          canSelect: () => {
+            const current = member
+              ? session.channels
+                  .list()
+                  .channels.find((entry) => entry.id === channel.id)
+              : session.channels.get?.(channel.id);
+            return (
+              !!current &&
+              current.name === channel.name &&
+              (member ? joined(current, session.viewer) : open(current))
+            );
+          },
+        };
+      };
+      const status = list.error
+        ? "Could not refresh channels."
+        : !shown.length && settling
+          ? "Loading channels…"
+          : searching
+            ? "Searching open channels…"
+            : error
+              ? "Could not search open channels."
+              : mine.length + others.length > LIMIT
+                ? "Keep typing to narrow the list."
+                : // Prose stays silent: the note joins rows already shown.
+                  partial && shown.length && !others.length
+                  ? "Only the newest open channels were searched."
+                  : undefined;
+      const retry = list.error
+        ? session.channels.refreshList &&
+          (() => session.channels.refreshList?.())
+        : !searching && error
+          ? retrySearch
+          : undefined;
       withdraw = publish({
-        items: matches.slice(0, 20).map(({ channel }) => {
-          const Icon = channelIcon(channel);
-          const duplicate = (names.get(channel.name.toLowerCase()) ?? 0) > 1;
-          const label = `#${channel.name}`.replace(
-            /[\\`*_[\]()#<>~&]/g,
-            "\\$&",
-          );
-          const id = encodeURIComponent(channel.id).replace(
-            /[!'()*]/g,
-            (char) => `%${char.charCodeAt(0).toString(16)}`,
-          );
-          return {
-            id: channel.id,
-            label: channel.name,
-            ...(duplicate || channel.private
-              ? {
-                  detail: [
-                    channel.private ? "Private channel" : "",
-                    duplicate ? channel.id : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" · "),
-                }
-              : {}),
-            preview: <Icon size={22} />,
-            edit: { text: `[${label}](buzz://channel/${id})` },
-            canSelect: () =>
-              session.channels
-                .list()
-                .channels.some(
-                  (current) =>
-                    current.id === channel.id &&
-                    current.name === channel.name &&
-                    eligible(current, session.viewer),
-                ),
-          };
-        }),
-        ...(list.error
-          ? { status: "Could not refresh channels." }
-          : !matches.length &&
-              (list.status === "loading" || list.status === "idle")
-            ? { status: "Loading channels…" }
-            : matches.length > 20
-              ? { status: "Keep typing to narrow the list." }
-              : {}),
-        ...(list.error && session.channels.refreshList
-          ? { retry: () => session.channels.refreshList?.() }
-          : {}),
+        items: shown.map(({ channel, member }) => item(channel, member)),
+        ...(status ? { status } : {}),
+        ...(retry ? { retry } : {}),
       });
     };
     const unsubscribe = session.channels.subscribeList(update);
@@ -105,6 +186,15 @@ export function ChannelCompletion({
       unsubscribe();
       if (withdraw) withdraw();
     };
-  }, [session, query.query, publish]);
+  }, [
+    session,
+    needle,
+    publish,
+    discovered,
+    searching,
+    partial,
+    error,
+    retrySearch,
+  ]);
   return null;
 }

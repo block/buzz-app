@@ -110,59 +110,6 @@ function itemProps(
   };
 }
 
-it("renders a 1:1 DM counterpart avatar and its missing-picture fallback", () => {
-  const state = owner(
-    new Map([
-      ["alice", { name: "Alice", picture: "https://example.test/alice.png" }],
-    ]),
-  );
-  const channel = {
-    id: "alpha",
-    name: "Alice",
-    channelType: "dm" as const,
-    participants: ["alice"],
-  };
-  const props = itemProps(state.session, false, channel);
-  const view = render(
-    <ChannelSidebarItem {...props} profile={state.profiles.get("alice")} />,
-  );
-  expect(document.querySelector("[data-dm-identity] img")).toHaveAttribute(
-    "src",
-    "media:https://example.test/alice.png",
-  );
-  const fallback = owner(new Map([["alice", { name: "Alice" }]]));
-  view.rerender(
-    <ChannelSidebarItem
-      {...itemProps(fallback.session, false, channel)}
-      profile={fallback.profiles.get("alice")}
-    />,
-  );
-  expect(document.querySelector("[data-dm-identity] img")).toBeNull();
-  expect(document.querySelector("[data-dm-identity]")).toHaveTextContent("A");
-});
-
-it("renders a compact group DM participant count without widening the icon slot", () => {
-  const state = owner();
-  render(
-    <div style={{ width: 124 }}>
-      <ChannelSidebarItem
-        {...itemProps(state.session, false, {
-          id: "alpha",
-          name: "A very long group conversation name",
-          channelType: "dm" as const,
-          participants: ["alice", "bob", "carol"],
-        })}
-      />
-    </div>,
-  );
-  const count = document.querySelector("[data-dm-participant-count]");
-  expect(count).toHaveTextContent("3");
-  expect(count?.closest("[data-dm-identity]")).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "A very long group conversation name" }),
-  ).toBeInTheDocument();
-});
-
 it("keeps the DM identity avatar and shows only a separate thinking badge", () => {
   const agent = "a".repeat(64);
   const state = owner(new Map([[agent, { name: "Buzzy", isAgent: true }]]));

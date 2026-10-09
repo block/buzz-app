@@ -8,6 +8,21 @@ export const MAX_AGENT_SNAPSHOT_JSON_BYTES = 5 * 1024 * 1024;
 export const MAX_AGENT_SNAPSHOT_PNG_BYTES = 10 * 1024 * 1024;
 /** Compatibility upper bound for callers without a known format; prefer the format-specific cap. */
 export const MAX_AGENT_SNAPSHOT_FILE_BYTES = MAX_AGENT_SNAPSHOT_PNG_BYTES;
+const LEGACY_AGENT_FILE_SUFFIXES = [
+  ".persona.md",
+  ".persona.json",
+  ".persona.png",
+  ".zip",
+] as const;
+const LEGACY_AGENT_FILE_MESSAGE =
+  "This agent file is from old Buzz and can't be imported directly. If old Buzz is installed on this computer, find that agent on the Agents page under Available to import and click Import.";
+export function legacyAgentFileError(fileName: string): string | undefined {
+  return LEGACY_AGENT_FILE_SUFFIXES.some((suffix) =>
+    fileName.toLowerCase().endsWith(suffix),
+  )
+    ? LEGACY_AGENT_FILE_MESSAGE
+    : undefined;
+}
 const snapshotFileLimit = (bytes: Uint8Array) =>
   bytes.length >= 8 &&
   bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])
@@ -55,6 +70,7 @@ export interface AgentSnapshot {
     namePool?: string[];
     idleTimeoutSeconds?: number;
     maxTurnDurationSeconds?: number;
+    effort?: string;
   };
   profile: {
     displayName: string;
@@ -146,6 +162,8 @@ const credentialLike = (value: string) =>
   /-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s,;]{8,})/i.test(
     value,
   );
+/** Effort levels are short harness names; native `validate_effort` matches. */
+const EFFORT = /^[A-Za-z0-9._-]{1,64}$/;
 const optionalText = (value: unknown, max: number) =>
   value === undefined || text(value, max);
 /** Native URL parsing accepts paths, queries, fragments and UTF-8 hosts but no credentials. */
@@ -221,6 +239,7 @@ export function parseAgentSnapshot(
     "respondTo",
     "idleTimeoutSeconds",
     "maxTurnDurationSeconds",
+    "effort",
   ]);
   const p = withoutNull(originalProfile, [
     "about",
@@ -246,6 +265,7 @@ export function parseAgentSnapshot(
       "namePool",
       "idleTimeoutSeconds",
       "maxTurnDurationSeconds",
+      "effort",
     ]) ||
     !keys(p, ["displayName", "about", "avatarDataUrl", "avatarUrl"]) ||
     !keys(m, ["level", "entries"]) ||
@@ -266,6 +286,8 @@ export function parseAgentSnapshot(
     (typeof d.model === "string" && !visibleSnapshotText(d.model)) ||
     !optionalText(d.provider, 128) ||
     (typeof d.provider === "string" && !visibleSnapshotText(d.provider)) ||
+    (d.effort !== undefined &&
+      (typeof d.effort !== "string" || !EFFORT.test(d.effort))) ||
     !["channel", "thread", undefined].includes(
       d.sessionPolicy as string | undefined,
     ) ||
@@ -403,7 +425,6 @@ export function buildAgentSnapshot(
       "team instructions",
       "idle timeout",
       "turn timeout",
-      "effort level",
       "behavioral environment overrides",
     ];
     if (
@@ -413,7 +434,7 @@ export function buildAgentSnapshot(
     )
       throw new Error("This agent cannot be exported faithfully.");
     throw new Error(
-      `This agent cannot be exported faithfully because of: ${limitations.join(", ")}. ${limitations.includes("effort level") ? "Check Agent defaults for inherited effort and remove it before exporting." : "Remove the listed settings before exporting."}`,
+      `This agent cannot be exported faithfully because of: ${limitations.join(", ")}. Remove the listed settings before exporting.`,
     );
   }
   for (const value of [
@@ -445,6 +466,7 @@ export function buildAgentSnapshot(
       ...(agent.launchParallelism != null
         ? { parallelism: agent.launchParallelism }
         : {}),
+      ...(agent.launchEffort ? { effort: agent.launchEffort } : {}),
       runtime: "buzz-agent",
       respondTo: "owner-only",
       sessionPolicy,
@@ -531,6 +553,9 @@ export function snapshotImportEdit(
       options.teamMember || snapshot.definition.parallelism === undefined
         ? {}
         : { BUZZ_ACP_AGENTS: String(snapshot.definition.parallelism) },
+    ...(snapshot.definition.effort
+      ? { effort: snapshot.definition.effort }
+      : {}),
     ...(options.teamMember && snapshot.profile.avatarDataUrl
       ? { picture: snapshot.profile.avatarDataUrl }
       : snapshot.profile.avatarUrl

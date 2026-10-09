@@ -29,6 +29,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** Latest request's thread, independent of session scope; absent in DMs. */
+  toolRoot?: string;
   interest: string;
 };
 type Saved = { threadId: string; workspace: string };
@@ -199,14 +201,14 @@ export class CodexRuntime {
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
-    const root =
-      channel?.channelType === "dm" || settings.scope === "channel"
-        ? undefined
-        : rootOf(trigger.event);
+    const toolRoot =
+      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+    const root = settings.scope === "channel" ? undefined : toolRoot;
     const request: Request = {
       event: trigger.event,
       agent,
       settings,
+      ...(toolRoot ? { toolRoot } : {}),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -378,7 +380,7 @@ export class CodexRuntime {
       client,
       {
         channel: request.conversation.channelId,
-        root: rootOf(request.event),
+        ...(request.toolRoot ? { root: request.toolRoot } : {}),
       },
       call.tool,
       call.tool === "send" &&

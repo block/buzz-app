@@ -185,7 +185,17 @@ function fixture(
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
     events.filter((event) =>
       filters.some((filter) =>
-        (filter.ids as string[] | undefined)?.includes(event.id),
+        Object.entries(filter).every(([key, value]) => {
+          if (key === "ids") return (value as string[]).includes(event.id);
+          if (key === "kinds") return (value as number[]).includes(event.kind);
+          if (key.startsWith("#"))
+            return event.tags.some(
+              ([name, item]) =>
+                name === key.slice(1) &&
+                (value as string[]).includes(item ?? ""),
+            );
+          return true;
+        }),
       ),
     ),
   );
@@ -448,6 +458,126 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
     tags: expect.arrayContaining([["e", "3".padStart(64, "0"), "", "reply"]]),
   });
 });
+it("cuts delayed history off before the request, including same-second messages and edits", async () => {
+  const f = fixture();
+  const first = f.delivery("CURRENT_REQUEST");
+  if (first.trigger.type === "timer") throw new Error("Expected a mention");
+  first.trigger.event.tags.push(["ms", "300"]);
+  const gate = deferred<EventData[]>();
+  const previous: EventData = {
+    ...first.trigger.event,
+    id: "6".repeat(64),
+    content: "EARLIER_MESSAGE",
+    tags: [
+      ...first.trigger.event.tags.filter(([key]) => key !== "ms"),
+      ["ms", "100"],
+    ],
+  };
+  const edit = (id: string, ms: string, content: string): EventData => ({
+    ...previous,
+    id: id.repeat(64),
+    kind: 40003,
+    content,
+    tags: [
+      ["h", "channel"],
+      ["e", previous.id],
+      ["ms", ms],
+    ],
+  });
+  f.read
+    .mockReturnValueOnce(gate.promise)
+    .mockResolvedValueOnce([
+      edit("f", "250", "EARLIER_EDIT"),
+      edit("e", "350", "FUTURE_EDIT"),
+    ]);
+  await f.runtime.run(first);
+  const later = f.delivery("LATER_REQUEST");
+  if (later.trigger.type === "timer") throw new Error("Expected a mention");
+  later.trigger.event.tags.push(["ms", "400"]);
+  try {
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
+    await f.runtime.run(later);
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    gate.resolve([
+      previous,
+      { ...first.trigger.event, id: "0".repeat(64), content: "TIE_BEFORE" },
+      first.trigger.event as EventData,
+      { ...first.trigger.event, id: "9".repeat(64), content: "TIE_AFTER" },
+      later.trigger.event as EventData,
+    ]);
+  }
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  const history = params.input[0]?.text.match(
+    /<thread-context>\n([\s\S]*?)\n<\/thread-context>/,
+  )?.[1];
+  expect(history).toBeDefined();
+  expect(
+    JSON.parse(history ?? "{}").messages.map(
+      (message: { content: string }) => message.content,
+    ),
+  ).toEqual(["EARLIER_EDIT", "TIE_BEFORE"]);
+  expect(
+    JSON.stringify(f.sent.find((wire) => wire.method === "turn/steer")?.params),
+  ).toContain("LATER_REQUEST");
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+});
+
+it.each([
+  { channelType: "dm", scope: "thread", whole: true },
+  { channelType: "stream", scope: "channel", whole: false },
+  { channelType: "stream", scope: "thread", whole: false },
+])(
+  "defaults Buzz reads to the latest conversation in $channelType/$scope",
+  async ({ channelType, scope, whole }) => {
+    const f = fixture();
+    vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+      channels: [{ id: "channel", name: "test", channelType }],
+    });
+    const otherRoot = "e".repeat(64);
+    f.delivery("OTHER_THREAD_CONTEXT", otherRoot);
+    const first = f.delivery("CURRENT_REQUEST");
+    await f.runtime.run({
+      ...first,
+      config: { ...(first.config as object), scope },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const initial = JSON.stringify((await f.tool("read", {}))?.result);
+    expect(initial).toContain("CURRENT_REQUEST");
+    expect(initial.includes("OTHER_THREAD_CONTEXT")).toBe(whole);
+    const latest = f.delivery(
+      "LATEST_REQUEST",
+      scope === "thread" && !whole ? root : otherRoot,
+    );
+    await f.runtime.run({
+      ...latest,
+      config: { ...(latest.config as object), scope },
+    });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    const after = JSON.stringify((await f.tool("read", {}))?.result);
+    expect(after).toContain("LATEST_REQUEST");
+    expect(after.includes("CURRENT_REQUEST")).toBe(whole || scope === "thread");
+    expect(after.includes("OTHER_THREAD_CONTEXT")).toBe(
+      whole || scope === "channel",
+    );
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+  },
+);
 it("cleans background terminals on server interruption and permits same-thread recovery", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));

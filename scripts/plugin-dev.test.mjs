@@ -112,20 +112,26 @@ test("Builderlab artifacts preserve the public deployment target and exact-origi
       commands: [],
       networkOrigins: ["https://login.example:8443"],
     });
+    expect(result.buildId).toBe(await hostBuildId("builderlab", checkout));
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("Builderlab host projection matches the public target and rejects different deployment paths", async () => {
+  vi.stubEnv("BUZZ_BUILDERLAB_URL", "https://login.example:8443/deployment/");
+  try {
     const graph = await pluginGraph(checkout);
+    const buildId = await hostBuildId("builderlab", checkout, graph);
     const projection = await bundledHostPlugin(checkout).load.call(
       { warn: vi.fn() },
       "\0virtual:buzz-plugin-host",
     );
-    expect(projection).toContain(`"block.builderlab":"${result.buildId}"`);
+    expect(projection).toContain(`"block.builderlab":"${buildId}"`);
     vi.stubEnv("BUZZ_BUILDERLAB_URL", "https://login.example:8443/other/");
-    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(
-      result.buildId,
-    );
+    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(buildId);
     vi.stubEnv("BUZZ_BUILDERLAB_URL", "");
-    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(
-      result.buildId,
-    );
+    expect(await hostBuildId("builderlab", checkout, graph)).not.toBe(buildId);
   } finally {
     vi.unstubAllEnvs();
   }

@@ -43,6 +43,7 @@ export function agentSections({
           agent={agent}
           save={(change) => agents2.save(agent.pubkey, change)}
           channels={channels}
+          classifier={agents2.classifier()}
         />
       ),
     },

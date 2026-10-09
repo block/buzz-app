@@ -84,6 +84,7 @@ function setup(agents: Agent[], { shown = true } = {}) {
     }),
     save: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
+    classifier: () => "unavailable",
   } satisfies Agents2;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

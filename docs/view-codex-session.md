@@ -3,7 +3,7 @@
 This guide is for agents investigating a Buzz conversation. All commands run
 non-interactively and read the saved transcript without invoking Codex or tools.
 
-Buzz runs Codex through the [Codex plugin](../src/agent-plugins/codex/README.md),
+Buzz runs Codex through the [Codex plugin](../src/bundled/codex/README.md),
 which starts one `codex app-server` per agent and one Codex thread per Buzz
 conversation. Codex saves each thread as a JSONL "rollout" file under
 `~/.codex/sessions/YYYY/MM/DD/rollout-<local-time>-<thread-id>.jsonl`. Archived

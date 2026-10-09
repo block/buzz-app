@@ -59,6 +59,8 @@ async function nativeImports(page, samples = []) {
     // Match Tauri core's callback IDs and Channel serialization, not a fake
     // Channel class: constructing the production bridge must cross real JS IPC.
     let nextCallback = 0;
+    let nextActivation = 0;
+    const activations = new Map();
     const callbacks = new Map();
     window.__TAURI_INTERNALS__ = {
       transformCallback(callback, once = false) {
@@ -82,6 +84,17 @@ async function nativeImports(page, samples = []) {
             !callbacks.has(args.onEvent.id)
           )
             throw new Error("Invalid deep-link channel");
+          return;
+        }
+        if (command === "plugin_activation_begin") {
+          const activation = ++nextActivation;
+          activations.set(activation, args.id);
+          return activation;
+        }
+        if (command === "plugin_activation_retire") {
+          if (activations.get(args.activation) !== args.id)
+            throw new Error("Invalid fixture activation owner");
+          activations.delete(args.activation);
           return;
         }
         if (command === "plugin_catalog") return ready();

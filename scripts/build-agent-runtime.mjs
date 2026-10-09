@@ -13,6 +13,7 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeBuildPlatform } from "./runtime-build-platform.mjs";
@@ -48,10 +49,7 @@ async function run(command, args, capture = false, cwd = root, childEnv = env) {
 const toolchain = await run(rustc, ["-vV"], true);
 const target = toolchain.match(/^host: (.+)$/m)?.[1]?.trim();
 if (!target) throw new Error("Could not resolve pinned Rust target");
-const destination = join(
-  root,
-  `src-tauri/resources/agent-runtime${dev ? "-dev" : ""}`,
-);
+const destination = join(root, "src-tauri/resources/agent-runtime");
 const filenames = spec.tools.map((name) =>
   process.platform === "win32" ? `${name}.exe` : name,
 );
@@ -278,9 +276,9 @@ async function prepare() {
   }
 }
 
-// Fail closed on overlap or interruption: never remove another process's Git
-// checkout or staging files. A killed process can leave Cargo/Git children alive,
-// so stale locks require explicit cleanup after those processes have stopped.
+// Fail closed on overlap: never remove another process's Git checkout or staging
+// files. A force-killed process can leave Cargo/Git children alive, so its stale
+// lock requires explicit cleanup after those processes have stopped.
 const preparationLock = join(root, "target/agent-runtime-prepare.lock");
 await mkdir(dirname(preparationLock), { recursive: true });
 try {
@@ -291,6 +289,12 @@ try {
     `Runtime preparation already in progress: ${preparationLock}. Retry after it finishes. If interrupted, stop its Git/Cargo processes before removing this lock.`,
   );
 }
+// Ctrl-C skips `finally`; the terminal signals Git and Cargo too.
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.once(signal, () => {
+    rmSync(preparationLock, { recursive: true, force: true });
+    process.exit(1);
+  });
 try {
   await writeFile(join(preparationLock, "owner"), `${process.pid}\n`);
   await prepare();

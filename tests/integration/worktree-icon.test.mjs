@@ -234,17 +234,12 @@ test("macOS launchers preserve icon, port, explicit config and runner arguments"
     "app",
     "--config",
   ]);
-  assert.deepEqual(JSON.parse(bundle[6]), {
-    bundle: { icon: config.bundle.icon },
-  });
+  assert.deepEqual(JSON.parse(bundle[6]), { bundle: config.bundle });
   assert.deepEqual(bundle.slice(7), forwarded);
   // A failed icon generation leaves the rest of the overlay in place.
   render("process.exit(1);");
   const fallback = launch();
-  assert.deepEqual(JSON.parse(fallback.call[3]), {
-    bundle: { resources: config.bundle.resources },
-    build: build(port),
-  });
+  assert.deepEqual(JSON.parse(fallback.call[3]), { build: build(port) });
   assert.deepEqual(fallback.call.slice(4), forwarded);
 });
 

@@ -62,14 +62,13 @@ impl RuntimeBundle {
         let source: Source =
             serde_json::from_str(include_str!("../../../runtime/agent-runtime.json"))
                 .map_err(|_| "Runtime source specification is invalid")?;
-        // Debug app builds (`just desktop`) also accept Goose's fast dev profile.
+        // `just desktop` stages Goose's fast dev profile; packaging stages the pin's.
         let goose = manifest.goose == source.goose
-            || (cfg!(debug_assertions)
-                && manifest.goose
-                    == GooseSource {
-                        profile: source.goose_dev_profile,
-                        ..source.goose
-                    });
+            || manifest.goose
+                == GooseSource {
+                    profile: source.goose_dev_profile,
+                    ..source.goose
+                };
         if manifest.version != 2
             || manifest.revision != source.revision
             || !goose

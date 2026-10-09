@@ -17,59 +17,16 @@ if (
 }
 const port = values.port === undefined ? undefined : Number(values.port);
 
-// Tauri's first positional argument starts implicit runner arguments too.
-let release = false;
-let runnerArgs = rest.slice(1);
-for (let index = 0; index < forwarded.length; index++) {
-  const arg = forwarded[index];
-  // Short value options may follow boolean flags, e.g. `-vr echo` or `-vf a b`.
-  const shortValue = arg.match(/^-[vheV]*([rtcf])(.*)$/);
-  if (arg === "--release") release = true;
-  else if (
-    ["--runner", "--target", "--config", "--additional-watch-folders"].includes(
-      arg,
-    ) ||
-    (shortValue && shortValue[1] !== "f" && !shortValue[2])
-  )
-    index++;
-  else if (
-    arg === "--features" ||
-    (shortValue?.[1] === "f" && !shortValue[2])
-  ) {
-    while (
-      index + 1 < forwarded.length &&
-      !forwarded[index + 1].startsWith("-")
-    )
-      index++;
-  } else if (!arg.startsWith("-")) {
-    runnerArgs = [...forwarded.slice(index), ...rest];
-    break;
-  }
-}
-
-// The first `--` starts Cargo arguments; Cargo's own `--` starts app arguments.
-// Explicit profiles may disable debug assertions, so use the pinned bundle for
-// all of them, including custom profiles whose settings this launcher cannot know.
-const appBoundary = runnerArgs.indexOf("--");
-release ||= runnerArgs
-  .slice(0, appBoundary < 0 ? undefined : appBoundary)
-  .some(
-    (arg) =>
-      arg === "--release" ||
-      /^-[vq]*r/.test(arg) ||
-      arg === "--profile" ||
-      arg.startsWith("--profile="),
-  );
-
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 // Prepare resources before Tauri can compile or observe an already-running Vite.
 // Its dev-server readiness timeout must not include a cold runtime build.
 if (!help) {
   const prepared = spawnSync(
     process.execPath,
+    // Local-only, so skip Goose's size optimizations; packaged builds keep them.
     [
       fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url)),
-      ...(release ? [] : ["--dev"]),
+      "--dev",
     ],
     { stdio: "inherit" },
   );
@@ -79,15 +36,6 @@ if (!help) {
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
 const config = desktopOverlay(root);
-if (!release) {
-  config.bundle ??= {};
-  // Merge-patch removes the stock lean source. Both modes keep stable paths so
-  // preparation in the other mode cannot replace resources read later by Tauri.
-  config.bundle.resources = {
-    "resources/agent-runtime/": null,
-    "resources/agent-runtime-dev/": "agent-runtime/",
-  };
-}
 // Tauri's own --port controls its static-file server, not our Vite server.
 // Without --port, each worktree derives its own stable port; vite.config.ts
 // derives the same one, so devUrl and Vite's strict port cannot disagree.

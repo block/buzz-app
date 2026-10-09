@@ -860,6 +860,26 @@ impl Controller {
             })
             .collect())
     }
+    /// Kept agents answer only to the owner who authorized them, not to whoever
+    /// signs in next. `signed_in` is `None` when no human identity is available.
+    /// A missing or malformed attestation is refused later by launch validation.
+    pub fn check_owner(&self, id: &str, signed_in: Option<&str>) -> Result<()> {
+        check_owner(self.attested_owner(id)?.as_deref(), signed_in)
+    }
+    /// The human owner named in the agent's saved authorization, if any.
+    pub fn attested_owner(&self, id: &str) -> Result<Option<String>> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        Ok(agent
+            .auth_tag
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+            .and_then(|tag| tag.into_iter().nth(1)))
+    }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
         let agents = self.store.agents()?;
         let agent = agents
@@ -1261,4 +1281,27 @@ fn goose_args(command: &str, args: &[String]) -> Vec<String> {
         normalized.remove(0);
     }
     normalized
+}
+
+/// Kept agents answer to the owner who authorized them, not whoever signs in next.
+pub fn check_owner(attested: Option<&str>, signed_in: Option<&str>) -> Result<()> {
+    match attested {
+        Some(owner) if signed_in != Some(owner) => Err(
+            "This agent belongs to a different Buzz identity. Sign in with its owner's key to start it."
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Sign out's "Also remove my agents", run at launch before the wipe: delete every
+/// local agent's key from the registry at `root`. Repeatable, because deleting an
+/// absent key succeeds; the registry itself is left for the wipe. Import keeps a
+/// local copy of every agent's key, deployed remote ones included, so each copy
+/// goes; the remote deployment itself is neither stopped nor deleted.
+pub fn delete_local_agent_keys(root: PathBuf, credentials: &dyn Credentials) -> Result<()> {
+    for agent in Store::open(root)?.agents()? {
+        credentials.delete(&agent.credential_id, &agent.pubkey)?;
+    }
+    Ok(())
 }

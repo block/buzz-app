@@ -53,6 +53,101 @@ fn agent(workspace: &Path) -> Agent {
     }
 }
 #[test]
+fn kept_agents_start_only_for_their_attested_owner() {
+    const OWNER: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let saved = agent(dir.path());
+    let mut unattested = agent(dir.path());
+    unattested.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    unattested.pubkey = "ab".repeat(32);
+    unattested.auth_tag = None;
+    store
+        .insert(vec![saved.clone(), unattested.clone()])
+        .unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    assert!(controller.check_owner(&saved.id, Some(OWNER)).is_ok());
+    let refusal = controller.check_owner(&saved.id, Some(PUB)).unwrap_err();
+    assert!(refusal.contains("different Buzz identity"), "{refusal}");
+    assert_eq!(
+        controller.check_owner(&saved.id, None).unwrap_err(),
+        refusal
+    );
+    // Launch validation, not this check, refuses a missing attestation.
+    assert!(controller.check_owner(&unattested.id, None).is_ok());
+}
+/// Agent keys left in a fake keychain; deleting the second one fails once.
+struct Keychain(std::sync::Mutex<(Vec<String>, bool)>);
+impl Credentials for Keychain {
+    fn delete(&self, id: &str, _: &str) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.1 && id == "second" {
+            state.1 = false;
+            return Err("keychain interrupted".into());
+        }
+        state.0.retain(|kept| kept != id);
+        Ok(())
+    }
+    fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
+        unreachable!()
+    }
+    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+        unreachable!()
+    }
+    fn add(&self, _: &str, _: &Secret) -> Result<()> {
+        unreachable!()
+    }
+}
+#[test]
+fn sign_out_agent_key_removal_resumes_after_an_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut first = agent(dir.path());
+    first.credential_id = "first".into();
+    let mut second = agent(dir.path());
+    second.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    second.pubkey = "ab".repeat(32);
+    second.credential_id = "second".into();
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![first, second])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((
+        vec!["first".into(), "second".into()],
+        true,
+    )));
+    // Interrupted between the two deletions: the first key is gone, the registry stays.
+    assert!(delete_local_agent_keys(root.clone(), &keychain).is_err());
+    assert_eq!(keychain.0.lock().unwrap().0, ["second"]);
+    // Repeating it, including the already-deleted key, finishes the job.
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    assert_eq!(Store::open(root).unwrap().agents().unwrap().len(), 2);
+}
+#[test]
+fn sign_out_agent_key_removal_includes_imported_remote_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut remote = agent(dir.path());
+    remote.credential_id = "second".into();
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    assert!(remote.deployed_remote());
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![remote])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((vec!["second".into()], false)));
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    // Only the local key copy goes; the record (and its deployment) is the wipe's.
+    assert!(Store::open(root).unwrap().agents().unwrap()[0].deployed_remote());
+}
+#[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("config");
@@ -1457,6 +1552,26 @@ fn bundle_rejects_source_revisions_different_from_the_runtime_spec() {
 
 #[test]
 #[cfg(unix)]
+fn bundle_accepts_the_dev_goose_profile() {
+    let tools = tempfile::tempdir().unwrap();
+    bundle(tools.path());
+    let path = tools.path().join("manifest.json");
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
+    for (profile, accepted) in [
+        (source["gooseDevProfile"].clone(), true),
+        (json!("dev-other"), false),
+    ] {
+        let mut manifest = original.clone();
+        manifest["goose"]["profile"] = profile;
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert_eq!(RuntimeBundle::new(tools.path().into()).is_ok(), accepted);
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn snapshots_project_configured_paths_but_starts_reverify_each_executable() {
     for name in ["buzz-acp", "buzz-dev-mcp", "buzz-agent"] {
         for removed in [false, true] {
@@ -2238,6 +2353,32 @@ fn pi_version_probe_times_out_and_retires_helpers() {
         }
         assert!(Instant::now() < deadline, "Helper still running: {state}");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn explicit_snapshot_worker_counts_reach_listener_without_imported_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.imported = serde_json::Value::Null;
+    let key = Secret::parse(KEY, PUB).unwrap();
+    fs::write(dir.path().join("exit-listener"), "").unwrap();
+    for count in [1, 4] {
+        a.environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        a.validate().unwrap();
+        let mut command = runtime
+            .command_with_defaults(&a, &key, &deployment_defaults())
+            .unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("worker-count")).unwrap(),
+            count.to_string()
+        );
     }
 }
 

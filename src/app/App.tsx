@@ -7,6 +7,7 @@ import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
 import { AgentUpdateReview } from "../bundled/agents/AgentUpdateReview";
+import { SnapshotPreview } from "../bundled/agents/SnapshotPreview";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
@@ -177,13 +178,20 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 }}
               />
             ) : route.selected === "buzz.me/me" ? (
-              <MeSidebar relay={services.relay} />
+              <MeSidebar
+                relay={services.relay}
+                navigator={services.navigation}
+                target={route.target}
+              />
             ) : (
               <ChannelSidebar
                 relay={services.relay}
                 navigator={services.navigation}
                 providers={services.channelTemplates}
                 target={route.target}
+                meEnabled={route.pages.some(
+                  (page) => page.key === "buzz.me/me",
+                )}
                 sessionsEnabled={route.pages.some(
                   (page) => page.pluginId === "buzz.sessions",
                 )}
@@ -232,6 +240,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
         >
           <AgentWakeNotice control={services.agentControl} />
           <AgentUpdateReview
+            relay={services.relay}
+            control={services.agentControl}
+          />
+          <SnapshotPreview
             relay={services.relay}
             control={services.agentControl}
           />

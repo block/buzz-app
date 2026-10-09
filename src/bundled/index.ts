@@ -1,3 +1,5 @@
+import voiceNotesManifest from "./voice-notes/manifest.json";
+import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -24,6 +26,8 @@ import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import agents2Manifest from "./agents2/manifest.json";
+import * as agents2 from "./agents2";
 import channelsManifest from "./channels/manifest.json";
 import usageManifest from "./channel-usage/manifest.json";
 import * as usage from "./channel-usage";
@@ -53,6 +57,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...voiceNotesManifest, apiVersion: 1 },
+    module: voiceNotes,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...meManifest, apiVersion: 1 },
     module: me,
@@ -161,6 +170,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...agents2Manifest, apiVersion: 1 },
+    module: agents2,
     enabledByDefault: true,
   },
   {

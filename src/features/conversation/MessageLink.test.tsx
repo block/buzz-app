@@ -16,6 +16,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
+import { subscribeSnapshotPreview } from "../agents/snapshot-preview";
+import type { RelaySession } from "../relay/session";
 import { ConversationPresentation } from "./ConversationPresentation";
 
 afterEach(() => {
@@ -50,7 +52,7 @@ it("keeps anchor destination and host semantics with and without presentation", 
   expect(fallback).toContain(`>${url}</a>`);
   expect(fallback).not.toContain("data-link-renderer");
 });
-it("skips throwing and unmatched renderers, with first matching presentation winning", () => {
+it("skips throwing and unmatched renderers and resolves by order, then key", () => {
   const broken = {
     ...entry,
     matches() {
@@ -58,8 +60,35 @@ it("skips throwing and unmatched renderers, with first matching presentation win
     },
   };
   const miss = { ...entry, matches: () => false };
-  expect(resolveLink(url, [broken, miss, entry, { ...entry }])).toBe(entry);
+  expect(resolveLink(url, [broken, miss, entry])).toBe(entry);
   expect(resolveLink(url, [broken, miss])).toBeUndefined();
+  // A catch-all loses to the default band whichever registered first.
+  const fallback = { ...entry, key: "a/fallback", order: 100 };
+  expect(resolveLink(url, [fallback, entry])).toBe(entry);
+  expect(resolveLink(url, [entry, fallback])).toBe(entry);
+  // Equal orders fall to the contribution key, not array position.
+  const alpha = { ...entry, key: "a/link" };
+  expect(resolveLink(url, [entry, alpha])).toBe(alpha);
+  expect(resolveLink(url, [alpha, entry])).toBe(alpha);
+  // One renderer can be specific on one URL and a catch-all on another.
+  const github = "https://github.com/block/buzz/pull/1";
+  const services = {
+    ...entry,
+    key: "a/services",
+    order: (href: string) => (href.startsWith("https://github.com/") ? 0 : 100),
+  };
+  const web = { ...entry, key: "b/web", order: 10 };
+  expect(resolveLink(github, [web, services])).toBe(services);
+  expect(resolveLink(url, [web, services])).toBe(web);
+  // A throwing order counts as the default band instead of dropping the renderer.
+  const shaky = {
+    ...entry,
+    key: "a/shaky",
+    order: () => {
+      throw new Error("order failed");
+    },
+  };
+  expect(resolveLink(url, [web, shaky])).toBe(shaky);
 });
 
 function mount(target = url, interactive = true) {
@@ -261,4 +290,44 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
   view.rerender(tree(true));
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+});
+
+it("keeps copied-media links externally openable and offers a separate snapshot preview action", async () => {
+  const user = userEvent.setup();
+  const target = `https://relay.test/media/${"a".repeat(64)}.png`;
+  const session = {
+    media: (url: string) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+  } as unknown as RelaySession;
+  const receive = vi.fn();
+  const stop = subscribeSnapshotPreview(session, receive);
+  const onOpenLink = vi.fn(() => true);
+  try {
+    render(
+      <ToastProvider>
+        <MessageLink
+          url={target}
+          session={session}
+          registry={undefined}
+          onOpenLink={onOpenLink}
+        />
+      </ToastProvider>,
+    );
+    const anchor = screen.getByRole("link");
+    fireEvent.click(anchor);
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(target);
+    expect(receive).not.toHaveBeenCalled();
+    fireEvent.contextMenu(anchor);
+    const external = await screen.findByRole("menuitem", {
+      name: "Open in browser",
+    });
+    expect(external).toHaveAttribute("href", target);
+    await user.click(
+      screen.getByRole("menuitem", { name: "Preview snapshot" }),
+    );
+    expect(receive).toHaveBeenCalledExactlyOnceWith({
+      attachment: { url: target, kind: "file" },
+    });
+  } finally {
+    stop();
+  }
 });

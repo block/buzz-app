@@ -80,8 +80,32 @@ export interface AgentView {
   deployedRemote?: boolean;
   /** Older imports need an explicit snapshot of their legacy team instructions. */
   needsTeamImport?: boolean;
+  /** The team this agent had in old Buzz, once recorded. Never its text. */
+  betaTeam?: BetaTeamView | null;
   /** Absent on older hosts means an existing configured setup. */
   configured?: boolean;
+}
+export interface BetaTeamView {
+  teamId: string;
+  name: string;
+  status: "pending" | "completed" | "skipped";
+}
+export interface BetaTeamMember {
+  id: string;
+  pubkey: string;
+  revision: number;
+}
+/** Unfinished agents of one team from old Buzz. */
+export interface PendingBetaTeam {
+  teamId: string;
+  name: string;
+  /** Distinct old Buzz texts of the members, normally one. */
+  texts: string[];
+  members: BetaTeamMember[];
+}
+export interface BetaTeamRestorePreview {
+  token: string;
+  groups: (PendingBetaTeam & { inferred: boolean })[];
 }
 export interface ParkedIdentity {
   pubkey: string;
@@ -182,6 +206,7 @@ export interface AgentImportPreview {
   candidates: (Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name"> & {
     /** The imported prompt drops a team section old Buzz baked into it. */
     stripsTeamInstructions?: boolean;
+    team?: BetaTeamView | null;
   })[];
   warnings: string[];
 }
@@ -263,6 +288,28 @@ export interface AgentControlHost {
     teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
+  betaTeams?(community: string): Promise<PendingBetaTeam[]>;
+  restoreBetaTeams?(
+    source: ImportSource,
+    ids: string[],
+  ): Promise<BetaTeamRestorePreview>;
+  /** Finishes one agent's team from old Buzz in one native write. `teams`
+   * maps every readable team to its current text, as for team sync. */
+  finishBetaTeam?(
+    community: string,
+    teams: Record<string, string>,
+    id: string,
+    revision: number,
+    outcome: "completed" | "skipped",
+  ): Promise<ControlSnapshot>;
+  /** Starts one restore-preview group with the chosen text in one write; its
+   * members then finish like any pending agent. */
+  restoreBetaTeam?(
+    community: string,
+    token: string,
+    teamId: string,
+    text: string,
+  ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
     id: string,
@@ -353,6 +400,28 @@ export interface AgentControl {
     teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
+  betaTeams?(community: string): Promise<PendingBetaTeam[]>;
+  restoreBetaTeams?(
+    source: ImportSource,
+    ids: string[],
+  ): Promise<BetaTeamRestorePreview>;
+  /** Finishes one agent's team from old Buzz in one native write. `teams`
+   * maps every readable team to its current text, as for team sync. */
+  finishBetaTeam?(
+    community: string,
+    teams: Record<string, string>,
+    id: string,
+    revision: number,
+    outcome: "completed" | "skipped",
+  ): Promise<ControlSnapshot>;
+  /** Starts one restore-preview group with the chosen text in one write; its
+   * members then finish like any pending agent. */
+  restoreBetaTeam?(
+    community: string,
+    token: string,
+    teamId: string,
+    text: string,
+  ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
@@ -742,6 +811,50 @@ export function createAgentControl(
               throw new Error("Team preview is unavailable.");
             return host.previewTeam(content);
           },
+        }
+      : {}),
+    ...(host?.betaTeams
+      ? {
+          betaTeams: (community: string) => {
+            if (!host.betaTeams)
+              throw new Error("Teams from old Buzz are unavailable.");
+            return host.betaTeams(community);
+          },
+        }
+      : {}),
+    ...(host?.restoreBetaTeams
+      ? {
+          restoreBetaTeams: (source: ImportSource, ids: string[]) => {
+            if (!host.restoreBetaTeams)
+              throw new Error("Teams from old Buzz are unavailable.");
+            return host.restoreBetaTeams(source, ids);
+          },
+        }
+      : {}),
+    ...(host?.finishBetaTeam
+      ? {
+          finishBetaTeam: (
+            ...args: Parameters<NonNullable<AgentControlHost["finishBetaTeam"]>>
+          ) =>
+            run(async (host) => {
+              if (!host.finishBetaTeam)
+                throw new Error("Teams from old Buzz are unavailable.");
+              return host.finishBetaTeam(...args);
+            }, ready),
+        }
+      : {}),
+    ...(host?.restoreBetaTeam
+      ? {
+          restoreBetaTeam: (
+            ...args: Parameters<
+              NonNullable<AgentControlHost["restoreBetaTeam"]>
+            >
+          ) =>
+            run(async (host) => {
+              if (!host.restoreBetaTeam)
+                throw new Error("Teams from old Buzz are unavailable.");
+              return host.restoreBetaTeam(...args);
+            }, ready),
         }
       : {}),
     ...(host?.publishProfile

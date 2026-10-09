@@ -31,6 +31,24 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     syncTeamInstructions: (community, teams) =>
       invoke("agent_control_team_sync", { community, teams }),
     previewTeam: (content) => invoke("agent_control_team_preview", { content }),
+    betaTeams: (community) => invoke("agent_control_beta_teams", { community }),
+    restoreBetaTeams: (source, ids) =>
+      invoke("agent_control_beta_team_restore_preview", { source, ids }),
+    finishBetaTeam: (community, teams, id, revision, outcome) =>
+      invoke("agent_control_beta_team_finish", {
+        community,
+        teams,
+        id,
+        revision,
+        outcome,
+      }),
+    restoreBetaTeam: (community, token, teamId, text) =>
+      invoke("agent_control_beta_team_restore", {
+        community,
+        token,
+        teamId,
+        text,
+      }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
     writeSnapshotMemory: (id, entries) =>
       invoke("agent_control_snapshot_memory_write", { id, entries }),

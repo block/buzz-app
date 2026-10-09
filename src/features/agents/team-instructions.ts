@@ -106,6 +106,18 @@ export function teamTextConflict(
     : undefined;
 }
 
+/** The community part of a relay session's scope, as native team calls take it. */
+export const sessionCommunity = (scope: string, viewer: string) =>
+  scope.slice(0, -(viewer.length + 1));
+
+/** The text map native team calls take: unreadable teams are left out. */
+export const readableTexts = (texts: readonly TeamText[]) =>
+  Object.fromEntries(
+    texts.flatMap(({ team, text }) =>
+      text === undefined ? [] : [[team.id, text]],
+    ),
+  );
+
 /** Writes every team's current text into its members' settings and clears it
  * for agents no team with text lists. Never restarts: running members show
  * restart-needed instead. Runs after each team save or delete and once teams
@@ -119,12 +131,8 @@ export async function deliverTeamTexts(
   try {
     const texts = await readTeamTexts(kit, control);
     await control.syncTeamInstructions(
-      session.scope.slice(0, -(session.viewer.length + 1)),
-      Object.fromEntries(
-        texts.flatMap(({ team, text }) =>
-          text === undefined ? [] : [[team.id, text]],
-        ),
-      ),
+      sessionCommunity(session.scope, session.viewer),
+      readableTexts(texts),
     );
   } catch (reason) {
     throw new Error(

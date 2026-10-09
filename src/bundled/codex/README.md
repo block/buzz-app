@@ -93,9 +93,10 @@ and cleanup.
 - Replies use Agents2's host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. Short Buzz guidance and custom instructions are
   supplied as developer instructions, preserving Codex’s native coding prompt.
-- Codex uses workspace-write with no network access and approval policy `never`.
-  Web search, inherited MCP servers, Apps, and plugins are disabled. The declared
-  native process grant itself has full user access; the Codex sandbox governs its tools.
+- Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
+  Claude Code's `bypassPermissions`: it can write outside its workspace, reach the
+  network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
+  are disabled.
 - Shared Agent Activity integration is deferred because this Agents2 delivery
   contract has no live-activity API. The Codex tab shows conversation status and
   the latest command/output. Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.

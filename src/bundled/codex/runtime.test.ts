@@ -403,7 +403,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     ?.params as Record<string, unknown>;
   expect(started).toMatchObject({
     model: "test-model",
-    sandbox: "workspace-write",
+    sandbox: "danger-full-access",
     approvalPolicy: "never",
   });
   expect(started.baseInstructions).toBeUndefined();

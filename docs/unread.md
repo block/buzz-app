@@ -326,7 +326,14 @@ before sending it. Plugins receive no generic encryption or arbitrary-kind signi
 capability. Both transports use scoped NIP-98 for reads and writes.
 
 Accepted local intent is saved before signing; the exact signed event is saved
-before sending. Lost responses/readback retain that event identity for retry.
+before sending. Lost responses/readback retain that event identity for retry. An exact timestamp
+refusal on an old pending read-state event permits recovery under the same publisher
+lock: read back and merge the own coordinate, reconcile if it covers the pending
+state, otherwise persist a newly signed snapshot before sending it. The old envelope
+remains saved until reconciliation or replacement commits; recovery does not
+acknowledge rejected intent. Unknown outcomes and other refusals retain exact-byte
+retries. Recent/future timestamps are not renewed, signing retains its bounded
+monotonic clock, and a flush attempts at most one replacement (no re-sign loop).
 `accepted` is a publish receipt, not observed coordinate state; `reconciled` also
 requires readback. A failed transaction is not acknowledged as saved. Timestamps
 are uint32 seconds; replaceable publication clocks advance monotonically with a
@@ -371,15 +378,31 @@ the journal. Local unread decisions use both sets. Returning keys take the maxim
 frontier before leaving the reserve. Its finite eviction order favors channel,
 thread, then catch-up receipts before individual messages; newest event timestamps
 win within each group. While overrides exist, inherited reserve floors stay protected
-and direct override floors return to the journal.
+and direct override floors return to the journal. Without overrides, the reserve
+also drops a receipt that a kept broader receipt already covers (the same rule the
+journal uses), whether the cover is in the journal or the reserve.
+
+A message, thread or thread catch-up receipt names one message but not its
+channel, so a channel receipt can cover it only while the app knows that channel.
+A local-only `homes` field in the same record keeps the channel of each message
+that a kept journal or reserve receipt names. Each save takes it from loaded,
+verified messages and drops entries that no kept receipt names. For receipts saved
+without one (older saves, or receipts from other devices), the app asks the relay
+for those messages once per session, after evidence repair. It asks only for
+receipts that some channel receipt could cover, in batches of 100 IDs, and saves
+the channels of the signed events that come back. This changes no read and
+publishes nothing. A failed or empty answer keeps the receipt. Channel catch-up
+(`activity:`) still covers a message receipt only while the message is loaded:
+only the message says whether catch-up reads it. Old builds discard `homes` on
+their next save, as with the reserve.
 
 This extends retention only on the same browser profile/install. It cannot recover
 already discarded receipts, prevent loss after exhausting the reserve, or improve a
 fresh profile's smaller synced copy. An automatic observation already covered by
 the reserve does not republish that receipt. Manual unread still wins. Old builds
 can load the unchanged sync journal but discard the optional reserve on their next
-save; community leave on any build deletes both together. No database migration,
-new relay request, or wire-format change is involved.
+save; community leave on any build deletes both together. No database migration
+or wire-format change is involved.
 
 Override groups, permanent clear floors, directly associated frontiers and possible
 inherited channel/thread frontiers are protected; capacity failure is visible,

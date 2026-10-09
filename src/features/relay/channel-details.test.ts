@@ -677,3 +677,106 @@ it("allows only a single canonical TTL command tag without widening other fields
       ).not.toThrow();
   }
 });
+
+it("renames standalone sessions with a name-only command and confirmed relay readback", async () => {
+  const h = harness();
+  h.set([
+    h.metadata("Old title", sessionDescription(), "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(true);
+  h.publish.mockImplementationOnce(async () => {
+    h.set([
+      h.metadata("New title", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+  });
+  await h.owner.capability.save(base, { ...base, name: "New title" });
+  const command = h.sign.mock.calls[0]?.[0];
+  expect(command?.tags).toEqual([
+    ["h", id],
+    ["name", "New title"],
+  ]);
+  assert(command);
+  expect(() => validateDetailsTemplate(command)).not.toThrow();
+  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+});
+it.each([false, true])(
+  "promotes a standalone session in place (public/temporary=%s)",
+  async (changed) => {
+    const h = harness();
+    h.set([
+      h.metadata("Work", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    const promotion = {
+      name: "Work",
+      description: "",
+      visibility: changed ? ("public" as const) : ("private" as const),
+      ...(changed ? { ttlSeconds: 600 } : {}),
+    };
+    h.publish.mockImplementationOnce(async () => {
+      h.set([
+        h.record(39000, [
+          ["name", promotion.name],
+          ["about", ""],
+          [promotion.visibility],
+          ["t", "stream"],
+          ...(changed ? [["ttl", "600"]] : []),
+        ]),
+        ...h.events().slice(1),
+      ]);
+    });
+    await h.owner.capability.save(base, promotion);
+    const command = h.sign.mock.calls[0]?.[0];
+    assert(command);
+    expect(command.tags).toEqual([
+      ["h", id],
+      ["name", "Work"],
+      ["about", ""],
+      ...(changed
+        ? [
+            ["visibility", "open"],
+            ["ttl", "600"],
+          ]
+        : []),
+    ]);
+    expect(() => validateDetailsTemplate(command)).not.toThrow();
+    expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  },
+);
+it("does not promote parent-linked sessions", async () => {
+  const h = harness();
+  h.set([
+    h.metadata("Work", sessionDescription(id), "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(false);
+  await expect(
+    h.owner.capability.save(base, { ...base, description: "" }),
+  ).rejects.toThrow("permission");
+  expect(h.sign).not.toHaveBeenCalled();
+});
+it.each([
+  { description: "ordinary channel" },
+  { visibility: "public" as const },
+  { ttlSeconds: 600 },
+])(
+  "rejects session metadata changes alongside renaming: %j",
+  async (change) => {
+    const h = harness();
+    h.set([
+      h.metadata("Old title", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    await expect(
+      h.owner.capability.save(base, { ...base, name: "New title", ...change }),
+    ).rejects.toThrow("Only the name");
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);

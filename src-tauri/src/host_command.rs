@@ -209,9 +209,16 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        let mut directories = std::env::split_paths(&path)
-            .filter(|directory| !directory.as_os_str().is_empty())
+        // Per-user installs, such as Claude Code's official installer, come first:
+        // an older system-wide copy in /usr/local/bin would otherwise run instead,
+        // and installing again could not replace it.
+        let mut directories = std::env::var_os("HOME")
+            .map(|home| std::path::Path::new(&home).join(".local/bin"))
+            .into_iter()
             .collect::<Vec<_>>();
+        directories.extend(
+            std::env::split_paths(&path).filter(|directory| !directory.as_os_str().is_empty()),
+        );
         directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
         std::env::join_paths(directories).unwrap_or(path)
     }
@@ -361,6 +368,17 @@ mod tests {
         let path = directory.path().join("tool");
         crate::test_executable::write_executable(&path, format!("#!/bin/sh\n{script}\n"));
         (directory, path)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn per_user_installs_come_before_system_wide_ones() {
+        let home = std::env::var_os("HOME").unwrap();
+        let path = effective_path();
+        let directories = std::env::split_paths(&path).collect::<Vec<_>>();
+        let first = |directory: &Path| directories.iter().position(|item| item == directory);
+        assert_eq!(first(&Path::new(&home).join(".local/bin")), Some(0));
+        assert!(first(Path::new("/usr/local/bin")) > Some(0));
     }
 
     #[tokio::test]

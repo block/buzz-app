@@ -318,10 +318,27 @@ The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
 installed. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected.
 
-Buzz supplies `buzz-dev-mcp` only to **Buzz Agent**, including an explicitly
-selected absolute path to its executable. Goose, Pi, Claude Code, Codex, and
-other harnesses use their own tools and receive no additional developer MCP
-server from Buzz. Runtime snapshots report an MCP command only for Buzz Agent.
+Buzz supplies `buzz-dev-mcp` to **Buzz Agent** for developer tools and **Hermes
+Agent** for its authenticated shell path: Hermes's native terminal can strip the
+Buzz signing key. Launch and runtime snapshots use the same native harness
+policy's `include_buzz_dev_mcp` flag. Every supported harness declares its choice
+explicitly. The shared preset definition requires `includeBuzzDevMcp`; omission
+is invalid. Unknown custom harnesses fall back to false. Available tools depend
+on the harness and its configuration.
+
+| Harness | `include_buzz_dev_mcp` |
+| --- | --- |
+| Buzz Agent | `true` |
+| Hermes Agent | `true` |
+| Goose | `false` |
+| Pi | `false` |
+| Claude Code | `false` |
+| Codex | `false` |
+| Unknown custom harness | `false` (fallback) |
+
+Saved absolute paths follow the same policy when the executable retains its
+recognized basename (`buzz-agent` or `hermes-acp`, including supported suffixes).
+A differently named wrapper or symlink is treated as a custom harness.
 
 - **Buzz Agent** is bundled and shows **Ready**.
 - **Goose** is bundled and always shows **Ready**. Buzz launches `goose-acp`
@@ -598,8 +615,8 @@ until work arrives. Status reads project configured ACP/MCP paths without readin
 or hashing executables. These paths and `runtimeAvailable` describe the bundle
 accepted at initialization, not a fresh integrity check or relay readiness. Every
 actual launch still verifies its worker and ACP executables, plus the MCP
-executable for Buzz Agent, before spawn and exposes verification failure on the
-agent. Native Start projects one
+executable for Buzz Agent and Hermes Agent, before spawn and exposes verification
+failure on the agent. Native Start projects one
 final snapshot after recording its outcome. This adds no incoming wake service
 for fully stopped listeners and no durable interrupted-turn recovery.
 
@@ -858,8 +875,15 @@ bin/cargo build -p buzz-foundation
 to the same immutable source revision as the native library, plus an independent
 Goose revision for `goose-acp`. The build script fetches both revisions and uses
 pinned Cargo with locked dependencies: a release build of the Buzz tools and a
-lean Goose build without default features. Builds happen outside the checkout,
-scrub injected Buzz/provider environment and
+lean Goose build without default features. `just desktop` builds Goose with
+`gooseDevProfile` instead, which compiles much faster. Packaged builds keep the
+pinned profile, and the manifest records the profile actually built. Sources stay
+checked out under `target/agent-runtime-src`, so a rebuild after a pin bump reuses
+unchanged crates. An exclusive per-checkout lock covers preparation through
+publication; a second preparation fails with a retry message. Ctrl-C releases the
+lock. After a force kill, stop its remaining Git/Cargo processes before removing
+`target/agent-runtime-prepare.lock`.
+Builds scrub injected Buzz/provider environment and
 per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
 revision/Goose source and build settings/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Worktrees

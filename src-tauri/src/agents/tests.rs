@@ -25,15 +25,22 @@ impl Credentials for RejectingCredentials {
 
 impl AgentHost {
     fn open(paths: Result<(PathBuf, PathBuf, PathBuf), String>) -> Self {
+        Self::open_with_bundle(paths, Err(RUNTIME_GATE.into()))
+    }
+    fn open_with_bundle(
+        paths: Result<(PathBuf, PathBuf, PathBuf), String>,
+        bundle: Result<RuntimeBundle, String>,
+    ) -> Self {
+        Self::open_with_credentials(paths, bundle, Arc::new(RejectingCredentials))
+    }
+    fn open_with_credentials(
+        paths: Result<(PathBuf, PathBuf, PathBuf), String>,
+        bundle: Result<RuntimeBundle, String>,
+        credentials: Arc<dyn Credentials>,
+    ) -> Self {
         Self(
             Arc::new(Mutex::new(paths.and_then(|(root, legacy, workspace)| {
-                Host::open(
-                    root,
-                    legacy,
-                    workspace,
-                    Err(RUNTIME_GATE.into()),
-                    Arc::new(RejectingCredentials),
-                )
+                Host::open(root, legacy, workspace, bundle, credentials)
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
@@ -465,7 +472,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"][0],
         json!({
-            "command":"buzz-agent", "label":"Buzz Agent",
+            "id":"buzz-agent", "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
             "providers": providers,
             "configurationPolicy": {
@@ -475,6 +482,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             }
         })
     );
+    assert!(before["harnessOptions"].as_array().unwrap().len() >= 4);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["configurationPolicy"],
@@ -530,6 +538,39 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][1]["status"], "ready");
     assert_eq!(before["harnessOptions"][1]["available"], true);
     assert_eq!(before["harnessOptions"][1]["command"], "goose");
+    let codex = before["harnessOptions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|option| option["id"] == "codex")
+        .expect("Codex harness option");
+    assert_eq!(codex["label"], "Codex");
+    let codex_status = if !cfg!(unix) {
+        "not-enabled"
+    } else if buzz_agent_controller::installed("codex").is_none() {
+        "cli-needed"
+    } else if buzz_agent_controller::codex::installed_adapter(Some(dir.path())).is_none() {
+        "adapter-needed"
+    } else {
+        "ready"
+    };
+    assert_eq!(codex["available"], codex_status == "ready");
+    assert_eq!(codex["status"], codex_status);
+    assert_eq!(
+        codex["installSupported"],
+        cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))
+    );
+    assert_eq!(
+        codex["configurationPolicy"],
+        json!({
+            "authentication": "external", "provider": "external",
+            "supportedModes": ["default", "advanced"], "model": "optional", "effortDiscovery": "modelSpecific",
+            "selectorEnvironment": null
+        })
+    );
     assert!(
         before["harnessOptions"][1]["providers"]
             .as_array()
@@ -3113,6 +3154,9 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[path = "create_tests.rs"]
+mod creation;
 
 #[test]
 fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {

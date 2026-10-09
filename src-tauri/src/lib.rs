@@ -17,6 +17,7 @@ use browser::{
 mod agent_models;
 mod agents;
 mod app_agents;
+mod codex_models;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -63,7 +64,6 @@ mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod managed_npm;
 mod pi_models;
-use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
@@ -74,6 +74,7 @@ use agents::{
     agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
     agent_control_team_preview, agent_control_use_here, AgentHost,
 };
+use agents::{claude_auth_status, codex_auth_status};
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
@@ -81,7 +82,7 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{claude_install, pi_install, HarnessSetup};
+use harness_setup::{claude_install, codex_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
@@ -524,7 +525,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_read_log,
         pi_install,
         claude_install,
+        codex_install,
         claude_auth_status,
+        codex_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,

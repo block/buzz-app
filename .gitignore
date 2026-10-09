@@ -31,5 +31,6 @@ coverage/
 dist-author/
 
 # Generated immutable agent runtime resources.
+src-tauri/resources/agent-runtime-dev/
 src-tauri/resources/agent-runtime/*
 !src-tauri/resources/agent-runtime/README.md

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { portForPath } from "../../scripts/worktree-port.mjs";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
@@ -61,10 +62,58 @@ function recipeWithRuntime(failRuntime, name, ...args) {
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWER:" + JSON.stringify(process.env.BUZZ_DEV_VIEWER));
 if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
-  if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
+  const config = JSON.parse(process.argv[process.argv.indexOf("--config") + 1]);
+  const resources = config.bundle?.resources ?? { "resources/agent-runtime/": "agent-runtime/" };
+  const source = Object.keys(resources).find((key) => resources[key] === "agent-runtime/");
+  if (!require("node:fs").existsSync("src-tauri/" + source + "manifest.json")) process.exit(19);
 }\n`,
       { mode: 0o755 },
     );
+    const runnerFile = path.join(directory, "runner.json");
+    if (settings.tauri) {
+      mkdirSync(path.join(directory, "src-tauri/src"), { recursive: true });
+      writeFileSync(
+        path.join(directory, "src-tauri/Cargo.toml"),
+        '[package]\nname="fixture-app"\nversion="0.1.0"\nedition="2021"\n',
+      );
+      writeFileSync(
+        path.join(directory, "src-tauri/src/main.rs"),
+        "fn main() {}",
+      );
+      writeFileSync(
+        path.join(directory, "src-tauri/tauri.conf.json"),
+        JSON.stringify({
+          productName: "Fixture",
+          version: "0.1.0",
+          identifier: "dev.buzz.fixture",
+          build: {},
+          bundle: {
+            active: false,
+            resources: { "resources/agent-runtime/": "agent-runtime/" },
+          },
+        }),
+      );
+      const runner = path.join(directory, "runner");
+      writeFileSync(
+        runner,
+        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(runnerFile)}, JSON.stringify({ args: process.argv.slice(2), config: process.env.TAURI_CONFIG })); process.exit(1);`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        path.join(directory, "pnpm"),
+        `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+if (process.argv[2] === "install") process.exit(0);
+require(${JSON.stringify(fileURLToPath(import.meta.resolve("@tauri-apps/cli")))}).run(process.argv.slice(3), "tauri").catch(() => process.exit(1));`,
+        { mode: 0o755 },
+      );
+      args.unshift(
+        "--config",
+        '{"build":{"beforeDevCommand":null,"devUrl":null}}',
+        "--no-watch",
+        "--runner",
+        runner,
+      );
+    }
     // Set PATH inside the recipe shell: Hermit proxies restore their own PATH.
     const result = spawnSync(
       "just",
@@ -103,14 +152,32 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
+    const config = calls[1]?.[1] === "dev" ? JSON.parse(calls[1][3]) : {};
+    const resources = config.bundle?.resources ?? {
+      "resources/agent-runtime/": "agent-runtime/",
+    };
+    const source = Object.keys(resources).find(
+      (key) => resources[key] === "agent-runtime/",
+    );
     const manifestPath = path.join(
       directory,
-      "src-tauri/resources/agent-runtime/manifest.json",
+      "src-tauri",
+      source,
+      "manifest.json",
     );
     const gooseProfile = existsSync(manifestPath)
       ? JSON.parse(readFileSync(manifestPath, "utf8")).goose.profile
       : undefined;
-    return { ...result, calls, built, gooseProfile, port: portForPath(root) };
+    return {
+      ...result,
+      calls,
+      built,
+      gooseProfile,
+      runner: existsSync(runnerFile)
+        ? JSON.parse(readFileSync(runnerFile, "utf8"))
+        : undefined,
+      port: portForPath(root),
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -144,6 +211,12 @@ const build = (port) => ({
 });
 
 const overlay = (port) => ({
+  bundle: {
+    resources: {
+      "resources/agent-runtime/": null,
+      "resources/agent-runtime-dev/": "agent-runtime/",
+    },
+  },
   build: build(port),
 });
 
@@ -180,19 +253,66 @@ test("desktop preparation follows Tauri's build mode across runner boundaries", 
     [["--runner", "echo", "--release"], "lean"],
     [["--config", "custom.json", "--release"], "lean"],
     [["--features", "one", "two", "--release"], "lean"],
-    [["--features=one", "two", "--release"], "dev"],
+    [["--features=one", "two", "--release"], "lean"],
     [["-vf", "one", "two", "--release"], "lean"],
-    [["-fone", "two", "--release"], "dev"],
+    [["-fone", "two", "--release"], "lean"],
     [["-vr", "echo", "--release"], "lean"],
     [["-cconfig.json", "--release"], "lean"],
-    [["--", "--release"], "dev"],
-    [["--runner", "echo", "hello", "--release"], "dev"],
-    [["--runner=echo", "hello", "--release"], "dev"],
+    [["--", "--release"], "lean"],
+    [["--", "-r"], "lean"],
+    [["--", "--profile", "release"], "lean"],
+    [["--", "--profile=release"], "lean"],
+    [["--", "--profile", "custom"], "lean"],
+    [["--", "--", "--release"], "dev"],
+    [["--runner", "echo", "hello", "--release"], "lean"],
+    [["--runner=echo", "hello", "--release"], "lean"],
     [["--release", "--", "--", "--release"], "lean"],
   ]) {
     const result = launched("desktop", ...args);
     assert.equal(result.gooseProfile, profile, JSON.stringify(args));
     assert.deepEqual(result.call.slice(4), args);
+  }
+});
+
+test("desktop runtime matches the real pinned Tauri-to-Cargo profile boundary", () => {
+  for (const [args, profile, cargoArgs] of [
+    [["--release"], "lean", ["run", "--release"]],
+    [["--", "--release"], "lean", ["run", "--release"]],
+    [["--", "-rj4"], "lean", ["run", "-rj4"]],
+    [["--", "--profile", "release"], "lean", ["run", "--profile", "release"]],
+    [["--", "--profile=release"], "lean", ["run", "--profile=release"]],
+    [["--", "--", "--release"], "dev", ["run"]],
+  ]) {
+    const result = recipeWithRuntime(
+      false,
+      "desktop",
+      { tauri: true },
+      ...args,
+    );
+    assert.ok(result.runner, result.stderr);
+    for (const arg of cargoArgs)
+      assert.ok(
+        result.runner.args.includes(arg),
+        JSON.stringify(result.runner.args),
+      );
+    // Only flags before Cargo's application boundary affect native compilation.
+    const boundary = result.runner.args.indexOf("--");
+    const nativeArgs = result.runner.args.slice(0, boundary);
+    if (profile === "dev") {
+      assert.ok(!nativeArgs.includes("--release"));
+      assert.deepEqual(result.runner.args.slice(boundary + 1), ["--release"]);
+    }
+    assert.equal(result.gooseProfile, profile, JSON.stringify(args));
+    const resources = JSON.parse(result.runner.config).bundle?.resources;
+    assert.deepEqual(
+      resources,
+      profile === "dev"
+        ? {
+            "resources/agent-runtime/": null,
+            "resources/agent-runtime-dev/": "agent-runtime/",
+          }
+        : undefined,
+    );
   }
 });
 

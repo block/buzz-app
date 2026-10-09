@@ -1552,7 +1552,7 @@ fn bundle_rejects_source_revisions_different_from_the_runtime_spec() {
 
 #[test]
 #[cfg(unix)]
-fn debug_bundle_accepts_the_pinned_or_dev_goose_profile_only() {
+fn bundle_accepts_the_dev_goose_profile_only_with_debug_assertions() {
     let tools = tempfile::tempdir().unwrap();
     bundle(tools.path());
     let path = tools.path().join("manifest.json");
@@ -1560,7 +1560,7 @@ fn debug_bundle_accepts_the_pinned_or_dev_goose_profile_only() {
     let source: serde_json::Value =
         serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
     for (profile, accepted) in [
-        (source["gooseDevProfile"].clone(), true),
+        (source["gooseDevProfile"].clone(), cfg!(debug_assertions)),
         (json!("dev-other"), false),
     ] {
         let mut manifest = original.clone();

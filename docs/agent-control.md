@@ -877,8 +877,9 @@ Goose revision for `goose-acp`. The build script fetches both revisions and uses
 pinned Cargo with locked dependencies: a release build of the Buzz tools and a
 lean Goose build without default features. `just desktop` builds Goose with
 `gooseDevProfile` instead, which only debug apps accept. `just desktop --release`
-keeps the pinned lean profile; runner/application arguments do not select the
-build mode. Sources stay checked out under `target/agent-runtime-src`, so a rebuild after a pin bump reuses
+keeps the pinned lean profile, as do Cargo `--release`, `-r` and explicit
+`--profile` arguments after the first `--`. Arguments after Cargo’s second `--`
+are app arguments and do not select the build mode. Sources stay checked out under `target/agent-runtime-src`, so a rebuild after a pin bump reuses
 unchanged crates. An exclusive per-checkout lock covers preparation through
 publication. A second preparation fails with a retry message. If interrupted,
 stop its remaining Git/Cargo processes before removing
@@ -887,7 +888,11 @@ on age or a dead parent PID. Ordinary success/failure removes the lock.
 Builds scrub injected Buzz/provider environment and
 per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
 revision/Goose source and build settings/target/SHA256 manifest in
-`src-tauri/resources/agent-runtime`. Worktrees
+`src-tauri/resources/agent-runtime` for packaged builds and
+`src-tauri/resources/agent-runtime-dev` for ordinary desktop dev. The desktop
+config selects the dev directory with the same `agent-runtime/` destination;
+one mode cannot replace the other’s staged resources before native copying or
+bundling finishes. Worktrees
 of one clone reuse a verified bundle cached under the Git common directory, keyed
 by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.

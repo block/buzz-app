@@ -21,7 +21,8 @@ const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
 // `just desktop` skips the pin's size optimizations; packaged builds keep them.
-const goose = process.argv.includes("--dev")
+const dev = process.argv.includes("--dev");
+const goose = dev
   ? { ...spec.goose, profile: spec.gooseDevProfile }
   : spec.goose;
 const { env, cargo, rustc } = runtimeBuildPlatform(root);
@@ -47,7 +48,10 @@ async function run(command, args, capture = false, cwd = root, childEnv = env) {
 const toolchain = await run(rustc, ["-vV"], true);
 const target = toolchain.match(/^host: (.+)$/m)?.[1]?.trim();
 if (!target) throw new Error("Could not resolve pinned Rust target");
-const destination = join(root, "src-tauri/resources/agent-runtime");
+const destination = join(
+  root,
+  `src-tauri/resources/agent-runtime${dev ? "-dev" : ""}`,
+);
 const filenames = spec.tools.map((name) =>
   process.platform === "win32" ? `${name}.exe` : name,
 );

@@ -138,27 +138,57 @@ test("desktop dev builds Goose with the dev profile; packaged preparation keeps 
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-  const recorded = () =>
+  const recorded = (dev = false) =>
     JSON.parse(
       readFileSync(
-        path.join(directory, "src-tauri/resources/agent-runtime/manifest.json"),
+        path.join(
+          directory,
+          `src-tauri/resources/agent-runtime${dev ? "-dev" : ""}/manifest.json`,
+        ),
         "utf8",
       ),
     ).goose;
+  const packagedFiles = {};
   const sources = path.join(directory, "target/agent-runtime-src");
   for (const [args, profile] of [
-    [["--dev"], spec.gooseDevProfile],
     [[], spec.goose.profile],
+    [["--dev"], spec.gooseDevProfile],
   ]) {
     assert.match(run(...args), /Verified inputs staged/);
-    assert.deepEqual(recorded(), { ...spec.goose, profile });
+    if (args.includes("--dev"))
+      assert.deepEqual(
+        recorded(),
+        spec.goose,
+        "later packaged consumption must keep the selected lean profile",
+      );
+    assert.deepEqual(recorded(args.includes("--dev")), {
+      ...spec.goose,
+      profile,
+    });
     const gooseBuild = calls().at(-1);
     assert.equal(
       gooseBuild.args[gooseBuild.args.indexOf("--profile") + 1],
       profile,
     );
     assert.match(run(...args), /Agent runtime ready/);
+    if (!args.includes("--dev")) {
+      const packaged = path.join(
+        directory,
+        "src-tauri/resources/agent-runtime",
+      );
+      for (const name of readdirSync(packaged))
+        packagedFiles[name] = readFileSync(path.join(packaged, name));
+    }
   }
+  // A release build consumes resources after preparation has released its lock.
+  // Intervening dev preparation must preserve every selected packaged byte.
+  assert.deepEqual(recorded(), spec.goose);
+  const packaged = path.join(directory, "src-tauri/resources/agent-runtime");
+  for (const name of readdirSync(packaged))
+    assert.deepEqual(
+      readFileSync(path.join(packaged, name)),
+      packagedFiles[name],
+    );
   assert.notEqual(spec.gooseDevProfile, spec.goose.profile);
   // Rebuilds reuse stable source checkouts, so Cargo can skip unchanged crates.
   assert.deepEqual(
@@ -168,6 +198,10 @@ test("desktop dev builds Goose with the dev profile; packaged preparation keeps 
     ),
   );
   // A checkout an interrupted run left unusable is fetched again from scratch.
+  rmSync(path.join(directory, "src-tauri/resources/agent-runtime-dev"), {
+    recursive: true,
+    force: true,
+  });
   writeFileSync(path.join(sources, "goose/broken-checkout"), "");
   assert.match(run("--dev"), /Verified inputs staged/);
   assert.ok(!existsSync(path.join(sources, "goose/broken-checkout")));

@@ -18,6 +18,8 @@ import {
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  legacyAgentFileError,
+  MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
   snapshotPngArtwork,
 } from "../../features/agents/snapshot";
@@ -124,6 +126,62 @@ it.each(["json", "png"] as const)(
     expect(h.create).not.toHaveBeenCalled();
   },
 );
+
+it("rejects legacy beta filenames with snapshot migration guidance before parsing", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  const message =
+    "This agent file is from old Buzz and can't be imported directly. If old Buzz is installed on this computer, find that agent on the Agents page under Available to import and click Import.";
+  for (const [name, type] of [
+    ["worker.persona.md", "text/markdown"],
+    ["worker.PERSONA.JSON", "application/json"],
+    ["worker.persona.png", "image/png"],
+    ["worker.zip", "application/zip"],
+  ] as const) {
+    expect(legacyAgentFileError(name)).toBe(message);
+    const contents =
+      name === "worker.zip"
+        ? new Uint8Array(MAX_AGENT_SNAPSHOT_FILE_BYTES + 1)
+        : "legacy";
+    choose(new File([contents], name, { type }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(h.create).not.toHaveBeenCalled();
+  }
+  expect(legacyAgentFileError("worker.agent.json")).toBeUndefined();
+  for (const name of [
+    "worker.agent.png",
+    "worker.json",
+    "worker.png",
+    "my.persona.md.json",
+  ])
+    expect(legacyAgentFileError(name)).toBeUndefined();
+});
+
+it("keeps ordinary markdown files on the normal snapshot parse path", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(new File(["not a snapshot"], "notes.md", { type: "text/markdown" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid snapshot JSON.",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+});
 
 it("refuses malformed received bytes before import and cannot create", async () => {
   const h = importControl();

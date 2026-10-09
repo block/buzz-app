@@ -3,6 +3,12 @@
 Use this system for new Buzz UI and for existing surfaces as they migrate.
 Before editing, read [the design guide](DESIGN.md) and
 [Maintaining the design system](MAINTAINING_DESIGN_SYSTEM.md).
+For screen composition, start with [the decision table](DESIGN.md#start-here-when-building-a-screen)
+and [whole-surface recipes](DESIGN.md#compose-the-whole-surface). Choose the recipe
+for the page, detail panel, Settings content, dialog, or anchored surface. Check
+[plugin contribution boundaries](DESIGN.md#plugin-contribution-boundaries) before
+adding chrome. Review consumers and action producers, not just shared frames;
+flexible props do not enforce the composition rules.
 
 ## Keep decisions with their owner
 

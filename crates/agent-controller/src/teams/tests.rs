@@ -111,6 +111,7 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         .profile(
             "Fixture",
             Some("https://example.test/avatar.png"),
+            false,
             Some("stale about"),
             &target.auth,
             &[],
@@ -136,6 +137,7 @@ fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
         .profile(
             "Fixture",
             None,
+            false,
             Some("Updated elsewhere"),
             &target.auth,
             &[retried],
@@ -222,6 +224,70 @@ fn team_export_refuses_explicit_and_inherited_community_but_preserves_overrides(
     }
 }
 
+#[test]
+fn rename_during_pending_team_import_preserves_profile_intents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("wss://relay.example", &owner()).unwrap();
+    let mut snapshot = member();
+    snapshot.profile.about = Some("Imported description".into());
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "rename-pending-import",
+            &BundleMember {
+                team: "rename-pending-import".into(),
+                member: snapshot,
+                instructions: String::new(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let initial = control.creation_profile(&prepared.id).unwrap();
+    let mut rename = edit(root.path());
+    rename.name = "Renamed member".into();
+    control
+        .save(&prepared.id, initial.revision, rename)
+        .unwrap();
+    // An earlier publication receipt cannot clear either the import or rename.
+    assert!(control
+        .profile_published(&prepared.id, initial.revision)
+        .is_err());
+    let target = control.creation_profile(&prepared.id).unwrap();
+    assert!(target.name_pending);
+    assert_eq!(target.about.as_deref(), Some("Imported description"));
+    let existing = prepared
+        .key
+        .profile(
+            "External name",
+            Some("https://example.test/current.png"),
+            false,
+            Some("External description"),
+            &target.auth,
+            &[],
+        )
+        .unwrap();
+    let event = target.event(&prepared.key, &[existing]).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+    assert_eq!(content["name"], "Renamed member");
+    assert_eq!(content["display_name"], "Renamed member");
+    assert_eq!(content["about"], "Imported description");
+    assert_eq!(content["picture"], "https://example.test/current.png");
+    target
+        .confirm(std::slice::from_ref(&event), event["id"].as_str().unwrap())
+        .unwrap();
+    control
+        .profile_published(&prepared.id, target.revision)
+        .unwrap();
+    assert!(control.creation_profile(&prepared.id).is_err());
+    let memory = control.memory_target(&prepared.id).unwrap();
+    assert!(!memory.name_pending);
+    assert!(memory.about.is_none());
+    assert!(memory.picture.is_none());
+}
 #[test]
 fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
     let root = tempfile::tempdir().unwrap();
@@ -1065,6 +1131,7 @@ fn merged_existing_profile_overflow_keeps_import_about_pending() {
         .profile(
             "Fixture",
             None,
+            false,
             Some(&"x".repeat(crate::profile::MAX_PROFILE_CONTENT_BYTES - 160)),
             &target.auth,
             &[],

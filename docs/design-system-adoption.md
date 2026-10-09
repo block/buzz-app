@@ -65,3 +65,73 @@ not a reason to remove a browser journey or weaken its behavioral assertions.
 Follow [the contribution workflow](contributing.md#interactive-product-iteration)
 for iteration and completed-batch checks. Record deferred checks. A draft PR or
 running preview does not establish native behavior or full validation.
+
+## Composition review
+
+Reviewed on 2026-10-09 against app commit `2bea18769`, with local documentation
+changes. This is an adoption snapshot, not blanket approval of these components.
+Use [DESIGN.md's whole-surface recipes](../src/shared/design-system/DESIGN.md#compose-the-whole-surface)
+as the target; remove resolved gaps from this table when their migrations are verified.
+During PR preparation, source references were refreshed against `a6ea532d6`,
+including the new Me workspace. The browser observations below remain tied to
+`2bea18769`; the newer Me workspace and Agents2 page were not browser-retested.
+
+Browser inspection covered Messages, Inbox, Reminders, Projects, Agents, Sessions,
+Workflows, Me, the account menu, Channel members, a profile companion panel, and
+Profile, Appearance, Notifications, and Builderlab Settings. The existing configured
+community loaded. Inspection used dark mode at 1280×720, with an additional
+Appearance check at 480×800. Menu Escape returned focus to its trigger; the member
+dialog's initial search focus and loading-to-list layout were observed.
+No forms were submitted or settings changed. Desktop-only agent management,
+light-mode parity, 200% zoom, RTL, full keyboard journeys, destructive/pending/error
+paths, and slow-motion playback were **not verified**. Source-only observations
+below are labelled separately. No product fixes are included in this documentation pass.
+
+### Patterns to reuse
+
+| Surface | Example and the specific pattern it demonstrates |
+| --- | --- |
+| Conversation workspace | [ChannelsPage](../src/bundled/channels/ChannelsPage.tsx): pane identity and icon actions, timeline scroll ownership, persistent composer |
+| Collection with detail | [InboxPage](../src/bundled/inbox/InboxPage.tsx): filters in the body and list/detail ownership; the Drafts header action is a gap below |
+| Me workspace | [SessionsPage](../src/bundled/sessions/SessionsPage.tsx): conversation timeline/composer beside the shared panel workspace; source-refreshed, with its disconnected header gap recorded below |
+| Immediate settings | [NotificationSettings](../src/app/NotificationSettings.tsx), [AppearanceSettings](../src/app/AppearanceSettings.tsx): shared preference rows, grouped controls, and contextual permission feedback |
+| Explicit-save settings | [ProfileSettings](../src/app/ProfileSettings.tsx): scoped description, labelled fields, preserved draft/save behavior, separate identity details |
+| Bounded modal | [ChannelMembersDialog](../src/bundled/channels/ChannelMembersDialog.tsx): stable shell, fixed search/filter area, bounded results; [RemindDialog](../src/bundled/reminders/RemindDialog.tsx) is the short-form source reference |
+| Anchored actions | [ChannelHeaderMenu](../src/bundled/channels/ChannelHeaderMenu.tsx): shared Menu parts, grouped actions, and focus handoff; account-menu composition is feature-specific |
+| Contributed detail | [ProfilePanel](../src/bundled/profiles/ProfilePanel.tsx) inside [PanelCard](../src/features/panels/PanelCard.tsx): body content and tabs within host-supplied framing |
+
+### Gaps to address when migrating owners
+
+All entries below concern consistency or adoption; they do not establish a broken
+interaction or authorize a redesign of the feature's behavior.
+
+| Before | After | Why |
+| --- | --- | --- |
+| [Projects](../src/bundled/projects/ProjectsPage.tsx) and [Workflows](../src/bundled/workflows/WorkflowsPage.tsx) begin with feature-authored large headings; Projects loading replaces the heading too. Observed in the browser. | Adopt the shared pane composition, with filters, scoped notices, and labelled task actions in the body. Keep identity stable across loading and results. | A destination should remain recognizable while its content changes. |
+| [Agents](../src/bundled/agents/AgentsPage.tsx) has a bare header title and browser text Refresh action; [AgentControlPanel](../src/bundled/agents/AgentControlPanel.tsx) supplies the desktop text Add action. [Inbox](../src/bundled/inbox/InboxPage.tsx) uses a text Drafts action. Browser observed; desktop action source-reviewed. | Shared label/navigation treatment and small icon-only header actions; retain accessible names and existing action behavior. | Using the frame alone does not establish correct composition. |
+| [WorkflowLanding](../src/bundled/workflows/WorkflowLanding.tsx) and [workflows.css](../src/bundled/workflows/workflows.css) make a 15rem-tall, plus-only Button look like a creation card. Observed in the empty landing view. | A named creation action with useful EmptyState guidance for a settled empty collection; ordinary cards remain for populated objects. | The visible next step should be understandable without hovering and should not require a private Button recipe. |
+| [Builderlab Login](../src/bundled/builderlab/login/Login.tsx) uses its own heading/gaps; [PairingSettings](../src/bundled/pairing/PairingSettings.tsx) uses a different hand-built heading. Builderlab observed; Pairing source-reviewed. | Use the Settings content Header and appropriate form/preference/management grouping. Preserve integration-specific instructions and steps. | Settings registration does not render consistent content hierarchy for the plugin. |
+| [AgentCreateDialog](../src/bundled/agents/AgentCreateDialog.tsx) and [AgentDeleteDialog](../src/bundled/agents/AgentDeleteDialog.tsx) assemble Base UI shells with `text-heading` titles. Source-only. | Adopt the shared Dialog/confirmation composition, preserving dirty-draft, pending, cancellation, and focus contracts. | Copying classes does not inherit shared header/body/footer ownership. |
+| Shared [AlertDialog](../src/shared/design-system/ui/AlertDialog.tsx) still uses direct title/description/action markup and `text-heading`, while [Dialog](../src/shared/design-system/ui/Dialog.tsx) owns a structured header/body/footer with `text-label`. Source-only. | Reconcile visual geometry in the shared confirmation owner while retaining alert-dialog semantics. | A guide cannot promise uniform modal composition until the shared owners agree. |
+| [PanelSubview](../src/features/panels/PanelSubview.tsx) focuses its Back control on entry. Adding an IconButton title opens a Tooltip that consumes the first Escape before Back; reproduced in the existing focus/return component test during an isolated trial. | Preserve accessible names and the existing one-Escape Back contract until the shared Tooltip policy supports both. Current controls omit the new hint. | A mandatory hint recipe can conflict with an established keyboard contract; token guards do not detect this. |
+| [SessionsPage](../src/bundled/sessions/SessionsPage.tsx), which now supplies [Me](../src/bundled/me/index.tsx), renders its disconnected state inside PanelFrame with a standalone heading instead of the shared pane header. Source-reviewed at `a6ea532d6`. | Keep pane identity consistent across connection states while preserving contextual connection and recovery guidance. | A host frame alone does not supply the pane's header composition. |
+
+### Enforcement boundary
+
+Existing guards check many color, type, icon, spacing, and CSS-adoption rules.
+They do not prove that a page has the right hierarchy, that an action belongs in a
+particular slot, or that a plugin avoids duplicate framing. The custom workflow
+button is a concrete example: its non-module stylesheet falls outside the adoption
+guard's CSS-module control-override scan. Flexible React slots also accept text header
+actions. External plugin trees are not made conformant by registration alone.
+
+Review the complete rendered composition and its contributing components. Any
+future executable guard or stricter component API needs a specific contract,
+current callers, focused regression coverage, and a migration plan; do not hide
+these gaps by broadening exceptions or claim this documentation mechanically
+enforces arbitrary plugin UI.
+
+Before planning live inspection, read entry effects as well as click handlers.
+For example, Pair mobile starts a pairing session when opened with native identity
+and a selected community. Use the existing controlled pairing fixture when the
+review is limited to layout; avoiding the submit button does not make entry read-only.

@@ -22,6 +22,76 @@ import { AgentCard } from "./AgentCard";
 
 afterEach(cleanup);
 
+it.each(["tile", "row"] as const)(
+  "shows a restart-required badge when any saved %s setup drifts, but not for unmanaged or legacy cards",
+  (layout) => {
+    const fixture = controlFixture();
+    const drift: AgentView["restartDiff"] = [
+      {
+        field: "systemPrompt",
+        change: { kind: "text", beforeChars: 18, afterChars: 21 },
+      },
+    ];
+    const stable = {
+      ...fixture.agent,
+      id: "stable-fixture-agent",
+      restartDiff: [],
+    } satisfies AgentView;
+    const drifted = {
+      ...fixture.agent,
+      id: "drifted-fixture-agent",
+      relayUrl: "wss://other-relay.example.test",
+      restartDiff: drift,
+    } satisfies AgentView;
+    const card = (editable: AgentView[]) => (
+      <AgentCard
+        name="Agent"
+        identities={[{ pubkey: fixture.agent.pubkey, name: "Agent" }]}
+        editable={editable}
+        layout={layout}
+      />
+    );
+    const view = render(card([stable, drifted]));
+    const article = screen.getByRole("article", { name: "Agent Agent" });
+    const badge = within(article).getByRole("status", {
+      name: "Restart required",
+    });
+
+    expect(badge).toBeVisible();
+    expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+
+    view.rerender(
+      card([
+        {
+          ...stable,
+          restartDiff: [],
+        },
+        {
+          ...drifted,
+          restartDiff: [],
+        },
+      ]),
+    );
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    view.rerender(card([]));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+
+    const legacy = { ...drifted } as Omit<AgentView, "restartDiff"> & {
+      restartDiff?: AgentView["restartDiff"];
+    };
+    delete legacy.restartDiff;
+    view.rerender(card([legacy as AgentView]));
+    expect(
+      within(article).queryByRole("status", { name: "Restart required" }),
+    ).toBeNull();
+  },
+);
+
 it("badges a single agent only while live presence is known", () => {
   const pubkey = "a".repeat(64);
   let status: PresenceStatus = "unknown";

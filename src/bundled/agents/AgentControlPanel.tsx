@@ -1,3 +1,5 @@
+import { AgentQuickModel } from "./AgentQuickModel";
+import { NewAgentTile } from "./NewAgentTile";
 import { createPortal } from "react-dom";
 import { Dialog } from "@base-ui/react/dialog";
 import type { useIdentityNames } from "../../features/identity-names/react";
@@ -39,7 +41,11 @@ export function AgentControlPanel({
   onCloseTarget,
   onOpenHarnesses,
   headerActions,
+  importTab = false,
+  onImported,
 }: {
+  importTab?: boolean;
+  onImported?: () => void;
   headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
@@ -61,7 +67,8 @@ export function AgentControlPanel({
       action: "use" | "clone",
       source?: ImportSource,
     ) => void,
-    onImport: (pubkey: string, source?: ImportSource) => void,
+    onImport: (pubkey?: string, source?: ImportSource) => void,
+    newAgent: ReactNode,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
@@ -86,7 +93,7 @@ export function AgentControlPanel({
   const [importSelection, setImportSelection] = useState<{
     destination: string;
     trigger: HTMLElement | null;
-    pubkey: string;
+    pubkey?: string | undefined;
     name: string;
     source?: ImportSource;
   } | null>(null);
@@ -200,7 +207,9 @@ export function AgentControlPanel({
   const importForm = state.data ? (
     <AgentImport
       // The inventory owns ordinary imports; this list only repairs team imports.
-      repairOnly={state.data.parked !== undefined && !importSelection}
+      repairOnly={
+        !importTab && state.data.parked !== undefined && !importSelection
+      }
       key={`${importDestination}:${importSelection?.pubkey}:${importSelection?.source}`}
       control={control}
       initialSource={importSelection?.source ?? "installed"}
@@ -228,6 +237,7 @@ export function AgentControlPanel({
       onImported={(agents) => {
         importCompleted.current = true;
         setImportedId(agents[0]?.id ?? null);
+        onImported?.();
         setImportSections([]);
         setImportSelection(null);
       }}
@@ -257,6 +267,7 @@ export function AgentControlPanel({
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
       {state.data &&
+        (!children || state.data.parked === undefined) &&
         (headerActions ? (
           createPortal(createButton, headerActions)
         ) : (
@@ -279,54 +290,84 @@ export function AgentControlPanel({
         <Button onClick={() => void control.refresh()}>Retry status</Button>
       )}
       {state.busy && <p role="status">Waiting for the desktop app…</p>}
-      {children ? (
-        children(
-          state,
-          edit,
-          duplicate,
-          remove,
-          importedId,
-          label,
-          (pubkey, action, source) =>
-            setHandover({
-              pubkey,
-              action,
-              destination: importDestination,
-              ...(source ? { source } : {}),
-            }),
-          (pubkey, source) => {
-            importCompleted.current = false;
-            setImportSelection({
-              destination: importDestination,
-              trigger:
-                document.activeElement instanceof HTMLElement
-                  ? document.activeElement
-                  : null,
-              pubkey,
-              name:
-                state.data?.parked?.find((agent) => agent.pubkey === pubkey)
-                  ?.name ?? "agent",
-              ...(source ? { source } : {}),
-            });
-            setImportSections(["old-buzz"]);
-          },
-        )
-      ) : (
-        <div className="agent-grid">
-          {state.data?.agents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              name={label(agent)}
-              identities={[agent]}
-              editable={[agent]}
-              onEdit={edit}
-              onDuplicate={duplicate}
-              onDelete={control.delete ? remove : undefined}
-            />
-          ))}
-        </div>
-      )}
+      <section
+        id={importTab ? "agents-import" : "agents-yours"}
+        role="tabpanel"
+        aria-labelledby={importTab ? "agents-import-tab" : "agents-yours-tab"}
+      >
+        {children ? (
+          children(
+            state,
+            edit,
+            duplicate,
+            remove,
+            importedId,
+            label,
+            (pubkey, action, source) =>
+              setHandover({
+                pubkey,
+                action,
+                destination: importDestination,
+                ...(source ? { source } : {}),
+              }),
+            (pubkey, source) => {
+              importCompleted.current = false;
+              setImportSelection({
+                destination: importDestination,
+                trigger:
+                  document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null,
+                pubkey,
+                name:
+                  state.data?.parked?.find((agent) => agent.pubkey === pubkey)
+                    ?.name ?? "agent",
+                ...(source ? { source } : {}),
+              });
+              setImportSections(["old-buzz"]);
+            },
+            !importTab && (
+              <NewAgentTile
+                disabled={localPending}
+                onClick={() =>
+                  setAdding({
+                    destination: importDestination,
+                    owner: createOwner ?? "",
+                  })
+                }
+              />
+            ),
+          )
+        ) : (
+          <div className="agent-grid">
+            {state.data?.agents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                name={label(agent)}
+                identities={[agent]}
+                editable={[agent]}
+                modelPicker={
+                  <AgentQuickModel
+                    agent={agent}
+                    control={control}
+                    state={state}
+                  />
+                }
+                onEdit={edit}
+                onDuplicate={duplicate}
+                onDelete={control.delete ? remove : undefined}
+              />
+            ))}
+          </div>
+        )}
+        {importTab && !importSelection && (
+          <div className="mt-6">
+            {importForm ?? <p>Connect to the desktop app to import agents.</p>}
+          </div>
+        )}
+      </section>
       {state.data &&
+        !importTab &&
         !importSelection &&
         (state.data.parked === undefined || needsRepair) && (
           <Accordion
@@ -376,7 +417,20 @@ export function AgentControlPanel({
                 }
                 aria-modal={!state.pendingCredentialWrite}
               >
+                {!importSelection.pubkey && (
+                  <Dialog.Title className="text-heading">
+                    Import agents
+                  </Dialog.Title>
+                )}
                 {importForm}
+                {!importSelection.pubkey && (
+                  <Button
+                    disabled={state.busy}
+                    onClick={() => setImportSelection(null)}
+                  >
+                    Close
+                  </Button>
+                )}
               </Dialog.Popup>
             </Dialog.Portal>
           </Dialog.Root>

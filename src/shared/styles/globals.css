@@ -245,7 +245,8 @@
       grid-template-columns var(--duration-settle) ease-in-out,
       clip-path var(--duration-settle) step-end allow-discrete;
   }
-  .shell-navigation[data-sidebar-collapsible][aria-hidden="true"] {
+  /* Popovers may set aria-hidden for accessibility without closing navigation. */
+  .shell-navigation[data-sidebar-collapsible]:not([data-sidebar-open]) {
     grid-template-columns: 0fr;
     clip-path: inset(0);
     transition-timing-function: ease-in-out, step-start;

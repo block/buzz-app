@@ -1,13 +1,4 @@
-import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
-import { DotsThreeIcon } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-} from "../../shared/design-system/ui/Menu";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { InventoryView } from "./InventoryView";
 import type { ClientSnapshot } from "../../features/communities/service";
@@ -30,7 +21,6 @@ import {
 import { useInventoryArchive } from "./inventory-archive";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySnapshot } from "../../features/relay/service";
-import { Button } from "../../shared/design-system/ui/Button";
 import { inventoryIdentities, localSetups } from "./inventory-model";
 import { identityTiles } from "./identity-tiles";
 import type { ProfileResolver } from "./AgentCard";
@@ -38,6 +28,7 @@ import { removeRelayAgent } from "../../features/agents/relay-removal";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
 export function UnifiedInventory({
+  importTab = false,
   state,
   control,
   connection,
@@ -51,9 +42,11 @@ export function UnifiedInventory({
   onUseHere,
   onImport,
   teams,
-  headerActions,
+  newAgent,
 }: {
+  importTab?: boolean;
   teams?: ReactNode;
+  newAgent?: ReactNode;
   headerActions?: HTMLElement | null;
   state: AgentControlState;
   control: AgentControl;
@@ -70,7 +63,7 @@ export function UnifiedInventory({
     action: "use" | "clone",
     source?: ImportSource,
   ): void;
-  onImport(pubkey: string, source?: ImportSource): void;
+  onImport(pubkey?: string, source?: ImportSource): void;
 }) {
   const { agentLibrary: library, archives, profiles } = connection.session;
   const publicProfiles = useSyncExternalStore(
@@ -117,7 +110,7 @@ export function UnifiedInventory({
     connection.viewer && connection.scope?.endsWith(`:${connection.viewer}`)
       ? relayOrigin(connection.scope.slice(0, -(connection.viewer.length + 1)))
       : "";
-  const [refresh, setRefresh] = useState(0);
+  const refresh = 0;
   // Hide confirmed removals at once and for as long as this view lives. A
   // removal is per community, so the key includes the destination.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
@@ -296,6 +289,7 @@ export function UnifiedInventory({
   }
   return (
     <InventoryView
+      importTab={importTab}
       state={state}
       control={control}
       session={connection.session}
@@ -329,66 +323,25 @@ export function UnifiedInventory({
       profileKeys={profileKeys}
       onUseHere={onUseHere}
       onImport={onImport}
-      teams={teams}
+      teams={importTab ? undefined : teams}
+      newAgent={newAgent}
     >
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">
           {warning} Retry local discovery by reopening the app.
         </p>
       ))}
-      {(client?.status === "ready" || connection.status === "ready") &&
-        (headerActions ? (
-          createPortal(
-            <MenuRoot>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    aria-label="Agent page actions"
-                    size="sm"
-                    icon={<DotsThreeIcon size={18} />}
-                  />
-                }
-              />
-              <MenuPopup align="end">
-                <MenuItem
-                  disabled={snapshot.status === "loading"}
-                  onClick={() => {
-                    void library.refresh();
-                    void archives.refresh();
-                    setRefresh((value) => value + 1);
-                  }}
-                >
-                  Refresh agents
-                </MenuItem>
-              </MenuPopup>
-            </MenuRoot>,
-            headerActions,
-          )
-        ) : (
-          <div className="self-start">
-            <Button
-              disabled={snapshot.status === "loading"}
-              onClick={() => {
-                void library.refresh();
-                void archives.refresh();
-                setRefresh((value) => value + 1);
-              }}
-            >
-              Refresh agents
-            </Button>
-          </div>
-        ))}
       {pending && <p role="status">Checking community inventory…</p>}
       {profileErrors.map((community) => (
         <p key={community} role="alert">
-          Agent names and pictures could not be checked for {community}. Refresh
-          to retry.
+          Agent names and pictures could not be checked for {community}. Reopen
+          this page to retry.
         </p>
       ))}
       {errors.map((community) => (
         <p key={community} role="alert">
-          Community inventory could not be checked for {community}. Refresh to
-          retry.
+          Community inventory could not be checked for {community}. Reopen this
+          page to retry.
         </p>
       ))}
       {!currentReadComplete && (
@@ -397,9 +350,9 @@ export function UnifiedInventory({
           current.
         </p>
       )}
-      {snapshot.error && connection.status === "ready" && (
-        <p role="alert">{snapshot.error}</p>
-      )}
+      {snapshot.error &&
+        !snapshot.error.startsWith("Local library unavailable;") &&
+        connection.status === "ready" && <p role="alert">{snapshot.error}</p>}
     </InventoryView>
   );
 }

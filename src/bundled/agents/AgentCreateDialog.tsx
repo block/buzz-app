@@ -1,3 +1,11 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { XIcon } from "../../shared/design-system/icons";
+import type { InstructionEditingActions } from "./AgentInstructions";
+import {
+  randomAgentAvatar,
+  isRetiredAgentAvatar,
+} from "../../features/agents/avatar-packs";
+import { AgentCreateHeader } from "./AgentCreateHeader";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import {
@@ -30,6 +38,9 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
     revision: 0,
     name: "",
     systemPrompt: "",
+    ...(state.data?.avatarEditingAvailable
+      ? { picture: randomAgentAvatar().url }
+      : {}),
     sessionPolicy: null,
     workspace: state.data?.defaultWorkspace ?? "",
     command,
@@ -66,6 +77,7 @@ export function AgentCreateDialog({
   initialSettings?: CloneSettings | undefined;
   onClose(): void;
 }) {
+  const form = useRef<HTMLFormElement>(null);
   const [requestId] = useState(() => crypto.randomUUID());
   const [draft, setDraft] = useState<AgentDraft>(() => {
     const initial = source
@@ -80,6 +92,14 @@ export function AgentCreateDialog({
         };
     return { ...initial, environment: { BUZZ_ACP_AGENTS: "10" } };
   });
+  useEffect(() => {
+    if (source || !state.data?.avatarEditingAvailable) return;
+    setDraft((current) =>
+      !current.picture || isRetiredAgentAvatar(current.picture)
+        ? { ...current, picture: randomAgentAvatar().url }
+        : current,
+    );
+  }, [source, state.data?.avatarEditingAvailable]);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
@@ -100,10 +120,22 @@ export function AgentCreateDialog({
   );
   const runtimeBlocked =
     !state.data?.runtimeAvailable && (!saved || nextStep === "start");
+  const [modelTarget, setModelTarget] = useState<HTMLDivElement | null>(null);
+  const [avatarActionTarget, setAvatarActionTarget] =
+    useState<HTMLDivElement | null>(null);
+  const avatarNavigation = useRef<{ back(): void }>(null);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
+  const [avatarActive, setAvatarActive] = useState(false);
+  const instructionEditing = useRef<InstructionEditingActions>(null);
+  const [instructionActive, setInstructionActive] = useState(false);
+  const [instructionBusy, setInstructionBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
     if (
+      instructionBusy ||
+      avatarBusy ||
       blocked ||
       runtimeBlocked ||
       (!saved && (!available || !control.create))
@@ -219,24 +251,35 @@ export function AgentCreateDialog({
       <Dialog.Portal>
         <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
+          initialFocus={() =>
+            form.current?.querySelector<HTMLInputElement>(
+              'input[placeholder="Agent name"], input:not([role="combobox"])',
+            ) ?? false
+          }
           aria-modal="true"
           data-buzz-ui=""
           className="buzz-dialog agent-dialog text-body"
         >
           <header className="buzz-dialog-header">
             <Dialog.Title className="text-heading">
-              {source
-                ? `Duplicate ${source.name}`
-                : initialSettings
-                  ? "Clone agent"
-                  : "Create agent"}
+              {configurationOpen
+                ? "AI configuration"
+                : source
+                  ? `Duplicate ${source.name}`
+                  : initialSettings
+                    ? "Clone agent"
+                    : "Create agent"}
             </Dialog.Title>
+            <Dialog.Close
+              render={
+                <IconButton
+                  aria-label="Close"
+                  size="compact"
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              }
+            />
           </header>
-          <Dialog.Description className="buzz-dialog-description">
-            Create and start an agent in{" "}
-            {destination || "a connected community"}. It won't join a channel
-            automatically.
-          </Dialog.Description>
           {initialSettings && (
             <p className="text-body-sm text-secondary">
               Only the name and instructions were copied. Review them for
@@ -246,13 +289,50 @@ export function AgentCreateDialog({
             </p>
           )}
           <form
-            className="buzz-dialog-body space-y-section-gap"
+            ref={form}
+            className="buzz-dialog-body flex flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              void create();
+              if (
+                !instructionActive &&
+                !configurationOpen &&
+                !avatarActive &&
+                !configurationOpen
+              )
+                void create();
             }}
           >
+            {state.data?.avatarEditingAvailable && (
+              <div hidden={configurationOpen}>
+                <AgentCreateHeader
+                  avatarNavigationRef={avatarNavigation}
+                  avatarActionTarget={avatarActionTarget}
+                  onAvatarActiveChange={setAvatarActive}
+                  instructionEditingRef={instructionEditing}
+                  onInstructionActiveChange={setInstructionActive}
+                  instructions={draft.systemPrompt}
+                  onInstructionBusyChange={setInstructionBusy}
+                  modelSlotRef={setModelTarget}
+                  community={destination}
+                  onBusyChange={setAvatarBusy}
+                  name={draft.name}
+                  picture={draft.picture}
+                  disabled={blocked || !!saved}
+                  onChange={(patch) => {
+                    setDraft((current) => ({ ...current, ...patch }));
+                    setDirty(true);
+                  }}
+                />
+              </div>
+            )}
             <AgentSettingsFields
+              configurationOpen={configurationOpen}
+              onConfigurationOpenChange={setConfigurationOpen}
+              onInstructionBusyChange={setInstructionBusy}
+              cardLayout
+              modelTarget={modelTarget}
+              hideInstructions={!!state.data?.avatarEditingAvailable}
+              hideName={!!state.data?.avatarEditingAvailable}
               draft={draft}
               control={control}
               state={state}
@@ -302,37 +382,74 @@ export function AgentCreateDialog({
                   : `${saved.name} was saved and started. Finish its profile setup.`}
               </p>
             )}
-            {error && <p role="alert">{error}</p>}
+            {error && error !== "Enter an agent name." && (
+              <p role="alert">{error}</p>
+            )}
             {state.status === "error" && !busy && (
               <Button onClick={() => void control.refresh()}>
                 Retry status
               </Button>
             )}
             <div className="buzz-dialog-actions">
-              <Button onClick={onClose}>
-                {busy || saved ? "Close" : "Cancel"}
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={blocked || runtimeBlocked || (!saved && !available)}
-              >
-                {busy
-                  ? phase === "starting"
-                    ? "Starting…"
-                    : phase === "publishing"
-                      ? "Finishing…"
-                      : phase === "checking"
-                        ? "Checking…"
-                        : "Creating…"
-                  : saved
-                    ? nextStep === "start"
-                      ? "Start agent"
-                      : "Finish profile"
-                    : initialSettings
-                      ? "Clone agent"
-                      : "Create agent"}
-              </Button>
+              {(instructionActive || avatarActive || configurationOpen) && (
+                <Button
+                  style={{ marginRight: "auto" }}
+                  onClick={() =>
+                    configurationOpen
+                      ? setConfigurationOpen(false)
+                      : instructionActive
+                        ? instructionEditing.current?.back()
+                        : avatarNavigation.current?.back()
+                  }
+                >
+                  Back
+                </Button>
+              )}
+              <div ref={setAvatarActionTarget} hidden={!avatarActive} />
+              {!avatarActive && (
+                <Button
+                  type={
+                    instructionActive || configurationOpen ? "button" : "submit"
+                  }
+                  onClick={
+                    configurationOpen
+                      ? () => setConfigurationOpen(false)
+                      : instructionActive
+                        ? () => instructionEditing.current?.done()
+                        : undefined
+                  }
+                  variant="primary"
+                  disabled={
+                    instructionBusy ||
+                    (!instructionActive &&
+                      !configurationOpen &&
+                      (avatarBusy ||
+                        blocked ||
+                        runtimeBlocked ||
+                        (!saved && (!available || !draft.name.trim()))))
+                  }
+                >
+                  {configurationOpen
+                    ? "Done"
+                    : instructionActive
+                      ? "Done editing"
+                      : busy
+                        ? phase === "starting"
+                          ? "Starting…"
+                          : phase === "publishing"
+                            ? "Finishing…"
+                            : phase === "checking"
+                              ? "Checking…"
+                              : "Creating…"
+                        : saved
+                          ? nextStep === "start"
+                            ? "Start agent"
+                            : "Finish profile"
+                          : initialSettings
+                            ? "Clone agent"
+                            : "Create agent"}
+                </Button>
+              )}
             </div>
           </form>
         </Dialog.Popup>

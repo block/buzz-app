@@ -7,6 +7,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { AgentQuickModel } from "../../bundled/agents/AgentQuickModel";
+import { controlFixture } from "../../features/agents/control-testing";
+import { createAgentControl } from "../../features/agents/control";
 import { AppShell } from "./AppShell";
 
 vi.mock("../../bundled", () => ({ bundledPlugins: [] }));
@@ -188,5 +191,48 @@ it("contains a throwing page badge to its own nav row", () => {
     expect(screen.getByText("content")).toBeInTheDocument();
   } finally {
     error.mockRestore();
+  }
+});
+
+it("keeps the sidebar unchanged while the card model picker opens and closes", async () => {
+  const current = createServices();
+  services = current;
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.agents/agents"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        <AgentQuickModel
+          agent={fixture.agent}
+          control={control}
+          state={control.snapshot()}
+        />
+      </AppShell>
+    </ToastProvider>,
+  );
+  const navigation = document.getElementById("shell-navigation");
+  for (const hidden of [false, true]) {
+    if (hidden)
+      await user.click(
+        screen.getByRole("button", { name: "Hide Channel sidebar" }),
+      );
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(navigation?.hasAttribute("data-sidebar-open")).toBe(!hidden);
+    await user.keyboard("{Escape}");
+    expect(navigation?.hasAttribute("data-sidebar-open")).toBe(!hidden);
   }
 });

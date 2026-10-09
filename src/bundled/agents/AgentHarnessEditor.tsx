@@ -19,7 +19,9 @@ export function AgentHarnessEditor({
   onOpenHarnesses,
   discardEdits = false,
   disabled = false,
+  hideHarness = false,
 }: {
+  hideHarness?: boolean;
   draft: AgentDraft;
   onOpenHarnesses?: (() => void) | undefined;
   discardEdits?: boolean;
@@ -47,85 +49,73 @@ export function AgentHarnessEditor({
     ? policy.provider === "discovered"
     : kind === "pi";
   const piLoading = discoveredProviders && piProviders === null;
-  const missingPi = options.some(
-    (option) =>
-      harnessKind(option.command) === "pi" && option.available === false,
-  );
-  const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
-      <ConfigChoice
-        disabled={disabled}
-        label="Harness"
-        customLabel="Custom executable / current value"
-        inputLabel="Executable"
-        value={draft.command}
-        options={[
-          ...options.map(({ command, label, available }) => ({
-            value: command,
-            label: available === false ? `${label} (install first)` : label,
-            disabled: available === false,
-          })),
-          ...(isPreset &&
-          !options.some((option) => option.command === draft.command)
-            ? [
-                {
-                  value: draft.command,
-                  label: `${harness?.label ?? preset?.label} (current executable)`,
-                },
-              ]
-            : []),
-        ]}
-        onChange={(command, pickedOption) => {
-          const option = options.find((item) => item.command === command);
-          const enteringExternal =
-            !!option &&
-            (!!harnessPreset(option.command) ||
-              (option.configurationPolicy
-                ? option.configurationPolicy.authentication ===
-                  "harnessWithOverrides"
-                : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
-          onChange({
-            command,
-            ...(pickedOption &&
-            option &&
-            (enteringExternal || external || isPreset)
-              ? {
-                  args: JSON.stringify(option?.defaultArgs ?? []),
-                  provider: enteringExternal
-                    ? ""
-                    : (option?.providers[0]?.value ?? ""),
-                  model: "",
-                }
-              : {}),
-          });
-        }}
-      />
-      {missingPi && (
-        <p className="text-body-sm text-secondary">
-          Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
-        </p>
-      )}
-      {missingPreset && (
-        <p className="text-body-sm text-secondary">
-          {preset.label} needs its ACP launcher. Set it up under Settings →
-          Agents → Harnesses.
-        </p>
-      )}
-      {(missingPi || missingPreset) && onOpenHarnesses && (
-        <div className="space-y-1">
-          <Button
-            type="button"
-            variant="link"
+      {!hideHarness && (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4">
+          <ConfigChoice
             disabled={disabled}
-            onClick={onOpenHarnesses}
-          >
-            Open Harnesses in Settings
-          </Button>
-          {discardEdits && (
-            <p className="m-0 text-body-sm text-secondary">
-              Opening Settings discards unsaved edits.
-            </p>
+            label="Harness"
+            customLabel="Custom executable / current value"
+            inputLabel="Executable"
+            value={draft.command}
+            options={[
+              ...options.map(({ command, label, available }) => ({
+                value: command,
+                label: available === false ? `${label} (install first)` : label,
+                disabled: available === false,
+              })),
+              ...(isPreset &&
+              !options.some((option) => option.command === draft.command)
+                ? [
+                    {
+                      value: draft.command,
+                      label: `${harness?.label ?? preset?.label} (current executable)`,
+                    },
+                  ]
+                : []),
+            ]}
+            onChange={(command, pickedOption) => {
+              const option = options.find((item) => item.command === command);
+              const enteringExternal =
+                !!option &&
+                (!!harnessPreset(option.command) ||
+                  (option.configurationPolicy
+                    ? option.configurationPolicy.authentication ===
+                      "harnessWithOverrides"
+                    : ["goose", "pi"].includes(
+                        harnessKind(option.command) ?? "",
+                      )));
+              onChange({
+                command,
+                ...(pickedOption &&
+                option &&
+                (enteringExternal || external || isPreset)
+                  ? {
+                      args: JSON.stringify(option?.defaultArgs ?? []),
+                      provider: enteringExternal
+                        ? ""
+                        : (option?.providers[0]?.value ?? ""),
+                      model: "",
+                    }
+                  : {}),
+              });
+            }}
+          />
+          {onOpenHarnesses && (
+            <Button
+              type="button"
+              variant="link"
+              disabled={disabled}
+              title={
+                discardEdits
+                  ? "Opening Settings discards unsaved edits."
+                  : undefined
+              }
+              onClick={onOpenHarnesses}
+            >
+              Open Harnesses in Settings
+            </Button>
           )}
         </div>
       )}

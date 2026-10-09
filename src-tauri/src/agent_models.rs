@@ -197,6 +197,23 @@ impl ModelHost {
         });
         receive.await.map_err(|_| CANCELLED.to_owned())?
     }
+    pub(crate) fn instruction_auth(
+        &self,
+        workspace: &str,
+    ) -> Result<Arc<PkceOAuthTokenSource>, String> {
+        struct Headless;
+        impl BrowserOpener for Headless {
+            fn open(&self, _: &str) -> Result<(), String> {
+                Err("Connect Databricks in the model picker first".into())
+            }
+        }
+        Ok(RuntimeConnection::new(
+            workspace.to_owned(),
+            &self.cache(workspace)?,
+            Arc::new(Headless),
+        )?
+        .auth)
+    }
     fn cache(&self, _host: &str) -> Result<PathBuf, String> {
         let state = self.state.lock().map_err(|_| CANCELLED)?;
         oauth_root(&state.root.clone()?)

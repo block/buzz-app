@@ -15,9 +15,9 @@ import type {
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { relayOrigin } from "../../features/communities/destination";
-import { AgentCard } from "./AgentCard";
 import type { ProfileResolver } from "./AgentCard";
 import {
+  importGroup,
   localHereGroup,
   localOtherGroup,
   relayGroup,
@@ -64,7 +64,9 @@ function communitySections(group: string, identities: InventoryEntry[]) {
 function orderedGroups(entries: InventoryEntry[]) {
   const groups = new Map<string, InventoryEntry[]>();
   for (const entry of entries) {
-    const group = entry.decision.group;
+    const group = [relayGroup, importGroup].includes(entry.decision.group)
+      ? localHereGroup
+      : entry.decision.group;
     groups.set(group, [...(groups.get(group) ?? []), entry]);
   }
   for (const identities of groups.values()) {
@@ -83,12 +85,12 @@ function orderedGroups(entries: InventoryEntry[]) {
 
 /** Final inventory presentation; discovery and transport lifetime stay with the caller. */
 export function InventoryView({
+  importTab = false,
   state,
   control,
   session,
   destination,
   rows,
-  profiles,
   publicProfiles,
   sourceProfiles,
   edit,
@@ -103,7 +105,9 @@ export function InventoryView({
   onImport,
   children,
   teams,
+  newAgent,
 }: {
+  importTab?: boolean;
   state: AgentControlState;
   control: AgentControl;
   session: RelaySession;
@@ -140,6 +144,7 @@ export function InventoryView({
   onImport(pubkey: string, source?: ImportSource): void;
   children?: ReactNode;
   teams?: ReactNode;
+  newAgent?: ReactNode;
 }) {
   const [selectedSources, setSelectedSources] = useState<
     Record<string, ImportSource>
@@ -163,11 +168,16 @@ export function InventoryView({
   if (!data) return null;
   const active: InventoryEntry[] = [];
   const archived: InventoryEntry[] = [];
-  for (const row of rows.values())
+  for (const row of rows.values()) {
+    const decision = inventoryDecision(row, destination);
+    const needsImport =
+      decision.group === relayGroup || decision.group === importGroup;
+    if (needsImport !== importTab) continue;
     (archive?.archived.has(row.pubkey) ? archived : active).push({
       row,
-      decision: inventoryDecision(row, destination),
+      decision,
     });
+  }
   const allArchived = !active.length && !!archived.length;
   // Entering the all-archived state reopens the section, even after an
   // earlier collapse; a collapse made while in that state still holds.
@@ -180,10 +190,26 @@ export function InventoryView({
   function renderGroups(entries: InventoryEntry[], nested = false) {
     const GroupHeading = nested ? "h3" : "h2";
     const CommunityHeading = nested ? "h4" : "h3";
-    return orderedGroups(entries).map(([group, identities]) => (
+    const groups = orderedGroups(entries);
+    if (
+      !nested &&
+      newAgent &&
+      !groups.some(([group]) => group === localHereGroup) &&
+      entries.every((entry) =>
+        [localHereGroup, relayGroup].includes(entry.decision.group),
+      )
+    )
+      groups.unshift([localHereGroup, []]);
+    return groups.map(([group, identities]) => (
       <section key={group} aria-label={group} className="flex flex-col gap-3">
-        <GroupHeading className="m-0 text-label-sm">
-          {group === localHereGroup ? "Individual agents" : group}
+        <GroupHeading
+          className={group === localHereGroup ? "sr-only" : "m-0 text-label-sm"}
+        >
+          {group === localHereGroup
+            ? importTab
+              ? "Agents to import"
+              : "Individual agents"
+            : group}
         </GroupHeading>
         {communitySections(group, identities).map(
           ({ community, identities }) => (
@@ -204,6 +230,7 @@ export function InventoryView({
                     : "agent-grid"
                 }
               >
+                {group === localHereGroup && !nested && newAgent}
                 {identities.map(({ row, decision }) => (
                   <InventoryIdentityCard
                     key={row.pubkey}
@@ -252,23 +279,32 @@ export function InventoryView({
       </section>
     ));
   }
-  profiles.sort(
-    (a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
-      a.id.localeCompare(b.id),
-  );
   return (
     <section ref={root} aria-label="My agents" className="flex flex-col gap-6">
       {children}
-      {!rows.size && <p>No agents yet. Add an agent to get started.</p>}
+      {!active.length && !archived.length && !newAgent && (
+        <p>
+          {importTab
+            ? "No other agents found to import."
+            : "No agents yet. Add an agent to get started."}
+        </p>
+      )}
       {allArchived && <p>All your agents are archived in this community.</p>}
       {renderGroups(
-        active.filter((entry) => entry.decision.group === localHereGroup),
+        active.filter((entry) =>
+          [localHereGroup, relayGroup].includes(entry.decision.group),
+        ),
       )}
       {teams}
-      {renderGroups(
-        active.filter((entry) => entry.decision.group !== localHereGroup),
-      )}
+      {active.some(
+        (entry) => ![localHereGroup, relayGroup].includes(entry.decision.group),
+      ) &&
+        renderGroups(
+          active.filter(
+            (entry) =>
+              ![localHereGroup, relayGroup].includes(entry.decision.group),
+          ),
+        )}
       {!!archived.length && (
         <section
           aria-label="Archived agents"
@@ -293,22 +329,6 @@ export function InventoryView({
               },
             ]}
           />
-        </section>
-      )}
-      {!!profiles.length && (
-        <section aria-label="Profiles without identities" className="space-y-3">
-          <h2 className="text-heading">Profiles without identities</h2>
-          <div className="agent-grid">
-            {profiles.map((profile) => (
-              <AgentCard
-                key={profile.id}
-                name={profile.name}
-                avatar={profile.avatar}
-                identities={[]}
-                session={session}
-              />
-            ))}
-          </div>
         </section>
       )}
     </section>

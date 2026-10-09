@@ -81,3 +81,11 @@ Hermes Agent: the bundled `icons/hermes.png` is reused unchanged from Block Buzz
 cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
+
+## Model family brand marks
+
+DeepSeek, Grok, Kimi, Qwen, and Gemini SVG marks in
+`src/shared/design-system/icons/ModelLogos.tsx` are adapted from
+[Lobe Icons](https://github.com/lobehub/lobe-icons/tree/c385b2b8d1f9e19aa86e628d4e23c91ee1111a47/packages/static-svg/icons)
+at revision `c385b2b8d1f9e19aa86e628d4e23c91ee1111a47`. SVG paths are unchanged; React sizing and accessibility use the shared icon gateway.
+The MIT license is preserved in [LOBE-LICENSE.txt](src/shared/design-system/icons/LOBE-LICENSE.txt).

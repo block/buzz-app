@@ -9,25 +9,30 @@ import { IconButton } from "./IconButton";
 function Control({
   label,
   triggerLabel,
+  labelVisibility = "visible",
   loading = false,
   onBrowse,
+  leading,
   description,
   error,
   id,
   ...props
 }: Omit<ComponentProps<typeof BaseCombobox.Input>, "className" | "render"> & {
   label: string;
+  labelVisibility?: "visible" | "hidden";
   description?: ReactNode;
   error?: ReactNode;
   triggerLabel: string;
   loading?: boolean;
   onBrowse?: () => void;
+  leading?: ReactNode;
 }) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
   return (
     <Field
       label={label}
+      labelVisibility={labelVisibility}
       controlId={inputId}
       description={description}
       error={error}
@@ -35,6 +40,7 @@ function Control({
       <BaseCombobox.InputGroup
         render={
           <InputGroup
+            leading={leading}
             trailing={
               <BaseCombobox.Trigger
                 tabIndex={0}

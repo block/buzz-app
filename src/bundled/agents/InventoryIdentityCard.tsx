@@ -1,4 +1,8 @@
+import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { PlayIcon, StopIcon } from "../../shared/design-system/icons/index";
+import { AgentQuickModel } from "./AgentQuickModel";
 import { npubEncode } from "nostr-tools/nip19";
+import { agentLaunchBlock, canStopAgent } from "../../features/agents/control";
 import type {
   AgentControl,
   AgentControlState,
@@ -25,6 +29,7 @@ import {
   useArchiveConsent,
 } from "./inventory-archive";
 import {
+  importGroup,
   localHereGroup,
   relayGroup,
   type inventoryDecision,
@@ -121,10 +126,15 @@ export function InventoryIdentityCard({
     sourceProfile && sourceProfile.picture === avatar
       ? sourceProfile.community
       : undefined;
-  const tile = decision.group === localHereGroup;
+  const tile = [localHereGroup, relayGroup, importGroup].includes(
+    decision.group,
+  );
   // The app runs every saved setup, so each keeps its controls whether or not
   // its community is the one currently selected or connected.
   const setups = localSetups(row, destination);
+  const modelSetup =
+    row.localSetups.get(destination) ??
+    (setups.length === 1 ? setups[0] : undefined);
   const selected = selectedSource;
   const source =
     row.oldBuzzSources.length === 1
@@ -166,6 +176,40 @@ export function InventoryIdentityCard({
         identities={[{ pubkey: row.pubkey, name: row.displayName }]}
         session={session}
         editable={setups}
+        modelPicker={
+          modelSetup ? (
+            <AgentQuickModel
+              agent={modelSetup}
+              control={control}
+              state={state}
+            />
+          ) : decision.action === "unavailable" ? (
+            <span
+              className="text-body-sm text-secondary"
+              title="This profile is on the relay, but its original identity and configuration have not been found on this computer."
+            >
+              Setup unavailable
+            </span>
+          ) : (
+            <Button
+              variant="ghost"
+              size="compact"
+              title={
+                decision.action === "use"
+                  ? "Set up this identity on this computer to choose its model."
+                  : "Import this agent’s original setup to choose its model."
+              }
+              disabled={state.busy || state.status !== "ready"}
+              onClick={() =>
+                decision.action === "use"
+                  ? onUseHere(row.pubkey, "use")
+                  : onImport(row.pubkey, source)
+              }
+            >
+              Set up model
+            </Button>
+          )
+        }
         imported={setups.some((agent) => agent.id === importedId)}
         revealControls={setups.some(
           (agent) =>
@@ -194,6 +238,33 @@ export function InventoryIdentityCard({
                     : setConfirming(true),
               }
             : undefined
+        }
+        menuActions={
+          tile &&
+          setups.length === 1 &&
+          (() => {
+            const agent = setups[0];
+            if (!agent) return null;
+            const active =
+              agent.status === "running" ||
+              agent.status === "starting" ||
+              agent.status === "waiting";
+            return (
+              <MenuItem
+                disabled={
+                  active
+                    ? !canStopAgent(state, agent.id)
+                    : !!agentLaunchBlock(state, agent)
+                }
+                onClick={() => actions(agent).act(active ? "stop" : "start")}
+              >
+                <MenuIcon>
+                  {active ? <StopIcon size={14} /> : <PlayIcon size={14} />}
+                </MenuIcon>
+                {active ? "Stop" : "Start"}
+              </MenuItem>
+            );
+          })()
         }
         feedback={
           archiveRun && (

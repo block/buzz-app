@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode, useState } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -10,7 +10,19 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import type { ModelCatalog } from "../../features/agents/models";
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 it("loads Goose models on provider selection, retires stale results, and retries failures explicitly", async () => {
   const f = controlFixture();
@@ -384,7 +396,7 @@ it("shows Goose authentication errors while keeping manual model entry available
 });
 
 for (const opening of ["typing", "ArrowDown", "closed"] as const) {
-  it(`${opening}: only explicit Browse or Retry may connect the actual combobox`, async () => {
+  it(`${opening}: opening the catalog loads once without repeated sign-in attempts`, async () => {
     const f = controlFixture();
     const begin = vi.fn(async () => 1);
     const run = vi.fn(async () => {
@@ -422,9 +434,13 @@ for (const opening of ["typing", "ArrowDown", "closed"] as const) {
       }
       if (opening !== "closed")
         expect(input).toHaveAttribute("aria-expanded", "true");
-      expect(begin).not.toHaveBeenCalled();
-      expect(run).not.toHaveBeenCalled();
-      expect(cancel).not.toHaveBeenCalled();
+      if (opening !== "closed") {
+        await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      } else {
+        expect(begin).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+      }
+      if (opening === "closed") expect(cancel).not.toHaveBeenCalled();
       if (opening === "ArrowDown") {
         await user.tab();
         expect(browse).toHaveFocus();
@@ -1094,7 +1110,8 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
     />,
   );
   try {
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    await user.keyboard("{ArrowDown}");
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         1,
@@ -1109,7 +1126,10 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
     expect(screen.queryByText(/Set your Databricks workspace/)).toBeNull();
     // Browse opens the model list once the catalog renders; its popup makes
     // the rest of the form inert, so close it before opening Advanced.
-    await screen.findByRole("option", { name: /Endpoint Two/ });
+    expect(
+      await screen.findByRole("option", { name: "Endpoint Two" }),
+    ).toHaveTextContent(/^Endpoint Two$/);
+    expect(screen.queryByText("endpoint-two")).toBeNull();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     await user.click(screen.getByRole("button", { name: "Model" }));
@@ -1130,6 +1150,131 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       ),
     );
   } finally {
+    control.dispose();
+  }
+});
+
+it("shows the inherited model and treats Advanced as an action, not a model", async () => {
+  const f = controlFixture();
+  f.host.models = {
+    begin: async () => 1,
+    cancel: async () => {},
+    run: async () => ({
+      host: "",
+      models: [{ id: "system.ai.gpt-6-1-sol", name: "GPT-6.1 Sol" }],
+      modelOverridden: false,
+      disconnected: false,
+    }),
+  };
+  const control = createAgentControl(f.host);
+  const onChange = vi.fn();
+  const onAdvanced = vi.fn();
+  const view = render(
+    <AgentModelPicker
+      compact
+      onAdvanced={onAdvanced}
+      draft={{
+        ...agentDraft(f.agent),
+        command: "buzz-agent",
+        provider: "databricks_v2",
+        model: "",
+      }}
+      defaultModel="system.ai.gpt-6-1-sol"
+      defaults={{ host: "https://example.com", filter: "" }}
+      control={control}
+      onChange={onChange}
+    />,
+  );
+  const user = userEvent.setup();
+  try {
+    const input = screen.getByRole("combobox", { name: "Model" });
+    expect(input).toHaveValue("GPT 6.1 Sol");
+    expect(screen.getByText("Model", { selector: "label" })).toHaveClass(
+      "sr-only",
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(input);
+    await user.click(
+      await screen.findByRole("option", { name: "Configure AI setup" }),
+    );
+    expect(onAdvanced).toHaveBeenCalledOnce();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("GPT-6.1 Sol");
+    await user.click(input);
+    await user.click(
+      await screen.findByRole("option", { name: "GPT-6.1 Sol" }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({ model: "" });
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("drills into multi-family Databricks catalogs without changing the selected model", async () => {
+  const f = controlFixture();
+  const models = [
+    { id: "system.ai.claude-sonnet", name: "Claude Sonnet" },
+    { id: "system.ai.gpt-6-1-sol", name: "GPT-6.1 Sol" },
+    { id: "system.ai.gemini-flash", name: "Gemini Flash" },
+  ];
+  f.host.models = {
+    begin: async () => 1,
+    cancel: async () => {},
+    run: async () => ({
+      host: "",
+      models,
+      modelOverridden: false,
+      disconnected: false,
+    }),
+  };
+  const control = createAgentControl(f.host);
+  const onChange = vi.fn();
+  const view = render(
+    <AgentModelPicker
+      compact
+      catalogProvider="databricks_v2"
+      draft={{
+        ...agentDraft(f.agent),
+        command: "buzz-agent",
+        provider: "",
+        model: "",
+      }}
+      defaultModel="system.ai.gpt-6-1-sol"
+      defaults={{ host: "https://example.com", filter: "" }}
+      control={control}
+      onChange={onChange}
+    />,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    await screen.findByRole("option", { name: "Claude" });
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      expect.stringContaining("OpenAI"),
+      expect.stringContaining("Claude"),
+      expect.stringContaining("Gemini"),
+    ]);
+    await user.click(screen.getByRole("option", { name: "Claude" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "GPT-6.1 Sol",
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: "Gemini Flash" })).toBeNull(),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "All model families" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Gemini" }));
+    await user.click(screen.getByRole("option", { name: "Gemini Flash" }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      model: "system.ai.gemini-flash",
+    });
+  } finally {
+    view.unmount();
     control.dispose();
   }
 });

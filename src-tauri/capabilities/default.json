@@ -85,6 +85,8 @@
     "allow-agent-control-local-clone-settings",
     "allow-agent-control-clone-settings",
     "allow-agent-control-use-here",
+    "allow-agent-instruction-transcribe",
+    "allow-agent-instruction-generate",
     "allow-agent-models-begin",
     "allow-agent-models-cancel",
     "allow-agent-models-run",

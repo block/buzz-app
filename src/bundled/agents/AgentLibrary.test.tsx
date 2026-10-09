@@ -16,7 +16,7 @@ import { bindNames } from "../../features/identity-names/service";
 import { agentDirectory } from "../../features/identity-names/testing";
 import { AgentLibrary } from "./AgentLibrary";
 afterEach(cleanup);
-it("renders linked identities as separate named tiles while retaining profile-only entries", async () => {
+it("renders linked identities as separate named tiles without profile-only entries", async () => {
   const keys = ["a".repeat(64), "b".repeat(64)];
   const owned = createRelaySession({
     viewer: "c".repeat(64),
@@ -60,12 +60,10 @@ it("renders linked identities as separate named tiles while retaining profile-on
       fireEvent.keyDown(popup, { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     }
-    expect(screen.getAllByRole("article")).toHaveLength(3);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(
-      within(
-        screen.getByRole("region", { name: "Profiles without identities" }),
-      ).getByText("Empty"),
-    ).toBeTruthy();
+      screen.queryByRole("region", { name: "Profiles without identities" }),
+    ).toBeNull();
   } finally {
     mounted.unmount();
     names.dispose();

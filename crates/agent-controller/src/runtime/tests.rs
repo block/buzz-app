@@ -3712,3 +3712,33 @@ fn pi_saved_tool_path_is_shared_by_context_and_launch() {
     );
     assert_eq!(String::from_utf8_lossy(&result.stdout), "0.99.1\n");
 }
+
+#[test]
+fn instruction_model_uses_saved_defaults_and_native_overrides_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("config")).unwrap();
+    let mut defaults = crate::agent_defaults::AgentDefaults {
+        harness: "buzz-agent".into(),
+        provider: "databricks_v2".into(),
+        model: "saved-model".into(),
+        ..Default::default()
+    };
+    defaults
+        .environment
+        .insert("DATABRICKS_HOST".into(), "https://workspace.example".into());
+    defaults
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "override-model".into());
+    store.save_defaults(&defaults).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        dir.path().join("ownership"),
+    );
+    let (model, context) = controller.instruction_model_context().unwrap();
+    assert_eq!(model, "override-model");
+    assert_eq!(context.host.as_deref(), Some("https://workspace.example"));
+    assert_eq!(controller.store.defaults().unwrap().model, "saved-model");
+    assert!(controller.store.agents().unwrap().is_empty());
+}

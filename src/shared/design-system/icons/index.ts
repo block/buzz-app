@@ -411,3 +411,61 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
     { width: 48, height: 48 },
   ],
 });
+
+import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
+export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
+import TablerGoogleLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandGoogle.mjs";
+export const GoogleLogoIcon = defineIcon("tabler", TablerGoogleLogoIcon);
+import TablerMetaLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandMeta.mjs";
+export const MetaLogoIcon = defineIcon("tabler", TablerMetaLogoIcon);
+import TablerDatabricksLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandDatabricks.mjs";
+export const DatabricksLogoIcon = defineIcon(
+  "tabler",
+  TablerDatabricksLogoIcon,
+);
+
+import {
+  DeepSeekLogoArtwork,
+  GrokLogoArtwork,
+  KimiLogoArtwork,
+  QwenLogoArtwork,
+  GeminiLogoArtwork,
+} from "./ModelLogos";
+export const DeepSeekLogoIcon = defineIcon("custom", DeepSeekLogoArtwork, {
+  meaning: "DeepSeek model family",
+  category: "Custom brand mark",
+  provenance:
+    "Lobe Icons MIT, bundled by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
+export const GrokLogoIcon = defineIcon("custom", GrokLogoArtwork, {
+  meaning: "Grok model family",
+  category: "Custom brand mark",
+  provenance:
+    "Lobe Icons MIT, bundled by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
+export const KimiLogoIcon = defineIcon("custom", KimiLogoArtwork, {
+  meaning: "Kimi model family",
+  category: "Custom brand mark",
+  provenance:
+    "Lobe Icons MIT, bundled by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
+export const QwenLogoIcon = defineIcon("custom", QwenLogoArtwork, {
+  meaning: "Qwen model family",
+  category: "Custom brand mark",
+  provenance:
+    "Lobe Icons MIT, bundled by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
+export const GeminiLogoIcon = defineIcon("custom", GeminiLogoArtwork, {
+  meaning: "Gemini model family",
+  category: "Custom brand mark",
+  provenance:
+    "Lobe Icons MIT, bundled by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
+
+import TablerStopFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerStopFilled.mjs";
+export const StopFilledIcon = defineIcon("tabler", TablerStopFilledIcon);

@@ -1031,6 +1031,11 @@ it("creates and starts Claude with its own defaults after switching from Buzz Ag
   });
   await user.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose avatar" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies 3" }));
   await user.type(within(dialog).getByLabelText("Name"), "Claude helper");
   await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Claude Code" }));
@@ -1052,6 +1057,9 @@ it("creates and starts Claude with its own defaults after switching from Buzz Ag
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit.mock.calls[0]?.[1].picture).toMatch(
+    /\/poster\/gloopies\/gloopies-3.png$/,
+  );
   expect(commit.mock.calls[0]?.[1].harness).toMatchObject({
     command: "/fixture/claude-agent-acp",
     args: [],
@@ -3438,203 +3446,94 @@ it("uses snapshot capabilities rather than JS wrappers and retains older-host im
   expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1);
 });
 
-it("unified card Import selects exact identity and development source, then moves to local community stopped", async () => {
-  vi.spyOn(communityApi, "communityRequest").mockImplementation(
-    async (_destination, route) =>
-      route === "agent-inventory"
-        ? { identities: [] }
-        : {
-            pubkey: "cd".repeat(32),
-            relayUrl: "wss://relay.example.test",
-            owner: "de".repeat(32),
-            signature: "fixture",
-          },
-  );
-  const { f } = setup("connected", (fixture) => {
-    fixture.data.parked = [
-      {
-        pubkey: "cd".repeat(32),
-        name: "Not imported",
-        sources: ["development"],
-      },
-    ];
-  });
-  const card = await screen.findByRole("article", {
-    name: "Agent Not imported",
-  });
-  fireEvent.click(within(card).getByRole("button", { name: "Import" }));
-  const form = await screen.findByRole("dialog", {
-    name: "Import Not imported?",
-  });
-  const submit = await within(form).findByRole("button", {
-    name: "Import agent",
-  });
-  await waitFor(() => expect(submit).toBeEnabled());
-  expect(within(form).getByText("Development Buzz")).toBeVisible();
-  expect(within(form).getByText("https://relay.example.test")).toBeVisible();
-  expect(within(form).queryByLabelText("Source library")).toBeNull();
-  expect(
-    within(form).queryByRole("button", { name: /Clone|Load agents/ }),
-  ).toBeNull();
-  expect(within(form).queryByText("Identity")).toBeNull();
-  expect(f.calls.some((call) => call.action === "import")).toBe(false);
-  fireEvent.click(submit);
-  await waitFor(() =>
-    expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Import Not imported?" }),
-    ).toBeNull(),
-  );
-  const localSection = screen.getByRole("region", {
-    name: "Local agents in this community",
-  });
-  expect(
-    within(localSection).getByRole("article", {
-      name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
-    }),
-  ).toBeVisible();
-  expect(
-    screen.getAllByRole("article", {
-      name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
-    }),
-  ).toHaveLength(1);
-  expect(f.calls.some((call) => call.action === "configure")).toBe(false);
-  expect(
-    f.data.agents.find((agent) => agent.id === "second-fixture")?.enabled,
-  ).toBe(false);
-  const configuredCard = await screen.findByRole("article", {
-    name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
-  });
-  await waitFor(() =>
-    expect(
-      within(configuredCard).getByRole("button", {
-        name: "Review agent status",
-      }),
-    ).toHaveFocus(),
-  );
-  expect(
-    within(await manageCard(configuredCard)).getByRole("button", {
-      name: "Start",
-    }),
-  ).toBeEnabled();
-  expect(f.calls.some((call) => call.action === "start")).toBe(false);
-});
-
-it("card Import without a selected community asks for a destination before importing", async () => {
-  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
-    identities: [],
-  });
-  const { f } = setup("disconnected", (fixture) => {
-    fixture.data.parked = [
-      {
-        pubkey: "cd".repeat(32),
-        name: "Not imported",
-        sources: ["development"],
-      },
-    ];
-  });
-  const card = await screen.findByRole("article", {
-    name: "Agent Not imported",
-  });
-  fireEvent.click(within(card).getByRole("button", { name: "Import" }));
-  const form = await screen.findByRole("dialog", {
-    name: "Import Not imported?",
-  });
-  const submit = within(form).getByRole("button", { name: "Import agent" });
-  await waitFor(() =>
-    expect(f.calls.some((call) => call.action === "preview")).toBe(true),
-  );
-  expect(submit).toBeDisabled();
-  fireEvent.change(within(form).getByLabelText("Destination community"), {
-    target: { value: "https://typed.example" },
-  });
-  fireEvent.click(
-    within(form).getByRole("button", { name: "Use destination" }),
-  );
-  await waitFor(() => expect(submit).toBeEnabled());
-  expect(
-    f.calls.filter((call) => call.action === "preview").at(-1)?.payload,
-  ).toEqual({ source: "development", destination: "https://typed.example" });
-  fireEvent.click(submit);
-  await waitFor(() =>
-    expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1),
-  );
-  expect(
-    f.calls.find((call) => call.action === "import")?.payload,
-  ).toMatchObject({ token: "fixture-preview" });
-});
+async function openImportMenu() {
+  await userEvent.click(await screen.findByRole("tab", { name: "Import" }));
+  return screen.findByRole("tabpanel", { name: "Import" });
+}
 
 it.each(["installed", "development"] as const)(
-  "imports the explicitly selected %s installation for a shared identity",
+  "imports from the %s source through the Import tab and leaves the agent stopped",
   async (source) => {
     vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
       identities: [],
     });
     const { f } = setup("connected", (fixture) => {
-      fixture.data.parked = [
-        {
-          pubkey: "cd".repeat(32),
-          name: "Not imported",
-          sources: ["installed", "development"],
-        },
-      ];
-      const preview = fixture.host.previewImport;
-      fixture.host.previewImport = vi.fn(async (from, destination) => ({
-        ...(await preview(from, destination)),
-        token: `preview-${from}`,
-        candidates: [
-          {
-            id: "second-fixture",
-            pubkey: "cd".repeat(32),
-            name: `${from} settings`,
-            relayUrl: destination,
-          },
-        ],
-      }));
-    });
-    const card = await screen.findByRole("article", {
-      name: "Agent Not imported",
-    });
-    expect(within(card).getByRole("button", { name: "Import" })).toBeDisabled();
-    fireEvent.click(within(card).getByLabelText(/^Details for /));
-    expect(within(card).getByRole("button", { name: "Clone" })).toBeDisabled();
-    expect(f.calls.some((call) => call.action === "preview")).toBe(false);
-    fireEvent.change(within(card).getByLabelText("Old Buzz installation"), {
-      target: { value: source },
-    });
-    fireEvent.click(within(card).getByRole("button", { name: "Import" }));
-    const form = await screen.findByRole("dialog", {
-      name: "Import Not imported?",
+      fixture.data.parked = [];
     });
     expect(
-      within(form).getByText(
-        source === "installed" ? "Installed Buzz" : "Development Buzz",
-      ),
-    ).toBeVisible();
-    const submit = within(form).getByRole("button", { name: "Import agent" });
+      screen.queryByRole("region", { name: "Available to import" }),
+    ).toBeNull();
+    const form = await openImportMenu();
+    await within(form).findByRole("button", { name: "Import Fixture agent" });
+    if (source === "development") {
+      fireEvent.click(within(form).getByText("Import options"));
+      await userEvent.click(within(form).getByLabelText("Source library"));
+      await userEvent.click(
+        await screen.findByRole("option", { name: "Development Buzz" }),
+      );
+    }
+    const submit = await within(form).findByRole("button", {
+      name: "Import Fixture agent",
+    });
     await waitFor(() => expect(submit).toBeEnabled());
+    expect(
+      f.calls.filter((call) => call.action === "preview").at(-1)?.payload,
+    ).toEqual({ source, destination: "https://relay.example.test" });
+    expect(f.calls.some((call) => call.action === "import")).toBe(false);
     fireEvent.click(submit);
     await waitFor(() =>
-      expect(f.calls.filter((call) => call.action === "import")).toEqual([
-        {
-          action: "import",
-          payload: { token: `preview-${source}`, ids: ["second-fixture"] },
-        },
-      ]),
+      expect(screen.queryByRole("tabpanel", { name: "Import" })).toBeNull(),
     );
-    expect(f.calls.filter((call) => call.action === "preview")).toEqual([
+    const card = await screen.findByRole("article", {
+      name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
+    });
+    expect(card).toBeVisible();
+    expect(f.calls.filter((call) => call.action === "import")).toEqual([
       {
-        action: "preview",
-        payload: { source, destination: "https://relay.example.test" },
+        action: "import",
+        payload: { token: "fixture-preview", ids: ["second-fixture"] },
       },
     ]);
     expect(
+      f.data.agents.find((agent) => agent.id === "second-fixture")?.enabled,
+    ).toBe(false);
+    expect(
       f.calls.some((call) => ["start", "configure"].includes(call.action)),
     ).toBe(false);
+    await waitFor(() =>
+      expect(
+        within(card).getByRole("button", { name: "Review agent status" }),
+      ).toHaveFocus(),
+    );
   },
 );
+
+it("keeps tab import available offline and requires a destination preview", async () => {
+  const { f } = setup("disconnected", (fixture) => {
+    fixture.data.parked = [];
+  });
+  const form = await openImportMenu();
+  expect(
+    await within(form).findByRole("button", { name: "Import Fixture agent" }),
+  ).toBeDisabled();
+  fireEvent.change(within(form).getByLabelText("Destination community"), {
+    target: { value: "https://typed.example" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Load agents" }));
+  const submit = await within(form).findByRole("button", {
+    name: "Import Fixture agent",
+  });
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(
+    f.calls.filter((call) => call.action === "preview").at(-1)?.payload,
+  ).toEqual({ source: "installed", destination: "https://typed.example" });
+  expect(f.calls.some((call) => call.action === "import")).toBe(false);
+  fireEvent.click(screen.getByRole("tab", { name: "Your agents" }));
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
 
 it("keeps the chosen source authoritative when an earlier preview finishes late", async () => {
   let finishInstalled!: () => void;
@@ -3710,4 +3609,27 @@ it("keeps the chosen source authoritative when an earlier preview finishes late"
       },
     ]),
   );
+});
+
+it("defaults to Your agents and exposes Import and Browse without refresh or the legacy warning", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+    identities: [],
+  });
+  setup("connected", (fixture) => {
+    fixture.data.parked = [];
+  });
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("button", { name: "Refresh agents" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Agent page actions" }),
+  ).toBeNull();
+  await userEvent.click(screen.getByRole("tab", { name: "Browse" }));
+  expect(
+    await screen.findByText("No shared agents found in this community yet."),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("tab", { name: "Your agents" }));
+  expect(screen.getByRole("tabpanel", { name: "Your agents" })).toBeVisible();
 });

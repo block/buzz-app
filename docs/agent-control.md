@@ -521,6 +521,11 @@ the form; Save first persists the exact native ID/revision, then publishes to th
 agent's saved community without restarting it. Older native hosts without
 `avatarEditingAvailable` retain the display-only avatar.
 
+New agent creation offers the bundled Gloopies, Fuzzies and Figgies poster packs.
+Picker previews are local; the selected versioned HTTPS poster URL is saved through
+`AgentEdit.picture`, so published profiles remain usable by other clients. Initials
+remain available. See `src/features/agents/avatar-packs/README.md` for provenance.
+
 An omitted picture preserves the saved override; an empty string explicitly removes
 it. A changed picture durably marks `profilePending`, so closing/reloading does not
 lose the Retry action. The native publisher reads and verifies the agent's current
@@ -1134,3 +1139,26 @@ controls must remain reachable. Linked profiles remain visible on identity cards
 
 Before starting an imported identity, stop the old agent and disable its automatic
 startup in the old application. Do not run duplicate copies of the same identity.
+
+### Voice instruction drafts
+
+The desktop create form offers Text and Voice. Voice reuses the voice-note
+recorder, limits recordings to two minutes, and encodes mono 16 kHz PCM WAV.
+The native host validates size and format before local Parakeet inference via
+sherpa-onnx. Audio remains in memory on this device; it is never uploaded.
+The current English model is reused from
+`~/.buzz/models/parakeet-tdt-ctc-110m-en/{model.int8.onnx,tokens.txt}`. A device
+without that model gets an explicit error and can continue with Text; automatic
+model provisioning is not implemented.
+
+Only the transcript is sent to the saved Agent defaults model, using the app's
+isolated Databricks OAuth connection. Drafting currently supports Buzz Agent
+with Databricks v2 defaults and follows native environment selector precedence.
+The pinned runtime's model capability manifest selects the gateway wire route.
+Other default providers return an explicit unsupported-configuration error.
+The transcript remains editable for retry. Generated instructions are a draft;
+only Use instructions (or Replace instructions with draft) changes the form.
+Closing or switching input mode discards late results, and never creates an
+agent. Native work is bounded to one transcription and one draft at a time;
+model requests time out after two minutes. Cancelling UI work does not interrupt
+already-running local inference or a model request.

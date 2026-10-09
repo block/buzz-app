@@ -1,16 +1,12 @@
 import { archiveHides } from "../../features/relay/identity-archives";
-import { createPortal } from "react-dom";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
-import { ArrowsClockwiseIcon } from "../../shared/design-system/icons/index";
 import { identityTiles } from "./identity-tiles";
 import type { RelaySession } from "../../features/relay/session";
-import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 
 export function AgentLibrary({
   session,
-  headerActions,
   managedKeys = [],
 }: {
   session: RelaySession;
@@ -30,15 +26,11 @@ export function AgentLibrary({
     archives.snapshot,
     archives.snapshot,
   );
-  const refresh = () => {
-    void library.refresh();
-    void archives.refresh();
-  };
   useEffect(() => {
     void library.refresh();
     void archives.refresh();
   }, [library, archives]);
-  const { identities, profiles } = identityTiles(
+  const { identities } = identityTiles(
     snapshot,
     (key) =>
       managedKeys.includes(key) || archiveHides(archives, key, session.viewer),
@@ -52,27 +44,9 @@ export function AgentLibrary({
         sensitivity: "base",
       }) || a.pubkey.localeCompare(b.pubkey),
   );
-  profiles.sort(
-    (a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
-      a.id.localeCompare(b.id),
-  );
   const loading = snapshot.status === "loading";
   return (
     <div className="space-y-section-gap">
-      {headerActions &&
-        createPortal(
-          <Button
-            variant="quiet"
-            size="compact"
-            disabled={loading || snapshot.status === "unavailable"}
-            onClick={refresh}
-          >
-            <ArrowsClockwiseIcon size={16} aria-hidden="true" />
-            {snapshot.status === "error" ? "Retry" : "Refresh agents"}
-          </Button>,
-          headerActions,
-        )}
       {loading && (
         <p className="text-body" role="status">
           Reading agent inventory…
@@ -80,7 +54,7 @@ export function AgentLibrary({
       )}
       {snapshot.status === "idle" && (
         <p className="text-body" role="status">
-          Library cleared. Refresh to read it again.
+          Reopen this page to load agents.
         </p>
       )}
       {snapshot.status === "unavailable" && (
@@ -89,15 +63,16 @@ export function AgentLibrary({
           also requires a supported host.
         </p>
       )}
-      {snapshot.error && (
-        <p className="text-body" role="alert">
-          {snapshot.error}
-        </p>
-      )}
+      {snapshot.error &&
+        !snapshot.error.startsWith("Local library unavailable;") && (
+          <p className="text-body" role="alert">
+            {snapshot.error}
+          </p>
+        )}
       {snapshot.status === "ready" && (
         <details className="space-y-4">
           <summary className="cursor-pointer text-label-sm">
-            Other agents ({identities.length + profiles.length})
+            Other agents ({identities.length})
           </summary>
           <section aria-label="Agent library" className="flex flex-col gap-4">
             <p className="m-0 text-body-sm text-secondary">
@@ -121,27 +96,6 @@ export function AgentLibrary({
               ))}
             </div>
           </section>
-          {!!profiles.length && (
-            <section
-              aria-label="Profiles without identities"
-              className="flex flex-col gap-4"
-            >
-              <h2 className="m-0 text-heading">Profiles without identities</h2>
-              <div className="overflow-hidden rounded-xl border border-primary">
-                {profiles.map((profile) => (
-                  <AgentCard
-                    layout="row"
-                    key={profile.id}
-                    name={profile.name}
-                    avatar={profile.avatar}
-                    identities={[]}
-                    session={session}
-                    identityLabel={identityLabel}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
           {archive.status !== "ready" && (
             <p className="text-body text-secondary">
               Archive visibility is unknown. Library entries remain visible;

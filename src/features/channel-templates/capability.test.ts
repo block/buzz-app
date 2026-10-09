@@ -1087,3 +1087,18 @@ it("a save check never joins a catalog read that began before it", async () => {
     teamTextConflict(await check, { id: "team", agents: [member] }, "OURS"),
   ).toMatch(/"Reviewers", which has different team instructions/);
 });
+
+it("checks and reads back a text head from the writer", async () => {
+  const f = fixture();
+  const team = await savedTeam(f);
+  vi.mocked(f.reader.read).mockClear();
+  await saveText(f, "SHARED", undefined, team);
+  const headReads = vi
+    .mocked(f.reader.read)
+    .mock.calls.flatMap(([filters]) => filters)
+    .filter((filter) => filter["#d"]?.[0]?.startsWith("buzz-team-text-v1:"));
+  expect(headReads.length).toBeGreaterThanOrEqual(2);
+  expect(headReads.every((filter) => filter.consistency === "strong")).toBe(
+    true,
+  );
+});

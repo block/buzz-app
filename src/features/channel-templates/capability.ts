@@ -406,10 +406,22 @@ export function createChannelKit({
     saving = true;
     try {
       await ready;
+      // A text head is read from the writer, as in `textHead()`, so a lagging
+      // replica can't hide another device's first text save.
+      const consistency =
+        tag === TEAM_TEXT_TAG ? ("strong" as const) : undefined;
       const head = async (readSignal = signal) =>
         selectedHead(
           await fresh(
-            [{ kinds: [30078], authors: [viewer], "#d": [d], limit: 1 }],
+            [
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [d],
+                limit: 1,
+                ...(consistency && { consistency }),
+              },
+            ],
             readSignal,
           ),
         );

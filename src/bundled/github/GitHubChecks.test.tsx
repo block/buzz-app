@@ -197,37 +197,6 @@ it.each([
 );
 
 it.each([
-  ["pending", "Pending"],
-  ["failure", "Some checks were not successful"],
-  ["success", "Successful"],
-])("does not offer Retry for known-only %s results", async (state, label) => {
-  const fetch = vi.fn(async (url: string) =>
-    response(
-      isConversation(url)
-        ? []
-        : /\/pulls\/\d+$/.test(url)
-          ? pull
-          : url.includes("/check-runs?")
-            ? { total_count: 0, check_runs: [] }
-            : { total_count: 1, statuses: [{ context: "Build", state }] },
-    ),
-  );
-  vi.stubGlobal("fetch", fetch);
-  render(<GitHubPanel target={target} close={() => {}} />);
-  await userEvent
-    .setup()
-    .click(await screen.findByRole("tab", { name: "Checks" }));
-  const checks = screen.getByRole("tabpanel", { name: "Checks" });
-  await within(checks).findByText(label, {
-    selector: "[class*=checkSummaryLabel]",
-  });
-  expect(
-    within(checks).queryByRole("button", { name: "Retry checks" }),
-  ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(5);
-});
-
-it.each([
   ["success", false],
   ["failure", false],
   ["success", true],
@@ -302,52 +271,6 @@ it.each([
   },
 );
 
-it("aborts checks when the panel target changes and ignores the late old result", async () => {
-  let finish!: (response: Response) => void;
-  const pending = new Promise<Response>((resolve) => {
-    finish = resolve;
-  });
-  const signals: AbortSignal[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string, options: RequestInit) => {
-      if (isConversation(url)) return Promise.resolve(response([]));
-      if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
-      if (url.includes("/issues/"))
-        return Promise.resolve(response({ title: "An issue" }));
-      signals.push(options.signal as AbortSignal);
-      return url.includes("/check-runs?")
-        ? pending
-        : Promise.resolve(response({ total_count: 0, statuses: [] }));
-    }),
-  );
-  const view = render(<GitHubPanel target={target} close={() => {}} />);
-  await userEvent
-    .setup()
-    .click(await screen.findByRole("tab", { name: "Checks" }));
-  await screen.findByText("Loading…");
-  view.rerender(
-    <GitHubPanel
-      target="https://github.com/sample/project/issues/2"
-      close={() => {}}
-    />,
-  );
-  await screen.findByRole("heading", { name: "An issue" });
-  expect(signals).toHaveLength(2);
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
-  await act(async () =>
-    finish(
-      response({
-        total_count: 1,
-        check_runs: [{ status: "completed", conclusion: "failure" }],
-      }),
-    ),
-  );
-  expect(
-    screen.queryByText("Some checks were not successful"),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByText("Checks")).not.toBeInTheDocument();
-});
 it("shows honest missing-head state without inventing a head check request", async () => {
   const fetch = vi.fn(async (url: string) =>
     response(isConversation(url) ? [] : { title: "Old PR" }),

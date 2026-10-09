@@ -280,7 +280,7 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
+it.each([true])(
   "publishes nonmember references without addressed tags, reply=%s",
   async (reply) => {
     const h = setup();

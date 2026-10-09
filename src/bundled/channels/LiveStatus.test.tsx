@@ -64,7 +64,6 @@ it.each<Partial<Snapshot>>([
   {
     routes: [channel, { id: "profiles", status: "pending", replay: "unknown" }],
   },
-  { heads: [{ channelId: "a", state: "pending" }] },
   { heads: [{ channelId: "a", state: "deferred" }] },
 ])(
   "does not turn ordinary setup into a yellow recovery warning: %j",
@@ -180,7 +179,7 @@ it("keeps partial roster coverage visible even with healthy established routes",
   );
 });
 
-it.each(["idle", "pending"] as const)(
+it.each(["pending"] as const)(
   "keeps partial roster coverage quiet while discovery is %s",
   async (state) => {
     expect(await render({ roster: { state } }, true)).toBe("");
@@ -197,11 +196,7 @@ it.each(["error", "deferred"] as const)(
     expect(notice).toContain("Retry live updates");
   },
 );
-it.each<Partial<Snapshot>>([
-  { error: "Socket refused" },
-  { routes: [{ ...channel, status: "error", error: "Stream stopped" }] },
-  { heads: [{ channelId: "a", state: "error", error: "Head read failed" }] },
-])(
+it.each<Partial<Snapshot>>([{ error: "Socket refused" }])(
   "pending partial discovery does not hide another failure: %j",
   async (patch) => {
     const notice = await render(

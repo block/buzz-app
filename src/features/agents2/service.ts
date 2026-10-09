@@ -17,6 +17,7 @@ import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import { threadReference } from "../relay/thread-reference";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -131,6 +132,10 @@ export type Delivery<Config = unknown> = Readonly<{
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
+  /** Keeps the agent shown as typing after `run` returns, until `done`
+   * settles, for a type that hands its work off and returns early. Only
+   * mention runs show typing; elsewhere this does nothing. */
+  workingUntil(done: PromiseLike<unknown>): void;
 }>;
 export type AgentType<Config = unknown> = {
   id: string;
@@ -186,6 +191,8 @@ const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
+/** Clients show a typing pulse for 8 s, so one every 3 s keeps it steady. */
+const TYPING_PULSE_MS = 3_000;
 const EMPTY = Object.freeze({});
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
@@ -708,7 +715,8 @@ export class Agents2Service extends Service implements Agents2 {
         bounded(runner.seen, event.id);
         // An agent never hears itself; its own events make replies addressed.
         if (event.pubkey === agent.pubkey) {
-          bounded(runner.wrote, event.id);
+          // Its typing pulses would push real messages out of `wrote`.
+          if (event.kind !== 20002) bounded(runner.wrote, event.id);
           continue;
         }
         for (const trigger of this.heard(runner, agent, event))
@@ -851,6 +859,7 @@ export class Agents2Service extends Service implements Agents2 {
         remember: (slug: string, body: string, after: number) =>
           this.require().remember(agent.pubkey, slug, body, after),
       });
+      const typing = this.typing(runner, job);
       try {
         await Promise.race([
           Promise.resolve().then(() =>
@@ -861,6 +870,8 @@ export class Agents2Service extends Service implements Agents2 {
                 agent: handle,
                 config: agent.config,
                 signal,
+                workingUntil: (done: PromiseLike<unknown>) =>
+                  typing?.hold(done),
               }),
             ),
           ),
@@ -874,9 +885,62 @@ export class Agents2Service extends Service implements Agents2 {
       } catch (error) {
         if (!lifetime.aborted)
           console.error(`Agent run failed: ${agent.name}`, error);
+      } finally {
+        typing?.release();
       }
     }
     runner.running = false;
+  }
+
+  /** Shows a mention run as typing where the agent will reply: a pulse now and
+   * every few seconds until the run and everything it handed to `workingUntil`
+   * have settled, the agent goes away, or the longest run allowed has passed.
+   * Pulses skip `publish` so they never count as something the agent wrote. A
+   * failed pulse ends them, so a relay that refuses typing is asked once a run. */
+  private typing(runner: Runner, { trigger, channelId }: Job) {
+    const native = this.native;
+    if (!native || trigger.type !== "mention") return undefined;
+    const { event } = trigger;
+    const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+    if (!channel) return undefined;
+    const root = threadReference(event)?.rootId ?? event.id;
+    const tags = [
+      ["h", channel],
+      ...(root === event.id ? [] : [["e", root, "", "root"]]),
+      ["e", event.id, "", "reply"],
+    ];
+    const lifetime = runner.controller.signal;
+    const started = Date.now();
+    let holds = 1;
+    let sending = false;
+    const pulse = () => {
+      if (Date.now() - started >= TIMEOUT_LIMIT_MS) return stop();
+      if (sending) return;
+      sending = true;
+      native.publish(runner.pubkey, { kind: 20002, content: "", tags }).then(
+        () => (sending = false),
+        () => stop(),
+      );
+    };
+    const timer = setInterval(pulse, TYPING_PULSE_MS);
+    const stop = () => {
+      holds = 0;
+      clearInterval(timer);
+      lifetime.removeEventListener("abort", stop);
+    };
+    lifetime.addEventListener("abort", stop, { once: true });
+    pulse();
+    const release = () => {
+      if (holds > 0 && --holds === 0) stop();
+    };
+    return {
+      hold(done: PromiseLike<unknown>) {
+        if (holds === 0) return;
+        holds++;
+        Promise.resolve(done).then(release, release);
+      },
+      release,
+    };
   }
 
   private require() {

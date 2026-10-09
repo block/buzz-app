@@ -45,9 +45,9 @@ export type AgentsNative = {
   remove(pubkey: string): Promise<void>;
   /** Drops a deleted identity. */
   forget(pubkey: string): Promise<void>;
-  /** Signs one event as the agent (deletions, reactions, messages, edits,
-   * canvases and DM opens only) with its owner attestation and posts it to the
-   * agent's community. */
+  /** Signs one event as the agent (deletions, reactions, messages, typing
+   * pulses, edits, canvases and DM opens only) with its owner attestation and
+   * posts it to the agent's community. */
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;

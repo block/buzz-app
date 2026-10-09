@@ -262,6 +262,8 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.moderation"
     )
 }
+/// Bundled ids that older profiles may still hold as installed plugins.
+const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code"];
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
 }
@@ -503,11 +505,20 @@ impl Manager {
             Err(error) => return Err(err(error)),
         };
         let text = read_file_limited(file)?;
-        let r: Registry = serde_json::from_str(&text).map_err(err)?;
+        let mut r: Registry = serde_json::from_str(&text).map_err(err)?;
         if r.version != 1 {
             return Err(
                 "Unsupported settings version; use a compatible Buzz or recover settings".into(),
             );
+        }
+        // These shipped as installable plugins before being bundled. The bundled copy
+        // replaces the installed one; a disabled install keeps the bundled copy off.
+        for id in FORMERLY_INSTALLED {
+            if let Some(old) = r.installed.remove(*id) {
+                if !old.enabled {
+                    r.bundled_overrides.entry((*id).into()).or_insert(false);
+                }
+            }
         }
         for (id, p) in &r.installed {
             p.manifest.validate()?;
@@ -1526,6 +1537,69 @@ mod tests {
             reopened.change("disable", id).unwrap();
             assert!(!enabled(&manager), "{id} exposes persisted disable");
         }
+    }
+
+    #[test]
+    fn formerly_installed_claude_code_upgrades_to_the_bundled_copy() {
+        let manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/bundled/claude-code/manifest.json"
+        ))
+        .unwrap();
+        let installed = |id: &str, enabled: bool| {
+            let mut manifest = manifest.clone();
+            manifest["id"] = id.into();
+            serde_json::json!({
+                "manifest": manifest,
+                "current": "0".repeat(64),
+                "previous": null,
+                "enabled": enabled,
+            })
+        };
+        let open = |installed: serde_json::Value| {
+            let temp = tempfile::tempdir().unwrap();
+            let profile = temp.path().join("profiles").join("upgrade");
+            fs::create_dir_all(&profile).unwrap();
+            let registry = serde_json::json!({
+                "version": 1,
+                "bundledEnabled": true,
+                "bundledOverrides": { "buzz.todos": true },
+                "installed": installed,
+            });
+            fs::write(profile.join("registry.json"), registry.to_string()).unwrap();
+            let manager = Manager::open(Some(temp.path().into()), "upgrade", false).unwrap();
+            (temp, manager)
+        };
+        let enabled = |manager: &Manager, id: &str| {
+            let plugins: Vec<_> = manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .filter(|plugin| plugin.manifest.id == id)
+                .collect();
+            assert_eq!(plugins.len(), 1, "{id} listed once");
+            assert_eq!(plugins[0].source, "bundled");
+            plugins[0].enabled
+        };
+
+        for was_enabled in [true, false] {
+            let (_temp, manager) = open(
+                serde_json::json!({ "buzz.claude-code": installed("buzz.claude-code", was_enabled) }),
+            );
+            assert_eq!(enabled(&manager, "buzz.claude-code"), was_enabled);
+            assert!(enabled(&manager, "buzz.todos"), "other overrides survive");
+            manager.change("enable", "buzz.claude-code").unwrap();
+            assert!(enabled(&manager, "buzz.claude-code"));
+            manager.change("disable", "buzz.claude-code").unwrap();
+            assert!(!enabled(&manager, "buzz.claude-code"));
+        }
+
+        let (_temp, manager) =
+            open(serde_json::json!({ "buzz.terminal": installed("buzz.terminal", true) }));
+        assert_eq!(
+            manager.catalog().err().as_deref(),
+            Some("Invalid installed plugin identity")
+        );
     }
 
     #[test]

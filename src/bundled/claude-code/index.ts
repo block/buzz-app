@@ -11,10 +11,11 @@ export const TYPE_ID = "claude-code";
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["react", "agents2", "host", "relay"];
+export const inject = ["agents2", "host", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start `claude`; no unusable type in a browser.
-  if (!isTauri()) return;
+  // Only the desktop app can start `claude`, and setup and file uploads run
+  // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
+  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents2, host, relay } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);
@@ -37,7 +38,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const { ClaudeTab, SettingsTab } = createTabs(ctx.react, { setup, runtime });
+  const { ClaudeTab, SettingsTab } = createTabs({ setup, runtime });
   agents2.register<Config>({
     id: TYPE_ID,
     title: "Claude Code",

@@ -23,6 +23,18 @@ export interface RestartDiffEntry {
   field: string;
   change: RestartChange;
 }
+export type HarnessIntegration =
+  | "buzz-agent"
+  | "goose"
+  | "pi"
+  | "codex"
+  | "external";
+export type AiConfiguration =
+  | { mode: "default" }
+  | {
+      mode: "advanced";
+      effort: { kind: "value"; value: string } | { kind: "unsupported" };
+    };
 export interface AgentView {
   id: string;
   pubkey: string;
@@ -35,10 +47,14 @@ export interface AgentView {
   sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: {
+    /** Stable native owner; absent preserves legacy/custom harness behavior. */
+    integration?: HarnessIntegration;
     command: string;
     args: string[];
     model: string;
     provider: string;
+    /** Proof-backed managed selection; the current editor keeps this read-only. */
+    configuration?: AiConfiguration;
     environmentKeys: string[];
     databricks?: { host: string; filter: string } | null;
   };
@@ -71,6 +87,8 @@ export interface AgentView {
   launchProvider: string | null;
   /** Next-start listener workers, including native defaults/overrides; never a raw env value. */
   launchParallelism?: number | null;
+  /** Effort level the next start applies; null when the harness decides. */
+  launchEffort?: string | null;
   /** Environment key deciding that selector; its value stays native. */
   launchModelEnv: string | null;
   launchProviderEnv: string | null;
@@ -122,11 +140,17 @@ export interface ControlSnapshot {
   /** Native executable presence and editing suggestions, not sign-in or execution evidence.
    * Optional so an older running native host retains editable custom values. */
   harnessOptions?: {
+    id?: HarnessIntegration;
     command: string;
     label: string;
     available?: boolean;
     /** Executable presence only; Pi also needs Node.js for its adapter. */
-    status?: "ready" | "cli-needed" | "adapter-needed";
+    status?:
+      | "ready"
+      | "cli-needed"
+      | "adapter-needed"
+      | "check-needed"
+      | "not-enabled";
     /** The native installer is available on macOS/Linux, not Windows. */
     installSupported?: boolean;
     /** The selected Pi install is app-owned and older than the pinned adapter. */
@@ -161,10 +185,10 @@ export interface ControlSnapshot {
 export interface HarnessConfigurationPolicy {
   authentication: "provider" | "harnessWithOverrides" | "external";
   provider: "selector" | "discovered" | "external";
-  /** Legacy inheritance is not managed Default. Current integrations admit neither mode yet. */
+  /** Legacy inheritance is distinct from managed Default. */
   supportedModes: ("default" | "advanced")[];
   model: "optional" | "withProvider";
-  effortDiscovery: "unknown";
+  effortDiscovery: "unknown" | "modelSpecific";
   selectorEnvironment: { model: string; provider: string } | null;
 }
 export interface AgentDefaultSettings {
@@ -199,6 +223,8 @@ export interface AgentEdit {
   harness: Omit<AgentView["harness"], "environmentKeys">;
   /** Missing preserves the native value; null removes it; string replaces it. */
   environment: Record<string, string | null>;
+  /** Missing preserves the saved effort level; a value replaces it. */
+  effort?: string;
 }
 export interface AgentImportPreview {
   token: string;
@@ -255,8 +281,10 @@ export interface AgentControlHost {
   models?: ModelHost;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
+  checkCodexAuth?(): Promise<boolean | null>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -349,6 +377,7 @@ export interface AgentControlState {
   /** App-lifetime install progress and last result, independent of agent writes. */
   piInstall?: HarnessInstallState;
   claudeInstall?: HarnessInstallState;
+  codexInstall?: HarnessInstallState;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   /** Accepted process actions, keyed by native ID across all control surfaces. */
@@ -367,8 +396,10 @@ export interface AgentControl {
   models?: AgentModels;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
+  checkCodexAuth?(): Promise<boolean | null>;
   create?(
     requestId: string,
     destination: string,
@@ -494,6 +525,7 @@ export function createAgentControl(
     busy: false,
     piInstall: { installing: false, report: null, error: null },
     claudeInstall: { installing: false, report: null, error: null },
+    codexInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -644,12 +676,16 @@ export function createAgentControl(
     );
   };
   async function installHarness(
-    key: "piInstall" | "claudeInstall",
+    key: "piInstall" | "claudeInstall" | "codexInstall",
     label: string,
     execute: () => Promise<HarnessInstallReport>,
   ): Promise<HarnessInstallReport> {
     if (disposed) throw new Error(agentControlUnavailable);
-    if (state.piInstall?.installing || state.claudeInstall?.installing)
+    if (
+      state.piInstall?.installing ||
+      state.claudeInstall?.installing ||
+      state.codexInstall?.installing
+    )
       throw new Error("A Harness installation is already in progress.");
     if (state.status !== "ready" || state.busy)
       throw new Error(`Refresh local agents before installing ${label}.`);
@@ -674,11 +710,14 @@ export function createAgentControl(
   }
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
+  const installCodex = host?.installCodex;
   const checkClaudeAuth = host?.checkClaudeAuth;
+  const checkCodexAuth = host?.checkCodexAuth;
   const writeSnapshotMemory = host?.writeSnapshotMemory;
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
+    ...(checkCodexAuth ? { checkCodexAuth } : {}),
     ...(host?.readLog
       ? {
           readLog: async (target: AgentLogTarget) => {
@@ -698,6 +737,16 @@ export function createAgentControl(
       ? {
           installClaude: () =>
             installHarness("claudeInstall", "Claude Code", installClaude),
+        }
+      : {}),
+    ...(installCodex
+      ? {
+          installCodex: () =>
+            installHarness(
+              "codexInstall",
+              "the Codex ACP adapter",
+              installCodex,
+            ),
         }
       : {}),
     ...(host?.prepareCreate && host.commitCreate
@@ -888,9 +937,8 @@ export function createAgentControl(
     },
     refresh,
     save: (id, revision, edit) =>
-      // Save may restart running agents and wait on their OS credential
-      // prompts; like other credential waits, recovery Stop stays available
-      // and a superseded result never replaces the newer Stop's evidence.
+      // Existing native Save owns revision checks and restart. Inference is
+      // performed only by the runtime, never as a prerequisite to persistence.
       run(
         (native) => native.save(id, revision, edit),
         ready,

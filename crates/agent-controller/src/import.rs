@@ -629,10 +629,12 @@ fn resolve(
         session_policy_inherit: false,
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            integration: None,
             databricks: None,
             command,
             args,
             model: fallback("model"),
+            configuration: None,
             provider: fallback("provider"),
         },
         environment: env,

@@ -44,7 +44,7 @@ type ProcessEvent =
   | { type: "stdout" | "stderr"; data: string }
   | { type: "exit"; code: number | null };
 export interface Host {
-  runCommand(id: string): Promise<string | null>;
+  runCommand(id: string, input?: string): Promise<string | null>;
   /** Starts a process the manifest declares in `host.processes`. It lives until
    * it exits, is killed, or the plugin unloads. Desktop only. */
   spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
@@ -126,7 +126,7 @@ export class HostService extends Service implements Host {
     return tag;
   }
 
-  async runCommand(id: string): Promise<string | null> {
+  async runCommand(id: string, input?: string): Promise<string | null> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri()) return null;
     try {
@@ -134,6 +134,7 @@ export class HostService extends Service implements Host {
         id: owner.id,
         revision: owner.revision,
         commandId: id,
+        ...(input === undefined ? {} : { input }),
       });
     } catch {
       return null;

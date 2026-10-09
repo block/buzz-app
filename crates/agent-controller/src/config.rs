@@ -82,6 +82,8 @@ pub struct AgentView {
     /// Effective listener worker count, including the Buzz Agent default of 1.
     /// Numeric projection only; other environment values never leave native.
     pub launch_parallelism: Option<u32>,
+    /// Effort level the next start applies; `None` when the harness decides.
+    pub launch_effort: Option<String>,
     /// Environment key deciding that selector. Its value never leaves native.
     pub launch_model_env: Option<&'static str>,
     pub launch_provider_env: Option<&'static str>,
@@ -96,9 +98,15 @@ pub struct AgentView {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessView {
+    /// Stable native integration identity. Absent preserves legacy/custom behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integration: Option<crate::HarnessIntegration>,
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Explicit managed model/effort intent. Absent preserves legacy behavior.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     pub environment_keys: Vec<String>,
     pub databricks: Option<crate::connection::DatabricksSettings>,
@@ -113,7 +121,7 @@ pub enum ProcessStatus {
     Stopping,
     Failed,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
@@ -127,16 +135,113 @@ pub struct AgentEdit {
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
+    /// Absence preserves; a value replaces. Set by portable imports.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+/// Saved key for an agent's own effort level.
+pub(crate) const OWN_EFFORT: &str = "effort";
+/// Effort levels are short harness names, as for agent defaults.
+pub(crate) fn validate_effort(effort: &str) -> Result<()> {
+    // Same rule as the app's snapshot parser (`EFFORT`), so an export never
+    // writes an effort that import would reject.
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if effort.is_empty() || effort.len() > 64 || !effort.chars().all(allowed) {
+        return Err("Effort level is empty, too long or invalid".into());
+    }
+    Ok(())
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HarnessEdit {
+    /// Stable native integration identity. Editable command names do not grant it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration: Option<crate::HarnessIntegration>,
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Explicit model/effort intent for native managed integrations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     #[serde(default)]
     pub databricks: Option<crate::connection::DatabricksSettings>,
+}
+
+/// Explicit managed model/effort intent, distinct from legacy blank inheritance.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AiConfiguration {
+    /// Delegate model and effort selection to the integration.
+    Default,
+    /// Apply and validate one explicit model and effort choice.
+    Advanced { effort: EffortSelection },
+}
+
+/// An explicit effort choice, including confirmed absence of an effort control.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum EffortSelection {
+    /// Stable adapter value, never its display label.
+    Value { value: String },
+    /// The integration explicitly reported no effort choices for this model.
+    Unsupported,
+}
+
+impl HarnessEdit {
+    fn validate_configuration(&self) -> Result<()> {
+        if self.integration == Some(crate::HarnessIntegration::Codex) && !self.args.is_empty() {
+            return Err("Native Codex does not accept custom adapter arguments".into());
+        }
+        match (self.integration, &self.configuration) {
+            (None, None) => Ok(()),
+            (Some(crate::HarnessIntegration::Codex), Some(AiConfiguration::Default)) => {
+                if !self.model.is_empty() {
+                    return Err(
+                        "Default Codex configuration must not contain a model override".into(),
+                    );
+                }
+                if !self.provider.is_empty() {
+                    return Err("Codex uses its own provider configuration".into());
+                }
+                Ok(())
+            }
+            (
+                Some(crate::HarnessIntegration::Codex),
+                Some(AiConfiguration::Advanced { effort }),
+            ) => {
+                if self.model.trim().is_empty() {
+                    return Err("Choose a model for Advanced Codex configuration".into());
+                }
+                if !self.provider.is_empty() {
+                    return Err("Codex uses its own provider configuration".into());
+                }
+                if let EffortSelection::Value { value } = effort {
+                    if value.trim().is_empty() || value.chars().any(char::is_control) {
+                        return Err("Choose a valid Codex effort value".into());
+                    }
+                    text(value, 128, "Codex effort")?;
+                }
+                Ok(())
+            }
+            (Some(crate::HarnessIntegration::Codex), None) => {
+                Err("Choose Default or Advanced Codex configuration".into())
+            }
+            (None, Some(_)) => Err("Managed configuration requires a native integration".into()),
+            (Some(_), _) => {
+                Err("This native integration does not support saved managed configuration".into())
+            }
+        }
+    }
+
+    pub(crate) fn codex_effort(&self) -> Option<&str> {
+        match &self.configuration {
+            Some(AiConfiguration::Advanced {
+                effort: EffortSelection::Value { value },
+            }) if self.integration == Some(crate::HarnessIntegration::Codex) => Some(value),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,9 +293,11 @@ impl Agent {
             session_policy: self.selected_session_policy(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
+                integration: self.harness.integration,
                 command: self.harness.command.clone(),
                 args: self.harness.args.clone(),
                 model: self.harness.model.clone(),
+                configuration: self.harness.configuration.clone(),
                 provider: self.harness.provider.clone(),
                 environment_keys: self.environment.keys().cloned().collect(),
                 databricks: self.harness.databricks.clone(),
@@ -202,7 +309,8 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             configured: self.configured(),
-            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
+            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true))
+                || self.extra.get("profileNamePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
@@ -222,10 +330,6 @@ impl Agent {
                 }
                 if !record["max_turn_duration_seconds"].is_null() {
                     limits.push("turn timeout");
-                }
-                if crate::agent_defaults::effort(&effective).is_some_and(|value| !value.is_empty())
-                {
-                    limits.push("effort level");
                 }
                 if effective.environment.keys().any(|key| {
                     (key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
@@ -284,6 +388,7 @@ impl Agent {
                         == Some("buzz-agent"))
                     .then_some(1)
                 }),
+            launch_effort: crate::agent_defaults::launch_effort(&effective).map(str::to_owned),
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
@@ -361,6 +466,10 @@ impl Agent {
                     .insert("profilePending".into(), Value::Bool(true));
             }
         }
+        if self.name != edit.name {
+            self.extra
+                .insert("profileNamePending".into(), Value::Bool(true));
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
         if let Some(policy) = edit.session_policy {
@@ -368,7 +477,17 @@ impl Agent {
             self.session_policy_inherit = policy.is_none();
         }
         self.workspace = edit.workspace;
+        let harness_changed = crate::agent_defaults::harness_kind(&self.harness.command)
+            != crate::agent_defaults::harness_kind(&edit.harness.command);
         self.harness = edit.harness;
+        if let Some(effort) = edit.effort {
+            validate_effort(&effort)?;
+            self.extra.insert(OWN_EFFORT.into(), Value::String(effort));
+        } else if harness_changed {
+            // Effort names belong to one harness, as for agent defaults. Null
+            // also retires an old Buzz import's `effort_level`.
+            self.extra.insert(OWN_EFFORT.into(), Value::Null);
+        }
         for (key, value) in edit.environment {
             if let Some(value) = value {
                 validate_env_key(&key, &self.harness.command)?;
@@ -422,11 +541,16 @@ impl Agent {
             }
         }
         text(&self.harness.model, 512, "Model")?;
+        self.harness.validate_configuration()?;
         text(&self.harness.provider, 128, "Provider")?;
         if let Some(settings) = &self.harness.databricks {
             settings.validate()?;
         }
-        validate_environment(&self.environment, &self.harness.command)
+        validate_environment(&self.environment, &self.harness.command)?;
+        if self.harness.integration == Some(crate::HarnessIntegration::Codex) {
+            crate::codex::validate_native_environment(&self.environment)?;
+        }
+        Ok(())
     }
 }
 pub(crate) fn canonical_key(key: &str) -> bool {

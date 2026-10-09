@@ -1,3 +1,4 @@
+import { CanvasConflictError } from "./canvas-conflict";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { createChannelKit, type Resume } from "./capability";
@@ -200,7 +201,7 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
   });
   f.events.push(head);
   await expect(f.canvas.save(channel, "New", undefined)).rejects.toThrow(
-    /changed/,
+    CanvasConflictError,
   );
   f.pending.push({ event: head, delivery: "unknown" });
   await expect(f.canvas.save(channel, "New", head.id)).rejects.toThrow(
@@ -498,7 +499,7 @@ it.each([false, true])(
     try {
       await expect(
         kit.canvas.save(channel, "Stale draft", before?.id),
-      ).rejects.toThrow(/Canvas changed.*draft is kept/);
+      ).rejects.toThrow(CanvasConflictError);
       expect(head).toBe(winner);
       expect(owner.outbox.snapshot()).toEqual([]);
       const saved = await kit.canvas.save(channel, "Reviewed draft", winner.id);

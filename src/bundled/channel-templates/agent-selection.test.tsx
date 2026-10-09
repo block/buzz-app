@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/sonner-dom";
 import "@testing-library/jest-dom/vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";

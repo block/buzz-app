@@ -2513,6 +2513,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               communityCatalog.reconnect();
               activityRosterKey = undefined;

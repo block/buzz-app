@@ -54,7 +54,6 @@ export const BASE_UI_PARTS = {
     docs: "accordion",
     module: "@base-ui/react/accordion",
   },
-  toast: { name: "Toast", docs: "toast", module: "@base-ui/react/toast" },
   tooltip: {
     name: "Tooltip",
     docs: "tooltip",
@@ -156,13 +155,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Compact feedback without moving the page or hiding recovery actions.",
     behavior:
-      "Base UI owns announcements, focus, expiry and dismissal; unresolved recovery stays visible.",
+      "Sonner owns bottom-right placement, announcements, expiry and swipe dismissal. Buzz supplies themed content and an expanded, scrollable recovery stack. F6 focuses notifications.",
     variants: ["transient", "actionable", "dismissible"],
     status: "core",
     collection: "components",
     source: "shared/design-system/ui/Toast.tsx",
-    baseUi: [BASE_UI_PARTS.toast],
-    composes: ["icon-button"],
+    baseUi: [],
+    composes: ["button", "icon-button"],
   },
   {
     slug: "alert-dialog",
@@ -444,6 +443,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "chrome",
       "avatar",
       "media",
+      "bare (glyph-state toggle, no background in any state; 20px artwork at sm)",
       "shape: control (default, 10px) | round (avatar default) | row-end",
       "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
@@ -715,7 +715,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "compact",
       "links",
       "checkbox choices",
-      "radio choices",
+      "radio choices: check (default) | highlight",
+      "group label: default | quiet",
       "nested submenus",
     ],
     status: "proposed",

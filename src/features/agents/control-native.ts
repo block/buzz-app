@@ -66,7 +66,9 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     },
     installPi: () => invoke("pi_install"),
     installClaude: () => invoke("claude_install"),
+    installCodex: () => invoke("codex_install"),
     checkClaudeAuth: () => invoke("claude_auth_status"),
+    checkCodexAuth: () => invoke("codex_auth_status"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
     saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),

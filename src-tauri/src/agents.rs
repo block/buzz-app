@@ -66,6 +66,7 @@ impl Snapshot {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HarnessOption {
+    id: buzz_agent_controller::HarnessIntegration,
     command: String,
     label: &'static str,
     available: bool,
@@ -185,6 +186,28 @@ async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Opt
     match (status.code(), logged_in) {
         (Some(0), true) => Some(true),
         (Some(1), false) => Some(false),
+        _ => None,
+    }
+}
+
+/// Settings-only read of the selected Codex CLI's existing login. Codex prints
+/// its status on stderr, so only the exit code is read, as for Claude Code.
+#[tauri::command]
+pub(crate) async fn codex_auth_status() -> Option<bool> {
+    prepare_tools_path().await;
+    let cli = buzz_agent_controller::installed("codex")?;
+    let path = buzz_agent_controller::tools_path().ok()?;
+    let (_, status) = crate::host_command::run_output(
+        &cli,
+        &["login".into(), "status".into()],
+        std::time::Duration::from_secs(5),
+        &path,
+        4096,
+    )
+    .await?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
         _ => None,
     }
 }
@@ -319,6 +342,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     let mut options =
         vec![
             HarnessOption {
+                id: buzz_agent_controller::HarnessIntegration::BuzzAgent,
                 command: "buzz-agent".into(),
                 configuration_policy:
                     buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-agent"),
@@ -341,6 +365,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 ][usize::from(cfg!(windows))..],
             },
             HarnessOption {
+                id: buzz_agent_controller::HarnessIntegration::Goose,
                 command: "goose".into(),
                 configuration_policy:
                     buzz_agent_controller::HarnessConfigurationPolicy::for_command("goose"),
@@ -353,6 +378,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 providers: GOOSE_PROVIDERS,
             },
             HarnessOption {
+                id: buzz_agent_controller::HarnessIntegration::Pi,
                 configuration_policy:
                     buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-pi-acp"),
                 command: pi.map_or_else(
@@ -380,9 +406,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     );
     let claude = claude_setup(app_data);
     options.push(HarnessOption {
-        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
-            "claude-agent-acp",
-        ),
+        id: buzz_agent_controller::HarnessIntegration::External,
         command: claude.adapter.map_or_else(
             || "claude-agent-acp".into(),
             |path| path.to_string_lossy().into_owned(),
@@ -394,6 +418,40 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
         update_supported: Some(false),
         default_args: vec![],
         providers: &[],
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_integration(
+            buzz_agent_controller::HarnessIntegration::External,
+        ),
+    });
+    let codex = buzz_agent_controller::codex::installed_adapter(Some(app_data));
+    let codex_status = if !cfg!(unix) {
+        "not-enabled"
+    } else if buzz_agent_controller::installed("codex").is_none() {
+        "cli-needed"
+    } else if codex.is_none() {
+        "adapter-needed"
+    } else {
+        "ready"
+    };
+    options.push(HarnessOption {
+        id: buzz_agent_controller::HarnessIntegration::Codex,
+        command: codex.map_or_else(
+            || "codex-acp".into(),
+            |path| path.to_string_lossy().into_owned(),
+        ),
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_integration(
+            buzz_agent_controller::HarnessIntegration::Codex,
+        ),
+        label: "Codex",
+        // Match Claude's selection gate: executable presence, not sign-in or inference.
+        available: codex_status == "ready",
+        status: codex_status,
+        install_supported: Some(cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))),
+        update_supported: None,
+        default_args: vec![],
+        providers: &[],
     });
     options
 }
@@ -403,9 +461,7 @@ fn preset_option(
     command: Option<PathBuf>,
 ) -> HarnessOption {
     HarnessOption {
-        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
-            &preset.command,
-        ),
+        id: buzz_agent_controller::HarnessIntegration::External,
         available: command.is_some(),
         status: if command.is_some() {
             "ready"
@@ -421,6 +477,9 @@ fn preset_option(
         update_supported: Some(false),
         default_args: preset.args.clone(),
         providers: &[],
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_integration(
+            buzz_agent_controller::HarnessIntegration::External,
+        ),
     }
 }
 
@@ -895,6 +954,24 @@ impl AgentHost {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
             (None, None) => {
                 Controller::draft_pi_model_context(host.controller.effective_draft(edit)?)
+            }
+            _ => Err("Invalid agent model context".into()),
+        })
+        .await
+    }
+    pub(crate) async fn codex_model_context(
+        &self,
+        id: Option<&str>,
+        revision: Option<u64>,
+        edit: AgentEdit,
+    ) -> Result<buzz_agent_controller::codex::CodexContext, String> {
+        prepare_tools_path().await;
+        let id = id.map(str::to_owned);
+        run(self.clone(), move |host| match (id.as_deref(), revision) {
+            (Some(id), Some(revision)) => host.controller.codex_model_context(id, revision, edit),
+            (None, None) => {
+                let edit = host.controller.effective_draft(edit)?;
+                host.controller.draft_codex_model_context(edit)
             }
             _ => Err("Invalid agent model context".into()),
         })

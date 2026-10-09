@@ -4,13 +4,14 @@ mod agent_defaults;
 mod app_agent;
 mod beta_migration;
 mod bundle;
+pub mod codex;
 mod community;
 mod config;
 mod harness_policy;
 pub use community::CommunityResolution;
 pub use harness_policy::{
     AuthenticationPolicy, ConfigurationMode, EffortDiscovery, HarnessConfigurationPolicy,
-    ModelRequirement, ProviderPolicy, SelectorEnvironment,
+    HarnessIntegration, ModelRequirement, ProviderPolicy, SelectorEnvironment,
 };
 pub mod connection;
 mod create;
@@ -45,7 +46,10 @@ pub use beta_migration::{
     RestorePreview,
 };
 pub use bundle::RuntimeBundle;
-pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
+pub use config::{
+    AgentEdit, AgentView, AiConfiguration, ControlSnapshot, EffortSelection, HarnessEdit,
+    ProcessStatus,
+};
 pub use create::{CreationProfile, NewAgent};
 pub use credentials::{PlatformCredentials, BUSY as CREDENTIALS_BUSY};
 pub use defaults::{build_defaults, BuildDefaults};

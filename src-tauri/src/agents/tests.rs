@@ -25,15 +25,22 @@ impl Credentials for RejectingCredentials {
 
 impl AgentHost {
     fn open(paths: Result<(PathBuf, PathBuf, PathBuf), String>) -> Self {
+        Self::open_with_bundle(paths, Err(RUNTIME_GATE.into()))
+    }
+    fn open_with_bundle(
+        paths: Result<(PathBuf, PathBuf, PathBuf), String>,
+        bundle: Result<RuntimeBundle, String>,
+    ) -> Self {
+        Self::open_with_credentials(paths, bundle, Arc::new(RejectingCredentials))
+    }
+    fn open_with_credentials(
+        paths: Result<(PathBuf, PathBuf, PathBuf), String>,
+        bundle: Result<RuntimeBundle, String>,
+        credentials: Arc<dyn Credentials>,
+    ) -> Self {
         Self(
             Arc::new(Mutex::new(paths.and_then(|(root, legacy, workspace)| {
-                Host::open(
-                    root,
-                    legacy,
-                    workspace,
-                    Err(RUNTIME_GATE.into()),
-                    Arc::new(RejectingCredentials),
-                )
+                Host::open(root, legacy, workspace, bundle, credentials)
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
@@ -465,7 +472,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"][0],
         json!({
-            "command":"buzz-agent", "label":"Buzz Agent",
+            "id":"buzz-agent", "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
             "providers": providers,
             "configurationPolicy": {
@@ -475,6 +482,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             }
         })
     );
+    assert!(before["harnessOptions"].as_array().unwrap().len() >= 4);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["configurationPolicy"],
@@ -530,6 +538,39 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][1]["status"], "ready");
     assert_eq!(before["harnessOptions"][1]["available"], true);
     assert_eq!(before["harnessOptions"][1]["command"], "goose");
+    let codex = before["harnessOptions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|option| option["id"] == "codex")
+        .expect("Codex harness option");
+    assert_eq!(codex["label"], "Codex");
+    let codex_status = if !cfg!(unix) {
+        "not-enabled"
+    } else if buzz_agent_controller::installed("codex").is_none() {
+        "cli-needed"
+    } else if buzz_agent_controller::codex::installed_adapter(Some(dir.path())).is_none() {
+        "adapter-needed"
+    } else {
+        "ready"
+    };
+    assert_eq!(codex["available"], codex_status == "ready");
+    assert_eq!(codex["status"], codex_status);
+    assert_eq!(
+        codex["installSupported"],
+        cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))
+    );
+    assert_eq!(
+        codex["configurationPolicy"],
+        json!({
+            "authentication": "external", "provider": "external",
+            "supportedModes": ["default", "advanced"], "model": "optional", "effortDiscovery": "modelSpecific",
+            "selectorEnvironment": null
+        })
+    );
     assert!(
         before["harnessOptions"][1]["providers"]
             .as_array()
@@ -827,36 +868,41 @@ async fn pi_model_probe_leaves_stop_usable_and_cancel_retires_its_group() {
     .expect("Cancelled probe still running");
 }
 
-// Unix-only: the synthetic bundle relies on executable-mode scripts.
+// Verified manifest over inert files. Credential or owner refusal precedes any spawn.
+fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
+    use sha2::{Digest, Sha256};
+    std::fs::create_dir_all(directory).unwrap();
+    let source: Value =
+        serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
+    let mut files = BTreeMap::new();
+    for tool in source["tools"].as_array().unwrap() {
+        let tool = tool.as_str().unwrap();
+        let name = if cfg!(windows) {
+            format!("{tool}.exe")
+        } else {
+            tool.to_owned()
+        };
+        let path = directory.join(&name);
+        crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
+        let digest = Sha256::digest(std::fs::read(&path).unwrap());
+        files.insert(name, format!("{digest:x}"));
+    }
+    let manifest = json!({"version":2, "goose":source["goose"], "revision":source["revision"],
+        "target":env!("TAURI_ENV_TARGET_TRIPLE"), "files":files});
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    RuntimeBundle::new(directory.into()).unwrap()
+}
+
+// Unix-only: the overlapping process fixtures use executable-mode scripts.
 #[cfg(unix)]
 mod overlap {
     use super::*;
 
     const REFUSAL: &str = "Synthetic credential refusal";
-
-    // Verified manifest over inert scripts. Credential refusal precedes any spawn.
-    pub(super) fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
-        use sha2::{Digest, Sha256};
-        std::fs::create_dir_all(directory).unwrap();
-        let source: Value =
-            serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
-        let mut files = BTreeMap::new();
-        for tool in source["tools"].as_array().unwrap() {
-            let name = tool.as_str().unwrap();
-            let path = directory.join(name);
-            crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
-            let digest = Sha256::digest(std::fs::read(&path).unwrap());
-            files.insert(name.to_owned(), format!("{digest:x}"));
-        }
-        let manifest = json!({"version":2, "goose":source["goose"], "revision":source["revision"],
-            "target":env!("TAURI_ENV_TARGET_TRIPLE"), "files":files});
-        std::fs::write(
-            directory.join("manifest.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        RuntimeBundle::new(directory.into()).unwrap()
-    }
 
     // Each credential read reports entry, then blocks until the test releases that
     // exact credential id; an unplanned read fails fast instead of hanging.
@@ -1746,7 +1792,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -1815,7 +1861,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -3040,7 +3086,7 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 Arc::new(RejectingCredentials),
-                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                Ok(synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.legacy_check = || Ok(());
@@ -3114,6 +3160,9 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
     );
 }
 
+#[path = "create_tests.rs"]
+mod creation;
+
 #[test]
 fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
     let (dir, host, _app, _view) = fixture();
@@ -3134,7 +3183,7 @@ fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
         h.controller = Controller::new(
             Store::open(dir.path().join("store"))?,
             credentials,
-            Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+            Ok(synthetic_bundle(&dir.path().join("tools"))),
             dir.path().join("ownership"),
         );
         h.legacy_check = || Ok(());

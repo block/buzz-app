@@ -17,10 +17,12 @@ pub(crate) fn fixture() -> Agent {
         // Only validated/serialized here; never used to launch a harness.
         workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: HarnessEdit {
+            integration: None,
             databricks: None,
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),
+            configuration: None,
             provider: "test-provider".into(),
         },
         environment: BTreeMap::from([("TEST_TOKEN".into(), "secret-env-value".into())]),
@@ -35,6 +37,7 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        effort: None,
         picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
@@ -44,6 +47,108 @@ fn edit() -> AgentEdit {
         harness: fixture().harness,
         environment: BTreeMap::new(),
     }
+}
+
+#[test]
+fn native_codex_configuration_round_trips_through_revision_checked_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.harness.integration = Some(crate::HarnessIntegration::Codex);
+    agent.harness.command = "/tools/codex-acp".into();
+    agent.harness.model.clear();
+    agent.harness.provider.clear();
+    agent.harness.configuration = Some(crate::AiConfiguration::Default);
+    agent.environment.clear();
+    store.insert(vec![agent.clone()]).unwrap();
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(
+        snapshot.agents[0].harness.integration,
+        Some(crate::HarnessIntegration::Codex)
+    );
+    assert_eq!(
+        snapshot.agents[0].harness.configuration,
+        Some(crate::AiConfiguration::Default)
+    );
+
+    let mut advanced = edit();
+    advanced.harness = agent.harness.clone();
+    advanced.harness.model = "gpt-6".into();
+    advanced.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: "high".into(),
+        },
+    });
+    store.save(&agent.id, agent.revision, advanced).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    assert_eq!(saved.revision, 2);
+    assert!(matches!(
+        saved.harness.configuration,
+        Some(crate::AiConfiguration::Advanced {
+            effort: crate::EffortSelection::Value { ref value }
+        }) if value == "high"
+    ));
+}
+
+#[test]
+fn native_codex_agent_can_switch_to_another_harness() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.harness.integration = Some(crate::HarnessIntegration::Codex);
+    agent.harness.command = "/tools/codex-acp".into();
+    agent.harness.model = "gpt-6".into();
+    agent.harness.provider.clear();
+    agent.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Unsupported,
+    });
+    agent.environment.clear();
+    store.insert(vec![agent.clone()]).unwrap();
+
+    // Leaving Codex must drop its managed configuration with the marker.
+    let mut leaking = edit();
+    leaking.harness.configuration = agent.harness.configuration.clone();
+    assert!(store
+        .save(&agent.id, agent.revision, leaking)
+        .unwrap_err()
+        .contains("requires a native integration"));
+
+    store.save(&agent.id, agent.revision, edit()).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    assert_eq!(saved.harness.integration, None);
+    assert_eq!(saved.harness.configuration, None);
+    assert_eq!(saved.harness.command, "buzz-agent");
+    assert_eq!(saved.harness.model, "test-model");
+}
+
+#[test]
+fn native_codex_structure_rejects_inheritance_custom_args_and_foreign_environment() {
+    let mut agent = fixture();
+    agent.harness.integration = Some(crate::HarnessIntegration::Codex);
+    agent.harness.command = "/tools/codex-acp".into();
+    agent.harness.model.clear();
+    agent.harness.provider.clear();
+    agent.harness.configuration = None;
+    agent.environment.clear();
+    assert!(agent
+        .validate()
+        .unwrap_err()
+        .contains("Default or Advanced"));
+
+    agent.harness.configuration = Some(crate::AiConfiguration::Default);
+    agent.harness.args = vec!["--config".into()];
+    assert!(agent
+        .validate()
+        .unwrap_err()
+        .contains("custom adapter arguments"));
+    agent.harness.args.clear();
+    agent
+        .environment
+        .insert("OPENAI_API_KEY".into(), "secret".into());
+    assert!(agent.validate().unwrap_err().contains("does not permit"));
 }
 #[test]
 fn snapshot_withholds_model_and_provider_environment_values() {
@@ -172,6 +277,7 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     store.insert(vec![agent.clone()]).unwrap();
     let mut update = edit();
     update.session_policy = Some(Some(crate::config::SessionPolicy::Thread));
+    update.name = "Edited Brain".into();
     store.save(&agent.id, 1, update).unwrap();
     let stale = store.save(&agent.id, 1, edit()).unwrap_err();
     assert!(stale.contains("Reload"));
@@ -197,7 +303,9 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let saved = &store.agents().unwrap()[0];
     assert_eq!(saved.environment, agent.environment);
     assert_eq!(saved.imported, agent.imported);
-    assert_eq!(saved.extra, agent.extra);
+    let mut expected_extra = agent.extra.clone();
+    expected_extra.insert("profileNamePending".into(), json!(true));
+    assert_eq!(saved.extra, expected_extra);
     assert_eq!(saved.auth_tag, agent.auth_tag);
     assert_eq!(saved.credential_id, agent.credential_id);
     assert_eq!(
@@ -569,6 +677,38 @@ fn avatar_save_preserve_clear_pending_cas_and_reopen() {
     let store = Store::open(dir.path().to_owned()).unwrap();
     assert_eq!(store.agents().unwrap()[0].picture.as_deref(), Some(""));
     assert_eq!(store.agents().unwrap()[0].imported, a.imported);
+}
+
+#[test]
+fn rename_save_persists_profile_name_pending_until_confirmed_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+
+    let mut update = edit();
+    update.name = "Luna".into();
+    store.save(&agent.id, agent.revision, update).unwrap();
+
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.name, "Luna");
+    assert_eq!(saved.extra.get("profileNamePending"), Some(&json!(true)));
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(store.agents().unwrap()[0].name, "Luna");
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    assert!(store.profile_published(&agent.id, agent.revision).is_err());
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+
+    store
+        .profile_published(&agent.id, agent.revision + 1)
+        .unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending);
+    assert!(!store.agents().unwrap()[0]
+        .extra
+        .contains_key("profileNamePending"));
 }
 
 #[test]

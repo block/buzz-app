@@ -74,6 +74,8 @@ pub(crate) fn spawn_config(agent: &Agent) -> Value {
         "system_prompt": agent.system_prompt,
         "team_instructions": crate::import::team_text(&agent.imported["teamInstructions"]).unwrap_or(""),
         "workspace": agent.workspace,
+        "integration": agent.harness.integration,
+        "configuration": agent.harness.configuration,
         "command": harness.command,
         "args": harness.args,
         "model": selected.model,

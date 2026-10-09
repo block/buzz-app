@@ -135,6 +135,7 @@ async function fixture(ownReply = false) {
       ])
     : undefined;
   const publications: RelayEvent[] = [];
+  let publicationGate: ReturnType<typeof deferred> | undefined;
   const events = [
     roster(relay, "room", [viewer.pubkey, alice.pubkey], 10),
     metadata(relay, "room", "Room", 10),
@@ -185,6 +186,7 @@ async function fixture(ownReply = false) {
         sign: async (template) => signed(viewer, template),
         publish: async (event) => {
           publications.push(event);
+          await publicationGate?.promise;
           events.push(event);
           live.receive([event]);
         },
@@ -224,6 +226,10 @@ async function fixture(ownReply = false) {
     item,
     journal: () => journal,
     scope: { viewer: viewer.pubkey, communityOrigin: "https://relay.test" },
+    holdPublication() {
+      publicationGate = deferred();
+      return publicationGate;
+    },
     hold(fail = false) {
       auxiliary = { gate: deferred(), started: deferred(), fail };
       return auxiliary;
@@ -790,3 +796,65 @@ it("keeps another person's Inbox message ineligible for edit and deletion", asyn
   expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
   expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
 });
+
+it.each([false, true])(
+  "dismisses deletion while Inbox is withheld without cancelling dispatched work (submitted: %s)",
+  async (submitted) => {
+    const h = await fixture(true);
+    const { reader, editor } = await opened(h);
+    const row = reader.querySelector<HTMLElement>(
+      `[data-message-id="${h.reply?.id}"]`,
+    );
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    const publication = h.holdPublication();
+    const gate = h.hold();
+    let refresh!: Promise<void>;
+    try {
+      if (submitted) {
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: /^Delete$/ }),
+        );
+        await waitFor(() => expect(h.publications).toHaveLength(1));
+        expect(h.publications[0]?.kind).toBe(5);
+        expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+      }
+      await act(async () => {
+        refresh = h.session.inboxFeed.refresh();
+        await gate.started.promise;
+      });
+      expect(screen.getByText("Preview updating…")).toBeVisible();
+      expect(dialog).not.toBeInTheDocument();
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(reader.closest("[hidden][inert]")).not.toBeNull();
+      expect(editor).toBeInTheDocument();
+      await act(async () => publication.resolve());
+      if (submitted) {
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+      }
+      await act(async () => {
+        gate.gate.resolve();
+        await refresh;
+      });
+      expect(screen.getByRole("complementary", { name: "Thread" })).toBe(
+        reader,
+      );
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(h.publications).toHaveLength(submitted ? 1 : 0);
+      if (!submitted) expect(row).toBeVisible();
+    } finally {
+      publication.resolve();
+      gate.gate.resolve();
+    }
+  },
+);

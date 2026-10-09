@@ -17,6 +17,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
@@ -101,7 +102,9 @@ export function MessageManagement({
   active?: boolean | undefined;
   children: ReactNode;
 }) {
+  const presented = useConversationPresentation();
   const [selection, setSelection] = useState<Deletion>();
+  if (!presented && selection) setSelection(undefined);
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
@@ -192,7 +195,7 @@ export function MessageManagement({
     >
       <MessageEditScope>{children}</MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
-      {selection && available && (
+      {presented && selection && available && (
         <DeleteMessageDialog
           key={selection.row.id}
           session={session}

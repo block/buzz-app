@@ -639,12 +639,16 @@ dependencies = [
 name = "buzz-agent-controller"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bech32 0.11.1",
  "buzz-credential-store",
  "dotenvy",
  "getrandom 0.3.4",
+ "hmac",
  "libc",
  "nix 0.31.3",
+ "nostr 0.45.5",
+ "regex",
  "secp256k1 0.31.1",
  "security-framework",
  "serde",
@@ -686,6 +690,7 @@ dependencies = [
  "buzzodz-plugins",
  "bytes",
  "chrono",
+ "dirs",
  "fs2",
  "futures-lite",
  "futures-util",
@@ -706,6 +711,7 @@ dependencies = [
  "portable-pty",
  "qrcode",
  "reqwest",
+ "rfd",
  "rusqlite",
  "rustls",
  "secp256k1 0.31.1",

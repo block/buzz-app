@@ -35,3 +35,4 @@ dist-inbox-dev.building-*/
 # Generated immutable agent runtime resources.
 src-tauri/resources/agent-runtime/*
 !src-tauri/resources/agent-runtime/README.md
+dist-buzz-mcp/

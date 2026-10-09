@@ -1,3 +1,5 @@
+import { pendingSessionDraft } from "../../features/sessions/pending-start";
+import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import type { AgentControl } from "../../features/agents/control";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -39,8 +41,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import {
   buzzLinkTarget,
   isBuzzLink,
+  parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { SessionShare } from "../sessions/SessionShare";
 import {
   SessionColumn,
   SessionHeading,
@@ -87,7 +91,7 @@ import {
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -450,6 +454,35 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  const pendingStart = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => (currentId ? pendingSessionDraft(scope, currentId) : undefined),
+  );
+  useEffect(() => {
+    if (
+      !pendingStart ||
+      !current ||
+      current.cached ||
+      resolving ||
+      navigation?.signal.aborted ||
+      navigation?.target.kind !== "conversation"
+    )
+      return;
+    // Recovery replaces the timeline, so it owns completion of the plain route.
+    // An exact address cannot be claimed opened without revealing its message.
+    navigation.complete(
+      requestedMessage || requestedThread
+        ? { status: "failed", reason: "unavailable" }
+        : { status: "opened" },
+    );
+  }, [
+    pendingStart,
+    current,
+    resolving,
+    navigation,
+    requestedMessage,
+    requestedThread,
+  ]);
   const canvasOpen =
     !!canvasOrigin &&
     canvasOrigin.channelId === currentId &&
@@ -964,6 +997,34 @@ function ChannelWorkspace({
         navigation?.signal.aborted
       )
         return false;
+      const parsed = parseBuzzLink(url);
+      const linkedSession =
+        parsed?.format === "legacy" &&
+        !parsed.messageId &&
+        queries.channels
+          .list()
+          .channels.find(
+            (item) =>
+              item.id === parsed.channelId &&
+              item.channelType === "session" &&
+              !item.cached &&
+              !item.readOnly &&
+              !item.archived &&
+              item.members?.includes(queries.viewer ?? ""),
+          );
+      if (linkedSession && linkedSession.id !== current?.id) {
+        const id = `conversation:${linkedSession.id}`;
+        tabState.setTabs((tabs) =>
+          tabs.some((tab) => tab.id === id)
+            ? tabs
+            : [
+                ...tabs,
+                { id, kind: "conversation", channelId: linkedSession.id },
+              ],
+        );
+        tabState.select(id);
+        return true;
+      }
       if (isBuzzLink(url) && navigator && viewer) {
         const target = buzzLinkTarget(url, {
           viewer,
@@ -1020,6 +1081,7 @@ function ChannelWorkspace({
       scope,
       setSettings,
       setThread,
+      tabState,
     ],
   );
   const openThreadLink = useCallback(
@@ -1203,6 +1265,8 @@ function ChannelWorkspace({
       target.cached ||
       target.readOnly ||
       target.archived ||
+      (target.channelType === "session" &&
+        !target.members?.includes(queries.viewer ?? "")) ||
       channelId === currentId
     )
       return;
@@ -1251,6 +1315,18 @@ function ChannelWorkspace({
     const connection = relay.snapshot();
     if (connection.status !== "ready" || connection.session !== queries)
       return false;
+    const parsed = parseBuzzLink(url);
+    if (
+      parsed?.format === "legacy" &&
+      !parsed.messageId &&
+      queries.channels
+        .list()
+        .channels.some(
+          (item) =>
+            item.id === parsed.channelId && item.channelType === "session",
+        )
+    )
+      return openLink(url, true);
     const candidate = panels.resolve(url);
     if (candidate) {
       panelTrigger.current =
@@ -1467,9 +1543,25 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : pendingStart && currentId ? (
+            <NewSessionComposer
+              key={pendingStart}
+              personal={pendingStart === "me" || pendingStart.startsWith("me:")}
+              standalone
+              resumeDraftKey={pendingStart}
+              sectionId={
+                pendingStart.includes(":section:")
+                  ? pendingStart.split(":section:")[1]
+                  : undefined
+              }
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onStarted={select}
+            />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new sessions from Sessions. Channel-nested sessions are no
+              Start new conversations from Me. Channel-nested sessions are no
               longer available.
             </p>
           ) : (
@@ -1482,7 +1574,14 @@ function ChannelWorkspace({
                       (parent) => parent.id === current.parentChannelId,
                     )?.name
                   }
-                />
+                >
+                  <SessionShare
+                    key={`${current.id}:${navigation?.entryId ?? ""}`}
+                    session={queries}
+                    channel={current}
+                    signal={navigation?.signal}
+                  />
+                </SessionHeading>
               ) : (
                 <PanelHeader
                   title={
@@ -1827,7 +1926,13 @@ function ChannelWorkspace({
                             : channels.find(
                                 (item) => item.id === tab.channelId,
                               );
-                        const usable = target && !target.readOnly;
+                        const usable =
+                          target &&
+                          !target.readOnly &&
+                          !target.archived &&
+                          !target.cached &&
+                          (target.channelType !== "session" ||
+                            target.members?.includes(queries.viewer ?? ""));
                         return {
                           id: tab.id,
                           label:

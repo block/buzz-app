@@ -45,7 +45,9 @@ export function SessionSections({
   sessions,
   renderSession,
   onNew,
+  personal = false,
 }: {
+  personal?: boolean;
   session: RelaySession;
   scope: string;
   sessions: readonly SessionListItem[];
@@ -73,17 +75,24 @@ export function SessionSections({
       copying.current = false;
     }
   };
-  const preferences = session.sidebarPreferences;
+  const preferences = personal
+    ? session.mePreferences
+    : session.sidebarPreferences;
+  const collapsedKey = `${personal ? "me" : "sessions"}:collapsed-sections`;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
     preferences.snapshot,
   );
+  const channels = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
   useEffect(() => {
-    void preferences.ensure();
-  }, [preferences]);
+    if (!personal || channels.status === "ready") void preferences.ensure();
+  }, [preferences, personal, channels.status]);
   const [collapsed, setCollapsed] = useState<string[]>(() => {
-    const saved = readView<unknown>(scope, "sessions:collapsed-sections", []);
+    const saved = readView<unknown>(scope, collapsedKey, []);
     return Array.isArray(saved)
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
@@ -107,7 +116,7 @@ export function SessionSections({
     })),
     {
       id: "",
-      name: "Sessions",
+      name: personal ? "Conversations" : "Sessions",
       rows: sessions.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
@@ -120,7 +129,7 @@ export function SessionSections({
       ? collapsed.filter((key) => key !== id)
       : [...collapsed, id];
     setCollapsed(next);
-    writeView(scope, "sessions:collapsed-sections", next);
+    writeView(scope, collapsedKey, next);
   };
   const moves =
     snapshot.moves?.filter((move) =>
@@ -138,7 +147,7 @@ export function SessionSections({
             <span className={styles.sectionIcon} aria-hidden="true">
               <PlusIcon size={15} strokeWidth={2.5} />
             </span>
-            <span>New session</span>
+            <span>{personal ? "New conversation" : "New session"}</span>
           </button>
         </div>
       )}
@@ -160,193 +169,202 @@ export function SessionSections({
           {deleteError}
         </p>
       )}
-      {sections.map((section) => (
-        <Collapsible.Root
-          key={section.id}
-          className={styles.section}
-          open={!collapsed.includes(section.id)}
-          onOpenChange={(open) => toggle(section.id, open)}
-          data-animate={animate || undefined}
-        >
-          <div className={styles.sectionHeader}>
-            <Collapsible.Trigger
-              type="button"
-              className={styles.sectionHeading}
-              aria-expanded={!collapsed.includes(section.id)}
-              onClick={(event) => setAnimate(event.detail > 0)}
-            >
-              {section.id && (
-                <span className={styles.sectionIcon} aria-hidden="true">
-                  <FolderSimpleIcon className={styles.folderGlyph} size={15} />
-                  <span className={styles.chevronGlyph}>
+      {sections
+        .filter((section) => !personal || section.id || section.rows.length)
+        .map((section) => (
+          <Collapsible.Root
+            key={section.id}
+            className={styles.section}
+            open={!collapsed.includes(section.id)}
+            onOpenChange={(open) => toggle(section.id, open)}
+            data-animate={animate || undefined}
+          >
+            <div className={styles.sectionHeader}>
+              <Collapsible.Trigger
+                type="button"
+                className={styles.sectionHeading}
+                aria-expanded={!collapsed.includes(section.id)}
+                onClick={(event) => setAnimate(event.detail > 0)}
+              >
+                {section.id && (
+                  <span className={styles.sectionIcon} aria-hidden="true">
+                    <FolderSimpleIcon
+                      className={styles.folderGlyph}
+                      size={15}
+                    />
+                    <span className={styles.chevronGlyph}>
+                      <CaretDownIcon size={15} strokeWidth={2.5} />
+                    </span>
+                  </span>
+                )}
+                <span>{section.name}</span>
+                {!section.id && (
+                  <span
+                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                    aria-hidden="true"
+                  >
                     <CaretDownIcon size={15} strokeWidth={2.5} />
                   </span>
-                </span>
-              )}
-              <span>{section.name}</span>
-              {!section.id && (
-                <span
-                  className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                  aria-hidden="true"
-                >
-                  <CaretDownIcon size={15} strokeWidth={2.5} />
-                </span>
-              )}
-            </Collapsible.Trigger>
-            <div className={styles.sectionActions}>
-              {onNew && section.id && (
-                <IconButton
-                  data-session-row-action=""
-                  size="compact"
-                  aria-label={`New session in ${section.name}`}
-                  title="New session"
-                  icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                  onClick={() => onNew(section.id || undefined)}
-                />
-              )}
-              {section.id && (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={(props) => (
-                      <IconButton
-                        {...props}
-                        data-session-row-action=""
-                        size="compact"
-                        aria-label={`Actions for ${section.name}`}
-                        icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-                      />
-                    )}
+                )}
+              </Collapsible.Trigger>
+              <div className={styles.sectionActions}>
+                {onNew && section.id && (
+                  <IconButton
+                    data-session-row-action=""
+                    size="compact"
+                    aria-label={`New session in ${section.name}`}
+                    title="New session"
+                    icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                    onClick={() => onNew(section.id || undefined)}
                   />
-                  <MenuPopup
-                    aria-label={`Actions for ${section.name}`}
-                    align="end"
-                  >
-                    <MenuItem onClick={() => setSettingsFor(section)}>
-                      Session settings…
-                    </MenuItem>
-                    <MenuItem
-                      tone="danger"
-                      data-delete-session-section=""
-                      disabled={
-                        !preferences.sectionRemovalWritable || !!deleting
-                      }
-                      onClick={() => {
-                        setDeleting(section.id);
-                        setDeleteError("");
-                        void preferences
-                          .removeSection(section.id)
-                          .catch((error: unknown) => {
-                            setDeleteError(
-                              error instanceof Error
-                                ? error.message
-                                : "Section could not be deleted. Try again.",
-                            );
-                          })
-                          .finally(() => setDeleting(undefined));
-                      }}
+                )}
+                {section.id && (
+                  <MenuRoot>
+                    <MenuTrigger
+                      render={(props) => (
+                        <IconButton
+                          {...props}
+                          data-session-row-action=""
+                          size="compact"
+                          aria-label={`Actions for ${section.name}`}
+                          icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+                        />
+                      )}
+                    />
+                    <MenuPopup
+                      aria-label={`Actions for ${section.name}`}
+                      align="end"
                     >
-                      Delete section
-                    </MenuItem>
-                  </MenuPopup>
-                </MenuRoot>
-              )}
-            </div>
-          </div>
-          <Collapsible.Panel className={styles.sectionPanel}>
-            {section.rows.map((item) => (
-              <div key={item.id} className={styles.organizedRow}>
-                {renderSession(item)}
-                <MenuRoot>
-                  <MenuTrigger
-                    render={(props) => (
-                      <IconButton
-                        {...props}
-                        data-session-row-action=""
-                        size="compact"
-                        aria-label={`Actions for ${item.title}`}
-                        icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-                      />
-                    )}
-                  />
-                  <MenuPopup
-                    aria-label={`Actions for ${item.title}`}
-                    align="end"
-                  >
-                    <MenuItem
-                      disabled={!session.channelDetails?.available}
-                      onClick={() => setRenaming(item)}
-                    >
-                      <MenuIcon>
-                        <PencilSimpleIcon size={16} />
-                      </MenuIcon>
-                      Rename
-                    </MenuItem>
-                    <MenuSubmenu>
-                      <MenuSubmenuTrigger disabled={!preferences.writable}>
-                        <MenuIcon>
-                          <FolderSimpleIcon size={16} />
-                        </MenuIcon>
-                        Section
-                      </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup aria-label="Session section">
-                        {section.id && (
-                          <MenuItem onClick={() => move(item.id)}>
-                            Sessions
-                          </MenuItem>
-                        )}
-                        {groups.map((group) => (
-                          <MenuItem
-                            key={group.id}
-                            onClick={() => move(item.id, group.id)}
-                          >
-                            {group.name}
-                          </MenuItem>
-                        ))}
-                        <MenuItem onClick={() => setCreatingFor(item)}>
-                          New section…
-                        </MenuItem>
-                      </MenuSubmenuPopup>
-                    </MenuSubmenu>
-                    <MenuSubmenu>
-                      <MenuSubmenuTrigger>
-                        <MenuIcon>
-                          <CopyIcon size={16} />
-                        </MenuIcon>
-                        Copy
-                      </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup aria-label="Copy session">
-                        <MenuItem
-                          onClick={() => void copy(item.title, "Session name")}
-                        >
-                          Copy session name
-                        </MenuItem>
-                        <MenuItem
-                          onClick={() => void copy(item.id, "Session ID")}
-                        >
-                          Copy session ID
-                        </MenuItem>
-                        <MenuItem
-                          onClick={() =>
-                            void copy(
-                              `buzz://channel/${encodeURIComponent(item.id)}`,
-                              "Session link",
-                            )
-                          }
-                        >
-                          Copy link to session
-                        </MenuItem>
-                      </MenuSubmenuPopup>
-                    </MenuSubmenu>
-                  </MenuPopup>
-                </MenuRoot>
+                      <MenuItem onClick={() => setSettingsFor(section)}>
+                        Session settings…
+                      </MenuItem>
+                      <MenuItem
+                        tone="danger"
+                        data-delete-session-section=""
+                        disabled={
+                          !preferences.sectionRemovalWritable || !!deleting
+                        }
+                        onClick={() => {
+                          setDeleting(section.id);
+                          setDeleteError("");
+                          void preferences
+                            .removeSection(section.id)
+                            .catch((error: unknown) => {
+                              setDeleteError(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Section could not be deleted. Try again.",
+                              );
+                            })
+                            .finally(() => setDeleting(undefined));
+                        }}
+                      >
+                        Delete section
+                      </MenuItem>
+                    </MenuPopup>
+                  </MenuRoot>
+                )}
               </div>
-            ))}
-            {!section.rows.length && section.id && (
-              <p className={styles.listMessage}>No sessions in this section.</p>
-            )}
-          </Collapsible.Panel>
-        </Collapsible.Root>
-      ))}
+            </div>
+            <Collapsible.Panel className={styles.sectionPanel}>
+              {section.rows.map((item) => (
+                <div key={item.id} className={styles.organizedRow}>
+                  {renderSession(item)}
+                  <MenuRoot>
+                    <MenuTrigger
+                      render={(props) => (
+                        <IconButton
+                          {...props}
+                          data-session-row-action=""
+                          size="compact"
+                          aria-label={`Actions for ${item.title}`}
+                          icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+                        />
+                      )}
+                    />
+                    <MenuPopup
+                      aria-label={`Actions for ${item.title}`}
+                      align="end"
+                    >
+                      <MenuItem
+                        disabled={!session.channelDetails?.available}
+                        onClick={() => setRenaming(item)}
+                      >
+                        <MenuIcon>
+                          <PencilSimpleIcon size={16} />
+                        </MenuIcon>
+                        Rename
+                      </MenuItem>
+                      <MenuSubmenu>
+                        <MenuSubmenuTrigger disabled={!preferences.writable}>
+                          <MenuIcon>
+                            <FolderSimpleIcon size={16} />
+                          </MenuIcon>
+                          Section
+                        </MenuSubmenuTrigger>
+                        <MenuSubmenuPopup aria-label="Session section">
+                          {section.id && (
+                            <MenuItem onClick={() => move(item.id)}>
+                              Sessions
+                            </MenuItem>
+                          )}
+                          {groups.map((group) => (
+                            <MenuItem
+                              key={group.id}
+                              onClick={() => move(item.id, group.id)}
+                            >
+                              {group.name}
+                            </MenuItem>
+                          ))}
+                          <MenuItem onClick={() => setCreatingFor(item)}>
+                            New section…
+                          </MenuItem>
+                        </MenuSubmenuPopup>
+                      </MenuSubmenu>
+                      <MenuSubmenu>
+                        <MenuSubmenuTrigger>
+                          <MenuIcon>
+                            <CopyIcon size={16} />
+                          </MenuIcon>
+                          Copy
+                        </MenuSubmenuTrigger>
+                        <MenuSubmenuPopup aria-label="Copy session">
+                          <MenuItem
+                            onClick={() =>
+                              void copy(item.title, "Session name")
+                            }
+                          >
+                            Copy session name
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() => void copy(item.id, "Session ID")}
+                          >
+                            Copy session ID
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() =>
+                              void copy(
+                                `buzz://channel/${encodeURIComponent(item.id)}`,
+                                "Session link",
+                              )
+                            }
+                          >
+                            Copy link to session
+                          </MenuItem>
+                        </MenuSubmenuPopup>
+                      </MenuSubmenu>
+                    </MenuPopup>
+                  </MenuRoot>
+                </div>
+              ))}
+              {!section.rows.length && section.id && (
+                <p className={styles.listMessage}>
+                  No sessions in this section.
+                </p>
+              )}
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        ))}
       {moves.some((move) => move.pending) && (
         <p role="status" className={styles.listMessage}>
           Saving section…
@@ -385,7 +403,7 @@ export function SessionSections({
           key={settingsFor.id}
           session={session}
           scope={scope}
-          target={{ kind: "section", ...settingsFor }}
+          target={{ kind: "section", ...settingsFor, personal }}
           close={() => setSettingsFor(undefined)}
         />
       )}

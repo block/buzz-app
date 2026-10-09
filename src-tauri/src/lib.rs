@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_models;
 mod agents;
+mod app_agents;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -37,6 +38,7 @@ mod window_controls;
 mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
+mod sign_out;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
@@ -492,6 +494,13 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_wait,
         oauth_callback_cancel,
         agent_control_create_prepare,
+        app_agents::app_agent_list,
+        app_agents::app_agent_create,
+        app_agents::app_agent_rename,
+        app_agents::app_agent_delete,
+        app_agents::app_agent_forget,
+        app_agents::app_agent_publish,
+        app_agents::app_agent_publish_profile,
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
@@ -538,11 +547,31 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_resize,
         terminal_close,
         terminal_close_owner,
-        update_restart
+        update_restart,
+        sign_out::sign_out,
+        sign_out::sign_out_wipe_refusal
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = app_context();
+    // A pending Sign out finishes before any window, webview storage, service or
+    // identity read; if it can't, Buzz explains and exits without opening.
+    let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
+        sign_out::boot(
+            &paths,
+            |registry| {
+                buzz_agent_controller::delete_local_agent_keys(
+                    registry.to_path_buf(),
+                    &buzz_agent_controller::PlatformCredentials::default(),
+                )
+            },
+            identity::remove_saved_key,
+        )
+        .unwrap_or_else(|message| sign_out::exit_with(&message))
+    });
+    let identity = IdentityHost::default();
+    let agent_identity = identity.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -562,7 +591,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
                     eprintln!("Could not restore Buzz window: {error}");
@@ -625,7 +654,19 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources));
+            app.manage(app_agents::AppAgentHost::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map_err(Clone::clone),
+            ));
+            let agent_owner = agents::owner::Owner::select(
+                agent_identity,
+                tauri::is_dev(),
+                std::env::var("BUZZ_DEV_VIEWER").ok().as_deref(),
+                app.config().build.dev_url.as_ref(),
+            );
+            app.manage(AgentHost::initialize(paths, resources, agent_owner));
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -640,9 +681,13 @@ pub fn run() {
     } else {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
+    let builder = match instance {
+        Some(instance) => builder.manage(instance),
+        None => builder,
+    };
     builder
         .manage(image_clipboard::ImageClipboard::default())
-        .manage(IdentityHost::default())
+        .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
@@ -702,7 +747,7 @@ pub fn run() {
             }
             browser::window_event(window, event);
         })
-        .build(app_context())
+        .build(context)
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
@@ -717,19 +762,25 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<relay::Spools>().cancel_all(&app.state::<relay::Uploads>());
-                app.state::<image_clipboard::ImageClipboard>().release();
-                app.state::<HarnessSetup>().shutdown();
-                browser::shutdown();
-                if let Err(error) = app.state::<Terminals>().shutdown() {
-                    eprintln!("Terminal shutdown failed: {error}");
-                }
-                app.state::<ModelHost>().shutdown();
-                if app.state::<AgentHost>().shutdown().is_err() {
-                    eprintln!("Native agent shutdown could not be confirmed");
-                }
+                shut_down(app);
             }
         });
+}
+
+/// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
+pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<relay::Spools>()
+        .cancel_all(&app.state::<relay::Uploads>());
+    app.state::<image_clipboard::ImageClipboard>().release();
+    app.state::<HarnessSetup>().shutdown();
+    browser::shutdown();
+    if let Err(error) = app.state::<Terminals>().shutdown() {
+        eprintln!("Terminal shutdown failed: {error}");
+    }
+    app.state::<ModelHost>().shutdown();
+    if app.state::<AgentHost>().shutdown().is_err() {
+        eprintln!("Native agent shutdown could not be confirmed");
+    }
 }
 
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {

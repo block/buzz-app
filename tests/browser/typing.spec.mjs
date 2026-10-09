@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, end, edge } from "./timeline.mjs";
+import { open, end, edge, keyScroll } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -120,7 +120,7 @@ for (const scope of ["channel", "thread"]) {
   test(`${scope} typing preserves viewport bounds and the visible bottom through completion and expiry`, async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
     await open(page, app);
     await expect
       .poll(() =>
@@ -179,10 +179,46 @@ for (const scope of ["channel", "thread"]) {
     ).toBeGreaterThan(100);
     const idle = await history.boundingBox();
     const idleComposer = await composer.boundingBox();
+    // The viewport meets the composer, but the final message has scrollable
+    // breathing room. It must disappear with content, not remain a fixed strip.
+    expect(Math.abs(idle.y + idle.height - idleComposer.y)).toBeLessThan(1);
+    const endPadding = 12; // Default interface size: the shared space-3 token.
+    const tailGap = async () => {
+      const tail = await history
+        .locator("[data-message-id]")
+        .last()
+        .boundingBox();
+      return idleComposer.y - tail.y - tail.height;
+    };
+    await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
+    await history.focus();
+    await keyScroll(page, "PageUp", history);
+    expect(await gap()).toBeGreaterThan(100);
+    expect(await history.boundingBox()).toEqual(idle);
+    expect(await composer.boundingBox()).toEqual(idleComposer);
+    // With the end spacer off-screen, an actual message reaches the lower edge.
+    expect(
+      await history.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return [...element.querySelectorAll("[data-message-id]")].some(
+          (row) => {
+            const rect = row.getBoundingClientRect();
+            return rect.top < bounds.bottom && rect.bottom >= bounds.bottom;
+          },
+        );
+      }),
+    ).toBe(true);
+    await keyScroll(page, "End", history);
+    await expect.poll(gap).toBeLessThan(2);
+    await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
+    await page.screenshot({
+      path: testInfo.outputPath(`${scope}-composer-no-gap.png`),
+    });
     const stable = async () => {
       expect(await history.boundingBox()).toEqual(idle);
       expect(await composer.boundingBox()).toEqual(idleComposer);
       await expect.poll(gap).toBeLessThan(2);
+      await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
       const tail = await history
         .locator("[data-message-id]")
         .last()

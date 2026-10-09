@@ -1,4 +1,5 @@
 //! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
+pub(crate) mod owner;
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
     LegacySource, NewAgent, PlatformCredentials, ProcessStatus, RuntimeBundle, Store,
@@ -497,7 +498,7 @@ impl Host {
             store,
             credentials.clone(),
             bundle,
-            legacy_parent.join("dev.local.buzz.agent-ownership"),
+            legacy_parent.join(crate::sign_out::AGENT_OWNERSHIP),
         );
         controller.protect_control_paths(
             crate::Manager::from_env().map(|manager| vec![manager.storage_root().to_path_buf()]),
@@ -655,14 +656,17 @@ pub(crate) struct AgentHost(
     Arc<Mutex<Result<Host, String>>>,
     Arc<AtomicBool>,
     Arc<tokio::sync::Mutex<()>>,
+    /// Starts compare each agent's attested owner with the signed-in human.
+    owner::Owner,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
+        identity: owner::Owner,
     ) -> Self {
         buzz_agent_controller::warm_tools_path();
-        Self::initialize_with(move || {
+        Self::initialize_with(identity, move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
                 Host::open(
@@ -675,7 +679,10 @@ impl AgentHost {
             })
         })
     }
-    fn initialize_with(open: impl FnOnce() -> Result<Host, String> + Send + 'static) -> Self {
+    fn initialize_with(
+        identity: owner::Owner,
+        open: impl FnOnce() -> Result<Host, String> + Send + 'static,
+    ) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
         )));
@@ -687,7 +694,12 @@ impl AgentHost {
             .clone()
             .try_lock_owned()
             .expect("new admission mutex");
-        let owner = Self(state.clone(), closed.clone(), admission.clone());
+        let owner = Self(
+            state.clone(),
+            closed.clone(),
+            admission.clone(),
+            identity.clone(),
+        );
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(open)
                 .await
@@ -699,7 +711,7 @@ impl AgentHost {
                 *state = opened;
             }
             drop(initializing); // restore itself enters through native admission.
-            Self(state, closed, admission).restore().await;
+            Self(state, closed, admission, identity).restore().await;
         });
         owner
     }
@@ -887,6 +899,7 @@ impl AgentHost {
         })
         .await
     }
+    /// Sign out's "Also remove my agents"; runs before shutdown fences the host.
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
         let mut state = self
@@ -1227,10 +1240,11 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        let attested = host.controller.attested_owner(&id)?;
+        Ok((request, ticket, host.credentials.clone(), attested))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested) = prepared;
     prepare_tools_path().await;
     let target = id.clone();
     let pi = run(owner.clone(), move |host| {
@@ -1262,7 +1276,25 @@ async fn start_guarded(
     }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    let acquired = if preflight.is_ok() {
+    // Kept agents answer to the owner who authorized them, not whoever signs in
+    // next: a mismatch is refused before the agent's key is read.
+    let ready = match owner.3.viewer().await {
+        Ok(signed_in) => buzz_agent_controller::check_owner(attested.as_deref(), Some(&signed_in)),
+        Err(error) => Err(error),
+    }
+    .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
+    let target = id.clone();
+    run(owner.clone(), move |host| {
+        host.starts
+            .get(&target)
+            .filter(|pending| pending.ticket == ticket)
+            .ok_or(START_CANCELLED)?;
+        Ok(())
+    })
+    .await?;
+    let acquired = if let Err(error) = ready {
+        Err(error)
+    } else {
         tauri::async_runtime::spawn_blocking(move || {
             if !restore && replay_floor.is_none() && guard.is_none() {
                 credentials.retry();
@@ -1273,8 +1305,6 @@ async fn start_guarded(
         .map_err(|_| "Native credential operation failed".to_owned())
         .and_then(|v| v)
         .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()))
-    } else {
-        Err(preflight.as_ref().err().unwrap().clone())
     };
     let target = id.clone();
     if acquired.is_ok() {
@@ -1572,7 +1602,7 @@ pub(crate) async fn agent_control_snapshot_memory_write(
 pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
 mod snapshot_memory;
 
-mod profile_http;
+pub(crate) mod profile_http;
 
 #[cfg(test)]
 pub(crate) mod tests;

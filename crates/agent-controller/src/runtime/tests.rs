@@ -3790,6 +3790,10 @@ fn plugin_protection_copies_defaults_and_fails_closed_when_provider_retires() {
             .unwrap();
     assert_eq!(launch["policy"], binding.policy);
     assert_eq!(launch["relayUrl"], saved.relay_url);
+    assert_eq!(
+        launch["agent"],
+        json!({"id":saved.id,"pubkey":saved.pubkey,"name":saved.name})
+    );
     assert!(cmd.get_envs().any(|(k, v)| k == "BUZZ_ACP_AGENT_COMMAND"
         && v == Some(std::ffi::OsStr::new("/runtime/buzz-agent"))));
     // A late disposal cannot remove a replacement provider.

@@ -51,7 +51,7 @@ export class AppServer {
   ) {}
 
   async open(spawn: Spawn, cwd?: string) {
-    this.process = await spawn("app-server", {
+    this.process = await spawn("codex-app-server", {
       ...(cwd ? { cwd } : {}),
       onStdout: (data) => this.read(data),
       onStderr: (data) => {

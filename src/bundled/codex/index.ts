@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { defaults, config } from "./config";
 import { CodexRuntime } from "./runtime";
+import { CodexSetup } from "./setup";
 import { createTabs } from "./tabs";
 export const inject = ["react", "agents2", "host", "relay", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -15,6 +16,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       throw new Error("Codex agents run only in the desktop app");
     });
   const runtime = new CodexRuntime(start, ctx.relay);
+  const setup = new CodexSetup(start);
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
   let selection = "";
   const sync = () => {
@@ -45,8 +47,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     offRelay();
     offCommunity();
     runtime.dispose();
+    void setup.cancel();
   });
-  const { CodexTab, SettingsTab } = createTabs(ctx.react, start, runtime);
+  const { CodexTab, SettingsTab } = createTabs(
+    ctx.react,
+    start,
+    runtime,
+    setup,
+  );
   ctx.agents2.register({
     id: "codex",
     title: "Codex",

@@ -203,16 +203,17 @@ pub(crate) async fn plugin_host_run_command(
 
 pub(crate) fn effective_path() -> OsString {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         let path = if path.is_empty() {
             OsString::from("/usr/bin:/bin")
         } else {
             path
         };
-        // Per-user installs, such as Claude Code's official installer, come first:
-        // an older system-wide copy in /usr/local/bin would otherwise run instead,
-        // and installing again could not replace it.
+        // Per-user installs, such as the official Claude Code and Codex installers,
+        // come first: an older system-wide copy in /usr/local/bin would otherwise
+        // run instead, and installing again could not replace it. Linux sessions
+        // add ~/.local/bin only if it existed at login, so a new install needs it too.
         let mut directories = std::env::var_os("HOME")
             .map(|home| std::path::Path::new(&home).join(".local/bin"))
             .into_iter()
@@ -220,10 +221,11 @@ pub(crate) fn effective_path() -> OsString {
         directories.extend(
             std::env::split_paths(&path).filter(|directory| !directory.as_os_str().is_empty()),
         );
+        #[cfg(target_os = "macos")]
         directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
         std::env::join_paths(directories).unwrap_or(path)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     {
         path
     }
@@ -420,7 +422,6 @@ mod tests {
         (directory, path)
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn per_user_installs_come_before_system_wide_ones() {
         let home = std::env::var_os("HOME").unwrap();
@@ -428,6 +429,7 @@ mod tests {
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
         let first = |directory: &Path| directories.iter().position(|item| item == directory);
         assert_eq!(first(&Path::new(&home).join(".local/bin")), Some(0));
+        #[cfg(target_os = "macos")]
         assert!(first(Path::new("/usr/local/bin")) > Some(0));
     }
 

@@ -773,7 +773,7 @@ it.each([{}, { workspace: "" }, { workspace: "  " }])(
     await f.runtime.run({ ...f.delivery("hello"), config });
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     expect(f.spawn).toHaveBeenCalledWith(
-      "app-server",
+      "codex-app-server",
       expect.objectContaining({ cwd: "~/.buzz" }),
     );
     expect(f.spawn).toHaveBeenCalledWith(

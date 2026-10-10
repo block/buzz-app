@@ -1275,9 +1275,9 @@ it("does not overwrite a later local edit when a background upload fails", async
     text: "later work",
   });
   expect(
-    screen.getByText(/Failed send was kept because this draft changed/),
+    await screen.findByText(/Failed send was kept because this draft changed/),
   ).toBeVisible();
-  const retry = screen.getByRole("button", {
+  const retry = await screen.findByRole("button", {
     name: "Retry failed send recovery",
   });
   await userEvent.click(retry);
@@ -1390,7 +1390,7 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
   const replacement = within(again.container).getByRole("textbox");
   await userEvent.type(replacement, "later edit");
   await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
-  const retry = screen.getByRole("button", {
+  const retry = await screen.findByRole("button", {
     name: "Retry failed send recovery",
   });
   expect(replacement).toHaveValue("later edit");

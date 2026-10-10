@@ -13,23 +13,15 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       invoke("agent_control_create_prepare", { requestId, destination, owner }),
     commitCreate: (requestId, edit, auth, bundle) =>
       invoke("agent_control_create_commit", { requestId, edit, auth, bundle }),
-    exportTeam: (snapshot, members, community, memoryLevel = "none") =>
+    exportTeam: (team, members, community, memoryLevel = "none") =>
       invoke("agent_control_team_export", {
-        snapshot,
+        team,
         members,
         community,
         memoryLevel,
       }),
-    applyTeamInstructions: (id, revision, instructions, team, community) =>
-      invoke("agent_control_team_instructions", {
-        id,
-        revision,
-        instructions,
-        team,
-        community,
-      }),
-    captureTeam: (team, members, community) =>
-      invoke("agent_control_team_capture", { team, members, community }),
+    syncTeamInstructions: (community, teams) =>
+      invoke("agent_control_team_sync", { community, teams }),
     previewTeam: (content) => invoke("agent_control_team_preview", { content }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
     writeSnapshotMemory: (id, entries) =>

@@ -53,6 +53,8 @@ function provideAgents2(root: Context, relay: RelayData) {
     forget: vi.fn(),
     publish: vi.fn(),
     publishProfile: vi.fn(),
+    claim: async () => true,
+    release: vi.fn(),
   });
 }
 

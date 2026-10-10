@@ -72,8 +72,8 @@ use agents::{
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
     agent_control_snapshot, agent_control_snapshot_memory_write, agent_control_start_on_app_launch,
-    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
-    agent_control_team_preview, agent_control_use_here, AgentHost,
+    agent_control_team_export, agent_control_team_preview, agent_control_team_sync,
+    agent_control_use_here, AgentHost,
 };
 use agents::{claude_auth_status, codex_auth_status};
 use buzzodz_plugins::{
@@ -513,13 +513,14 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_query,
         app_agents::app_agent_upload,
         app_agents::app_agent_remember,
+        app_agents::app_agent_claim,
+        app_agents::app_agent_release,
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
         agent_control_snapshot_memory_write,
         agent_control_team_preview,
-        agent_control_team_instructions,
-        agent_control_team_capture,
+        agent_control_team_sync,
         agent_control_team_export,
         agent_control_snapshot,
         agent_control_log_challenge,
@@ -675,6 +676,8 @@ pub fn run() {
                     .as_ref()
                     .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
                     .map_err(Clone::clone),
+                // `just desktop` builds step aside for a packaged app.
+                !tauri::is_dev(),
             ));
             let agent_owner = agents::owner::Owner::select(
                 agent_identity,

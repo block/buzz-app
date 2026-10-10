@@ -9,7 +9,8 @@ use buzz_agent_controller::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const BUSY_WAITS: u32 = 50;
@@ -29,14 +30,25 @@ pub(crate) struct AppAgentHost {
     /// One profile publication per agent at a time, so each is newer than the
     /// last; Delete takes it too, so no publication outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    hosting: Arc<Hosting>,
 }
 impl AppAgentHost {
-    pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
+    /// `packaged` is false for a dev build, which steps aside for a packaged app.
+    pub(crate) fn new(path: Result<PathBuf, String>, packaged: bool) -> Self {
+        let hosts = path
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
         Self {
             agents: path.map(AppAgents::open),
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
             profiles: Arc::default(),
+            hosting: Arc::new(Hosting {
+                dir: hosts,
+                packaged,
+                held: Mutex::default(),
+            }),
         }
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
@@ -92,6 +104,7 @@ impl AppAgentHost {
             // Held across the deletion, so no publication re-reads the key meanwhile.
             let mut keys = host.keys();
             keys.remove(&pubkey);
+            host.hosting.held().remove(&pubkey);
             host.agents
                 .clone()?
                 .remove(&pubkey, host.credentials.as_ref())
@@ -110,6 +123,83 @@ impl AppAgentHost {
         })
         .await
     }
+}
+
+/// Which running copy of the app runs each agent. Every copy on this machine
+/// (the packaged app and any dev builds) shares the agent list and hears the
+/// same events. The packaged app always runs what it can and holds
+/// `<pubkey>.packaged` while it does; there is only ever one, since release
+/// builds are single-instance. Dev builds step aside while that is held, and
+/// otherwise run each agent from whichever holds `<pubkey>.lock`. The OS lets go
+/// of both when a copy exits, however it exits.
+struct Hosting {
+    dir: Result<PathBuf, String>,
+    packaged: bool,
+    /// The lock file this copy holds per agent: `.packaged` or `.lock`.
+    held: Mutex<HashMap<String, File>>,
+}
+impl Hosting {
+    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<String, File>> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Whether this copy runs the agent. The packaged app always does, so a
+    /// stuck dev build can never silence it. A dev build takes the agent if no
+    /// other copy runs it, and lets go while the packaged app does.
+    #[allow(clippy::incompatible_msrv)] // `File` locking; see `sign_out::Instance`.
+    fn claim(&self, pubkey: &str) -> Result<bool, String> {
+        if pubkey.len() != 64
+            || !pubkey
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err("Invalid agent".into());
+        }
+        let dir = self.dir.as_ref().map_err(Clone::clone)?;
+        std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
+        let packaged = dir.join(format!("{pubkey}.packaged"));
+        let mut held = self.held();
+        if self.packaged {
+            if !held.contains_key(pubkey) {
+                let file = open_lock(&packaged)?;
+                // A dev build checking for it holds it briefly; this tries again next time.
+                if lock(file.try_lock())? {
+                    held.insert(pubkey.into(), file);
+                }
+            }
+            return Ok(true);
+        }
+        if !lock(open_lock(&packaged)?.try_lock_shared())? {
+            held.remove(pubkey);
+            return Ok(false);
+        }
+        if !held.contains_key(pubkey) {
+            let file = open_lock(&dir.join(format!("{pubkey}.lock")))?;
+            if lock(file.try_lock())? {
+                held.insert(pubkey.into(), file);
+            }
+        }
+        Ok(held.contains_key(pubkey))
+    }
+}
+/// Whether a try at a lock took it; closing the file lets go.
+#[allow(clippy::incompatible_msrv)]
+fn lock(attempt: Result<(), TryLockError>) -> Result<bool, String> {
+    match attempt {
+        Ok(()) => Ok(true),
+        Err(TryLockError::WouldBlock) => Ok(false),
+        Err(TryLockError::Error(_)) => Err("Could not read agent hosting".into()),
+    }
+}
+fn open_lock(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|_| "Could not open agent hosting lock".to_owned())
 }
 
 /// Runs blocking file and credential work off the async runtime.
@@ -207,6 +297,22 @@ pub(crate) async fn app_agent_forget(
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
     blocking(move || agents.forget(&pubkey)).await
+}
+
+/// Whether this copy of the app runs the agent; see `Hosting`.
+#[tauri::command]
+pub(crate) async fn app_agent_claim(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<bool, String> {
+    let hosting = state.hosting.clone();
+    blocking(move || hosting.claim(&pubkey)).await
+}
+
+/// Lets another copy of the app run the agent, as when this one cannot.
+#[tauri::command]
+pub(crate) fn app_agent_release(state: tauri::State<'_, AppAgentHost>, pubkey: String) {
+    state.hosting.held().remove(&pubkey);
 }
 
 #[derive(Deserialize)]
@@ -475,6 +581,7 @@ mod tests {
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
             keys: Arc::default(),
             profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), true)),
         };
         let agent = AppAgent {
             pubkey: key.pubkey().into(),
@@ -493,7 +600,7 @@ mod tests {
     #[tokio::test]
     async fn delete_waits_for_a_profile_publication_in_flight() {
         let dir = tempfile::tempdir().unwrap();
-        let host = AppAgentHost::new(Ok(dir.path().join("identities.json")));
+        let host = AppAgentHost::new(Ok(dir.path().join("identities.json")), true);
         let pubkey = "c".repeat(64);
         let turn = host.profile_turn(&pubkey);
         let publishing = turn.lock().await;
@@ -507,5 +614,53 @@ mod tests {
         assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
         drop(publishing);
         deleting.await.unwrap().unwrap();
+    }
+
+    fn hosting(dir: Result<PathBuf, String>, packaged: bool) -> Hosting {
+        Hosting {
+            dir,
+            packaged,
+            held: Mutex::default(),
+        }
+    }
+
+    #[test]
+    fn one_copy_runs_each_agent_until_it_lets_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = ("a".repeat(64), "b".repeat(64));
+        let one = hosting(Ok(dir.path().join("hosts")), false);
+        let other = hosting(Ok(dir.path().join("hosts")), false);
+        assert!(one.claim(&first).unwrap());
+        assert!(one.claim(&first).unwrap());
+        assert!(!other.claim(&first).unwrap());
+        assert!(other.claim(&second).unwrap());
+        // As when that copy quits.
+        drop(one);
+        assert!(other.claim(&first).unwrap());
+        assert!(other.claim("../x").is_err());
+    }
+
+    #[test]
+    fn a_packaged_app_runs_what_it_can_and_dev_builds_let_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let (agent, other) = ("a".repeat(64), "b".repeat(64));
+        let dev = hosting(Ok(dir.path().join("hosts")), false);
+        let packaged = hosting(Ok(dir.path().join("hosts")), true);
+        assert!(dev.claim(&agent).unwrap());
+        assert!(dev.claim(&other).unwrap());
+        // The packaged app runs it at once, though the dev build had it first,
+        assert!(packaged.claim(&agent).unwrap());
+        // and the dev build lets go at its next claim.
+        assert!(!dev.claim(&agent).unwrap());
+        assert!(packaged.claim(&agent).unwrap());
+        // A second dev build cannot take it either.
+        let another = hosting(Ok(dir.path().join("hosts")), false);
+        assert!(!another.claim(&agent).unwrap());
+        // One the packaged app does not ask for stays with the dev build.
+        assert!(dev.claim(&other).unwrap());
+        // As when it can no longer run it.
+        packaged.held().remove(&agent);
+        assert!(dev.claim(&agent).unwrap());
+        assert!(!another.claim(&agent).unwrap());
     }
 }

@@ -1,3 +1,5 @@
+import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
@@ -317,6 +319,25 @@ function SessionWork({
     },
   });
   const { drawer, splitTrigger } = secondary;
+  const handoff = useChannelNavigation();
+  const { open, panelTrigger } = secondary;
+  useLayoutEffect(() => {
+    const intent = handoff?.activityAgent.current;
+    if (
+      !intent ||
+      intent.channelId !== channel.id ||
+      navigation?.signal.aborted
+    )
+      return;
+    const target = activityTarget(intent.agent, intent.channelId);
+    const panel = panels.resolve(target);
+    if (panel) {
+      panelTrigger.current = intent.trigger;
+      open({ channelId: intent.channelId, panel, target }, true);
+    }
+    handoff.activityAgent.current = undefined;
+  }, [handoff, channel.id, navigation, panels, open, panelTrigger]);
+
   const canOpenLink = (url: string) =>
     !!panels.resolve(url) ||
     (!!navigator && !!sessionLinkTarget(url, scope, session.viewer));

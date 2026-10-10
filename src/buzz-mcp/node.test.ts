@@ -97,6 +97,12 @@ it("fetches only its community's media, signed for a get", async () => {
     new Response(new Uint8Array(5 * 1024 * 1024 + 1)),
   );
   await expect(client().media(sha)).rejects.toThrow("over 5 MB");
+  fetch.mockResolvedValueOnce(
+    new Response(new Uint8Array(5 * 1024 * 1024 + 1), { status: 500 }),
+  );
+  await expect(client().media(sha)).rejects.toThrow("over 5 MB");
+  fetch.mockResolvedValueOnce(new Response("denied", { status: 401 }));
+  await expect(client().media(sha)).rejects.toThrow("Media failed: 401 denied");
   const wrongHash = "a".repeat(64);
   fetch.mockResolvedValueOnce(new Response(bytes));
   await expect(client().media(wrongHash)).rejects.toThrow(

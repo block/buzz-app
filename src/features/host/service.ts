@@ -40,6 +40,9 @@ export type HostProcess = Readonly<{
   /** The exit code once it exits; null when a signal ended it. */
   exited: Promise<number | null>;
 }>;
+/** UTF-16 units per process write: at most 3 UTF-8 bytes each, so a piece
+ * stays under the host's 1 MiB write limit. */
+const WRITE_UNITS = 256 * 1024;
 type ProcessEvent =
   | { type: "stdout" | "stderr"; data: string }
   | { type: "exit"; code: number | null };
@@ -173,13 +176,29 @@ export class HostService extends Service implements Host {
       env: options.env ?? null,
       onEvent,
     });
-    const write = (data: string, close: boolean) =>
-      invoke<void>("plugin_host_process_write", {
-        id: owner.id,
-        handle,
-        data,
-        close,
+    // The host takes at most 1 MiB a write, so a longer one goes in pieces,
+    // queued so no other write lands between them.
+    let queue: Promise<unknown> = Promise.resolve();
+    const write = (data: string, close: boolean) => {
+      const written = queue.then(async () => {
+        let at = 0;
+        do {
+          let end = Math.min(data.length, at + WRITE_UNITS);
+          // A piece must not split a surrogate pair.
+          if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1] ?? ""))
+            end--;
+          await invoke<void>("plugin_host_process_write", {
+            id: owner.id,
+            handle,
+            data: data.slice(at, end),
+            close: close && end === data.length,
+          });
+          at = end;
+        } while (at < data.length);
       });
+      queue = written.catch(() => undefined);
+      return written;
+    };
     const kill = () =>
       invoke<void>("plugin_host_process_kill", { id: owner.id, handle }).catch(
         // Already gone.

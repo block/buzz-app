@@ -190,14 +190,14 @@ it("shrinks over-budget pages and preserves Load more and explicit retry", async
     />,
   );
   try {
-    await screen.findByRole("heading", { name: "Helper 99", exact: true });
+    await screen.findByRole("heading", { name: "Helper 99" });
     expect(
       query.mock.calls.slice(0, 2).map(([filters]) => filters[0]?.limit),
     ).toEqual([200, 100]);
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("heading", { name: "Helper 199", exact: true }),
+      await screen.findByRole("heading", { name: "Helper 199" }),
     ).toBeVisible();
     expect(screen.getAllByRole("heading")).toHaveLength(200);
     expect(

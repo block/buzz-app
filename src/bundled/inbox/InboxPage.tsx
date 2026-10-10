@@ -608,7 +608,7 @@ export function InboxView({
         const index = current.visible.findIndex(
           (row) =>
             row.channelId === item.channelId &&
-            row.messageIds.includes(item.messageId),
+            (row.id === item.id || row.messageIds.includes(item.messageId)),
         );
         const next =
           leaves && index >= 0

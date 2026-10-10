@@ -509,6 +509,55 @@ it.each([
   },
 );
 
+it("header Archive advances from an ordinary-reply visit after switching to Mentions", async () => {
+  const h = fixture();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  const mention = message(h.alice, "room", "Decision in our discussion", 23, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const progress = message(h.alice, "room", "Later ordinary progress", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.addEvent(mention);
+  h.addEvent(progress);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  act(() => h.emit([mention, progress]));
+  await act(async () => {
+    await h.owner.session.unread.markThrough(
+      { kind: "thread", channelId: "room", rootId: root.id },
+      progress.id,
+    );
+  });
+  await screen.findByText("Later ordinary progress");
+  const thread = rows().find((row) =>
+    row.textContent?.includes("Later ordinary progress"),
+  );
+  if (!thread) throw new Error("Missing ordinary progress row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await screen.findByRole("region", { name: "Inbox detail" });
+  await chooseFilter("Mentions");
+  expect(rows().map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Decision in our discussion"),
+    expect.stringContaining("Please review this"),
+  ]);
+  const archive = screen.getByRole("button", { name: "Archive conversation" });
+  await waitFor(() => expect(archive).toBeEnabled());
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  fireEvent.click(archive);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  expect(
+    screen.getByRole("region", { name: "Inbox detail" }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
+  );
+});
+
 it.each(["button", "menu"] as const)(
   "unselected-row Archive via %s leaves the reader and its draft alone",
   async (action) => {

@@ -150,7 +150,7 @@ it("shrinks over-budget pages and preserves Load more and explicit retry", async
     id: index.toString(16).padStart(64, "0"),
     created_at: 200 - index,
     tags: [
-      ["d", `helper-${index}`],
+      ["d", `helper-${Math.floor(index / 100)}`],
       ["shared", "true"],
     ],
     content: JSON.stringify({
@@ -190,16 +190,16 @@ it("shrinks over-budget pages and preserves Load more and explicit retry", async
     />,
   );
   try {
-    await screen.findByRole("heading", { name: "Helper 99" });
+    await screen.findByRole("heading", { name: "Helper 0" });
     expect(
       query.mock.calls.slice(0, 2).map(([filters]) => filters[0]?.limit),
     ).toEqual([200, 100]);
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("heading", { name: "Helper 199" }),
+      await screen.findByRole("heading", { name: "Helper 100" }),
     ).toBeVisible();
-    expect(screen.getAllByRole("heading")).toHaveLength(200);
+    expect(screen.getAllByRole("heading")).toHaveLength(2);
     expect(
       screen.queryByRole("button", { name: "Load more" }),
     ).not.toBeInTheDocument();

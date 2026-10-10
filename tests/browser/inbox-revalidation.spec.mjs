@@ -273,12 +273,13 @@ for (const scenario of [
         ).toBeVisible();
         await expectWithheld();
         await expectNoViewer();
+        const show = inbox.getByRole("combobox", { name: "Show" });
         const activity = inbox.getByRole("button", {
           name: "Inbox filters",
           exact: true,
         });
         const retry = inbox.getByRole("button", { name: "Retry inbox" });
-        await activity.focus();
+        await show.focus();
         await page.keyboard.press("Shift+Tab");
         await expect(retry).toBeFocused();
 
@@ -289,6 +290,8 @@ for (const scenario of [
         await expectWithheld();
         await expectNoViewer();
         await expect(retry).toBeFocused();
+        await page.keyboard.press("Tab");
+        await expect(show).toBeFocused();
         await page.keyboard.press("Tab");
         await expect(activity).toBeFocused();
         await page.keyboard.press("Tab");

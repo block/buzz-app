@@ -39,29 +39,3 @@ it.each([
     /malformed or invalidly signed|not an event array/,
   );
 });
-
-it("passes the history scope and preserves verified events with their IFC generation", async () => {
-  vi.mocked(invoke).mockResolvedValueOnce({
-    generation: "g1",
-    events: [message],
-  });
-  const history = await native.readHistory?.(agent.pubkey, "c", message);
-  expect(invoke).toHaveBeenCalledWith("app_agent_read_history", {
-    pubkey: agent.pubkey,
-    channel: "c",
-    trigger: message,
-  });
-  expect(history?.generation).toBe("g1");
-  expect(history?.events.every(hasEventProof)).toBe(true);
-  vi.mocked(invoke).mockResolvedValueOnce(null);
-  expect(
-    await native.readHistory?.(agent.pubkey, "c", message),
-  ).toBeUndefined();
-  vi.mocked(invoke).mockResolvedValueOnce({
-    generation: "g2",
-    events: [{ ...message, content: "forged" }],
-  });
-  await expect(
-    native.readHistory?.(agent.pubkey, "c", message),
-  ).rejects.toThrow(/invalidly signed/);
-});

@@ -13,8 +13,6 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-mod ifc;
-
 const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -32,7 +30,6 @@ pub(crate) struct AppAgentHost {
     /// One profile publication per agent at a time, so each is newer than the
     /// last; Delete takes it too, so no publication outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    ifc: Arc<ifc::HistoryRead>,
     hosting: Arc<Hosting>,
 }
 impl AppAgentHost {
@@ -47,7 +44,6 @@ impl AppAgentHost {
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
             profiles: Arc::default(),
-            ifc: Arc::new(ifc::HistoryRead::from_env()),
             hosting: Arc::new(Hosting {
                 dir: hosts,
                 packaged,
@@ -116,7 +112,7 @@ impl AppAgentHost {
         .await
     }
     /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
-    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+    pub(crate) async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
         let host = self.clone();
         blocking(move || {
             let agent = host.agents.clone()?.get(&pubkey);
@@ -384,34 +380,13 @@ pub(crate) async fn app_agent_query(
         return Err("Agents read with one to eight filters".into());
     }
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    query(&agent, &key, &filters).await
-}
-
-/// The opt-in recent-DM read, including the retained IFC generation. Disabled
-/// or out-of-scope reads return None so the existing history path still runs.
-#[tauri::command]
-pub(crate) async fn app_agent_read_history(
-    state: tauri::State<'_, AppAgentHost>,
-    pubkey: String,
-    channel: String,
-    trigger: nostr::event::Event,
-) -> Result<Option<ifc::History>, String> {
-    tokio::time::timeout(
-        std::time::Duration::from_secs(4),
-        state.ifc.read(state.inner(), pubkey, channel, trigger),
-    )
-    .await
-    .map_err(|_| "IFC DM history read timed out")?
-}
-
-async fn query(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
     let bytes = serde_json::to_vec(&filters).map_err(|_| "Could not encode agent read")?;
     let response = client(20)?
         .post(agent.query_url())
         .header("Content-Type", "application/json")
         .header(
             "Authorization",
-            authorization(agent.http_auth(key, &agent.query_url(), &bytes)?)?,
+            authorization(agent.http_auth(&key, &agent.query_url(), &bytes)?)?,
         )
         .header("x-auth-tag", &agent.auth)
         .body(bytes)
@@ -606,7 +581,6 @@ mod tests {
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
             keys: Arc::default(),
             profiles: Arc::default(),
-            ifc: Arc::new(ifc::HistoryRead::disabled()),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
         };
         let agent = AppAgent {

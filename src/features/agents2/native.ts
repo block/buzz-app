@@ -1,12 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
 
-/** Verified recent history and the native broker's retained IFC generation. */
-export type AgentHistory = Readonly<{
-  generation: string;
-  events: readonly RelayEvent[];
-}>;
-
 /** A plugin agent's identity as native custody reports it; never the key. The
  * saved identities are the agent list. */
 export type AgentIdentity = Readonly<{
@@ -57,12 +51,6 @@ export type AgentsNative = {
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
-  /** Opt-in IFC history; undefined means this DM uses the existing path. */
-  readHistory?(
-    pubkey: string,
-    channel: string,
-    trigger: RelayEvent,
-  ): Promise<AgentHistory | undefined>;
   /** Uploads base64 `data` (an image or MP4) as the agent. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
@@ -102,18 +90,6 @@ export const nativeAgents = (): AgentsNative | undefined =>
           }),
         query: async (pubkey, filters) =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
-        readHistory: async (pubkey, channel, trigger) => {
-          const result = await invoke<{
-            generation: string;
-            events: unknown;
-          } | null>("app_agent_read_history", { pubkey, channel, trigger });
-          return result
-            ? {
-                generation: result.generation,
-                events: eventsDto(result.events),
-              }
-            : undefined;
-        },
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         remember: (pubkey, slug, body, after) =>

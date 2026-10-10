@@ -21,51 +21,38 @@ Its only adaptations are local Cargo dependencies, the app's Nostr version,
 and a local UUID-backed `CommunityId`, avoiding the relay's `buzz-core` crate.
 The [design paper](practical-information-flow-for-buzz-agents.md) describes the
 model and its assumptions. Adding these crates alone does not mediate Agents2.
+## Observational history read
 
-## Opt-in native history read
+Claude Code Agents2 continues to use the existing `session.read()` for recent
+DM history. Its read options carry the agent and signed triggering event through
+the existing scheduler, transport and `relay_http` command. There is no opt-in
+flag, alternate history command, or change to the history result.
 
-The first integration mediates one operation: the recent history included in a
-Claude Code Agents2 turn in a selected DM, when the trigger is not a thread
-reply. It uses the existing native agent broker and its credential custody.
+After a successful history response, Rust starts a bounded background audit.
+It looks up the saved agent and owner, resolves community identity and relay
+key from the same HTTPS origin, and fetches current relay-signed DM metadata
+and membership. It derives the execution domain and independent resource label,
+checks `IfcSession::call` and `IfcSession::read`, and verifies the history's
+signatures and channel. IFC failures are printed to the native log; the original
+read result is returned immediately. Existing read authorization, signature
+checks and network errors retain their behavior.
 
-Set `BUZZ_APP_IFC_READ` in the native app's environment before starting it:
+At most two audits run concurrently, with a three-second deadline each. Capacity
+exhaustion and timeouts are logged rather than delaying or rejecting history.
+Audited reads do not share a scheduler job with another caller's read, so their
+agent and triggering event remain attached to the correct request. Browser/dev
+broker reads keep working but have no Rust audit in this slice. Thread history
+and other adapters are unchanged.
 
-```sh
-BUZZ_APP_IFC_READ='{"agent_pubkey":"<agent hex public key>","relay":"wss://<community host>","community_id":"<trusted community UUID>","channel_id":"<DM UUID>","relay_pubkey":"<trusted relay hex public key>"}' just desktop
-```
+This checks one read. It does not bind an IFC session to Claude's retained model
+state, rotate model history, enforce publication, or establish a security boundary.
+Policy is observed after the read, so the audit makes no claim about membership
+throughout the read. Other inputs remain unknown to IFC. Community identity
+currently uses the relay's version-1 `read_state_snapshot.community_id` discovery
+field; relays without it produce a diagnostic and still return history.
 
-The IDs and relay key must come from trusted host configuration. The configured
-relay must equal the agent's saved community origin. Absent configuration leaves
-the current path in place; malformed configuration rejects history requests.
-Only the specified agent and DM opt in. Browser and Codex agents are outside this
-slice.
-
-Native verifies the trigger and the relay-signed kind-39000 metadata and
-kind-39002 membership. It requires an active private DM and current agent and
-requester membership. It derives the domain from the complete member set and
-labels the resource independently from that conversation's readers. It checks
-`channel.read` and `IfcSession::read`, fetches at most 13 signed messages of kind
-9 or 40002, and rechecks current policy before returning any of them. The whole
-native operation has a four-second deadline; existing response-size limits apply.
-
-One retained `IfcSession` holds a native generation UUID for the selected DM.
-Reissued policy events and topic edits preserve it; a changed domain rotates it.
-The Claude runtime clears both the live process and saved model session before
-accepting a new generation, including its first read after a runtime or app
-restart. Rejected reads abort the prompt, clear that conversation's model state,
-and use the existing failure reporter to ask for another attempt. The next valid
-read can start fresh. No permanent invalidation, membership cache, request
-journal, or lifetime budget is introduced.
-
-Instructions, files, memory, thread reads, other tools, and publications remain
-unmediated. The IFC session is marked as having unknown input. This read hook
-does not establish an end-to-end noninterference property or detect membership
-changes that occur and revert between policy observations.
-
-For acceptance with an agreed isolated agent and DM, enable the configuration
-and send a non-thread mention. History should reach a fresh Claude session.
-Change only the topic and send another mention: the same model session should
-continue. Change the members and send another valid mention: Claude should start
-a new session with recent history. A refused read should show a failure reply,
-deliver no prompt, and allow a later attempt. Runtime and human acceptance are
-deferred on this draft; local tests were not deliberately run.
+For acceptance with an agreed isolated native agent and DM, send a non-thread
+mention and confirm ordinary history and model-session reuse. A missing membership
+or unavailable policy lookup should produce an `IFC history audit failed` message
+in the native log while the normal read and prompt continue. Runtime and human
+acceptance are deferred; local tests remain stopped at the author's request.

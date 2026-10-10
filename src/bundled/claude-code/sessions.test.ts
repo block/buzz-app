@@ -67,25 +67,6 @@ function sessions(
   };
 }
 
-it("forget removes saved state and cancels an opening conversation", async () => {
-  let release: (() => void) | undefined;
-  const launched = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const { pool, store, live } = sessions({ launched });
-  const delivery = pool.deliver("dm", "old prompt", 10);
-  const forgetting = pool.forget("dm");
-  release?.();
-  await forgetting;
-  expect((await delivery).ok).toBe(false);
-  expect(store.get("dm")).toBeUndefined();
-  expect(pool.snapshot()).toEqual([]);
-  expect(live()).toHaveLength(0);
-  await pool.deliver("dm", "fresh prompt", 20);
-  expect(store.get("dm")).toMatchObject({ id: "new-2", seen: 20 });
-  pool.dispose();
-});
-
 it("starts a new conversation on the warm spare and warms another", async () => {
   const { pool, store, claudes } = sessions();
   pool.warm();

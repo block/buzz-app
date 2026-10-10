@@ -8,11 +8,18 @@ import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 
 export type Priority = "foreground" | "background";
+/** Context for a native, log-only IFC audit of an agent's history read. */
+export type IfcReadContext = Readonly<{
+  agent: string;
+  trigger: RelayEvent;
+}>;
 export type ReadOptions = {
   signal?: AbortSignal;
   priority?: Priority;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
+  /** Observational only; IFC failures never reject the read. */
+  ifc?: IfcReadContext;
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
@@ -38,6 +45,7 @@ type Job = {
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
   snapshot: boolean;
+  ifc?: IfcReadContext;
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 
@@ -154,6 +162,7 @@ export function createRelayReader(
                 job.controller.signal,
                 job.id,
                 job.priority,
+                job.ifc,
               );
         void query
           .then(async (events) => {
@@ -179,7 +188,7 @@ export function createRelayReader(
   }
   function read(
     filters: readonly ReadFilter[],
-    { signal, priority = "foreground", fresh = false }: ReadOptions = {},
+    { signal, priority = "foreground", fresh = false, ifc }: ReadOptions = {},
     snapshot = false,
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
@@ -243,7 +252,9 @@ export function createRelayReader(
         );
       key = `read-state-snapshot:${key}`;
     }
-    if (fresh) key = `${key}:fresh:${++sequence}`;
+    // An audit belongs to this agent and trigger, never to another consumer
+    // that happens to request the same filters.
+    if (fresh || ifc) key = `${key}:fresh:${++sequence}`;
     let job = jobs.get(key);
     if (!job) {
       if (jobs.size >= maxPending)
@@ -261,6 +272,7 @@ export function createRelayReader(
         consumers: new Set(),
         running: false,
         snapshot,
+        ...(ifc ? { ifc } : {}),
         timer: setTimeout(
           () =>
             finish(

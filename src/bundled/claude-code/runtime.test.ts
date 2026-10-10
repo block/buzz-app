@@ -1,12 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
+import type { ReadOptions } from "../../features/relay/reader";
 import type { EventData, RelayEvent } from "../../features/relay/events";
-import type { AgentHandle } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./claude-testing";
 import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
-import { localSessions } from "./sessions";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -31,14 +30,11 @@ const message = (
     ...extra,
   }) as RelayEvent;
 
-function setup(
-  thread: readonly EventData[] = [],
-  readHistory?: AgentHandle["readHistory"],
-) {
+function setup(thread: readonly EventData[] = [], dm = false) {
   const fake = fakeSpawn();
   const host = { spawn: fake.spawn, request: vi.fn() } as unknown as Host;
   const read = vi.fn(
-    async (_filters: readonly { kinds?: readonly number[] }[]) => thread,
+    async (_filters: readonly object[], _options?: ReadOptions) => thread,
   );
   const session = {
     read,
@@ -48,7 +44,7 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType: readHistory ? "dm" : "stream",
+            channelType: dm ? "dm" : "stream",
             members: [],
           },
         ],
@@ -88,7 +84,6 @@ function setup(
     query,
     upload: vi.fn(),
     remember: vi.fn(),
-    ...(readHistory ? { readHistory } : {}),
   };
   const deliver = (trigger: Delivery["trigger"]) =>
     runtime.run({
@@ -100,128 +95,8 @@ function setup(
     } as Delivery);
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
-  return {
-    runtime,
-    deliver,
-    published,
-    claudes,
-    fake,
-    read,
-    data,
-    storage,
-    agent,
-  };
+  return { runtime, deliver, published, claudes, fake, read, data, agent };
 }
-
-it("reads IFC history through the agent and discards an unbound saved model session", async () => {
-  const earlier = message("1", "verified history", { created_at: 90 });
-  const readHistory = vi.fn(async () => ({
-    generation: "domain-1",
-    events: [earlier],
-  }));
-  const f = setup([], readHistory);
-  f.fake.known.add("unbound-session");
-  localSessions(f.storage, self).set(channel, {
-    id: "unbound-session",
-    seen: 99,
-    at: 0,
-  });
-  const trigger = message("2", "new turn");
-  await f.deliver({ type: "mention", event: trigger });
-  await flush(10);
-  const process = f.claudes().find((item) => item.prompts.length);
-  expect(readHistory).toHaveBeenCalledWith(channel, trigger);
-  expect(process?.prompts[0]).toContain("verified history");
-  expect(process?.options.args).not.toContain("--resume");
-  expect(
-    f.read.mock.calls.some(([filters]) => filters[0]?.kinds?.includes(9)),
-  ).toBe(false);
-});
-
-it("keeps the owner read and saved model session when the native hook is disabled", async () => {
-  const earlier = message("1", "old history", { created_at: 90 });
-  const readHistory = vi.fn(async () => undefined);
-  const f = setup([earlier], readHistory);
-  f.fake.known.add("saved-session");
-  localSessions(f.storage, self).set(channel, {
-    id: "saved-session",
-    seen: 99,
-    at: 0,
-  });
-  await f.deliver({ type: "mention", event: message("2", "new turn") });
-  await flush(10);
-  const process = f.claudes().find((item) => item.prompts.length);
-  expect(process?.options.args).toContain("--resume");
-  expect(process?.options.args).toContain("saved-session");
-  expect(
-    f.read.mock.calls.some(([filters]) => filters[0]?.kinds?.includes(9)),
-  ).toBe(true);
-});
-
-it("reuses an unchanged IFC generation and starts fresh when it changes", async () => {
-  const earlier = message("1", "history after rotation", { created_at: 90 });
-  const readHistory = vi.fn(async () => ({
-    generation: "domain-1",
-    events: [earlier],
-  }));
-  const f = setup([], readHistory);
-  await f.deliver({ type: "mention", event: message("2", "first") });
-  await flush(10);
-  const first = f.claudes().find((item) => item.prompts.length);
-  await f.deliver({
-    type: "mention",
-    event: message("3", "same domain", { created_at: 110 }),
-  });
-  await flush(10);
-  expect(first?.prompts).toHaveLength(2);
-  expect(first?.killed).toBe(false);
-  readHistory.mockResolvedValue({ generation: "domain-2", events: [earlier] });
-  await f.deliver({
-    type: "mention",
-    event: message("4", "changed domain", { created_at: 120 }),
-  });
-  await flush(10);
-  expect(first?.killed).toBe(true);
-  const current = f
-    .claudes()
-    .find((item) => item !== first && item.prompts.length);
-  expect(current?.options.args).not.toContain("--resume");
-  expect(current?.prompts[0]).toContain("history after rotation");
-});
-
-it("aborts a rejected IFC read without delivering a prompt or falling back to owner history", async () => {
-  const readHistory = vi.fn(async () => ({
-    generation: "domain-1",
-    events: [] as RelayEvent[],
-  }));
-  const f = setup([], readHistory);
-  await f.deliver({ type: "mention", event: message("1", "first") });
-  await flush(10);
-  const first = f.claudes().find((item) => item.prompts.length);
-  readHistory.mockRejectedValueOnce(
-    new Error("membership changed during read"),
-  );
-  await expect(
-    f.deliver({ type: "mention", event: message("2", "rejected") }),
-  ).rejects.toThrow("membership changed");
-  expect(first?.killed).toBe(true);
-  expect(f.published.at(-1)?.content).toContain(
-    "DM history could not be verified",
-  );
-  expect(
-    f.claudes().reduce((count, item) => count + item.prompts.length, 0),
-  ).toBe(1);
-  expect(
-    f.read.mock.calls.some(([filters]) => filters[0]?.kinds?.includes(9)),
-  ).toBe(false);
-  readHistory.mockResolvedValue({ generation: "domain-2", events: [] });
-  await f.deliver({ type: "mention", event: message("3", "retry") });
-  await flush(10);
-  expect(
-    f.claudes().find((item) => item !== first && item.prompts.length)
-      ?.prompts[0],
-  ).toContain("retry");
-});
 
 it("hands a mention to its thread's session", async () => {
   const root = message("1", "Build is red");
@@ -481,4 +356,26 @@ it("warms a spare for each agent of its type and stops those that go away", asyn
   runtime.sync([]);
   await flush(10);
   expect(claudes().every((process) => process.killed)).toBe(true);
+});
+
+it("tags the existing DM history read for audit and keeps the model session", async () => {
+  const earlier = message("1", "Earlier DM context");
+  const trigger = message("2", "@Claude hello", { created_at: 110 });
+  const f = setup([earlier], true);
+  await f.deliver({ type: "mention", event: trigger });
+  await flush(10);
+  expect(f.read).toHaveBeenCalledWith(
+    [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+    expect.objectContaining({ ifc: { agent: self, trigger } }),
+  );
+  expect(
+    f.claudes().find((process) => process.prompts.length)?.prompts[0],
+  ).toContain("Earlier DM context");
+  const later = message("3", "@Claude again", { created_at: 120 });
+  await f.deliver({ type: "mention", event: later });
+  await flush(10);
+  const used = f.claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  expect(used[0]?.prompts).toHaveLength(2);
+  expect(f.agent.query).not.toHaveBeenCalled();
 });

@@ -38,7 +38,6 @@ import {
   type AgentEventTemplate,
   type AgentIdentity,
   type AgentsNative,
-  type AgentHistory,
   type AgentUpload,
 } from "./native";
 import {
@@ -93,11 +92,6 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
-  /** Native IFC admission for the opt-in recent-DM history operation. */
-  readHistory?(
-    channel: string,
-    trigger: RelayEvent,
-  ): Promise<AgentHistory | undefined>;
   /** Uploads base64 `data`, an image or MP4 video, as the agent. */
   upload(data: string, mime: string): Promise<AgentUpload>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
@@ -877,9 +871,6 @@ export class Agents2Service extends Service implements Agents2 {
         publish: (event: AgentEventTemplate) => this.publish(runner, event),
         query: (filters: readonly object[]) =>
           this.require().query(agent.pubkey, filters),
-        readHistory: (channel: string, trigger: RelayEvent) =>
-          this.require().readHistory?.(agent.pubkey, channel, trigger) ??
-          Promise.resolve(undefined),
         upload: (data: string, mime: string) =>
           this.require().upload(agent.pubkey, data, mime),
         remember: (slug: string, body: string, after: number) =>

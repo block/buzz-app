@@ -138,6 +138,7 @@ export function AttentionPanel({
 }) {
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const [adding, setAdding] = useState(false);
+  const switched = useAction();
   const skipped = Object.values(agent.skipped);
   const row = (object: WatchObject) => (
     <WatchRow
@@ -160,6 +161,28 @@ export function AttentionPanel({
           icon={<AtIcon size={16} />}
           title="Mentions and replies"
           subtitle="Messages that mention it or reply to it. Always on."
+        />
+        <PreferenceRow
+          icon={<EyeIcon size={16} />}
+          title="Attention"
+          subtitle={
+            <>
+              Lets the agent add and change its own Interests, watches and
+              timers, and wakes it for them. Off, nothing below wakes it, and it
+              is not offered the tools.
+              <Problem error={switched.error} />
+            </>
+          }
+          trailing={
+            <Switch
+              aria-label="Attention on"
+              checked={agent.attentionEnabled}
+              disabled={switched.pending}
+              onCheckedChange={(attentionEnabled) =>
+                void switched.run(() => save({ attentionEnabled }))
+              }
+            />
+          }
         />
       </SettingsGroup>
       {interests.map((object) => {
@@ -428,8 +451,13 @@ function WatchRow({
   const [editing, setEditing] = useState(false);
   const action = useAction();
   const title = describeWatch(value, channels);
-  const put = (next: AttentionValue | null) =>
-    action.run(() => save({ attention: { [slug]: next } }));
+  const put = (next: AttentionValue | null, restart = false) =>
+    action.run(() =>
+      save({
+        attention: { [slug]: next },
+        ...(restart ? { restart: [slug] } : {}),
+      }),
+    );
   const status =
     value.type === "timer" ? timerStatus(agent, slug, value) : undefined;
   const detail =
@@ -477,18 +505,22 @@ function WatchRow({
               extra={
                 value.type === "timer" &&
                 status?.spent && (
-                  // A new armed_at is a new schedule, with nothing used yet.
+                  // The owner starts it over: a new schedule, nothing used yet.
                   <MenuItem
                     onClick={() =>
-                      void put({
-                        ...value,
-                        enabled: true,
-                        armed_at: now(),
-                        expires_at:
-                          value.expires_at !== null && value.expires_at <= now()
-                            ? null
-                            : value.expires_at,
-                      })
+                      void put(
+                        {
+                          ...value,
+                          enabled: true,
+                          armed_at: now(),
+                          expires_at:
+                            value.expires_at !== null &&
+                            value.expires_at <= now()
+                              ? null
+                              : value.expires_at,
+                        },
+                        true,
+                      )
                     }
                   >
                     <MenuIcon>

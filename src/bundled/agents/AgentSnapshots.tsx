@@ -40,7 +40,7 @@ export function AgentSnapshotExport({
   onClose,
 }: {
   agent: AgentView;
-  defaultSessionPolicy?: "channel" | "thread" | undefined;
+  defaultSessionPolicy?: NonNullable<AgentView["sessionPolicy"]> | undefined;
   session?: RelaySession | undefined;
   destination: string;
   onClose(): void;

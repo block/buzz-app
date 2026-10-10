@@ -22,9 +22,10 @@ struct GooseSource {
     features: String,
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Manifest {
     version: u32,
+    patch_sha256: String,
     revision: String,
     target: String,
     files: BTreeMap<String, String>,
@@ -69,7 +70,8 @@ impl RuntimeBundle {
                     profile: source.goose_dev_profile,
                     ..source.goose
                 };
-        if manifest.version != 2
+        if manifest.version != 3
+            || manifest.patch_sha256 != community_patch_sha256()
             || manifest.revision != source.revision
             || !goose
             || manifest.target != env!("BUZZ_RUNTIME_TARGET")
@@ -119,6 +121,13 @@ impl RuntimeBundle {
         Ok(path)
     }
 }
+pub(crate) fn community_patch_sha256() -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(include_bytes!("../../../runtime/community-session.patch"))
+    )
+}
+
 const INTEGRITY_ERROR: &str =
     "Runtime executable failed its integrity check; rebuild the app resources";
 

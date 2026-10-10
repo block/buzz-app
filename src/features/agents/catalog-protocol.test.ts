@@ -91,6 +91,26 @@ describe("agent projection", () => {
     expect(policy("thread", "channel")).toBe("thread");
   });
 
+  it.each(["community", null] as const)(
+    "refuses effective community policy before catalog publication (own: %s)",
+    (own) => {
+      expect(() =>
+        agentCatalogContent(agent({ sessionPolicy: own }), "community"),
+      ).toThrow(/community.*cannot be shared/i);
+    },
+  );
+
+  it.each(["channel", "thread"] as const)(
+    "shares explicit %s policy over community defaults",
+    (own) => {
+      expect(
+        JSON.parse(
+          agentCatalogContent(agent({ sessionPolicy: own }), "community"),
+        ).session_policy,
+      ).toBe(own);
+    },
+  );
+
   it("projects the known Windows Buzz Agent executable but still rejects Codex", () => {
     const windows = agent({
       harness: { ...agent().harness, command: "C:\\Tools\\buzz-agent.exe" },
@@ -170,6 +190,35 @@ describe("team projection", () => {
     expect(await policy("channel", "thread")).toBeUndefined();
     expect(await policy("thread", "channel")).toBe("thread");
   });
+
+  it.each(["community", null] as const)(
+    "refuses a community member instead of dropping its policy (own: %s)",
+    async (own) => {
+      await expect(
+        teamCatalogContent(
+          { id: "t1", name: "Crew", agents: [owner] },
+          [{ ...member, sessionPolicy: own }],
+          "community",
+        ),
+      ).rejects.toThrow(/community.*cannot be shared/i);
+    },
+  );
+
+  it.each(["channel", "thread"] as const)(
+    "shares a member's explicit %s policy over community defaults",
+    async (own) => {
+      const body = JSON.parse(
+        await teamCatalogContent(
+          { id: "t1", name: "Crew", agents: [owner] },
+          [{ ...member, sessionPolicy: own }],
+          "community",
+        ),
+      );
+      expect(body.members[0].session_policy).toBe(
+        own === "thread" ? "thread" : undefined,
+      );
+    },
+  );
 
   it("carries saved team text and refuses text the parser would reject", async () => {
     const team = { id: "t1", name: "Crew", agents: [owner] };

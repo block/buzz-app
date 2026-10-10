@@ -21,11 +21,22 @@ const manifest = JSON.parse(
 assert.deepEqual(Object.keys(manifest).sort(), [
   "files",
   "goose",
+  "patchSha256",
   "revision",
   "target",
   "version",
 ]);
-assert.equal(manifest.version, 2);
+assert.equal(manifest.version, 3);
+assert.equal(
+  manifest.patchSha256,
+  createHash("sha256")
+    .update(
+      readFileSync(
+        new URL("../runtime/community-session.patch", import.meta.url),
+      ),
+    )
+    .digest("hex"),
+);
 assert.deepEqual(manifest.goose, source.goose);
 assert.equal(manifest.revision, source.revision);
 assert.equal(manifest.target, target);

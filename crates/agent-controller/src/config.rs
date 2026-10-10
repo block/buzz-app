@@ -13,6 +13,7 @@ pub enum SessionPolicy {
     Channel,
     #[default]
     Thread,
+    Community,
 }
 
 impl SessionPolicy {
@@ -20,6 +21,7 @@ impl SessionPolicy {
         match self {
             Self::Channel => "channel",
             Self::Thread => "thread",
+            Self::Community => "community",
         }
     }
 }
@@ -423,6 +425,7 @@ impl Agent {
                 })?;
             Some(match imported["session_policy"].as_str() {
                 Some("thread") => SessionPolicy::Thread,
+                Some("community") => SessionPolicy::Community,
                 _ => SessionPolicy::Channel,
             })
         })

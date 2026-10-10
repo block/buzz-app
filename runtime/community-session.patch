@@ -1,0 +1,1156 @@
+diff --git a/crates/buzz-acp/src/lib.rs b/crates/buzz-acp/src/lib.rs
+index 3f74500..d15ff26 100644
+--- a/crates/buzz-acp/src/lib.rs
++++ b/crates/buzz-acp/src/lib.rs
+@@ -6463,6 +6463,40 @@ mod owner_control_command_tests {
+         );
+     }
+
++    #[tokio::test]
++    async fn community_route_cancel_in_b_does_not_cancel_active_a() {
++        let mut pool = AgentPool::from_slots(vec![None]);
++        let a = thread_scope(Uuid::new_v4(), &"a".repeat(64));
++        let b = thread_scope(Uuid::new_v4(), &"b".repeat(64));
++        // Both routes are owned by the same serial worker, not a common address.
++        pool.record_scope_owner(a.clone(), 0);
++        pool.record_scope_owner(b.clone(), 0);
++        let (tx, mut rx) = tokio::sync::oneshot::channel();
++        insert_task_meta(&mut pool, 0, a.clone(), tx);
++        let observer = observer::ObserverHandle::in_process();
++        handle_cancel_turn_control(
++            &serde_json::json!({"channelId": b.channel_id().to_string()}),
++            &mut pool,
++            Some(&observer),
++        );
++        assert_eq!(observer.snapshot()[0].payload["status"], "no_active_turn");
++        assert!(!signal_in_flight_task_for_scope(
++            &mut pool,
++            &b,
++            ControlSignal::Cancel
++        ));
++        assert_eq!(
++            rx.try_recv(),
++            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
++        );
++        assert!(signal_in_flight_task_for_scope(
++            &mut pool,
++            &a,
++            ControlSignal::Cancel
++        ));
++        assert_eq!(rx.await.unwrap(), ControlSignal::Cancel);
++    }
++
+     #[tokio::test]
+     async fn observer_channel_controls_reject_sibling_sessions_without_signalling() {
+         let mut pool = AgentPool::from_slots(vec![]);
+diff --git a/crates/buzz-acp/src/pool.rs b/crates/buzz-acp/src/pool.rs
+index 1278c17..919646c 100644
+--- a/crates/buzz-acp/src/pool.rs
++++ b/crates/buzz-acp/src/pool.rs
+@@ -131,6 +131,10 @@ pub struct ChannelDeliveryState {
+ pub struct SessionState {
+     /// session scope → session_id
+     pub sessions: HashMap<SessionScope, String>,
++    // Route aliases retain existing pool/control bookkeeping; only provider IDs
++    // are shared. One App-configured worker owns this listener's public history.
++    shared_session: Option<String>,
++    shared_scopes: HashSet<SessionScope>,
+     pub heartbeat_session: Option<String>,
+     /// Per-scope turn counters for proactive session rotation.
+     /// Incremented on each successful prompt; reset when the session is rotated.
+@@ -178,9 +182,41 @@ impl SessionState {
+         }
+     }
+
+-    /// Invalidate a single session scope's session and turn counter.
+-    /// Returns `true` if the scope had an active session.
++    /// Select provider history after current-turn eligibility is resolved.
++    fn select_provider_history(&mut self, scope: &SessionScope, shared: bool) {
++        if self.shared_scopes.contains(scope) != shared {
++            // History selection changes delivery state, not the current dispatch's fence.
++            let generation = self.scope_owner_generations.get(scope).copied();
++            self.forget_route(scope);
++            if let Some(generation) = generation {
++                self.set_scope_owner_generation(scope.clone(), generation);
++            }
++        }
++        if shared {
++            self.shared_scopes.insert(scope.clone());
++            if let Some(sid) = &self.shared_session {
++                self.sessions.insert(scope.clone(), sid.clone());
++            }
++        }
++    }
++
++    /// Invalidate a scope and its delivery state, including every route sharing
++    /// its community provider history. Returns whether history was active.
+     pub fn invalidate_scope(&mut self, scope: &SessionScope) -> bool {
++        if self.shared_scopes.contains(scope) {
++            let scopes: Vec<_> = self.shared_scopes.iter().cloned().collect();
++            let existed = self.shared_session.take().is_some();
++            for alias in scopes {
++                self.forget_route(&alias);
++            }
++            return existed;
++        }
++        self.forget_route(scope)
++    }
++
++    // Membership cleanup detaches only this route, not already-public history.
++    fn forget_route(&mut self, scope: &SessionScope) -> bool {
++        self.shared_scopes.remove(scope);
+         self.turn_counts.remove(scope);
+         self.core_sections.remove(scope);
+         self.canvas_sections.remove(scope);
+@@ -208,7 +244,7 @@ impl SessionState {
+             .collect();
+         let mut count = 0;
+         for scope in scopes {
+-            if self.invalidate_scope(&scope) {
++            if self.forget_route(&scope) {
+                 count += 1;
+             }
+         }
+@@ -218,6 +254,8 @@ impl SessionState {
+     /// Invalidate all sessions and turn counters (e.g. after agent exit).
+     pub fn invalidate_all(&mut self) {
+         self.sessions.clear();
++        self.shared_session = None;
++        self.shared_scopes.clear();
+         self.turn_counts.clear();
+         self.heartbeat_session = None;
+         self.heartbeat_turn_count = 0;
+@@ -772,6 +810,7 @@ impl ChannelInfoResolver {
+                 (info.channel_type != "unknown").then_some((
+                     id,
+                     PromptChannelInfo {
++                        explicitly_public: false,
+                         name: info.name,
+                         channel_type: info.channel_type,
+                         description: info.description,
+@@ -810,9 +849,19 @@ impl ChannelInfoResolver {
+     /// be edited while the harness is running; the next prompt must use the
+     /// relay's current kind-39000 event. On a transient refresh failure, retain
+     /// the last known metadata so an otherwise healthy turn can still proceed.
++    #[cfg(test)]
+     pub async fn resolve(
+         &self,
+         channel_id: Uuid,
++    ) -> Result<Option<PromptChannelInfo>, ProjectLookupError> {
++        self.resolve_for_turn(channel_id, false).await
++    }
++
++    // Sharing must not admit stale public classification after a failed refresh.
++    async fn resolve_for_turn(
++        &self,
++        channel_id: Uuid,
++        require_fresh: bool,
+     ) -> Result<Option<PromptChannelInfo>, ProjectLookupError> {
+         let cached = self
+             .cache
+@@ -835,10 +884,24 @@ impl ChannelInfoResolver {
+                 }
+                 fresh
+             }
+-            None => match cached {
+-                Some(cached) => cached,
+-                None => return Ok(None),
+-            },
++            None => {
++                // Unconfirmed visibility prevents sharing, not independent project resolution.
++                let mut fallback = match cached {
++                    Some(cached) => cached,
++                    None if require_fresh => PromptChannelInfo {
++                        explicitly_public: false,
++                        name: UNKNOWN_CHANNEL_NAME.into(),
++                        channel_type: "unknown".into(),
++                        description: None,
++                        project: None,
++                    },
++                    None => return Ok(None),
++                };
++                if require_fresh {
++                    fallback.explicitly_public = false;
++                }
++                fallback
++            }
+         };
+         info.project = self.lookup_project(channel_id).await?;
+         Ok(Some(info))
+@@ -887,6 +950,8 @@ impl ChannelInfoResolver {
+ }
+
+ pub struct PromptContext {
++    /// Configured provider-history policy; routing remains scope-local.
++    pub session_policy: crate::scope::SessionPolicy,
+     pub mcp_servers: Vec<McpServer>,
+     pub initial_message: Option<String>,
+     pub idle_timeout: Duration,
+@@ -2507,7 +2572,14 @@ pub async fn run_prompt_task(
+     // outcome: fail closed and preserve the batch without poisoning the healthy
+     // ACP process.
+     let resolved_channel_info = match &source {
+-        PromptSource::Channel(scope) => match ctx.channel_info.resolve(scope.channel_id()).await {
++        PromptSource::Channel(scope) => match ctx
++            .channel_info
++            .resolve_for_turn(
++                scope.channel_id(),
++                ctx.session_policy == crate::scope::SessionPolicy::Community,
++            )
++            .await
++        {
+             Ok(info) => info,
+             Err(error) => {
+                 tracing::warn!(
+@@ -2529,6 +2601,15 @@ pub async fn run_prompt_task(
+         PromptSource::Heartbeat => None,
+     };
+
++    let shared_public = ctx.session_policy == crate::scope::SessionPolicy::Community
++        && resolved_channel_info
++            .as_ref()
++            .is_some_and(|info| info.explicitly_public && info.channel_type == "stream")
++        && matches!(&source, PromptSource::Channel(scope) if scope.is_thread());
++    if let PromptSource::Channel(scope) = &source {
++        agent.state.select_provider_history(scope, shared_public);
++    }
++
+     //
+     // Core memory is delivered inside the system prompt the harness already
+     // builds (system role for protocol >= 2, the `<agent-instructions>` user-message
+@@ -2621,7 +2702,7 @@ pub async fn run_prompt_task(
+         let is_new_channel_session = !agent.state.sessions.contains_key(scope);
+         let needs_canvas =
+             is_new_channel_session && !agent.state.canvas_sections.contains_key(scope);
+-        if is_new_channel_session {
++        if is_new_channel_session || shared_public {
+             let (is_dm, resolved_channel, resolved_channel_type) =
+                 resolve_new_session_channel_context(resolved_channel_info.as_ref()).await;
+             title_channel = resolved_channel;
+@@ -2631,7 +2712,7 @@ pub async fn run_prompt_task(
+             }
+             // A confirmed DM never receives a canvas section; an undeterminable
+             // channel type fails closed as a DM for the same reason.
+-            if needs_canvas && !is_dm {
++            if (needs_canvas || shared_public) && !is_dm {
+                 if let Some(section) = fetch_canvas_section(cid, &ctx.rest_client).await {
+                     pending_canvas = Some((scope.clone(), section));
+                 }
+@@ -2672,8 +2753,16 @@ pub async fn run_prompt_task(
+                     &ctx,
+                     agent_core.as_deref(),
+                     NewSessionChannelContext {
+-                        huddle_instructions: huddle_instructions.as_deref(),
+-                        canvas: agent_canvas.as_deref(),
++                        huddle_instructions: if shared_public {
++                            None
++                        } else {
++                            huddle_instructions.as_deref()
++                        },
++                        canvas: if shared_public {
++                            None
++                        } else {
++                            agent_canvas.as_deref()
++                        },
+                         name: title_channel.as_deref(),
+                         scope: Some(scope),
+                         channel_type: origin_channel_type.as_deref(),
+@@ -2688,6 +2777,9 @@ pub async fn run_prompt_task(
+                             scope.telemetry_label()
+                         );
+                         agent.state.sessions.insert(scope.clone(), sid.clone());
++                        if shared_public {
++                            agent.state.shared_session = Some(sid.clone());
++                        }
+                         agent
+                             .state
+                             .deliveries
+@@ -2696,7 +2788,7 @@ pub async fn run_prompt_task(
+                         // so prior usage is zero by definition — first turn is reliable.
+                         agent.acp.notify_session_spawned(&sid);
+                         // Commit canvas only after session creation succeeds (I3).
+-                        if let Some((pending_scope, section)) = pending_canvas.take() {
++                        if let Some((pending_scope, section)) = pending_canvas.clone() {
+                             agent.state.canvas_sections.insert(pending_scope, section);
+                         }
+                         (sid, true)
+@@ -2814,8 +2906,16 @@ pub async fn run_prompt_task(
+         system_prompt: ctx.system_prompt.as_deref(),
+         team_instructions: ctx.team_instructions.as_deref(),
+         agent_core: agent_core.as_deref(),
+-        huddle_instructions: huddle_instructions.as_deref(),
+-        agent_canvas: agent_canvas.as_deref(),
++        huddle_instructions: if shared_public {
++            None
++        } else {
++            huddle_instructions.as_deref()
++        },
++        agent_canvas: if shared_public {
++            None
++        } else {
++            agent_canvas.as_deref()
++        },
+     };
+     // Delivery state is committed only after ACP confirms success. Existing
+     // sessions created before this field existed fail safe by behaving as
+@@ -3153,6 +3253,16 @@ pub async fn run_prompt_task(
+     // own block. Per-section blocks let the observer size trimmer elide a
+     // section body in place while every `[Header]` line survives at the head
+     // of its own leaf — so the "Prompt context" panel counts every section.
++    let mut prompt_sections = prompt_sections;
++    if shared_public {
++        let canvas = pending_canvas.as_ref().map(|(_, section)| section.as_str());
++        prompt_sections.insert(0, crate::prompt_framing::semantic_section(
++            "current-channel-instructions",
++            &format!("Applies only to this turn; earlier channels' instructions are not current.\n{}\n{}",
++                canvas.unwrap_or("No current canvas metadata available."),
++                huddle_instructions.as_deref().unwrap_or("No current huddle instructions available.")),
++        ));
++    }
+     let prompt_blocks: Vec<&str> = match slash_command {
+         Some(ref cmd) => std::iter::once(cmd.as_str())
+             .chain(prompt_sections.iter().map(String::as_str))
+@@ -3645,6 +3755,37 @@ pub(crate) async fn fetch_channel_info(
+     fetch_with_retry(|| fetch_channel_info_once(channel_id, rest)).await
+ }
+
++// Match Buzz's exact visibility flags; display-type fallback is not public evidence.
++fn channel_is_explicitly_public(tags: &[serde_json::Value]) -> bool {
++    let flags: Vec<_> = tags
++        .iter()
++        .filter_map(|tag| tag.as_array())
++        .filter(|tag| {
++            matches!(
++                tag.first().and_then(|value| value.as_str()),
++                Some("public" | "private")
++            )
++        })
++        .collect();
++    let types: Vec<_> = tags
++        .iter()
++        .filter_map(|tag| tag.as_array())
++        .filter(|tag| tag.first().and_then(|value| value.as_str()) == Some("t"))
++        .collect();
++    flags.len() == 1
++        && flags[0].as_slice() == [serde_json::Value::from("public")]
++        && types.len() == 1
++        && types[0].as_slice()
++            == [
++                serde_json::Value::from("t"),
++                serde_json::Value::from("stream"),
++            ]
++        && !tags.iter().any(|tag| {
++            tag.as_array()
++                .is_some_and(|tag| tag.first().and_then(|value| value.as_str()) == Some("hidden"))
++        })
++}
++
+ /// Fetch the current kind-39000 metadata with one bounded request.
+ ///
+ /// Used by prompt-turn refreshes when cached metadata is already available as
+@@ -3687,6 +3828,7 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
+                 .filter(|s| !s.is_empty())
+                 .map(str::to_string);
+             Some(PromptChannelInfo {
++                explicitly_public: channel_is_explicitly_public(tags),
+                 name: name.unwrap_or(UNKNOWN_CHANNEL_NAME).to_string(),
+                 channel_type,
+                 description,
+@@ -7175,6 +7317,357 @@ mod tests {
+         }
+     }
+
++    #[tokio::test]
++    async fn community_wire_reuses_public_session_with_turn_local_canvas_and_isolates_private() {
++        community_wire_lifecycle(false, &[]).await;
++    }
++
++    #[tokio::test]
++    async fn community_protocol_error_in_a_resets_b_provider_history() {
++        community_wire_lifecycle(true, &[]).await;
++    }
++
++    #[tokio::test]
++    async fn community_wire_requires_affirmative_public_metadata() {
++        let unknown = [
++            json!([]),
++            json!([["t", "stream"]]),
++            json!([["t", "unknown"], ["public"]]),
++            json!([["t", "stream"], ["public", "true"]]),
++            json!([["t", "stream"], ["public"], ["private"]]),
++            json!([["t", "stream"], ["public"], ["public"]]),
++            json!([["t", "stream"], ["public"], ["hidden"]]),
++            json!([["t", "stream"], ["private"]]),
++            json!([["t", "stream"], ["t", "unknown"], ["public"]]),
++        ];
++        community_wire_lifecycle(false, &unknown).await;
++    }
++
++    async fn community_wire_lifecycle(protocol_error: bool, unknown: &[serde_json::Value]) {
++        use axum::{routing::post, Json, Router};
++        let channels: Vec<_> = (0..4 + unknown.len()).map(|_| Uuid::new_v4()).collect();
++        let channel_events: Vec<_> = channels
++            .iter()
++            .enumerate()
++            .map(|(i, channel)| {
++                let tags = if i >= 4 {
++                    unknown[i - 4]
++                        .as_array()
++                        .unwrap()
++                        .iter()
++                        .map(|tag| {
++                            Tag::parse(tag.as_array().unwrap().iter().map(|v| v.as_str().unwrap()))
++                                .unwrap()
++                        })
++                        .collect::<Vec<_>>()
++                } else {
++                    vec![
++                        Tag::parse(["d", &channel.to_string()]).unwrap(),
++                        Tag::parse(["name", &format!("wire-{i}")]).unwrap(),
++                        Tag::parse(["t", if i == 3 { "dm" } else { "stream" }]).unwrap(),
++                        Tag::parse([if i == 2 || i == 3 {
++                            "private"
++                        } else {
++                            "public"
++                        }])
++                        .unwrap(),
++                    ]
++                };
++                serde_json::to_value(
++                    EventBuilder::new(Kind::Custom(39000), "")
++                        .tags(tags)
++                        .sign_with_keys(&Keys::generate())
++                        .unwrap(),
++                )
++                .unwrap()
++            })
++            .collect();
++        let canvases: Vec<_> = channels
++            .iter()
++            .map(|channel| {
++                serde_json::to_value(
++                    EventBuilder::new(Kind::Custom(buzz_core::kind::KIND_CANVAS as u16), "canvas")
++                        .tags([Tag::parse(["h", &channel.to_string()]).unwrap()])
++                        .sign_with_keys(&Keys::generate())
++                        .unwrap(),
++                )
++                .unwrap()
++            })
++            .collect();
++        let expected_canvases: Vec<_> = canvases
++            .iter()
++            .map(|v| v["id"].as_str().unwrap().to_string())
++            .collect();
++        let server_channels = channels.clone();
++        let app = Router::new()
++            .route(
++                "/query",
++                post(move |Json(filters): Json<serde_json::Value>| {
++                    let channels = server_channels.clone();
++                    let metadata = channel_events.clone();
++                    let canvases = canvases.clone();
++                    async move {
++                        let filter = &filters[0];
++                        let result = if filter["kinds"][0] == 39000 {
++                            channels
++                                .iter()
++                                .position(|c| filter["#d"][0] == c.to_string())
++                                .map(|i| vec![metadata[i].clone()])
++                                .unwrap_or_default()
++                        } else if filter["kinds"][0] == buzz_core::kind::KIND_CANVAS {
++                            channels
++                                .iter()
++                                .position(|c| filter["#h"][0] == c.to_string())
++                                .map(|i| vec![canvases[i].clone()])
++                                .unwrap_or_default()
++                        } else {
++                            vec![]
++                        };
++                        Json(result)
++                    }
++                }),
++            )
++            .route(
++                "/events",
++                post(|| async { Json(serde_json::json!({"accepted": true})) }),
++            );
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let base_url = format!("http://{}", listener.local_addr().unwrap());
++        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
++        let capture = tempfile::NamedTempFile::new().unwrap();
++        let script = r#"import json,sys
++count=0
++for line in sys.stdin:
++ r=json.loads(line)
++ with open(sys.argv[1], 'a') as f: f.write(line)
++ if 'id' not in r: continue
++ if r['method']=='session/new':
++  count+=1; result={'sessionId':str(count)}
++ elif r['method']=='session/prompt' and 'fail-community-history' in json.dumps(r['params']):
++  result={} # Malformed prompt response reaches the production Protocol error path.
++ else: result={'stopReason':'end_turn'}
++ print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
++"#;
++        let acp = AcpClient::spawn(
++            "python3",
++            &[
++                "-u".into(),
++                "-c".into(),
++                script.into(),
++                capture.path().to_string_lossy().into(),
++            ],
++            &[],
++            false,
++        )
++        .await
++        .unwrap();
++        let mut agent = OwnedAgent {
++            index: 0,
++            acp,
++            state: SessionState::default(),
++            model_capabilities: None,
++            desired_model: None,
++            model_overridden: false,
++            desired_model_request_id: None,
++            desired_model_pending_ack: false,
++            startup_effort: None,
++            agent_name: String::new(),
++            goose_system_prompt_supported: None,
++            protocol_version: 2,
++        };
++        agent.protocol_version = 2;
++        agent.agent_name = "buzz-agent".into();
++        let mut ctx = make_prompt_context_no_owner();
++        ctx.session_policy = crate::scope::SessionPolicy::Community;
++        ctx.rest_client.base_url = base_url;
++        ctx.channel_info = ChannelInfoResolver::new(HashMap::new(), ctx.rest_client.clone());
++        let ctx = Arc::new(ctx);
++        let mut pool = AgentPool::from_slots(vec![Some(agent)]);
++        let mut queue = crate::queue::EventQueue::new(ctx.dedup_mode);
++        let mut last_activity = tokio::time::Instant::now();
++        let mut session_ids = vec![];
++        let mut public_a = None;
++        let mut turns = if protocol_error {
++            vec![0, 1, 2, 3, 0, 1, 0, 0, 1]
++        } else {
++            vec![0, 1, 2, 3, 0, 1, 0]
++        };
++        for i in 4..channels.len() {
++            turns.extend([i, i]);
++        }
++        for (turn, &i) in turns.iter().enumerate() {
++            if turn == 5 {
++                // Idle !rotate uses this pool seam. Reset A, then resume B.
++                assert_eq!(pool.invalidate_scope_session(public_a.as_ref().unwrap()), 1);
++            }
++            let content = if protocol_error && turn == 7 {
++                "fail-community-history".to_string()
++            } else {
++                format!("turn-{i}")
++            };
++            let event = EventBuilder::new(Kind::Custom(9), content)
++                .sign_with_keys(&Keys::generate())
++                .unwrap();
++            let batch = FlushBatch {
++                channel_id: channels[i],
++                scope: if i == 3 {
++                    conv(channels[i])
++                } else {
++                    SessionScope::Thread {
++                        channel_id: channels[i],
++                        root_event_id: event.id.to_hex(),
++                    }
++                },
++                events: vec![crate::queue::BatchEvent {
++                    edit: None,
++                    event,
++                    prompt_tag: "@mention".into(),
++                    received_at: std::time::Instant::now(),
++                }],
++                cancelled_events: vec![],
++                cancel_reason: None,
++            };
++            let scope = batch.scope.clone();
++            if turn == 0 {
++                public_a = Some(scope.clone());
++            }
++            for event in batch.events {
++                assert!(queue.push(crate::queue::QueuedEvent {
++                    channel_id: batch.channel_id,
++                    scope: scope.clone(),
++                    event: event.event,
++                    received_at: event.received_at,
++                    prompt_tag: event.prompt_tag,
++                    edit: event.edit,
++                }));
++            }
++            let dispatched =
++                crate::dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, None);
++            assert_eq!(dispatched.len(), 1);
++            assert_eq!(dispatched[0].0, scope);
++            let (task_id, ()) = pool.join_set.join_next_with_id().await.unwrap().unwrap();
++            pool.task_map_mut().remove(&task_id).unwrap();
++            let result = pool.result_rx_try_recv().unwrap();
++            assert_eq!(result.source.scope(), Some(&scope));
++            if protocol_error && turn == 7 {
++                assert!(matches!(
++                    result.outcome,
++                    PromptOutcome::Error(AcpError::Protocol(_))
++                ));
++                assert!(
++                    result.agent.state.shared_session.is_none(),
++                    "A's protocol error must reset shared history"
++                );
++                assert!(result.agent.state.shared_scopes.is_empty());
++                assert!(
++                    result.agent.state.sessions.keys().all(|route| {
++                        route.channel_id() != channels[0] && route.channel_id() != channels[1]
++                    }),
++                    "A's protocol error must detach B's aliases too"
++                );
++                assert_eq!(
++                    result.agent.state.sessions.len(),
++                    2,
++                    "private and DM sessions must survive"
++                );
++            } else {
++                assert!(matches!(
++                    result.outcome,
++                    PromptOutcome::Ok(StopReason::EndTurn)
++                ));
++                session_ids.push(result.agent.state.sessions[&scope].clone());
++            }
++            let succeeded = matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn));
++            pool.return_agent(result.agent);
++            queue.mark_complete(&scope);
++            if succeeded {
++                assert!(
++                    pool.has_session_for(&scope),
++                    "successful dispatch must retain owned history after pool return"
++                );
++            }
++        }
++        pool.try_claim(None).unwrap().acp.shutdown().await;
++        server.abort();
++        let requests: Vec<serde_json::Value> = std::fs::read_to_string(capture.path())
++            .unwrap()
++            .lines()
++            .map(|l| serde_json::from_str(l).unwrap())
++            .collect();
++        assert_eq!(
++            session_ids[0], session_ids[1],
++            "A → B must resume the same live provider session"
++        );
++        assert_eq!(
++            session_ids[0], session_ids[4],
++            "returning to a new A thread must retain public history"
++        );
++        assert_ne!(
++            session_ids[0], session_ids[2],
++            "private history must be isolated"
++        );
++        assert_ne!(
++            session_ids[0], session_ids[3],
++            "DM history must be isolated"
++        );
++        assert_ne!(
++            session_ids[0], session_ids[5],
++            "idle rotate in A must also reset B's provider history"
++        );
++        assert_eq!(
++            session_ids[5], session_ids[6],
++            "A and B must reuse one fresh history after rotation"
++        );
++        if protocol_error {
++            assert_ne!(
++                session_ids[6], session_ids[7],
++                "B must receive a new sid after A's protocol error"
++            );
++        }
++        let prompts: Vec<_> = requests
++            .iter()
++            .filter(|r| r["method"] == "session/prompt")
++            .collect();
++        for (case, _) in unknown.iter().enumerate() {
++            let turn = 7 + case * 2;
++            let first = &prompts[turn]["params"]["sessionId"];
++            let second = &prompts[turn + 1]["params"]["sessionId"];
++            assert_ne!(
++                first, &prompts[6]["params"]["sessionId"],
++                "unknown metadata case {case} must not enter public history"
++            );
++            assert_ne!(
++                first, second,
++                "unknown metadata case {case} must keep new threads isolated"
++            );
++        }
++        for (turn, &channel) in turns.iter().enumerate() {
++            let text = prompts[turn]["params"]["prompt"].to_string();
++            assert!(
++                text.contains(&channels[channel].to_string()),
++                "turn must keep its actual source route"
++            );
++            if channel < 2 {
++                assert!(
++                    text.contains(&expected_canvases[channel]),
++                    "modern shared turn must receive current canvas on the wire"
++                );
++                assert!(
++                    !text.contains(&expected_canvases[1 - channel]),
++                    "other channel canvas must not be current instructions"
++                );
++            }
++        }
++        for request in requests.iter().filter(|r| r["method"] == "session/new") {
++            if request["params"]["_meta"].to_string().contains("wire-0") {
++                assert!(
++                    !request.to_string().contains(&expected_canvases[0]),
++                    "public canvas must not be standing system context"
++                );
++            }
++        }
++    }
++
+     #[tokio::test]
+     async fn run_prompt_task_commits_standing_context_only_after_acp_success() {
+         let capture = std::env::temp_dir().join(format!(
+@@ -10420,6 +10913,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+     ) -> PromptContext {
+         use crate::relay::RestClient;
+         PromptContext {
++            session_policy: crate::scope::SessionPolicy::Channel,
+             mcp_servers: vec![],
+             initial_message: None,
+             idle_timeout: Duration::from_secs(60),
+@@ -10948,6 +11442,16 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+
+     #[tokio::test]
+     async fn failed_refresh_rejects_expired_absence_but_retains_expired_project() {
++        for (require_fresh, cached_metadata) in [(false, true), (true, true), (true, false)] {
++            failed_visibility_refresh_preserves_project_authority(require_fresh, cached_metadata)
++                .await;
++        }
++    }
++
++    async fn failed_visibility_refresh_preserves_project_authority(
++        require_fresh: bool,
++        cached_metadata: bool,
++    ) {
+         use std::sync::atomic::Ordering;
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+@@ -10986,6 +11490,18 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+
++        if cached_metadata {
++            resolver
++                .cache
++                .write()
++                .unwrap()
++                .get_mut(&id)
++                .unwrap()
++                .explicitly_public = true;
++        } else {
++            resolver.cache.write().unwrap().clear();
++        }
++
+         resolver.projects.write().unwrap().insert(
+             id,
+             CachedProjectInfo {
+@@ -10994,7 +11510,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+         assert!(
+-            resolver.resolve(id).await.is_err(),
++            resolver.resolve_for_turn(id, require_fresh).await.is_err(),
+             "an expired absence plus failed refresh must remain indeterminate"
+         );
+         assert!(
+@@ -11025,21 +11541,43 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
+             },
+         );
+         let resolved = resolver
+-            .resolve(id)
++            .resolve_for_turn(id, require_fresh)
+             .await
+             .expect("project lookup succeeds")
+             .expect("stale project is retained");
+         assert_eq!(resolved.project, Some(stale_project));
++        assert_eq!(resolved.explicitly_public, !require_fresh);
++        assert_eq!(
++            resolved.name,
++            if cached_metadata {
++                "ordinary-looking"
++            } else {
++                UNKNOWN_CHANNEL_NAME
++            }
++        );
+         assert_eq!(
+             requests.load(Ordering::SeqCst),
+-            6,
+-            "each resolve makes one metadata refresh and retries project refresh once"
++            if cached_metadata { 6 } else { 8 },
++            "metadata discovery and project authority retain their independent retry contracts"
+         );
+         server.abort();
+     }
+
+     #[tokio::test]
+     async fn indeterminate_project_context_never_reaches_acp_prompt_boundary() {
++        for (policy, cached_metadata) in [
++            (crate::scope::SessionPolicy::Thread, true),
++            (crate::scope::SessionPolicy::Community, true),
++            (crate::scope::SessionPolicy::Community, false),
++        ] {
++            indeterminate_project_context_at_prompt_boundary(policy, cached_metadata).await;
++        }
++    }
++
++    async fn indeterminate_project_context_at_prompt_boundary(
++        policy: crate::scope::SessionPolicy,
++        cached_metadata: bool,
++    ) {
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+         let channel_id = Uuid::new_v4();
+@@ -11105,18 +11643,23 @@ done"#
+         };
+
+         let mut ctx = make_prompt_context_no_owner();
++        ctx.session_policy = policy;
+         ctx.dedup_mode = DedupMode::Queue;
+         ctx.initial_message = Some("inspect this project before the triggering turn".into());
+         ctx.rest_client.base_url = base_url.clone();
+         ctx.channel_info = ChannelInfoResolver::new(
+-            HashMap::from([(
+-                channel_id,
+-                crate::relay::ChannelInfo {
+-                    name: "ordinary-looking".into(),
+-                    channel_type: "stream".into(),
+-                    description: None,
+-                },
+-            )]),
++            if cached_metadata {
++                HashMap::from([(
++                    channel_id,
++                    crate::relay::ChannelInfo {
++                        name: "ordinary-looking".into(),
++                        channel_type: "stream".into(),
++                        description: None,
++                    },
++                )])
++            } else {
++                HashMap::new()
++            },
+             RestClient {
+                 http: reqwest::Client::new(),
+                 base_url,
+diff --git a/crates/buzz-acp/src/queue.rs b/crates/buzz-acp/src/queue.rs
+index e82a62a..0d7447b 100644
+--- a/crates/buzz-acp/src/queue.rs
++++ b/crates/buzz-acp/src/queue.rs
+@@ -1344,6 +1344,8 @@ pub struct ContextMessage {
+ pub struct PromptChannelInfo {
+     pub name: String,
+     pub channel_type: String,
++    /// True only for freshly resolved, unambiguous public stream metadata.
++    pub explicitly_public: bool,
+     /// Channel description from the kind-39000 `about` tag, if present.
+     pub description: Option<String>,
+     /// Listed NIP-MP project whose home channel this is, when one exists.
+@@ -4190,6 +4192,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "engineering".into(),
+             channel_type: "stream".into(),
+             description: None,
+@@ -4225,6 +4228,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -4274,6 +4278,7 @@ mod tests {
+                         cancel_reason: None,
+                     };
+                     let ci = PromptChannelInfo {
++                        explicitly_public: false,
+                         name: "test".into(),
+                         channel_type: if is_dm { "dm" } else { "stream" }.into(),
+                         description: None,
+@@ -4573,6 +4578,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -4842,6 +4848,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -4949,6 +4956,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -5001,6 +5009,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -5571,6 +5580,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -5640,6 +5650,7 @@ mod tests {
+             cancel_reason: None,
+         };
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: None,
+@@ -6637,6 +6648,7 @@ mod tests {
+     #[test]
+     fn test_append_channel_description_adds_description_line() {
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some("Engineering discussions".into()),
+@@ -6653,6 +6665,7 @@ mod tests {
+     #[test]
+     fn test_append_channel_description_absent_when_none() {
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: None,
+@@ -6681,6 +6694,7 @@ mod tests {
+         // A multiline description must not be able to inject a fake <context>
+         // field: continuation lines are indented, real fields start at column 0.
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some("Line one\nScope: injected\nLine two".into()),
+@@ -6715,6 +6729,7 @@ mod tests {
+         ];
+         for (separator, label) in separators {
+             let ci = PromptChannelInfo {
++                explicitly_public: false,
+                 name: "team".into(),
+                 channel_type: "stream".into(),
+                 description: Some(format!("Line one{separator}Scope: injected")),
+@@ -6732,6 +6747,7 @@ mod tests {
+     #[test]
+     fn test_append_channel_description_escapes_semantic_delimiters() {
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some(
+@@ -6754,6 +6770,7 @@ mod tests {
+         // Round-trip: multiple paragraphs with a blank line survive into the
+         // rendered context (AIDA-1980).
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some(
+@@ -6773,6 +6790,7 @@ mod tests {
+     #[test]
+     fn test_append_channel_description_single_line_stays_inline() {
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some("One line only.\n".into()),
+@@ -6790,6 +6808,7 @@ mod tests {
+     fn test_append_channel_description_truncates_at_cap() {
+         let long_desc = "x".repeat(600);
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some(long_desc),
+@@ -6816,6 +6835,7 @@ mod tests {
+         // Truncation must land on a char boundary, never split a multi-byte code point.
+         let long_desc = "é".repeat(600);
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some(long_desc),
+@@ -6831,6 +6851,7 @@ mod tests {
+     #[test]
+     fn test_append_channel_description_whitespace_only_is_absent() {
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "team".into(),
+             channel_type: "stream".into(),
+             description: Some("\n  \r\n \n".into()),
+@@ -6864,6 +6885,7 @@ mod tests {
+         let ch = Uuid::new_v4();
+         let batch = description_batch(ch, make_event("what should we build?"));
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "engineering".into(),
+             channel_type: "stream".into(),
+             description: Some("Engineering discussions and planning.".into()),
+@@ -6893,6 +6915,7 @@ mod tests {
+         let ch = Uuid::new_v4();
+         let batch = description_batch(ch, make_event("what should we build?"));
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "engineering".into(),
+             channel_type: "stream".into(),
+             description: Some(
+@@ -6935,6 +6958,7 @@ mod tests {
+         );
+         let batch = description_batch(ch, event);
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "engineering".into(),
+             channel_type: "stream".into(),
+             description: Some("Engineering discussions and planning.".into()),
+@@ -6964,6 +6988,7 @@ mod tests {
+         let ch = Uuid::new_v4();
+         let batch = description_batch(ch, make_event("hey"));
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "DM".into(),
+             channel_type: "dm".into(),
+             description: Some("This should not appear.".into()),
+@@ -6993,6 +7018,7 @@ mod tests {
+         let channel_id = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+         let owner = "a".repeat(64);
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "space-invaders-3d".into(),
+             channel_type: "stream".into(),
+             description: Some("Recreating Space Invaders".into()),
+@@ -7033,6 +7059,7 @@ mod tests {
+         let owner = "b".repeat(64);
+         let batch = description_batch(ch, make_event("make tasks and a codebase"));
+         let ci = PromptChannelInfo {
++            explicitly_public: false,
+             name: "space-invaders-3d".into(),
+             channel_type: "stream".into(),
+             description: None,
+diff --git a/crates/buzz-acp/src/runtime.rs b/crates/buzz-acp/src/runtime.rs
+index e6745b6..bb65481 100644
+--- a/crates/buzz-acp/src/runtime.rs
++++ b/crates/buzz-acp/src/runtime.rs
+@@ -83,6 +83,7 @@ fn make_prompt_context(
+     let base_prompt_content = config.base_prompt_content.as_ref();
+     let cwd = current_working_directory()?;
+     Ok(PromptContext {
++        session_policy: config.session_policy,
+         mcp_servers: build_mcp_servers(config),
+         initial_message: config.initial_message.clone(),
+         idle_timeout: Duration::from_secs(config.idle_timeout_secs),
+diff --git a/crates/buzz-acp/src/scope.rs b/crates/buzz-acp/src/scope.rs
+index 1ec23eb..995cb33 100644
+--- a/crates/buzz-acp/src/scope.rs
++++ b/crates/buzz-acp/src/scope.rs
+@@ -39,6 +39,8 @@ pub enum SessionPolicy {
+     /// Thread-scoped: each canonical channel thread gets an isolated provider
+     /// session. DMs remain conversation-scoped.
+     Thread,
++    /// Experimental public-community provider history, with thread-local routes.
++    Community,
+ }
+
+ impl SessionPolicy {
+@@ -48,6 +50,7 @@ impl SessionPolicy {
+         let session_model = match self {
+             Self::Channel => include_str!("session_model_channel.md"),
+             Self::Thread => include_str!("session_model_thread.md"),
++            Self::Community => include_str!("session_model_community.md"),
+         };
+         format!("{}\n\n{}", base_prompt.trim_end(), session_model.trim_end())
+     }
+@@ -58,6 +61,7 @@ impl std::fmt::Display for SessionPolicy {
+         match self {
+             Self::Channel => f.write_str("channel"),
+             Self::Thread => f.write_str("thread"),
++            Self::Community => f.write_str("community"),
+         }
+     }
+ }
+@@ -111,7 +115,7 @@ impl SessionScope {
+     ///    direct messages conversation-scoped regardless of policy.
+     /// 2. Under [`SessionPolicy::Channel`], every channel event is
+     ///    conversation-scoped (legacy / rollback behavior).
+-    /// 3. Under [`SessionPolicy::Thread`], a channel event with a NIP-10 root
++    /// 3. Under thread or community policy, a channel event with a NIP-10 root
+     ///    tag scopes to that canonical root; a top-level mention (no thread
+     ///    tags) opens a new thread rooted at the triggering event id.
+     ///
+@@ -214,7 +218,7 @@ mod tests {
+                     assert!(!prompt.contains("each thread gets its own"));
+                     assert!(!prompt.contains("sibling channel thread"));
+                 }
+-                SessionPolicy::Thread => {
++                SessionPolicy::Thread | SessionPolicy::Community => {
+                     assert!(prompt.contains("each thread gets its own"));
+                     assert!(prompt.contains("sibling channel thread"));
+                     assert!(!prompt.contains("one per-channel session"));
+@@ -223,6 +227,26 @@ mod tests {
+         }
+     }
+
++    #[test]
++    fn community_policy_preserves_thread_routes_and_has_its_own_session_model() {
++        let a = Uuid::new_v4();
++        let b = Uuid::new_v4();
++        let event = plain_event();
++        let route_a = SessionScope::derive(SessionPolicy::Community, a, false, &event);
++        let route_b = SessionScope::derive(SessionPolicy::Community, b, false, &event);
++        assert_ne!(route_a, route_b);
++        assert!(route_a.is_thread());
++        assert_eq!(
++            SessionScope::derive(SessionPolicy::Community, a, true, &event),
++            SessionScope::Conversation { channel_id: a }
++        );
++        let prompt = SessionPolicy::Community.append_session_model(include_str!("base_prompt.md"));
++        assert_eq!(prompt.matches("## Session Model").count(), 1);
++        assert!(prompt.contains("share live context"));
++        assert!(prompt.contains("DMs, private and unknown channels are isolated"));
++        assert!(!prompt.contains("each thread gets its own"));
++    }
++
+     #[test]
+     fn dm_is_always_conversation_scoped_under_thread_policy() {
+         let ch = Uuid::new_v4();
+diff --git a/crates/buzz-acp/src/session_model_community.md b/crates/buzz-acp/src/session_model_community.md
+new file mode 100644
+index 0000000..16eeb41
+--- /dev/null
++++ b/crates/buzz-acp/src/session_model_community.md
+@@ -0,0 +1,3 @@
++## Session Model
++
++Eligible public-channel turns share live context in this agent/community listener. DMs, private and unknown channels are isolated. Follow the current turn’s channel/thread/reply destination, not an earlier turn’s route. Channel canvas and huddle sections apply only to the current turn. Restart, rotation or provider failure may discard live history.

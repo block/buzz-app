@@ -9,6 +9,7 @@ export function runtimeFixture(directory) {
     "scripts/build-agent-runtime.mjs",
     "scripts/runtime-build-platform.mjs",
     "runtime/agent-runtime.json",
+    "runtime/community-session.patch",
   ])
     copyFileSync(
       new URL(`../../${name}`, import.meta.url),
@@ -85,6 +86,9 @@ const path = require("node:path");
 const common = path.join(${JSON.stringify(directory)}, "git-common-dir");
 // Stands in for a checkout an interrupted run left locked.
 if (fs.existsSync("broken-checkout")) process.exit(128);
+if (process.argv[2] === "apply" && !process.argv.includes("--check")) {
+  fs.writeFileSync(path.join(${JSON.stringify(directory)}, "applied.patch"), fs.readFileSync(process.argv.at(-1)));
+}
 if (!process.argv.includes("rev-parse")) process.exit(0);
 if (!fs.existsSync(common)) process.exit(128);
 console.log(fs.readFileSync(common, "utf8"));

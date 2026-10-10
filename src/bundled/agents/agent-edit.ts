@@ -12,7 +12,7 @@ export interface AgentDraft {
   name: string;
   picture?: string;
   systemPrompt: string;
-  sessionPolicy: "channel" | "thread" | null;
+  sessionPolicy: "channel" | "thread" | "community" | null;
   workspace: string;
   integration?: HarnessIntegration | undefined;
   command: string;

@@ -163,6 +163,11 @@ impl TeamSnapshot {
         for member in &self.members {
             member.memory.validate()?;
             let d = &member.definition;
+            if d.session_policy == SessionPolicy::Community {
+                return Err(
+                    "Public community conversation context is not portable in snapshot v1".into(),
+                );
+            }
             if member.format != "buzz-agent-snapshot"
                 || member.version != 1
                 || d.name.trim().is_empty()
@@ -334,6 +339,12 @@ fn snapshot_member(
     let view = agent.view(defaults);
     let workers = view.launch_parallelism;
     let effective = crate::agent_defaults::effective(agent, defaults);
+    let session_policy = agent
+        .selected_session_policy()
+        .unwrap_or(defaults.session_policy);
+    if session_policy == SessionPolicy::Community {
+        return Err("Public community conversation context is not portable in snapshot v1".into());
+    }
     let runtime = crate::agent_defaults::harness_kind(&effective.harness.command)
         .ok_or("Team member harness is not portable")?;
     if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {
@@ -355,7 +366,7 @@ fn snapshot_member(
             runtime: Some(runtime.to_owned()),
             model: Some(agent.harness.model.clone()),
             provider: Some(agent.harness.provider.clone()),
-            session_policy: agent.selected_session_policy().unwrap_or_default(),
+            session_policy,
             respond_to: Some(agent.respond_to(false)?.into()),
             respond_to_allowlist: serde_json::from_value(record["respond_to_allowlist"].clone())
                 .unwrap_or_default(),

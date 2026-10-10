@@ -887,7 +887,9 @@ fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
         let digest = Sha256::digest(std::fs::read(&path).unwrap());
         files.insert(name, format!("{digest:x}"));
     }
-    let manifest = json!({"version":2, "goose":source["goose"], "revision":source["revision"],
+    let patch_sha256 = Sha256::digest(include_bytes!("../../../runtime/community-session.patch"));
+    let manifest = json!({"version":3, "patchSha256":format!("{patch_sha256:x}"),
+        "goose":source["goose"], "revision":source["revision"],
         "target":env!("TAURI_ENV_TARGET_TRIPLE"), "files":files});
     std::fs::write(
         directory.join("manifest.json"),
@@ -903,6 +905,12 @@ mod overlap {
     use super::*;
 
     const REFUSAL: &str = "Synthetic credential refusal";
+
+    #[test]
+    fn synthetic_bundle_matches_the_packaged_runtime_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let _bundle = synthetic_bundle(directory.path());
+    }
 
     // Each credential read reports entry, then blocks until the test releases that
     // exact credential id; an unplanned read fails fast instead of hanging.

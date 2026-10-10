@@ -21,6 +21,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
+const patch = await readFile(join(root, "runtime/community-session.patch"));
+const patchSha256 = createHash("sha256").update(patch).digest("hex");
 // `just desktop` skips the pin's size optimizations; packaged builds keep them.
 const goose = process.argv.includes("--dev")
   ? { ...spec.goose, profile: spec.gooseDevProfile }
@@ -99,7 +101,9 @@ function cachedBundle() {
     return undefined;
   }
   const key = createHash("sha256")
-    .update(JSON.stringify([spec, toolchain, buildArgs, gooseBuildArgs]))
+    .update(
+      JSON.stringify([spec, patchSha256, toolchain, buildArgs, gooseBuildArgs]),
+    )
     .digest("hex")
     .slice(0, 16);
   return join(common, "buzz-agent-runtime", key);
@@ -112,8 +116,9 @@ async function verifiedBundle(directory) {
     if (!meta.isFile() || meta.size > 16384) return false;
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     if (
-      Object.keys(manifest).length !== 5 ||
-      manifest.version !== 2 ||
+      Object.keys(manifest).length !== 6 ||
+      manifest.version !== 3 ||
+      manifest.patchSha256 !== patchSha256 ||
       JSON.stringify(manifest.goose) !== JSON.stringify(goose) ||
       manifest.revision !== spec.revision ||
       manifest.target !== target ||
@@ -153,7 +158,8 @@ async function publish(source, directory) {
     await rename(temporary, join(directory, filename));
   }
   const manifest = {
-    version: 2,
+    version: 3,
+    patchSha256,
     revision: spec.revision,
     goose,
     target,
@@ -218,6 +224,8 @@ async function prepare() {
           false,
           directory,
         );
+        // Remove untracked files from earlier patches before applying this pin's.
+        await run("git", ["clean", "-fd"], false, directory);
         return;
       } catch (error) {
         if (retry) throw error;
@@ -227,6 +235,11 @@ async function prepare() {
   }
   const source = join(sources, "buzz");
   await checkout(source, spec.repository, spec.revision);
+  // Patch only this controlled fetched tree; Classic checkouts stay read-only.
+  const patchPath = join(sources, "community-session.patch");
+  await writeFile(patchPath, patch);
+  await run("git", ["apply", "--check", patchPath], false, source);
+  await run("git", ["apply", patchPath], false, source);
   await run(cargo, buildArgs, false, source);
   // Goose is an independent upstream pin, built with the same locked toolchain.
   const gooseSource = join(sources, "goose");

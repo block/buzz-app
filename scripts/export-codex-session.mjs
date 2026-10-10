@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+import { entry, exportSession, text } from "./session-viewer.mjs";
+
+const contentText = (content) =>
+  (content ?? [])
+    .map((block) => (typeof block.text === "string" ? block.text : ""))
+    .join("\n")
+    .trim();
+// Tool outputs are a string or a list of text/image content items.
+const outputText = (output) =>
+  Array.isArray(output) &&
+  output.every((item) => typeof item?.text === "string")
+    ? output.map((item) => item.text).join("\n")
+    : output;
+// Codex injects AGENTS.md and environment context as user-role messages.
+const isContext = (value) =>
+  /^(# AGENTS\.md instructions|<environment_context>|<user_instructions>)/.test(
+    value,
+  );
+// Buzz turns end with `Request: "<json string>"`; show that instead of context.
+function buzzRequest(value) {
+  const match = value.match(/^Request: (".*")$/m);
+  try {
+    return match ? JSON.parse(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+exportSession((records) => {
+  const meta =
+    records.find((record) => record?.type === "session_meta")?.payload ?? {};
+  const outputs = new Map(
+    records
+      .filter((record) => record?.payload?.type?.endsWith?.("_output"))
+      .map((record) => [record.payload.call_id, record.payload]),
+  );
+  const entries = [];
+  let model;
+  for (const { timestamp, type, payload: item } of records) {
+    if (type === "turn_context" && item?.model && item.model !== model) {
+      model = item.model;
+      entries.push(
+        entry.model(
+          timestamp,
+          `${model}${item.effort ? ` · ${item.effort}` : ""}`,
+        ),
+      );
+    }
+    if (type !== "response_item" || !item?.type) continue;
+    if (item.type === "message") {
+      const body = contentText(item.content);
+      if (!body) continue;
+      if (item.role === "developer" || isContext(body))
+        entries.push(
+          entry.instructions(
+            timestamp,
+            item.role === "developer" ? "instructions" : "context",
+            body,
+          ),
+        );
+      else if (item.role === "user")
+        entries.push(entry.user(timestamp, body, buzzRequest(body)));
+      else entries.push(entry.assistant(timestamp, body));
+    } else if (item.type === "reasoning") {
+      const summary = (item.summary ?? []).map((part) => part.text).join("\n");
+      if (summary) entries.push(entry.thinking(timestamp, summary));
+    } else if (item.call_id && !item.type.endsWith("_output")) {
+      const input = item.input ?? item.arguments ?? item.action ?? "";
+      // Code Mode runs nested tools from an `exec` script; name them.
+      const nested = new Set(
+        [...text(input).matchAll(/tools\.([A-Za-z0-9_]+)/g)].map((m) => m[1]),
+      );
+      const output = outputs.get(item.call_id);
+      entries.push(
+        entry.tool(timestamp, {
+          name: item.name || item.type,
+          detail: [...nested].join(", "),
+          input,
+          result: output && outputText(output.output),
+        }),
+      );
+    } else if (!item.type.endsWith("_output")) {
+      const { encrypted_content: _, ...rest } = item;
+      entries.push(entry.other(timestamp, item.type, rest));
+    }
+  }
+  return {
+    title: "Codex session",
+    info: [
+      `Session: ${meta.id}`,
+      `Originator: ${meta.originator} · Codex ${meta.cli_version}`,
+      `Working directory: ${meta.cwd}`,
+      `Started: ${meta.timestamp}`,
+    ],
+    entries,
+  };
+});

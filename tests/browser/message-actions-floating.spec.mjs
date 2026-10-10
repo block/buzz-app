@@ -149,6 +149,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
       "alpha",
       `Following ${i}\n\nExtra space\n\nAnother paragraph\n\nLast paragraph`,
       false,
+      false,
     );
   await open(page, app);
   const row = page.locator(

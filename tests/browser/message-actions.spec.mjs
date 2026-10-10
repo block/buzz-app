@@ -27,18 +27,10 @@ for (const direction of ["forward", "backward"]) {
       "[Before](https://example.com/before)",
     );
     const target = app.append("primary", "alpha", "Untouched continuation");
-    const after = app.append(
-      "primary",
-      "alpha",
-      "Following author",
-      true,
-      false,
-    );
+    const after = app.append("primary", "alpha", "Following continuation");
     const row = (event) =>
       page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
-    await expect(
-      row(target).locator('[data-layout="continuation"]'),
-    ).toBeVisible();
+    await expect(row(target).locator("[data-stack-previous]")).toBeVisible();
     await expect(row(after)).toBeVisible();
     await settle(page);
     const actions = row(target).getByRole("group", {
@@ -461,7 +453,7 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   const following = page.locator(
     `[data-channel-timeline] [data-message-id="${next.id}"]`,
   );
-  await expect(row.locator('[data-layout="continuation"]')).toBeVisible();
+  await expect(row.locator("[data-stack-previous]")).toBeVisible();
   await expect(following).toBeVisible();
   const actions = row.getByRole("group", { name: "Message actions" });
   const link = row.getByRole("link", { name: /this reference/ });
@@ -532,4 +524,67 @@ test("historical single-day DMs and their threads expose dates without hover", a
     exact: true,
   });
   await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
+});
+
+// Browser-only: live timeline/thread grouping must preserve real native focus
+// and Tab's next destination while the focused avatar retires on blur.
+test("live grouped appends preserve avatar focus in channel and thread", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  for (const mode of ["channel", "thread"]) {
+    let container = page.locator("[data-channel-timeline]");
+    let composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    if (mode === "thread") {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      container = panel;
+      composer = panel.getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      });
+    }
+    const append = (text) =>
+      app.append(
+        "primary",
+        "alpha",
+        text,
+        true,
+        true,
+        mode === "thread" ? root.id : undefined,
+      );
+    const first = append(`Focused ${mode} message`);
+    const row = container.locator(`[data-message-id="${first.id}"]`);
+    const avatar = row
+      .getByRole("button", { name: /^View .* profile$/ })
+      .first();
+    await avatar.focus();
+    const second = append(`Next ${mode} message`);
+    await expect(row.locator("[data-stack-next]")).toBeVisible();
+    await expect(avatar).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      row.getByRole("button", { name: "React with 👍", exact: true }),
+    ).toBeFocused();
+    await expect(avatar).toHaveCount(0);
+    await composer.focus();
+    append(`Another ${mode} message`);
+    await expect(
+      container.locator(`[data-message-id="${second.id}"] [data-stack-next]`),
+    ).toBeVisible();
+    await expect(composer).toBeFocused();
+  }
 });

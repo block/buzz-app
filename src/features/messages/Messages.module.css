@@ -25,7 +25,8 @@
   overflow-anchor: none;
   padding: 0 var(--space-panel-inset);
   /* Keep fractional last rows reachable despite integer scroll extents. */
-  padding-bottom: var(--space-half);
+  --history-bottom-inset: var(--space-half);
+  padding-bottom: var(--history-bottom-inset);
   /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.51.0.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
@@ -158,14 +159,6 @@
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
   line-height: var(--size-emoji-display);
-}
-.text a:not([data-link-renderer]) {
-  color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.text a:not([data-link-renderer]):hover {
-  text-decoration: underline;
 }
 .reactions {
   min-inline-size: 0;
@@ -459,6 +452,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   @apply text-caption;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: var(--space-half);
   padding: var(--space-1);
   border-radius: var(--radius-row);
   background: var(--affordance-subtle-hover);
@@ -471,6 +466,17 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-direction: column;
   flex-shrink: 0;
   min-width: 0;
+}
+/* Soften the scroll edge without reserving a blank strip above the composer. */
+:is(.feed, .threadHistory):has(.jumpToLatest[data-visible="true"])
++ .composerContext::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: calc(-1 * var(--space-3));
+  height: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--surface-panel));
+  pointer-events: none;
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -680,7 +686,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   overflow: auto;
   padding: 0 var(--space-panel-inset);
   /* Scrollable end padding, not a fixed strip above the composer. */
-  padding-bottom: var(--space-3);
+  --history-bottom-inset: var(--space-3);
+  padding-bottom: var(--history-bottom-inset);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -812,8 +819,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
-a.fileAttachment:hover {
-  background: var(--surface-hover);
+.fileAttachment:is(a, button) {
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fileAttachment:is(a, button):hover {
+    background: var(--surface-hover);
+  }
+}
+.fileAttachment > svg {
+  flex-shrink: 0;
 }
 html[data-keyboard-navigation] .fileAttachment:focus-visible {
   outline: 2px solid var(--focus);
@@ -1447,13 +1462,13 @@ button.mediaPreview {
   vertical-align: middle;
   accent-color: var(--affordance-prominent);
 }
-.text a:not([data-link-renderer]) {
-  color: var(--text-standard);
+.text a {
+  color: var(--text-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.text a:not([data-link-renderer]):hover {
+.text a:hover {
   text-decoration-thickness: 2px;
 }
 .imageAlt {
@@ -1645,7 +1660,8 @@ html[data-keyboard-input] .quickReactionGlyph {
     width: 100%;
     height: 0;
   }
-  .message[data-layout="continuation"] .messageActionsSlot {
+  .message:is([data-layout="continuation"], [data-stack-previous])
+    .messageActionsSlot {
     top: 0;
   }
   .messageActions {
@@ -1748,6 +1764,10 @@ html[data-keyboard-input] .quickReactionGlyph {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-subtle);
+}
+/* Generous conversation measure, relative to the rendered message type size. */
+.messageBubble > :is(.text, .plainText) {
+  max-width: min(90ch, 100%);
 }
 .message[data-layout="continuation"] .text {
   margin-top: 0;
@@ -2251,6 +2271,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   outline: none;
 }
 
+.message[data-layout="timeline"] .messageGutter {
+  flex-basis: var(--size-control);
+}
 .feed .message[data-layout="continuation"] .messageGutter {
   flex-basis: var(--size-control);
 }
@@ -2259,10 +2282,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .jumpToLatest {
-  align-items: flex-start;
+  align-items: flex-end;
   position: sticky;
   z-index: 2;
-  top: calc(100% - var(--size-control-sm));
+  /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */
+  top: calc(100% + var(--history-bottom-inset) - var(--space-3));
   height: 0;
   display: flex;
   justify-content: center;
@@ -2271,11 +2295,18 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Leave a separate floating lane when the composer has an activity pill. */
 :is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
 .jumpToLatest {
-  top: calc(100% - var(--size-control-sm) - 2 * var(--space-6));
+  top: calc(
+    100% +
+    var(--history-bottom-inset) -
+    var(--space-3) -
+    2 *
+    var(--space-6)
+  );
 }
 .jumpToLatestSurface {
   @apply glass-secondary;
-  border-radius: var(--radius-control);
+  display: flex;
+  border-radius: var(--radius-capsule);
   visibility: hidden;
   opacity: 0;
   transform: translateY(2px) scale(0.97);
@@ -2285,6 +2316,12 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     transform var(--duration-fast) var(--easing-settle),
     filter var(--duration-fast) var(--easing-state),
     visibility 0s var(--duration-fast);
+}
+.jumpToLatestSurface [data-jump-to-latest] {
+  padding-inline: var(--space-2);
+}
+.jumpToLatestSurface > button > [class~="buzz-button-label"] {
+  gap: var(--space-1);
 }
 .jumpToLatest[data-visible="true"] .jumpToLatestSurface {
   visibility: visible;
@@ -2305,6 +2342,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .sentFromThread {
+  padding-inline-start: var(--space-3);
   font-size: var(--text-caption);
   color: var(--text-secondary);
   margin-block: var(--space-1);
@@ -2328,6 +2366,169 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .workflowDetails dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* Content hugs short messages while rich content can use the available width. */
+.messageBubble {
+  position: relative;
+  --message-link: var(--text-link);
+  --message-inset: var(--space-2);
+  --message-radius: calc(var(--radius-panel) - var(--space-1));
+  --message-inner-radius: max(
+    0px,
+    calc(var(--message-radius) - var(--message-inset))
+  );
+  box-sizing: border-box;
+  width: fit-content;
+  font-size: var(--text-body-sm);
+  max-width: min(100%, calc(90ch + 2 * var(--space-4)));
+  min-width: 0;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--message-radius);
+  background: var(--surface-message);
+  color: var(--text-standard);
+  overflow-wrap: anywhere;
+}
+.message[data-layout="continuation"] .messageBubble {
+  margin-top: 0;
+}
+
+.message[data-stack-previous] .messageBubble {
+  margin-top: 0;
+}
+
+.messageAvatar {
+  user-select: none;
+  position: absolute;
+  bottom: 0;
+  right: calc(100% + var(--space-3));
+  display: flex;
+}
+.message:not([data-layout="timeline"]) .messageAvatar {
+  right: calc(100% + var(--space-2));
+}
+.messageBubble > :is(.text, .plainText) {
+  margin: 0;
+}
+.messageBubble .text :is(a, [data-mention-kind]) {
+  --link-text: var(--message-link);
+  --link-hover: transparent;
+  --link-focus: currentColor;
+  color: var(--message-link);
+  background: transparent;
+}
+.messageBubble .text [data-mention-kind] {
+  font-weight: var(--type-weight-medium);
+}
+.messageBubble .text :is(pre, table) {
+  border-radius: var(--message-inner-radius);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
+  --message-link: var(--text-link);
+}
+.messageContent {
+  position: relative;
+  min-width: 0;
+}
+.messageAttachments {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-half);
+  margin-top: var(--space-half);
+  min-width: 0;
+}
+.messageAttachments > * {
+  max-width: 100%;
+  margin-block: 0;
+}
+.messageAttachments .imageUnavailable {
+  border-radius: calc(var(--radius-panel) - var(--space-2));
+}
+
+.messageBubble[data-own] {
+  color: var(--text-message-own);
+  background: var(--surface-message-own);
+  --message-link: var(--text-message-link-own);
+}
+.messageBubble[data-own] .text blockquote {
+  color: inherit;
+  border-color: currentColor;
+}
+.messageBubble[data-own] .text :is(code, pre) {
+  color: var(--text-standard);
+}
+.messageBubble[data-own] .spoilerMask {
+  color: inherit;
+}
+.messageBubble[data-own]
+  :is(
+    .spoilerMask:hover,
+    .spoilerMask:focus-visible,
+    .spoiler[data-revealed="true"]
+  ) {
+  /* Revealed content uses the same neutral inset as code and tables. */
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  --message-link: var(--text-link);
+}
+
+.messageBubble[data-long-text] {
+  --message-radius: calc((var(--radius-panel) + var(--radius-control)) / 2);
+}
+
+.threadAvatar:nth-child(1) {
+  z-index: 3;
+}
+.threadAvatar:nth-child(2) {
+  z-index: 2;
+}
+.threadAvatar:nth-child(3) {
+  z-index: 1;
+}
+
+.message[data-layout="timeline"] {
+  padding-block: var(--space-2);
+}
+.message[data-stack-next] {
+  padding-bottom: 0;
+}
+.message[data-stack-previous] {
+  padding-top: var(--space-half);
+}
+.message .byline {
+  padding-inline-start: var(--space-3);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.message .delivery {
+  padding-inline-start: var(--space-3);
+}
+
+.text pre {
+  text-wrap-style: auto;
+}
+
+.messageBubble[data-own] .text :is(h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+}
+.messageBubble[data-own] .text th {
+  color: var(--text-standard);
+}
+
+.messageAttachments :is(.imageStrip, .fileGroup) {
+  gap: var(--space-half);
+}
+
+/* Keep focus-ring clearance inside the scrollport without insetting the tiles. */
+.messageAttachments .imageStrip {
+  margin: calc(-1 * var(--space-1));
+}
+.messageAttachments .imageCount {
+  margin-top: var(--space-half);
 }
 
 .composerActions[hidden] {

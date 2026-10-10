@@ -1,3 +1,4 @@
+import { ImageIcon } from "../../shared/design-system/icons";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
@@ -65,7 +66,15 @@ export function AttachmentImage({
         }
         role="status"
       >
-        Image unavailable
+        {thumbnail ? (
+          <>
+            <ImageIcon size={20} aria-hidden="true" />
+            <span aria-hidden="true">Unavailable</span>
+            <span className="sr-only">Image unavailable</span>
+          </>
+        ) : (
+          "Image unavailable"
+        )}
       </span>
     );
   return (

@@ -30,6 +30,35 @@ export function turnInput(
     : "buzz-event";
   return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", session_thread: conversation.root, reply_to: event.id })}\n</context>\n<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
 }
-export function sessionName(agent: AgentHandle, conversation: Conversation) {
-  return `Buzz #${conversation.name.replace(/\s+/g, " ").slice(0, 100)}${conversation.root ? ` · thread ${conversation.root.slice(0, 8)}` : ""} · ${agent.name}`;
+/** The readable part of a conversation's thread name; earlier versions used
+ * it alone. */
+export function sessionTitle(agentName: string, conversation: Conversation) {
+  return `Buzz #${conversation.name.replace(/\s+/g, " ").slice(0, 100)}${conversation.root ? ` · thread ${conversation.root.slice(0, 8)}` : ""} · ${agentName}`;
+}
+/** Names the agent's conversation in its thread names, so its threads can be
+ * found from any build of the app, each of which saves its own bindings. */
+export async function sessionTag(
+  agentPubkey: string,
+  conversation: Pick<Conversation, "channelId" | "root">,
+) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      JSON.stringify([
+        agentPubkey,
+        conversation.channelId,
+        conversation.root ?? "channel",
+      ]),
+    ),
+  );
+  const hex = [...new Uint8Array(digest).slice(0, 8)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `buzz:${hex}`;
+}
+export async function sessionName(
+  agent: AgentHandle,
+  conversation: Conversation,
+) {
+  return `${sessionTitle(agent.name, conversation)} · ${await sessionTag(agent.pubkey, conversation)}`;
 }

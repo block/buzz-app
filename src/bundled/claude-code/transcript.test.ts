@@ -3,7 +3,13 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { claudeTurns, projectName, readTranscript } from "./transcript";
 
 const root = "c".repeat(64);
-const conversation = { sessionId: "session-1", channelId: "channel", root };
+const agent = "a".repeat(64);
+const conversation = {
+  agent,
+  sessionId: "session-1",
+  channelId: "channel",
+  root,
+};
 const prompt = (content: string) =>
   `<context>\nScope: thread\n</context>\n\n<buzz-event type="mention">\nEvent ID: e\nFrom: Sam (npub: npub1x, hex: ${"a".repeat(64)})\nContent: ${content}\nTags: []\n</buzz-event>`;
 let clock = 0;
@@ -121,12 +127,24 @@ it("names projects as Claude Code does", () => {
   expect(projectName("/Users/me/my_repo")).toBe("-Users-me-my-repo");
 });
 
-/** `workspace` prints the resolved folder; `read` serves `files` as base64. */
+/** `workspace` prints the resolved folder; `read` serves `files` as base64,
+ * and `find` lists those in the project folder that contain its pattern. */
 function host(files: Record<string, string>) {
   const reads: HostProcessOptions[] = [];
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     let code = 0;
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
+    if (id === "find") {
+      const project = options.cwd?.split("/").pop();
+      const matches = Object.entries(files).flatMap(([path, content]) =>
+        path.startsWith(`${project}/`) &&
+        content.includes(options.args?.[0] ?? "")
+          ? [`./${path.slice(project?.length ?? 0).replace(/^\//, "")}`]
+          : [],
+      );
+      if (matches.length) options.onStdout?.(`${matches.join("\n")}\n`);
+      else code = 1;
+    }
     if (id === "read") {
       reads.push(options);
       const path = options.args?.[0] ?? "";
@@ -177,4 +195,71 @@ it("treats a missing session file as no transcript, not a failure", async () => 
       new AbortController().signal,
     ),
   ).resolves.toBeUndefined();
+});
+
+it("merges the agent's other sessions for the thread, oldest turn first", async () => {
+  const session = (start: number, context: string, content: string) => {
+    clock = start;
+    return [
+      line(
+        "user",
+        prompt(content).replace("Scope: thread", `Scope: thread\n${context}`),
+      ),
+      line("assistant", [{ type: "text", text: `re: ${content}` }]),
+    ].join("\n");
+  };
+  const thread = `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}`;
+  const { spawn } = host({
+    "-Users-me--buzz/session-1.jsonl": session(20, thread, "latest"),
+    "-Users-me--buzz/earlier.jsonl": session(
+      10,
+      `${thread}\nAgent: ${agent}`,
+      "first",
+    ),
+    // Started before agents were named.
+    "-Users-me--buzz/unnamed.jsonl": session(15, thread, "second"),
+    "-Users-me--buzz/other-agent.jsonl": session(
+      12,
+      `${thread}\nAgent: ${"b".repeat(64)}`,
+      "not ours",
+    ),
+    "-Users-me--buzz/channel.jsonl": session(
+      13,
+      `Session scope: channel\nChannel: dev (#channel)\nThread root: ${root}`,
+      "shared",
+    ),
+  });
+  const signal = new AbortController().signal;
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    signal,
+  );
+  expect(read?.turns.map((turn) => [turn.sessionId, turn.items[0]])).toEqual([
+    ["earlier", expect.objectContaining({ text: "first" })],
+    ["unnamed", expect.objectContaining({ text: "second" })],
+    ["session-1", expect.objectContaining({ text: "latest" })],
+  ]);
+  expect(spawn).toHaveBeenCalledWith(
+    "find",
+    expect.objectContaining({
+      args: [root, "."],
+      cwd: "~/.claude/projects/-Users-me--buzz",
+    }),
+  );
+  // Without a saved session, the found ones are the conversation's.
+  const found = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "channel", root },
+    false,
+    signal,
+  );
+  expect(found?.turns.map((turn) => turn.sessionId)).toEqual([
+    "earlier",
+    "unnamed",
+    "session-1",
+  ]);
 });

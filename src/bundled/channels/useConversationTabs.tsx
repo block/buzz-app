@@ -16,6 +16,7 @@ import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { BrowserIcon } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   ChannelTabPicker,
   channelToolIcon,
@@ -133,7 +134,15 @@ export function useConversationTabs({
                 entry.panel === next.panel && entry.target === next.target,
             )
           : undefined;
-      const selected = existing || next;
+      // A link from another conversation retargets the open tab's context.
+      const retarget =
+        existing &&
+        next &&
+        (existing.channelId !== next.channelId ||
+          existing.rootId !== next.rootId)
+          ? next
+          : undefined;
+      const selected = retarget || existing || next;
       // Timeline actions replace transient details, never retained channel tools.
       const retained = append
         ? entryList.current
@@ -142,8 +151,11 @@ export function useConversationTabs({
               entry.channelContext &&
               (!selected || panelTabId(entry) !== panelTabId(selected)),
           );
-      const updated =
-        selected && !existing ? [...retained, selected] : retained;
+      const updated = retarget
+        ? retained.map((entry) => (entry === existing ? retarget : entry))
+        : selected && !existing
+          ? [...retained, selected]
+          : retained;
       entryList.current = updated;
       setEntries(updated);
       selectOpening(selected);
@@ -179,6 +191,7 @@ export function useConversationTabs({
   };
   const panelContext = (entry: Opening) => ({
     channelId: entry.channelId,
+    ...(entry.rootId && { rootId: entry.rootId }),
     canOpen: (target: string) => !!panels.resolve(target),
     open: (target: string) => {
       if (!panelActive(entry)) return false;
@@ -377,7 +390,11 @@ export function useConversationTabs({
     });
     selectPanelTab(id);
   };
-  const openConversationLink = (channelId: string, url: string) => {
+  const openConversationLink = (
+    channelId: string,
+    url: string,
+    origin?: MessageLinkOrigin,
+  ) => {
     const connection = relay.snapshot();
     if (
       !active() ||
@@ -403,7 +420,15 @@ export function useConversationTabs({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open({ channelId, panel: candidate, target: url }, true);
+      open(
+        {
+          channelId,
+          ...(origin && { rootId: origin.rootId }),
+          panel: candidate,
+          target: url,
+        },
+        true,
+      );
       return true;
     }
     return openLink(url);
@@ -470,7 +495,9 @@ export function useConversationTabs({
                 session={queries}
                 scope={scope}
                 extensions={extensions}
-                openLink={(url) => openConversationLink(target.id, url)}
+                openLink={(url, origin) =>
+                  openConversationLink(target.id, url, origin)
+                }
                 canOpenLink={canOpenLink}
                 openThread={(id, root, intent) =>
                   openConversationThread(target.id, id, root, intent)

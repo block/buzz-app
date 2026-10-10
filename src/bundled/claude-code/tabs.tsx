@@ -3,9 +3,14 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import type { Transcript } from "../../features/agents/activity-transcript";
+import {
+  OpenedConversation,
+  useOpenedSession,
+} from "../../features/agents2/OpenedConversation";
 import type { AgentViewProps } from "../../features/agents2/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -23,6 +28,8 @@ const message = (error: unknown) =>
 
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+/** Conversations listed below the one the profile was opened from. */
+const CONVERSATION_LIMIT = 30;
 type Read =
   | { status: "ready"; transcript: Transcript & { more: boolean } }
   | { status: "missing" }
@@ -137,7 +144,7 @@ export function createTabs({
   }
 
   /** Claude Code on this computer, and this agent's conversations. */
-  function ClaudeTab({ agent }: AgentViewProps<Config>) {
+  function ClaudeTab({ agent, conversation }: AgentViewProps<Config>) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -149,6 +156,21 @@ export function createTabs({
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
+    const workspace = readConfig(agent.config).workspace;
+    const {
+      session: here,
+      searching,
+      error: lookupError,
+    } = useOpenedSession(conversations, conversation, (place, signal) =>
+      runtime.find(agent.pubkey, place, workspace, signal),
+    );
+    const recent = conversations
+      .filter((item) => item.key !== here?.key)
+      .slice(0, CONVERSATION_LIMIT);
+    const activity = (key: string) => {
+      const running = busy.get(key);
+      return running === undefined ? undefined : running ? "Working" : "Idle";
+    };
     const [open, setOpen] = useState<SavedConversation>();
     const [code, setCode] = useState("");
     useEffect(() => {
@@ -247,43 +269,39 @@ export function createTabs({
             </form>
           )}
         </section>
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Conversations</h3>
-          {conversations.length ? (
+        {conversation && (
+          <OpenedConversation
+            conversation={conversation}
+            harness="Claude Code"
+            session={here}
+            searching={searching}
+            error={lookupError}
+            status={here && activity(here.key)}
+            onView={() => here && setOpen(here)}
+          />
+        )}
+        <section>
+          <InlineHeader title="Recent conversations" />
+          {recent.length ? (
             <ul className="m-0 grid list-none gap-2 p-0">
-              {conversations.map((conversation) => {
-                const running = busy.get(conversation.key);
-                return (
-                  <li
-                    key={conversation.key}
-                    className="flex items-center justify-between gap-2"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">
-                        {label(conversation)}
-                      </span>
-                      <span className="block text-body-sm text-subtle">
-                        {[
-                          running === undefined
-                            ? undefined
-                            : running
-                              ? "Working"
-                              : "Idle",
-                          new Date(conversation.at).toLocaleString(),
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
+              {recent.map((item) => (
+                <li
+                  key={item.key}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate">{label(item)}</span>
+                    <span className="block text-body-sm text-subtle">
+                      {[activity(item.key), new Date(item.at).toLocaleString()]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
-                    <Button
-                      variant="ghost"
-                      onClick={() => setOpen(conversation)}
-                    >
-                      View transcript
-                    </Button>
-                  </li>
-                );
-              })}
+                  </span>
+                  <Button variant="ghost" onClick={() => setOpen(item)}>
+                    View transcript
+                  </Button>
+                </li>
+              ))}
             </ul>
           ) : (
             <p className="m-0 text-body-sm text-subtle">

@@ -77,6 +77,7 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
@@ -689,7 +690,7 @@ function ChannelWorkspace({
     onOpenDrawer: () => setSettings(undefined),
     continuingVisit,
     isLive: () => !destination.current.navigation?.signal.aborted,
-    openLink: (url) => openLink(url, true),
+    openLink: (url) => openLink(url, { fromThread: true }),
     fallbackFocus: settingsTrigger,
     eligible: (entry) =>
       !entry.panel.channelMenu ||
@@ -956,7 +957,18 @@ function ChannelWorkspace({
     };
   }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
-    (url: string, fromThread = false, returnFocus?: HTMLElement) => {
+    (
+      url: string,
+      {
+        fromThread = false,
+        returnFocus,
+        rootId,
+      }: {
+        fromThread?: boolean;
+        returnFocus?: HTMLElement | undefined;
+        rootId?: string;
+      } = {},
+    ) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -1031,6 +1043,7 @@ function ChannelWorkspace({
         open(
           {
             channelId: context.channelId,
+            ...(rootId && { rootId }),
             panel: candidate,
             target: url,
           },
@@ -1056,7 +1069,8 @@ function ChannelWorkspace({
     ],
   );
   const openThreadLink = useCallback(
-    (url: string) => openLink(url, true),
+    (url: string, origin?: MessageLinkOrigin) =>
+      openLink(url, { ...origin, fromThread: true }),
     [openLink],
   );
   const hasChannelPanel =
@@ -1215,7 +1229,7 @@ function ChannelWorkspace({
               : membersHeaderTrigger
           }
           canOpenLink={canOpenLink}
-          onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
+          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)

@@ -75,12 +75,47 @@ it.each([false, true])(
       );
       expect(open).toHaveBeenCalledWith(
         profileTarget(authorId, { agent: agentEnvelope }),
+        { rootId: "root" },
       );
     } finally {
       cleanup();
     }
   },
 );
+
+it("tells link handlers the thread a reply was opened from", () => {
+  const open = vi.fn(() => true);
+  const authorId = "ab".repeat(32);
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          authorId,
+          id: "reply",
+          threadRootId: "thread",
+          replyCount: 0,
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `View ${authorId.slice(0, 10)} profile`,
+      }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(authorId), {
+      rootId: "thread",
+    });
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps agent badges but omits human presence and status symbols from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
@@ -952,7 +987,7 @@ it.each([9, 40002])(
     if (!resent) throw new Error("missing resent message");
     expect(resent.mentions).toEqual([]);
     expect(messageCopyText(resent, profiles, [])).toBe(content);
-    const open = vi.fn((_target: string) => true);
+    const open = vi.fn((_target: string, _origin?: unknown) => true);
     try {
       renderDom(
         <MessageRow
@@ -975,7 +1010,10 @@ it.each([9, 40002])(
         expect(document.activeElement).toBe(reference);
       });
       expect(open.mock.calls).toEqual(
-        people.map(({ pubkey }) => [profileTarget(pubkey)]),
+        people.map(({ pubkey }) => [
+          profileTarget(pubkey),
+          { rootId: resent.id },
+        ]),
       );
       expect(resent.mentions).toEqual([]);
     } finally {
@@ -1659,6 +1697,7 @@ it("opens the exact source thread from a shared message", () => {
     fireEvent.click(screen.getByRole("link", { name: "Thread" }));
     expect(open).toHaveBeenCalledWith(
       `buzz://message?channel=channel&id=${rootId}&thread=${rootId}`,
+      { rootId: "root" },
     );
   } finally {
     cleanup();
@@ -1802,7 +1841,9 @@ it("presents automation, links the owner and discloses the separate relay signer
     fireEvent.click(
       screen.getByRole("button", { name: "View workflow owner Wes profile" }),
     );
-    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId), {
+      rootId: "root",
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Workflow message details" }),
     );

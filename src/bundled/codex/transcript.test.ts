@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { Wire } from "./rpc";
-import { codexTurns, readTranscript } from "./transcript";
+import { sessionTag } from "./prompt";
+import { codexTurns, findConversation, readTranscript } from "./transcript";
 
 const root = "c".repeat(64);
 const conversation = { channelId: "channel", root };
@@ -113,8 +114,15 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
   expect(channelTurn).not.toHaveProperty("endedAt");
 });
 
-/** An app-server answering `thread/turns/list` as the test says. */
-function server(list: (params: Record<string, unknown>) => Wire) {
+const agent = { pubkey: "a".repeat(64), name: "Sol" };
+const lookup = { agent, channelId: "channel", name: "dev", root };
+
+/** An app-server answering `thread/turns/list` as the test says, and
+ * `thread/list` from `threads` as Codex searches names. */
+function server(
+  list: (params: Record<string, unknown>) => Wire,
+  threads: { id: string; name: string; updatedAt: number }[] = [],
+) {
   const sent: Wire[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
     let exit!: (code: number) => void;
@@ -126,10 +134,19 @@ function server(list: (params: Record<string, unknown>) => Wire) {
         const wire: Wire = JSON.parse(text);
         sent.push(wire);
         if (wire.id == null) return;
+        const params = wire.params as Record<string, unknown>;
         const reply =
           wire.method === "thread/turns/list"
-            ? list(wire.params as Record<string, unknown>)
-            : { result: {} };
+            ? list(params)
+            : wire.method === "thread/list"
+              ? {
+                  result: {
+                    data: threads.filter((thread) =>
+                      thread.name.includes(String(params.searchTerm)),
+                    ),
+                  },
+                }
+              : { result: {} };
         options?.onStdout?.(`${JSON.stringify({ id: wire.id, ...reply })}\n`);
       },
       end: async () => exit(0),
@@ -152,8 +169,7 @@ it("reads the latest turns oldest first and closes its app-server", async () => 
   }));
   const read = await readTranscript(
     spawn,
-    "thread-1",
-    conversation,
+    { ...lookup, threadId: "thread-1" },
     new AbortController().signal,
   );
   expect(spawn).toHaveBeenCalledWith("app-server", expect.anything());
@@ -167,18 +183,95 @@ it("reads the latest turns oldest first and closes its app-server", async () => 
   expect(read).toMatchObject({ more: true, working: true });
 });
 
+it("merges the threads other builds started, found by tag or by their earlier name", async () => {
+  const tag = await sessionTag(agent.pubkey, lookup);
+  const title = `Buzz #dev · thread ${root.slice(0, 8)} · Sol`;
+  const threads = [
+    { id: "tagged", name: `Renamed · ${tag}`, updatedAt: 3 },
+    { id: "legacy", name: title, updatedAt: 2 },
+    // Same name, from a same-named channel elsewhere.
+    { id: "same-name", name: title, updatedAt: 9 },
+    {
+      id: "other-agent",
+      name: `${title} · buzz:0000000000000000`,
+      updatedAt: 4,
+    },
+  ];
+  const started: Record<string, [number, string]> = {
+    "thread-1": [300, "channel"],
+    tagged: [200, "channel"],
+    legacy: [100, "channel"],
+    "same-name": [400, "elsewhere"],
+  };
+  const list = ({ threadId }: Record<string, unknown>): Wire => {
+    const [startedAt, channel] = started[String(threadId)] ?? [0, ""];
+    const text = `<context>\n${JSON.stringify({ channel_id: channel, session_thread: root })}\n</context>\nRequest: "hi"`;
+    return {
+      result: {
+        data: [
+          turn({
+            id: String(threadId),
+            startedAt,
+            items: [
+              {
+                type: "userMessage",
+                id: "u",
+                content: [{ type: "text", text }],
+              },
+            ],
+          }),
+        ],
+        nextCursor: null,
+      },
+    };
+  };
+  const { spawn, sent } = server(list, threads);
+  const signal = new AbortController().signal;
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "thread-1" },
+    signal,
+  );
+  expect(read?.turns.map((t) => t.turnId)).toEqual([
+    "legacy",
+    "tagged",
+    "thread-1",
+  ]);
+  expect(
+    sent.filter((w) => w.method === "thread/list").map((w) => w.params),
+  ).toEqual([
+    { searchTerm: tag, limit: 50 },
+    { searchTerm: title, limit: 50 },
+  ]);
+  // With no saved thread, the newest one found for it is the conversation's.
+  await expect(
+    findConversation(server(list, threads).spawn, lookup, signal),
+  ).resolves.toEqual({ threadId: "tagged", at: 3000 });
+  await expect(
+    findConversation(server(list, threads.slice(1)).spawn, lookup, signal),
+  ).resolves.toEqual({ threadId: "legacy", at: 2000 });
+  await expect(
+    findConversation(
+      server(list, []).spawn,
+      { agent, channelId: "channel", name: "dev" },
+      signal,
+    ),
+  ).resolves.toBeUndefined();
+});
+
 it("treats a thread Codex no longer has as missing, and other failures as errors", async () => {
   const signal = new AbortController().signal;
+  const saved = { ...lookup, threadId: "thread-1" };
   const gone = server(() => ({
     error: { code: -32600, message: "thread not loaded: thread-1" },
   }));
   await expect(
-    readTranscript(gone.spawn, "thread-1", conversation, signal),
+    readTranscript(gone.spawn, saved, signal),
   ).resolves.toBeUndefined();
   const broken = server(() => ({
     error: { code: -32603, message: "database is locked" },
   }));
-  await expect(
-    readTranscript(broken.spawn, "thread-1", conversation, signal),
-  ).rejects.toThrow("database is locked");
+  await expect(readTranscript(broken.spawn, saved, signal)).rejects.toThrow(
+    "database is locked",
+  );
 });

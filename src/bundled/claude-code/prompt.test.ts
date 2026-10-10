@@ -59,6 +59,7 @@ it("frames a new top-level mention as the root of its thread", () => {
     ],
   });
   const prompt = turnPrompt({
+    agent,
     event: mention,
     channel: { id: "chan", name: "general" },
     scope: "thread",
@@ -71,6 +72,7 @@ it("frames a new top-level mention as the root of its thread", () => {
     "Scope: thread\nSession scope: thread\nChannel: general (#chan)",
   );
   expect(prompt).toContain(`Thread root: ${mention.id}`);
+  expect(prompt).toContain(`Agent: ${agent}`);
   expect(prompt).toContain(
     "This is a new top-level message. `send` replies in its thread by default",
   );
@@ -98,6 +100,7 @@ it("includes the thread messages the session has not seen", () => {
     ],
   });
   const prompt = turnPrompt({
+    agent,
     event: reply,
     channel: { id: "chan" },
     scope: "thread",
@@ -127,6 +130,7 @@ it("includes the thread messages the session has not seen", () => {
 
 it("says earlier context is already in the session when none is new", () => {
   const prompt = turnPrompt({
+    agent,
     event: event("3", "and another thing"),
     channel: { id: "dm", dm: true },
     scope: "thread",
@@ -147,6 +151,7 @@ it("says earlier context is already in the session when none is new", () => {
 
 it("shows a DM's recent messages as conversation context", () => {
   const prompt = turnPrompt({
+    agent,
     event: event("3", "and this"),
     channel: { id: "dm", dm: true },
     scope: "thread",

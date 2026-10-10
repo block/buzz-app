@@ -7,6 +7,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
+import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, type Spawn } from "./rpc";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
@@ -176,14 +177,105 @@ const missing = (error: unknown) =>
     error instanceof Error ? error.message : String(error),
   );
 
-/** The thread's latest turns from a short-lived app-server, or undefined when
- * Codex has no history for it on this device. */
-export async function readTranscript(
+/** A conversation to read: its saved thread, if this build has one, and what
+ * finds the threads other builds started for it. */
+export type Lookup = Readonly<{
+  agent: Readonly<{ pubkey: string; name: string }>;
+  channelId: string;
+  /** The channel's name, as the agent named threads with it. */
+  name?: string;
+  root?: string;
+  threadId?: string;
+}>;
+/** `legacy` threads were named without the tag, so their name alone does not
+ * tell same-named channels apart. */
+type Found = { id: string; updatedAt: number; legacy: boolean };
+
+/** Whether `turns` were for the conversation, as their prompts' context says. */
+function startedFor(turns: readonly Turn[], lookup: Lookup) {
+  return turns.some((turn) =>
+    turn.items.some((value) => {
+      if (value.type !== "userMessage") return false;
+      const raw = (Array.isArray(value.content) ? value.content : [])
+        .map((part: Json) => str(part.text))
+        .join("\n");
+      const body = promptSections(raw).find(
+        (section) => section.tag === "context",
+      )?.body;
+      try {
+        const context = JSON.parse(body ?? "") as Json;
+        return (
+          context.channel_id === lookup.channelId &&
+          (context.session_thread ?? undefined) === lookup.root
+        );
+      } catch {
+        return false;
+      }
+    }),
+  );
+}
+
+/** The conversation's threads, newest first: named with its tag, or with the
+ * readable name alone that earlier versions used. */
+async function findThreads(rpc: AppServer, lookup: Lookup): Promise<Found[]> {
+  const conversation = {
+    channelId: lookup.channelId,
+    name: lookup.name ?? lookup.channelId,
+    ...(lookup.root ? { root: lookup.root } : {}),
+  };
+  const tag = await sessionTag(lookup.agent.pubkey, conversation);
+  const title = sessionTitle(lookup.agent.name, conversation);
+  const found = new Map<string, Found>();
+  for (const [term, legacy, named] of [
+    [tag, false, (name: string) => name.endsWith(` · ${tag}`)],
+    [title, true, (name: string) => name === title],
+  ] as const) {
+    const page = await rpc.request<{
+      data: { id: string; name: string | null; updatedAt: number }[];
+    }>("thread/list", { searchTerm: term, limit: 50 });
+    for (const { id, name, updatedAt } of page.data)
+      if (name && named(name) && !found.has(id))
+        found.set(id, { id, updatedAt, legacy });
+  }
+  return [...found.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** When the conversation's newest thread was last used, or undefined when
+ * Codex has no thread for it on this device. */
+export async function findConversation(
   spawn: Spawn,
-  threadId: string,
-  conversation: { channelId: string; root?: string },
+  lookup: Lookup,
   signal: AbortSignal,
-): Promise<CodexTranscript | undefined> {
+) {
+  return withServer(spawn, signal, async (rpc) => {
+    for (const thread of await findThreads(rpc, lookup))
+      if (!thread.legacy || startedFor(await turns(rpc, thread.id, 1), lookup))
+        return { threadId: thread.id, at: thread.updatedAt * 1000 };
+    return undefined;
+  });
+}
+
+/** A thread's latest turns, newest first, or undefined when Codex no longer
+ * has it. */
+async function page(rpc: AppServer, threadId: string, limit: number) {
+  try {
+    return await rpc.request<{ data: Turn[]; nextCursor: string | null }>(
+      "thread/turns/list",
+      { threadId, limit, sortDirection: "desc", itemsView: "full" },
+    );
+  } catch (error) {
+    if (missing(error)) return undefined;
+    throw error;
+  }
+}
+const turns = async (rpc: AppServer, threadId: string, limit: number) =>
+  (await page(rpc, threadId, limit))?.data ?? [];
+
+async function withServer<T>(
+  spawn: Spawn,
+  signal: AbortSignal,
+  use: (rpc: AppServer) => Promise<T>,
+) {
   const rpc = new AppServer();
   const abort = () => void rpc.close();
   signal.addEventListener("abort", abort, { once: true });
@@ -191,28 +283,50 @@ export async function readTranscript(
     signal.throwIfAborted();
     await rpc.open(spawn);
     signal.throwIfAborted();
-    let page: { data: Turn[]; nextCursor: string | null };
-    try {
-      page = await rpc.request<typeof page>("thread/turns/list", {
-        threadId,
-        limit: TURN_LIMIT,
-        sortDirection: "desc",
-        itemsView: "full",
-      });
-    } catch (error) {
-      if (missing(error)) return undefined;
-      throw error;
-    }
+    const result = await use(rpc);
     signal.throwIfAborted();
-    const turns = [...page.data].reverse();
-    return {
-      turns: codexTurns(turns, conversation),
-      unknownThread: 0,
-      more: !!page.nextCursor,
-      working: turns.at(-1)?.status === "inProgress",
-    };
+    return result;
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
   }
+}
+
+/** The latest turns of all the conversation's threads, oldest first, from a
+ * short-lived app-server, or undefined when Codex has no history for it on
+ * this device. */
+export async function readTranscript(
+  spawn: Spawn,
+  lookup: Lookup,
+  signal: AbortSignal,
+): Promise<CodexTranscript | undefined> {
+  return withServer(spawn, signal, async (rpc) => {
+    // The saved thread is the conversation's; a found one by its name.
+    const threads = new Map<string, boolean>(
+      lookup.threadId ? [[lookup.threadId, false]] : [],
+    );
+    for (const thread of await findThreads(rpc, lookup))
+      if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
+    const all: Turn[] = [];
+    let found = false;
+    let more = false;
+    let working = false;
+    for (const [threadId, legacy] of threads) {
+      const read = await page(rpc, threadId, TURN_LIMIT);
+      if (!read || (legacy && !startedFor(read.data, lookup))) continue;
+      found = true;
+      more ||= !!read.nextCursor;
+      if (threadId === lookup.threadId)
+        working = read.data[0]?.status === "inProgress";
+      all.push(...[...read.data].reverse());
+    }
+    if (!found) return undefined;
+    all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    return {
+      turns: codexTurns(all.slice(-TURN_LIMIT), lookup),
+      unknownThread: 0,
+      more: more || all.length > TURN_LIMIT,
+      working,
+    };
+  });
 }

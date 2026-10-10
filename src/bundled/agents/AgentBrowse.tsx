@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RelaySnapshot } from "../../features/relay/service";
+import { ReadError } from "../../features/relay/errors";
 import type { EventData } from "../../features/relay/events";
 import {
   AGENT_CATALOG_KIND,
@@ -57,15 +58,35 @@ export function AgentBrowse({ connection }: { connection: RelaySnapshot }) {
     const controller = new AbortController();
     setLoading(true);
     setError(false);
-    void session
-      .read([{ kinds: [30175], limit: pageSize, ...cursor }], {
-        signal: controller.signal,
-      })
-      .then((page) => {
-        if (controller.signal.aborted) return;
-        setEvents((previous) => (cursor ? [...previous, ...page] : page));
-        setMore(page.length === pageSize);
-      })
+    const readPage = async () => {
+      let limit = pageSize;
+      for (;;) {
+        controller.signal.throwIfAborted();
+        try {
+          const page = await session.read(
+            [{ kinds: [AGENT_CATALOG_KIND], limit, ...cursor }],
+            { signal: controller.signal },
+          );
+          if (controller.signal.aborted) return;
+          setEvents((previous) => (cursor ? [...previous, ...page] : page));
+          setMore(page.length === limit);
+          return;
+        } catch (problem) {
+          // Match the community catalog's bounded retry at the same cursor.
+          if (
+            problem instanceof ReadError &&
+            problem.kind === "invalid-response" &&
+            problem.message === "Relay response exceeds the read budget" &&
+            limit > 1
+          ) {
+            limit = Math.floor(limit / 2);
+            continue;
+          }
+          throw problem;
+        }
+      }
+    };
+    void readPage()
       .catch(() => {
         if (!controller.signal.aborted) setError(true);
       })

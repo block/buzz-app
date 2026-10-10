@@ -3,6 +3,9 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { AgentBrowse, sharedAgents } from "./AgentBrowse";
+import { createRelayReader } from "../../features/relay/reader";
+import type { ReadTransport } from "../../features/relay/transport";
+import type { RelayEvent } from "../../features/relay/events";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -139,4 +142,72 @@ it("does not revive a valid publication behind an invalid newer head", () => {
   expect(
     sharedAgents([shared, { ...shared, created_at: 2, content: "invalid" }]),
   ).toEqual([]);
+});
+
+it("shrinks over-budget pages and preserves Load more and explicit retry", async () => {
+  const events = Array.from({ length: 200 }, (_, index) => ({
+    ...shared,
+    id: index.toString(16).padStart(64, "0"),
+    created_at: 200 - index,
+    tags: [
+      ["d", `helper-${index}`],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({
+      display_name: `Helper ${index}`,
+      system_prompt: "x".repeat(48 * 1024),
+    }),
+  })) as RelayEvent[];
+  let failNextPage = true;
+  const query = vi.fn<ReadTransport["query"]>(async (filters) => {
+    const filter = filters[0];
+    if (!filter) throw new Error("Missing filter");
+    if (filter.until !== undefined && failNextPage) {
+      failNextPage = false;
+      throw new Error("offline");
+    }
+    return events
+      .filter(
+        (event) =>
+          filter.until === undefined || event.created_at < filter.until,
+      )
+      .slice(0, filter.limit);
+  });
+  const owned = createRelayReader({
+    viewer: shared.pubkey,
+    relayAuthor: "relay",
+    media: () => undefined,
+    query,
+  });
+  const view = render(
+    <AgentBrowse
+      connection={
+        {
+          status: "ready",
+          session: { read: owned.reader.read, media: () => undefined },
+        } as unknown as RelaySnapshot
+      }
+    />,
+  );
+  try {
+    await screen.findByRole("heading", { name: "Helper 99", exact: true });
+    expect(
+      query.mock.calls.slice(0, 2).map(([filters]) => filters[0]?.limit),
+    ).toEqual([200, 100]);
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByRole("heading", { name: "Helper 199", exact: true }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("heading")).toHaveLength(200);
+    expect(
+      screen.queryByRole("button", { name: "Load more" }),
+    ).not.toBeInTheDocument();
+    expect(
+      query.mock.calls.slice(2).map(([filters]) => filters[0]?.until),
+    ).toEqual([101, 101]);
+  } finally {
+    view.unmount();
+    owned.dispose();
+  }
 });

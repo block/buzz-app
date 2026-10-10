@@ -361,7 +361,10 @@ it("discards form-only state on same-revision review and re-arms the next draft'
     );
     await user.click(screen.getByRole("combobox", { name: "Add condition" }));
     await user.click(await screen.findByRole("option", { name: "Author" }));
-    await user.type(screen.getByRole("textbox", { name: "Value" }), value);
+    // This checks draft replacement, not typing; populate the invalid fixture once.
+    fireEvent.change(screen.getByRole("textbox", { name: "Value" }), {
+      target: { value },
+    });
     expect(warnsOnUnload()).toBe(true);
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Close inspector" }));

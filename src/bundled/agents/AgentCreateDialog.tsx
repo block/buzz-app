@@ -5,11 +5,13 @@ import {
   randomAgentAvatar,
   isRetiredAgentAvatar,
 } from "../../features/agents/avatar-packs";
+import { useManagedAgentActions } from "./ManagedAgentActions";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   agentFailureReason,
+  canStopAgent,
   type AgentControl,
   type AgentControlState,
   type CatalogSeed,
@@ -219,6 +221,8 @@ export function AgentCreateDialog({
   const form = useRef<HTMLFormElement>(null);
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
+  const recoveryAction = useManagedAgentActions(state, control);
+  const closeBlocked = busy || !!state.stopping;
   const create = async (publication?: AgentPublication) => {
     if (
       blocked ||
@@ -349,7 +353,7 @@ export function AgentCreateDialog({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !dirty && !blocked) onClose();
+        if (!open && (!dirty || error) && !closeBlocked) onClose();
       }}
     >
       <Dialog.Portal>
@@ -371,11 +375,41 @@ export function AgentCreateDialog({
             </Dialog.Title>
             <IconButton
               aria-label="Close"
-              disabled={blocked}
+              disabled={closeBlocked}
               icon={<XIcon size={20} />}
               onClick={onClose}
             />
           </header>
+          {busy && !!state.data?.agents.length && (
+            <section
+              aria-label="Agent recovery"
+              className="flex flex-col gap-2"
+            >
+              {state.data.agents.map((agent) => {
+                const action = recoveryAction(agent);
+                return (
+                  <div key={agent.id} className="flex flex-col gap-1">
+                    <Button
+                      size="compact"
+                      disabled={!canStopAgent(state, agent.id)}
+                      onClick={() => action.act("stop")}
+                    >
+                      Stop {agent.name}
+                      {state.data?.agents.some(
+                        (other) =>
+                          other.id !== agent.id && other.name === agent.name,
+                      ) && ` (${agent.relayUrl})`}
+                    </Button>
+                    {action.checking && (
+                      <p role="status">Checking agent status…</p>
+                    )}
+                    {action.notice && <p role="alert">{action.notice}</p>}
+                    {agent.error && <p role="alert">{agent.error}</p>}
+                  </div>
+                );
+              })}
+            </section>
+          )}
           {cloned && (
             <p className="text-body-sm text-secondary">
               Only the name and instructions were copied. Review them for

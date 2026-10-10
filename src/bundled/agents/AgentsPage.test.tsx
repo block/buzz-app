@@ -1969,7 +1969,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
 
 for (const stage of ["create", "profile"] as const) {
   for (const recoverStop of [false, true]) {
-    it(`${stage} wait: block Close, external recovery Stop=${recoverStop}, retain result`, async () => {
+    it(`${stage} wait: block Close, visible recovery Stop=${recoverStop}, retain result`, async () => {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -2036,9 +2036,11 @@ for (const stage of ["create", "profile"] as const) {
         expect(
           within(dialog).getByRole("button", { name: "Close" }),
         ).toBeDisabled();
-        // Another surface may stop an existing agent while this dialog waits.
-        if (recoverStop)
-          await act(async () => control.action("fixture-agent", "stop"));
+        const stop = within(dialog).getByRole("button", {
+          name: /^Stop Fixture agent \(.*relay\.example\.test\)/,
+        });
+        expect(stop).toBeEnabled();
+        if (recoverStop) await user.click(stop);
         await act(async () => {
           release();
           await gate;

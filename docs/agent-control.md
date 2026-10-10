@@ -40,7 +40,11 @@ saves the agent, starts it, then publishes its profile. A failed Start or profil
 publication retains the saved identity and offers a retry for that step; it never
 creates another identity. A native Start response can confirm a saved agent while
 reporting that its process could not run. During Create, Start, or profile setup,
-**Close** leaves the operation running and keeps recovery **Stop** available through **Manage agent**. Late completion never closes a subsequently opened dialog. If an operation
+**Close** is disabled while setup is pending, and **Stop** remains available inside
+the setup dialog for each known agent, using the controller's recovery admission.
+The draft and operation result stay mounted. Once setup settles into an error,
+**Close** is available even if status refresh still fails. Late completion after a
+host unmount never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
 
 Create is blocked with an explanation if this app’s runtime is unavailable;

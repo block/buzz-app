@@ -201,7 +201,7 @@ it.each(["start", "profile"])(
   },
 );
 
-it("keeps catalog status recovery available and enables Close after status recovers", async () => {
+it("keeps Close available after creation fails even when status cannot recover", async () => {
   const f = fixture();
   f.create.mockRejectedValueOnce(Error("create timed out"));
   f.select();
@@ -217,8 +217,6 @@ it("keeps catalog status recovery available and enables Close after status recov
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   expect(f.control.refresh).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
-  f.setState({ ...f.control.snapshot(), status: "ready" });
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled(),
   );

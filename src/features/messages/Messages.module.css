@@ -1804,9 +1804,14 @@ html[data-keyboard-input] .quickReactionGlyph {
   z-index: 1;
   background: var(--surface-panel);
   color: var(--text-subtle);
+  /* Align the caption within the prose's first line without changing its type. */
+  display: flex;
+  align-items: center;
+  block-size: calc(var(--text-message) * var(--text-message--line-height));
   font-size: var(--text-caption);
-  line-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
+  line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

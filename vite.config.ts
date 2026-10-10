@@ -1,4 +1,4 @@
-import { avatarCodecs } from "./scripts/avatar-codecs";
+import { avatarCodecs } from "./scripts/avatar-codecs.ts";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";

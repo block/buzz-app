@@ -373,7 +373,9 @@ it("shows Goose authentication errors while keeping manual model entry available
     await userEvent.click(
       screen.getByRole("button", { name: "Browse models" }),
     );
-    expect(await screen.findByText(/Goose needs authentication/)).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText(/Goose needs authentication/)).toBeVisible(),
+    );
     const input = screen.getByRole("combobox", { name: "Model" });
     await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
     // Authentication can finish before Base UI's next-frame trigger opens the

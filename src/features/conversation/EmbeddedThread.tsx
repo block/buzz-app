@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentProps,
+  type ReactNode,
 } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
@@ -42,8 +43,8 @@ type Overlay =
  * As in Channels, the channel visit and message recovery span threads of one
  * channel; retargeting remounts only the thread and its overlay.
  */
-export function EmbeddedThread(props: Props) {
-  const { session, scope, channelId, messageId } = props;
+export function EmbeddedThread({ host, extensions, ...props }: Props) {
+  const { session, scope, channelId, channelName, messageId } = props;
   return (
     <MessageManagement
       key={messageViewKey(session, scope, channelId)}
@@ -51,12 +52,56 @@ export function EmbeddedThread(props: Props) {
       channelId={channelId}
     >
       <MessageManagementStatus />
-      <OwnedEmbeddedThread key={messageId} {...props} />
+      <EmbeddedConversation
+        key={messageId}
+        host={host}
+        extensions={extensions}
+        session={session}
+        scope={scope}
+        channelId={channelId}
+        channelName={channelName}
+        threadId={messageId}
+      >
+        {({ active: _, ...conversation }) => (
+          <ThreadPanel {...props} {...conversation} />
+        )}
+      </EmbeddedConversation>
     </MessageManagement>
   );
 }
 
-function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
+/** What the host supplies to an embedded message view of one channel. */
+export type EmbeddedConversationProps = Required<
+  Pick<
+    ThreadPanelProps,
+    "sessionConversation" | "onOpenLink" | "canOpenLink" | "onOpenMediaReview"
+  >
+> & {
+  extensions: NonNullable<ThreadPanelProps["extensions"]>;
+  /** False after unmount, or once the page's connection is not this view's. */
+  active(): boolean;
+};
+
+/**
+ * The host behavior around an embedded message view of one channel: Buzz link
+ * navigation and one modal at a time for a registered panel or media review.
+ */
+export function EmbeddedConversation({
+  host,
+  extensions,
+  threadId,
+  children,
+  ...props
+}: Pick<
+  EmbeddedThreadProps,
+  "session" | "scope" | "channelId" | "channelName"
+> & {
+  host: Context;
+  extensions: NonNullable<ThreadPanelProps["extensions"]>;
+  /** The thread a panel opened from this view belongs to, if any. */
+  threadId?: string | undefined;
+  children(conversation: EmbeddedConversationProps): ReactNode;
+}) {
   const { session, scope, channelId, channelName } = props;
   const viewer = scope.slice(-64);
   const relayUrl = scope.slice(0, -65);
@@ -107,16 +152,15 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
   };
   return (
     <>
-      <ThreadPanel
-        {...props}
-        sessionConversation={channels.some(
+      {children({
+        sessionConversation: channels.some(
           (channel) =>
             channel.id === channelId && channel.channelType === "session",
-        )}
-        extensions={extensions}
-        onOpenLink={open}
-        canOpenLink={canOpen}
-        onOpenMediaReview={(
+        ),
+        extensions,
+        onOpenLink: open,
+        canOpenLink: canOpen,
+        onOpenMediaReview: (
           messageId,
           attachment,
           initialTime,
@@ -126,8 +170,9 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
             setOverlay({
               media: { messageId, attachment, initialTime, hasComments },
             });
-        }}
-      />
+        },
+        active,
+      })}
       {overlay?.panel && (
         <Dialog
           open
@@ -150,7 +195,7 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
               channelName,
               viewer,
               relayUrl,
-              threadId: props.messageId,
+              ...(threadId ? { threadId } : {}),
             }}
             context={{
               channelId,

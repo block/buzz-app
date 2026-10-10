@@ -17,6 +17,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
@@ -101,11 +102,28 @@ export function MessageManagement({
   active?: boolean | undefined;
   children: ReactNode;
 }) {
+  const presented = useConversationPresentation();
   const [selection, setSelection] = useState<Deletion>();
+  const [completions, setCompletions] = useState<
+    { id: string; done: () => void }[]
+  >([]);
+  if (!presented && selection) setSelection(undefined);
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
   );
+  // Dispatched deletions can settle after their confirmation portal retires.
+  useEffect(() => {
+    const settled = completions.filter(({ id }) => {
+      const operation = operations.find((item) => item.event.id === id);
+      return !operation || ["seen", "accepted"].includes(operation.delivery);
+    });
+    if (!settled.length) return;
+    setCompletions((current) =>
+      current.filter((item) => !settled.includes(item)),
+    );
+    for (const { done } of settled) done();
+  }, [completions, operations]);
   const channels = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -192,12 +210,21 @@ export function MessageManagement({
     >
       <MessageEditScope>{children}</MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
-      {selection && available && (
+      {presented && selection && available && (
         <DeleteMessageDialog
           key={selection.row.id}
           session={session}
           selection={selection}
           operations={operations}
+          dispatched={(id) => {
+            const done = selection.done;
+            if (done)
+              setCompletions((current) =>
+                current.some((item) => item.id === id)
+                  ? current
+                  : [...current, { id, done }],
+              );
+          }}
           close={() => setSelection(undefined)}
         />
       )}
@@ -393,11 +420,13 @@ function DeleteMessageDialog({
   session,
   selection,
   operations,
+  dispatched,
   close,
 }: {
   session: RelaySession;
   selection: Deletion;
   operations: readonly OutgoingEvent[];
+  dispatched(id: string): void;
   close(): void;
 }) {
   const { row, authorization } = selection;
@@ -421,10 +450,9 @@ function DeleteMessageDialog({
         operation.delivery === "seen" ||
         operation.delivery === "accepted")
     ) {
-      selection.done?.();
       close();
     }
-  }, [operationId, operation, selection, close]);
+  }, [operationId, operation, close]);
   const run = () => {
     setError(undefined);
     try {
@@ -441,8 +469,14 @@ function DeleteMessageDialog({
         throw new Error(
           "This conversation is no longer available for changes.",
         );
-      if (operationId) session.outbox?.retry(operationId);
-      else setOperationId(session.messages.remove([row.id], authorization));
+      if (operationId) {
+        session.outbox?.retry(operationId);
+        dispatched(operationId);
+      } else {
+        const id = session.messages.remove([row.id], authorization);
+        setOperationId(id);
+        dispatched(id);
+      }
     } catch (cause) {
       setError(
         cause instanceof Error

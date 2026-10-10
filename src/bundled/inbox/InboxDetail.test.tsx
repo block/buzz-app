@@ -16,6 +16,7 @@ import type { ComposerInputElement } from "../../features/messages/composer-dom"
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { RelayEvent } from "../../features/relay/events";
 import type { Navigation } from "../../features/navigation/controller";
 import { matchesEvent } from "../../features/relay/projection";
 import {
@@ -113,7 +114,7 @@ async function frame() {
     for (const callback of pending) callback(performance.now());
   });
 }
-async function fixture() {
+async function fixture(ownReply = false, anotherReply = false) {
   const viewer = keypair(),
     alice = keypair(),
     relay = keypair();
@@ -128,10 +129,24 @@ async function fixture() {
       ["imeta", "url https://fixture.test/image.png", "m image/png"],
     ],
   );
+  const reply = ownReply
+    ? message(viewer, "room", "My Inbox reply", 21, [
+        ["e", root.id, "", "reply"],
+      ])
+    : undefined;
+  const nextReply = anotherReply
+    ? message(viewer, "room", "Another Inbox reply", 22, [
+        ["e", root.id, "", "reply"],
+      ])
+    : undefined;
+  const publications: RelayEvent[] = [];
+  let publicationGate: ReturnType<typeof deferred> | undefined;
   const events = [
     roster(relay, "room", [viewer.pubkey, alice.pubkey], 10),
     metadata(relay, "room", "Room", 10),
     root,
+    ...(reply ? [reply] : []),
+    ...(nextReply ? [nextReply] : []),
   ];
   let journal: ReadJournal | undefined;
   let live!: LiveCallbacks;
@@ -173,9 +188,14 @@ async function fixture() {
         },
       },
       writer: {
-        kinds: [9],
+        kinds: [9, 40003, 5],
         sign: async (template) => signed(viewer, template),
-        publish: async () => {},
+        publish: async (event) => {
+          publications.push(event);
+          await publicationGate?.promise;
+          events.push(event);
+          live.receive([event]);
+        },
       },
       subscribe(callbacks) {
         live = callbacks;
@@ -207,9 +227,16 @@ async function fixture() {
     ...owner,
     live,
     root,
+    reply,
+    nextReply,
+    publications,
     item,
     journal: () => journal,
     scope: { viewer: viewer.pubkey, communityOrigin: "https://relay.test" },
+    holdPublication() {
+      publicationGate = deferred();
+      return publicationGate;
+    },
     hold(fail = false) {
       auxiliary = { gate: deferred(), started: deferred(), fail };
       return auxiliary;
@@ -740,6 +767,289 @@ it("does not restore a control retired by withholding, even when a replacement m
     expect(replacement).not.toBe(toggle);
     expect(replacement).not.toHaveFocus();
   } finally {
+    gate.gate.resolve();
+  }
+});
+
+it("edits an owned reply in the Inbox thread using its existing composer", async () => {
+  const h = await fixture(true);
+  const { reader, editor } = await opened(h);
+  const row = reader.querySelector<HTMLElement>(
+    `[data-message-id="${h.reply?.id}"]`,
+  );
+  if (!row) throw new Error("Missing owned reply");
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row).getByRole("button", { name: "More message actions" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  );
+  await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
+  expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+  expect(editor).toHaveFocus();
+  act(() => {
+    editor.value = "Corrected from Inbox";
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit composer form");
+  fireEvent.submit(form);
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publications[0]).toMatchObject({
+    kind: 40003,
+    content: "Corrected from Inbox",
+  });
+  expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+  await waitFor(() =>
+    expect(within(row).getByText("Corrected from Inbox")).toBeVisible(),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Edit message" })).toBeNull(),
+  );
+});
+
+it("keeps another person's Inbox message ineligible for edit and deletion", async () => {
+  const h = await fixture();
+  const { row } = await opened(h);
+  if (!row) throw new Error("Missing peer root");
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row as HTMLElement).getByRole("button", {
+      name: "More message actions",
+    }),
+  );
+  await screen.findByRole("menuitem", { name: /Mark (read|unread)/ });
+  expect(screen.queryByRole("menuitem", { name: "Edit message" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
+});
+
+it.each([false, true])(
+  "dismisses deletion while Inbox is withheld without cancelling dispatched work (submitted: %s)",
+  async (submitted) => {
+    const h = await fixture(true);
+    const { reader, editor } = await opened(h);
+    const row = reader.querySelector<HTMLElement>(
+      `[data-message-id="${h.reply?.id}"]`,
+    );
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    const publication = h.holdPublication();
+    const gate = h.hold();
+    let refresh!: Promise<void>;
+    try {
+      if (submitted) {
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: /^Delete$/ }),
+        );
+        await waitFor(() => expect(h.publications).toHaveLength(1));
+        expect(h.publications[0]?.kind).toBe(5);
+        expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+      }
+      await act(async () => {
+        refresh = h.session.inboxFeed.refresh();
+        await gate.started.promise;
+      });
+      expect(screen.getByText("Preview updating…")).toBeVisible();
+      expect(dialog).not.toBeInTheDocument();
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(reader.closest("[hidden][inert]")).not.toBeNull();
+      expect(editor).toBeInTheDocument();
+      await act(async () => publication.resolve());
+      if (submitted) {
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+      }
+      await act(async () => {
+        gate.gate.resolve();
+        await refresh;
+      });
+      expect(screen.getByRole("complementary", { name: "Thread" })).toBe(
+        reader,
+      );
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      expect(h.publications).toHaveLength(submitted ? 1 : 0);
+      if (!submitted) expect(row).toBeVisible();
+    } finally {
+      publication.resolve();
+      gate.gate.resolve();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves channel forced-unread intent across Inbox open and close (left channel: %s)",
+  async (leftChannel) => {
+    const h = await fixture(true);
+    if (!h.reply) throw new Error("Missing owned reply");
+    await h.session.unread.enterChannel("room");
+    await h.session.unread.markMessageUnread("room", h.reply.id);
+    if (leftChannel) h.session.unread.leaveChannel("room");
+    const force = h.journal()?.localUnread["message-force:room"];
+    expect(force).toBeDefined();
+    const { editor } = await opened(h);
+    act(() => screen.getByRole("combobox", { name: "Sender" }).focus());
+    expect(h.journal()?.localUnread["message-force:room"]).toBe(force);
+    fireEvent.keyDown(screen.getByRole("region", { name: "Inbox detail" }), {
+      key: "Escape",
+    });
+    expect(editor).not.toBeInTheDocument();
+    expect(h.journal()?.localUnread["message-force:room"]).toBe(force);
+    if (!leftChannel)
+      expect(h.session.unread.attention("room", h.reply.id).forced).toBe(true);
+  },
+);
+
+it.each([false, true])(
+  "restores the reply draft after empty-edit deletion across withholding (settles hidden: %s)",
+  async (settlesHidden) => {
+    const h = await fixture(true);
+    const { reader, editor } = await opened(h);
+    act(() => {
+      editor.focus();
+      editor.value = "Saved reply draft";
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+    });
+    fireEvent.input(editor);
+    const row = reader.querySelector<HTMLElement>(
+      `[data-message-id="${h.reply?.id}"]`,
+    );
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit message" }),
+    );
+    await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
+    act(() => {
+      editor.value = "";
+    });
+    fireEvent.input(editor);
+    const form = editor.closest("form");
+    if (!form) throw new Error("Missing edit composer form");
+    fireEvent.submit(form);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    const publication = h.holdPublication();
+    const gate = h.hold();
+    let refresh!: Promise<void>;
+    try {
+      fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+      await waitFor(() => expect(h.publications).toHaveLength(1));
+      expect(h.publications[0]?.kind).toBe(5);
+      expect(h.publications[0]?.tags).toContainEqual(["e", h.reply?.id]);
+      await act(async () => {
+        refresh = h.session.inboxFeed.refresh();
+        await gate.started.promise;
+      });
+      expect(dialog).not.toBeInTheDocument();
+      expect(reader.closest("[hidden][inert]")).not.toBeNull();
+      expect(editor).toBeInTheDocument();
+      if (settlesHidden) {
+        await act(async () => publication.resolve());
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+        await waitFor(() => expect(editor).toHaveValue("Saved reply draft"));
+      }
+      await act(async () => {
+        gate.gate.resolve();
+        await refresh;
+      });
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+      if (!settlesHidden) {
+        await act(async () => publication.resolve());
+        await waitFor(() => expect(row).not.toBeInTheDocument());
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("textbox", { name: "Edit message" }),
+        ).toBeNull(),
+      );
+      expect(screen.getByRole("textbox")).toBe(editor);
+      expect(editor).toHaveValue("Saved reply draft");
+      expect(reader).toBeVisible();
+      expect(h.publications).toHaveLength(1);
+    } finally {
+      publication.resolve();
+      gate.gate.resolve();
+    }
+  },
+);
+
+it("does not let a withheld deletion completion cancel a replacement edit", async () => {
+  const h = await fixture(true, true);
+  const { reader, editor } = await opened(h);
+  act(() => {
+    editor.value = "Reply draft";
+  });
+  fireEvent.input(editor);
+  const editRow = async (id: string | undefined, value: string) => {
+    const row = reader.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
+    if (!row) throw new Error("Missing owned reply");
+    fireEvent.focus(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit message" }),
+    );
+    await waitFor(() => expect(editor).toHaveValue(value));
+    return row;
+  };
+  const original = await editRow(h.reply?.id, "My Inbox reply");
+  act(() => {
+    editor.value = "";
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit composer form");
+  fireEvent.submit(form);
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  const publication = h.holdPublication();
+  const gate = h.hold();
+  let refresh!: Promise<void>;
+  try {
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () => {
+      refresh = h.session.inboxFeed.refresh();
+      await gate.started.promise;
+    });
+    expect(dialog).not.toBeInTheDocument();
+    await act(async () => {
+      gate.gate.resolve();
+      await refresh;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(editor).toHaveValue("Reply draft");
+    await editRow(h.nextReply?.id, "Another Inbox reply");
+    act(() => {
+      editor.value = "Keep this newer correction";
+    });
+    fireEvent.input(editor);
+    await act(async () => publication.resolve());
+    await waitFor(() => expect(original).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+    expect(editor).toHaveValue("Keep this newer correction");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(editor).toHaveValue("Reply draft");
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    publication.resolve();
     gate.gate.resolve();
   }
 });

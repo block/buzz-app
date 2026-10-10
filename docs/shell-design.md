@@ -60,9 +60,11 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, and desktop Settings share an animated header toggle; hiding
-  the sidebar preserves its mounted state and saved width. Reduced motion disables
-  the transition. Other desktop pages retain the visible sidebar.
+  Me, Messages, Agents, desktop Settings, and any selected primary page share an
+  animated header toggle; hiding the sidebar preserves its mounted state and saved
+  width. Pages without a Channel or Me-specific label use generic "Hide sidebar" /
+  "Show sidebar" labels. Reduced motion disables the transition. Other desktop
+  pages retain the visible sidebar.
   The same header keeps history and account/search actions, plus a centered
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise

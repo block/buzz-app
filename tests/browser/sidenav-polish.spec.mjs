@@ -391,7 +391,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   });
   const toggle = page.locator("[data-shell-sidebar-toggle]");
   await expect(toggle).toHaveCount(1);
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await expect(sidebar).not.toBeVisible();
   await toggle.click();
   await expect(sidebar).toBeVisible();
@@ -411,7 +411,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   await expect(sidebar).not.toBeVisible();
   await expect(toggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await toggle.click();
   await expect(sidebar).toBeVisible();
 });

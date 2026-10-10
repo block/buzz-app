@@ -1,4 +1,5 @@
 import { isWorkflowDefinitionBatch } from "../workflows/queries";
+import type { IfcContext } from "../ifc/context";
 import { verifyThreadWindows } from "./thread-window";
 import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -13,6 +14,8 @@ export type ReadOptions = {
   priority?: Priority;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
+  /** Observational only; IFC failures never reject the read. */
+  ifc?: IfcContext;
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
@@ -38,6 +41,7 @@ type Job = {
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
   snapshot: boolean;
+  ifc?: IfcContext;
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 
@@ -154,6 +158,7 @@ export function createRelayReader(
                 job.controller.signal,
                 job.id,
                 job.priority,
+                job.ifc,
               );
         void query
           .then(async (events) => {
@@ -179,7 +184,7 @@ export function createRelayReader(
   }
   function read(
     filters: readonly ReadFilter[],
-    { signal, priority = "foreground", fresh = false }: ReadOptions = {},
+    { signal, priority = "foreground", fresh = false, ifc }: ReadOptions = {},
     snapshot = false,
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
@@ -243,7 +248,9 @@ export function createRelayReader(
         );
       key = `read-state-snapshot:${key}`;
     }
-    if (fresh) key = `${key}:fresh:${++sequence}`;
+    // An audit belongs to this agent and trigger, never to another consumer
+    // that happens to request the same filters.
+    if (fresh || ifc) key = `${key}:fresh:${++sequence}`;
     let job = jobs.get(key);
     if (!job) {
       if (jobs.size >= maxPending)
@@ -261,6 +268,7 @@ export function createRelayReader(
         consumers: new Set(),
         running: false,
         snapshot,
+        ...(ifc ? { ifc } : {}),
         timer: setTimeout(
           () =>
             finish(

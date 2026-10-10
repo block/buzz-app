@@ -339,3 +339,20 @@ it("admits only the bounded workflow batch exception without relaxing other read
   owners.at(-1)?.dispose();
   await rejected;
 });
+
+it("keeps audited reads separate from ordinary reads and other agent contexts", async () => {
+  const { transport, read, next, pending } = setup();
+  const query = vi.spyOn(transport, "query");
+  const trigger = { id: "trigger" } as import("./events").RelayEvent;
+  const a = { agent: "agent-a", trigger };
+  const b = { agent: "agent-b", trigger };
+  const reads = [
+    read(filter("dm")),
+    read(filter("dm"), { ifc: a }),
+    read(filter("dm"), { ifc: b }),
+  ];
+  expect(pending).toHaveLength(3);
+  expect(query.mock.calls.map((call) => call[4])).toEqual([undefined, a, b]);
+  for (let i = 0; i < 3; i++) next().respond([]);
+  await expect(Promise.all(reads)).resolves.toEqual([[], [], []]);
+});

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
+import type { ReadOptions } from "../../features/relay/reader";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./claude-testing";
@@ -29,16 +30,23 @@ const message = (
     ...extra,
   }) as RelayEvent;
 
-function setup(thread: readonly EventData[] = []) {
+function setup(thread: readonly EventData[] = [], dm = false) {
   const fake = fakeSpawn();
   const host = { spawn: fake.spawn, request: vi.fn() } as unknown as Host;
-  const read = vi.fn(async () => thread);
+  const read = vi.fn(
+    async (_filters: readonly object[], _options?: ReadOptions) => thread,
+  );
   const session = {
     read,
     channels: {
       list: () => ({
         channels: [
-          { id: channel, name: "general", channelType: "stream", members: [] },
+          {
+            id: channel,
+            name: "general",
+            channelType: dm ? "dm" : "stream",
+            members: [],
+          },
         ],
       }),
     },
@@ -348,4 +356,26 @@ it("warms a spare for each agent of its type and stops those that go away", asyn
   runtime.sync([]);
   await flush(10);
   expect(claudes().every((process) => process.killed)).toBe(true);
+});
+
+it("tags the existing DM history read for audit and keeps the model session", async () => {
+  const earlier = message("1", "Earlier DM context");
+  const trigger = message("2", "@Claude hello", { created_at: 110 });
+  const f = setup([earlier], true);
+  await f.deliver({ type: "mention", event: trigger });
+  await flush(10);
+  expect(f.read).toHaveBeenCalledWith(
+    [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+    expect.objectContaining({ ifc: { agent: self, trigger } }),
+  );
+  expect(
+    f.claudes().find((process) => process.prompts.length)?.prompts[0],
+  ).toContain("Earlier DM context");
+  const later = message("3", "@Claude again", { created_at: 120 });
+  await f.deliver({ type: "mention", event: later });
+  await flush(10);
+  const used = f.claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  expect(used[0]?.prompts).toHaveLength(2);
+  expect(f.agent.query).not.toHaveBeenCalled();
 });

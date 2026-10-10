@@ -18,6 +18,7 @@ use url::Url;
 
 mod catalog;
 mod channel_writes;
+mod ifc;
 mod kit;
 pub(crate) use channel_writes::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
@@ -654,10 +655,12 @@ fn client() -> Result<&'static reqwest::Client> {
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
     community: String,
     path: String,
     method: String,
     body: Option<String>,
+    ifc: Option<serde_json::Value>,
 ) -> Result<RelayResponse> {
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
@@ -694,15 +697,29 @@ pub(crate) async fn relay_http(
             return Err("Invalid outgoing signature".into());
         }
     }
-    send(
+    let audit_filters = ifc.as_ref().and_then(|_| body.clone());
+    let response = send(
         host.inner(),
-        url,
+        url.clone(),
         &method,
         body,
         method == "POST",
         MAX_RESPONSE,
     )
-    .await
+    .await?;
+    if path == "/query" && response.status == 200 {
+        if let (Some(context), Some(filters)) = (ifc, audit_filters) {
+            ifc::observe(
+                host.inner().clone(),
+                agents.inner().clone(),
+                url,
+                context,
+                filters,
+                &response,
+            );
+        }
+    }
+    Ok(response)
 }
 
 async fn send(

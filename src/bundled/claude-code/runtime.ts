@@ -12,7 +12,7 @@ import type {
   Delivery,
 } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
-import type { EventData } from "../../features/relay/events";
+import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Spawn, ToolServer } from "./claude";
@@ -238,7 +238,7 @@ export class ClaudeRuntime {
   private async turn(
     entry: Entry,
     self: string,
-    event: EventData,
+    event: RelayEvent,
     channelId: string,
     fresh = false,
   ) {
@@ -264,7 +264,10 @@ export class ClaudeRuntime {
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+          {
+            signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
+            ...(dm && !thread ? { ifc: { agent: self, trigger: event } } : {}),
+          },
         );
         earlier = events
           .filter(

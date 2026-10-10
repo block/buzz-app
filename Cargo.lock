@@ -686,6 +686,7 @@ dependencies = [
  "buzz-agent",
  "buzz-agent-controller",
  "buzz-credential-store",
+ "buzz-ifc",
  "buzz-pairing",
  "buzzodz-plugins",
  "bytes",

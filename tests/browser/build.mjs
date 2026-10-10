@@ -1,3 +1,4 @@
+import { bundledHostPlugin } from "../../scripts/plugin-dev.mjs";
 import { fixtureAliases } from "../relay-config.ts";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
@@ -13,6 +14,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export async function buildApp(
   {
     developmentReact,
+    bundledDevelopment,
     pluginFixtures,
     companionFixture,
     agentManagement,
@@ -30,6 +32,9 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
+        ...(bundledDevelopment
+          ? [bundledHostPlugin(root, { builderlabUrl: "" })]
+          : []),
         ...(pairingFixture
           ? [
               {

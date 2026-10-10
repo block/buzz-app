@@ -2,13 +2,14 @@ import type { PluginManifest } from "./api";
 
 export type PluginInfo = {
   manifest: PluginManifest;
-  source: "bundled" | "external";
+  source: "bundled" | "external" | "development";
   enabled: boolean;
   revision: string;
   previous: string | null;
   hasSignature?: boolean;
   rollbackBlockedReason?: string | null;
   reloadable: boolean;
+  developmentSupported?: boolean;
   error: string | null;
 };
 export type Catalog = {
@@ -46,5 +47,18 @@ export type PluginImports = {
     authorization?: string,
   ): Promise<ImportPreview | null>;
   install(token: string, path: string): Promise<StorageResult>;
+  discard(token: string): Promise<void>;
+};
+
+export type DevelopmentPreview = {
+  token: string;
+  manifest: PluginManifest;
+  revision: string;
+  source: string;
+};
+export type PluginDevelopment = {
+  folder(id: string): Promise<DevelopmentPreview | null>;
+  attach(token: string): Promise<StorageResult>;
+  compiled(id: string): Promise<StorageResult>;
   discard(token: string): Promise<void>;
 };

@@ -63,6 +63,14 @@ only the configured URL's exact origin. Never put credentials in this input.
 
 The bundled Builderlab login consumes this public URL and appends `/api/goose`.
 
+`bin/pnpm plugin:dev builderlab` uses the development frontend's public build input,
+bakes the target and its exact-origin grant into the artifact, and includes the
+full target in host compatibility. Use `.env.local` or the same process input
+for both the native host and artifact command; frontend-only mode files still do
+not configure native grants. Different deployment paths on the same origin are
+different compatibility targets. Local artifact builds reject invalid targets
+without replacing the previous artifact.
+
 Restart desktop development after changing this input so Vite and the native
 grant rebuild together; browser-only development needs a Vite restart. Production
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`

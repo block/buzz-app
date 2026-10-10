@@ -3,6 +3,7 @@ import type { PluginModule } from "./api";
 import type { PluginInfo } from "./types";
 import { withTimeout } from "./timeout.ts";
 import type {} from "./status";
+import type { PluginLifecycle } from "./lifecycle";
 
 export type PluginState = {
   revision: string;
@@ -18,6 +19,8 @@ type Entry = {
   unwatch?: () => void;
   stopped?: Promise<void>;
   predecessor: Promise<void>;
+  starting: Promise<void>;
+  activation?: number;
 };
 
 // Cordis 4.0.2 erases its FiberState const enum from the published JavaScript.
@@ -34,11 +37,13 @@ export class PluginRuntime {
   private readonly load: (plugin: PluginInfo) => Promise<PluginModule>;
   private readonly listeners = new Set<() => void>();
   private readonly timeoutMs: number;
+  private readonly lifecycle?: PluginLifecycle | undefined;
 
   constructor(
     root: Context,
     load: (plugin: PluginInfo) => Promise<PluginModule>,
     timeoutMs = 10_000,
+    lifecycle?: PluginLifecycle,
   ) {
     this.root = root;
     this.load = load;
@@ -47,6 +52,7 @@ export class PluginRuntime {
       subscribe: this.subscribe,
     });
     this.timeoutMs = timeoutMs;
+    this.lifecycle = lifecycle;
   }
 
   snapshot = () => this.states;
@@ -94,11 +100,12 @@ export class PluginRuntime {
         plugin,
         cancelled: false,
         failed: false,
+        starting: Promise.resolve(),
         predecessor: previous ? this.stop(previous) : Promise.resolve(),
       };
       this.entries.set(id, entry);
       this.update(entry, "starting", null);
-      void this.start(entry);
+      entry.starting = this.start(entry);
     }
   }
 
@@ -140,10 +147,20 @@ export class PluginRuntime {
         this.timeoutMs,
       );
       if (entry.cancelled) return;
+      if (this.lifecycle) {
+        entry.activation = await this.lifecycle.begin(
+          entry.plugin.manifest.id,
+          entry.plugin.revision,
+        );
+        if (entry.cancelled) return;
+      }
       const scope = this.root.extend({
         pluginOwner: Object.freeze({
           id: entry.plugin.manifest.id,
           revision: entry.plugin.revision,
+          ...(entry.activation === undefined
+            ? {}
+            : { activation: entry.activation }),
         }),
       });
       const fiber = scope.plugin({
@@ -198,20 +215,30 @@ export class PluginRuntime {
     this.update(entry, "failed", String(reason));
     // Failure stays visible until an explicit retry. Retain the cleanup barrier
     // so replacement also waits for disposal started by a timeout or error.
-    if (entry.fiber) {
-      entry.stopped ??= entry.fiber.dispose();
-      void entry.stopped.catch(() => {});
-    }
+    entry.stopped ??= this.teardown(entry);
+    void entry.stopped.catch(() => {});
   }
 
   private stop(entry: Entry): Promise<void> {
     entry.cancelled = true;
     entry.unwatch?.();
-    entry.stopped ??= Promise.all([
-      entry.predecessor,
-      entry.fiber?.dispose(),
-    ]).then(() => {});
+    entry.stopped ??= this.teardown(entry);
     return entry.stopped;
+  }
+
+  private async teardown(entry: Entry) {
+    // Include a pending native begin/module load before fencing late resources.
+    await entry.starting;
+    await entry.predecessor;
+    try {
+      await entry.fiber?.dispose();
+    } finally {
+      if (entry.activation !== undefined)
+        await this.lifecycle?.retire(
+          entry.plugin.manifest.id,
+          entry.activation,
+        );
+    }
   }
 
   async dispose() {

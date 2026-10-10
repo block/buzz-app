@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod development;
 pub mod imports;
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -275,6 +276,16 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.moderation"
     )
 }
+fn effective_grants(mut grants: HostGrants) -> HostGrants {
+    for command in &mut grants.commands {
+        command.max_output_bytes = Some(
+            command
+                .max_output_bytes
+                .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES),
+        );
+    }
+    grants
+}
 /// Bundled ids that older profiles may still hold as installed plugins.
 const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
 fn is_bundled(id: &str) -> bool {
@@ -331,7 +342,7 @@ impl Default for Registry {
         }
     }
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
     manifest: Manifest,
@@ -438,6 +449,7 @@ pub struct PluginInfo {
     pub has_signature: bool,
     pub rollback_blocked_reason: Option<&'static str>,
     pub reloadable: bool,
+    pub development_supported: bool,
     pub error: Option<String>,
     pub publisher: Option<String>,
 }
@@ -467,6 +479,7 @@ pub struct Manager {
     root: PathBuf,
     profile: String,
     safe_mode: bool,
+    development: std::sync::Arc<std::sync::Mutex<development::Session>>,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -487,6 +500,7 @@ impl Manager {
             root: home.join("profiles").join(profile),
             profile: profile.into(),
             safe_mode,
+            development: Default::default(),
         })
     }
     pub fn from_env() -> Result<Self> {
@@ -603,6 +617,7 @@ impl Manager {
                     has_signature: false,
                     rollback_blocked_reason: None,
                     reloadable: false,
+                    development_supported: false,
                     error: None,
                     publisher: None,
                 }
@@ -639,10 +654,12 @@ impl Manager {
                 has_signature,
                 rollback_blocked_reason,
                 reloadable: p.current_source.is_some(),
+                development_supported: false,
                 error,
                 publisher,
             });
         }
+        self.project_development(&mut plugins)?;
         Ok(Catalog {
             profile: self.profile.clone(),
             location: self.root.display().to_string(),
@@ -769,7 +786,7 @@ impl Manager {
     fn reload_with_commit_hook(&self, id: &str, before_commit: impl FnOnce()) -> Result<Catalog> {
         valid_id(id)?;
         if is_bundled(id) {
-            return Err("Bundled plugins cannot be reloaded from disk".into());
+            return self.reload_development(id);
         }
         let snapshot = {
             let _lock = self.lock()?;
@@ -798,16 +815,6 @@ impl Manager {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
         // Compare effective access without changing the stored manifest representation.
-        let effective_grants = |mut grants: HostGrants| {
-            for command in &mut grants.commands {
-                command.max_output_bytes = Some(
-                    command
-                        .max_output_bytes
-                        .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES),
-                );
-            }
-            grants
-        };
         if effective_grants(manifest.host.clone().unwrap_or_default())
             != effective_grants(snapshot.3)
         {
@@ -858,6 +865,9 @@ impl Manager {
         self.catalog()
     }
     pub fn module(&self, id: &str, revision: &str) -> Result<String> {
+        if is_bundled(id) {
+            return Ok(self.development_artifact(id, revision)?.code);
+        }
         Ok(self.current_artifact(id, revision)?.code)
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
@@ -867,10 +877,20 @@ impl Manager {
                 .plugins
                 .into_iter()
                 .find(|plugin| {
-                    plugin.source == "bundled" && plugin.manifest.id == id && plugin.enabled
+                    plugin.source == "bundled"
+                        && plugin.revision == "bundled"
+                        && plugin.manifest.id == id
+                        && plugin.enabled
                 })
                 .ok_or("Bundled plugin is disabled or unavailable")?;
             return Ok(plugin.manifest.host.unwrap_or_default());
+        }
+        if is_bundled(id) {
+            return Ok(self
+                .development_artifact(id, revision)?
+                .manifest
+                .host
+                .unwrap_or_default());
         }
         Ok(self
             .current_artifact(id, revision)?

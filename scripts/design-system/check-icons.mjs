@@ -21,6 +21,8 @@ const nonIconDependencies = new Set([
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",
+  "@tailwindcss/node",
+  "@tailwindcss/oxide",
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",

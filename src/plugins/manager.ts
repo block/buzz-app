@@ -5,6 +5,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { PluginManifest, PluginModule } from "./api";
 import { createModuleLoader } from "./modules";
 import { withTimeout } from "./timeout";
+import { nativePluginLifecycle } from "./lifecycle";
 import type {
   StorageResult,
   ConfigurationState,
@@ -47,6 +48,8 @@ export function createPluginManager(
       ),
       storage.readModule,
     ),
+    10_000,
+    nativePluginLifecycle(),
   );
   let configuration: ConfigurationState = { status: "loading" };
   let busy = false;
@@ -176,6 +179,19 @@ export function createPluginManager(
       };
     },
     imports: storage.imports,
+    development: storage.development,
+    attachDevelopment: (token: string) =>
+      update(() => {
+        if (!storage.development)
+          throw new Error("Local development requires the desktop app");
+        return storage.development.attach(token);
+      }),
+    restoreCompiled: (id: string) =>
+      update(() => {
+        if (!storage.development)
+          throw new Error("Local development requires the desktop app");
+        return storage.development.compiled(id);
+      }),
     installImport: (token: string, path: string) =>
       update(() => {
         if (!storage.imports)

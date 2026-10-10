@@ -27,7 +27,7 @@ function pluginContext() {
   return {
     root,
     plugin: root.extend({
-      pluginOwner: { id: "example.plugin", revision: "abc" },
+      pluginOwner: { id: "example.plugin", revision: "abc", activation: 12 },
     }),
   };
 }
@@ -242,6 +242,7 @@ it("starts a declared process as the calling plugin and streams it", async () =>
   expect(invoke).toHaveBeenCalledWith("plugin_host_process_spawn", {
     id: "example.plugin",
     revision: "abc",
+    activation: 12,
     processId: "agent",
     args: ["--print"],
     cwd: "~/.buzz",
@@ -258,12 +259,14 @@ it("starts a declared process as the calling plugin and streams it", async () =>
   await process?.end();
   expect(invoke).toHaveBeenCalledWith("plugin_host_process_write", {
     id: "example.plugin",
+    activation: 12,
     handle: 7,
     data: "line\n",
     close: false,
   });
   expect(invoke).toHaveBeenCalledWith("plugin_host_process_write", {
     id: "example.plugin",
+    activation: 12,
     handle: 7,
     data: "",
     close: true,
@@ -300,7 +303,9 @@ it("kills a plugin's processes when the plugin unloads", async () => {
   new HostService(root);
   let host!: Host;
   const fiber = root
-    .extend({ pluginOwner: { id: "example.plugin", revision: "abc" } })
+    .extend({
+      pluginOwner: { id: "example.plugin", revision: "abc", activation: 12 },
+    })
     .plugin({
       inject: ["host"],
       apply: (ctx: Context) => {
@@ -314,6 +319,7 @@ it("kills a plugin's processes when the plugin unloads", async () => {
   await fiber.dispose();
   expect(invoke).toHaveBeenCalledWith("plugin_host_process_kill", {
     id: "example.plugin",
+    activation: 12,
     handle: 3,
   });
 });
@@ -323,7 +329,9 @@ it("kills a process that started as its plugin unloaded", async () => {
   new HostService(root);
   let host!: Host;
   const fiber = root
-    .extend({ pluginOwner: { id: "example.plugin", revision: "abc" } })
+    .extend({
+      pluginOwner: { id: "example.plugin", revision: "abc", activation: 12 },
+    })
     .plugin({
       inject: ["host"],
       apply: (ctx: Context) => {
@@ -345,6 +353,7 @@ it("kills a process that started as its plugin unloaded", async () => {
   await expect(spawning).rejects.toThrow();
   expect(invoke).toHaveBeenCalledWith("plugin_host_process_kill", {
     id: "example.plugin",
+    activation: 12,
     handle: 4,
   });
 });
@@ -359,4 +368,98 @@ it("refuses processes outside the desktop app", async () => {
     "installed desktop plugin",
   );
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("fences output callbacks as soon as the plugin unloads, including a pending spawn", async () => {
+  const root = new Context();
+  new HostService(root);
+  let host!: Host;
+  const fiber = root
+    .extend({
+      pluginOwner: { id: "example.plugin", revision: "abc", activation: 12 },
+    })
+    .plugin({
+      inject: ["host"],
+      apply(ctx: Context) {
+        host = ctx.host;
+      },
+    });
+  await fiber;
+  let started!: (handle: number) => void;
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "plugin_host_process_spawn"
+      ? new Promise((resolve) => {
+          started = resolve;
+        })
+      : Promise.resolve(undefined),
+  );
+  const output: string[] = [];
+  const spawning = host.spawn?.("agent", {
+    onStdout: (data) => output.push(data),
+    onStderr: (data) => output.push(data),
+  });
+  const [, spawn] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  spawn.onEvent.onmessage({ type: "stdout", data: "live" });
+  await fiber.dispose();
+  spawn.onEvent.onmessage({ type: "stdout", data: "late" });
+  spawn.onEvent.onmessage({ type: "stderr", data: "late error" });
+  started(4);
+  await expect(spawning).rejects.toThrow();
+  expect(output).toEqual(["live"]);
+  await expect(host.spawn?.("agent")).rejects.toThrow();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command]) => command === "plugin_host_process_spawn",
+      ),
+  ).toHaveLength(1);
+});
+
+it("fences callbacks before awaiting process cleanup", async () => {
+  const root = new Context();
+  new HostService(root);
+  let host!: Host;
+  const fiber = root
+    .extend({
+      pluginOwner: { id: "example.plugin", revision: "abc", activation: 12 },
+    })
+    .plugin({
+      inject: ["host"],
+      apply(ctx: Context) {
+        host = ctx.host;
+      },
+    });
+  await fiber;
+  let killed!: () => void;
+  let killing!: () => void;
+  const killStarted = new Promise<void>((resolve) => {
+    killing = resolve;
+  });
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "plugin_host_process_spawn"
+      ? Promise.resolve(4)
+      : new Promise<void>((resolve) => {
+          killed = resolve;
+          killing();
+        }),
+  );
+  const output: string[] = [];
+  await host.spawn?.("agent", { onStdout: (data) => output.push(data) });
+  const [, spawn] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  const disposing = fiber.dispose();
+  try {
+    await killStarted;
+    spawn.onEvent.onmessage({ type: "stdout", data: "late" });
+    expect(output).toEqual([]);
+  } finally {
+    killed();
+    await disposing;
+  }
 });

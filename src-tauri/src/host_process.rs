@@ -16,7 +16,7 @@ use std::time::Duration;
 use tauri::ipc::Channel;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 /// Processes alive at once across all plugins.
 const MAX_PROCESSES: usize = 64;
@@ -43,6 +43,8 @@ pub(crate) enum ProcessEvent {
 
 struct Entry {
     plugin: String,
+    activation: u64,
+    exited: watch::Receiver<bool>,
     /// Its process group, which is its own pid.
     #[cfg_attr(not(unix), allow(dead_code))]
     group: Option<u32>,
@@ -61,6 +63,8 @@ struct Registry {
     /// refused rather than left running with nobody listening.
     page: u64,
     entries: HashMap<u64, Entry>,
+    next_activation: u64,
+    activations: HashMap<String, (u64, String)>,
 }
 impl HostProcesses {
     fn registry(&self) -> std::sync::MutexGuard<'_, Registry> {
@@ -71,14 +75,85 @@ impl HostProcesses {
     fn owned<T>(
         &self,
         plugin: &str,
+        activation: u64,
         handle: u64,
         take: impl FnOnce(&mut Entry) -> T,
     ) -> Result<T, String> {
         let mut registry = self.registry();
         match registry.entries.get_mut(&handle) {
-            Some(entry) if entry.plugin == plugin => Ok(take(entry)),
+            Some(entry) if entry.plugin == plugin && entry.activation == activation => {
+                Ok(take(entry))
+            }
             _ => Err("No such process".into()),
         }
+    }
+    async fn begin(&self, page: u64, id: String, revision: String) -> Result<u64, String> {
+        let exits = {
+            let registry = self.registry();
+            if registry.page != page {
+                return Err("The page reloaded".into());
+            }
+            if registry.activations.contains_key(&id) {
+                return Err(
+                    "Previous plugin activation has not retired; restart if cleanup is stuck"
+                        .into(),
+                );
+            }
+            registry
+                .entries
+                .values()
+                .filter(|entry| entry.plugin == id)
+                .map(|entry| entry.exited.clone())
+                .collect::<Vec<_>>()
+        };
+        for exit in exits {
+            wait_for_exit(exit).await?;
+        }
+        let mut registry = self.registry();
+        if registry.page != page {
+            return Err("The page reloaded".into());
+        }
+        if registry.activations.contains_key(&id)
+            || registry.entries.values().any(|entry| entry.plugin == id)
+        {
+            return Err(
+                "Previous plugin activation has not retired; restart if cleanup is stuck".into(),
+            );
+        }
+        let activation = registry.next_activation;
+        registry.next_activation = activation
+            .checked_add(1)
+            .ok_or("Activation counter exhausted; restart")?;
+        registry.activations.insert(id, (activation, revision));
+        Ok(activation)
+    }
+    async fn retire(&self, id: &str, activation: u64) -> Result<(), String> {
+        let exits = {
+            let mut registry = self.registry();
+            if registry
+                .activations
+                .get(id)
+                .is_some_and(|(current, _)| *current == activation)
+            {
+                registry.activations.remove(id);
+            }
+            registry
+                .entries
+                .values_mut()
+                .filter(|entry| entry.plugin == id && entry.activation == activation)
+                .map(|entry| {
+                    entry.stdin = None;
+                    if let Some(stop) = entry.stop.take() {
+                        let _ = stop.send(());
+                    }
+                    entry.exited.clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        for exit in exits {
+            wait_for_exit(exit).await?;
+        }
+        Ok(())
     }
     /// The current page load, for `start`.
     pub(crate) fn page(&self) -> u64 {
@@ -86,10 +161,13 @@ impl HostProcesses {
     }
     /// Starts `command`, owned by `plugin`, and streams its output to `on_event`,
     /// unless the page that asked during `page` has since gone.
+    #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
         page: u64,
         plugin: String,
+        revision: String,
+        activation: u64,
         program: &str,
         mut command: Command,
         on_event: Channel<ProcessEvent>,
@@ -98,6 +176,9 @@ impl HostProcesses {
         let mut registry = self.registry();
         if registry.page != page {
             return Err("The page reloaded".into());
+        }
+        if registry.activations.get(&plugin) != Some(&(activation, revision)) {
+            return Err("Plugin activation retired".into());
         }
         if registry.entries.len() >= MAX_PROCESSES {
             return Err("Too many processes are running".into());
@@ -117,10 +198,13 @@ impl HostProcesses {
         let handle = registry.next;
         registry.next += 1;
         let (stop, stopped) = oneshot::channel();
+        let (exited, exit) = watch::channel(false);
         registry.entries.insert(
             handle,
             Entry {
                 plugin,
+                activation,
+                exited: exit,
                 group: child.id(),
                 stdin: child
                     .stdin
@@ -185,6 +269,7 @@ impl HostProcesses {
                 let _ = reader.await;
             }
             state.registry().entries.remove(&handle);
+            let _ = exited.send(true);
             let _ = on_event.send(ProcessEvent::Exit {
                 code: status.and_then(|status| status.code()),
             });
@@ -194,6 +279,7 @@ impl HostProcesses {
     async fn write(
         &self,
         plugin: &str,
+        activation: u64,
         handle: u64,
         data: String,
         close: bool,
@@ -201,7 +287,15 @@ impl HostProcesses {
         if data.len() > MAX_WRITE_BYTES {
             return Err("Write is too large".into());
         }
-        let stdin = self.owned(plugin, handle, |entry| {
+        if !self
+            .registry()
+            .activations
+            .get(plugin)
+            .is_some_and(|(current, _)| *current == activation)
+        {
+            return Err("Plugin activation retired".into());
+        }
+        let stdin = self.owned(plugin, activation, handle, |entry| {
             if close {
                 entry.stdin.take()
             } else {
@@ -218,19 +312,30 @@ impl HostProcesses {
             .await
             .map_err(|_| "The process is not reading its input".into())
     }
-    fn kill(&self, plugin: &str, handle: u64) -> Result<(), String> {
-        if let Some(stop) = self.owned(plugin, handle, |entry| {
+    async fn kill(&self, plugin: &str, activation: u64, handle: u64) -> Result<(), String> {
+        // Lookup and request stop under one lock: a natural exit may remove
+        // the entry concurrently, and cleanup of an already-gone process is OK.
+        let exit = {
+            let mut registry = self.registry();
+            let Some(entry) = registry.entries.get_mut(&handle) else {
+                return Ok(());
+            };
+            if entry.plugin != plugin || entry.activation != activation {
+                return Err("No such process".into());
+            }
             entry.stdin = None;
-            entry.stop.take()
-        })? {
-            let _ = stop.send(());
-        }
-        Ok(())
+            if let Some(stop) = entry.stop.take() {
+                let _ = stop.send(());
+            }
+            entry.exited.clone()
+        };
+        wait_for_exit(exit).await
     }
     /// Stops every process: the page that owned them is gone.
     pub(crate) fn stop_all(&self) {
         let mut registry = self.registry();
         registry.page += 1;
+        registry.activations.clear();
         for entry in registry.entries.values_mut() {
             entry.stdin = None;
             if let Some(stop) = entry.stop.take() {
@@ -255,6 +360,40 @@ impl HostProcesses {
     }
 }
 
+async fn wait_for_exit(mut exit: watch::Receiver<bool>) -> Result<(), String> {
+    while !*exit.borrow_and_update() {
+        exit.changed()
+            .await
+            .map_err(|_| "Process cleanup failed; restart the app")?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn plugin_activation_begin(
+    manager: tauri::State<'_, PluginManager>,
+    processes: tauri::State<'_, HostProcesses>,
+    id: String,
+    revision: String,
+) -> Result<u64, String> {
+    let page = processes.page();
+    let checked_id = id.clone();
+    let checked_revision = revision.clone();
+    with_manager(manager, move |manager| {
+        manager.host_grants(&checked_id, &checked_revision)
+    })
+    .await?;
+    processes.begin(page, id, revision).await
+}
+#[tauri::command]
+pub(crate) async fn plugin_activation_retire(
+    processes: tauri::State<'_, HostProcesses>,
+    id: String,
+    activation: u64,
+) -> Result<(), String> {
+    processes.retire(&id, activation).await
+}
+
 #[derive(Clone, Copy)]
 enum Stream {
     Stdout,
@@ -271,6 +410,7 @@ pub(crate) async fn plugin_host_process_spawn(
     processes: tauri::State<'_, HostProcesses>,
     id: String,
     revision: String,
+    activation: u64,
     process_id: String,
     args: Vec<String>,
     cwd: Option<String>,
@@ -279,6 +419,7 @@ pub(crate) async fn plugin_host_process_spawn(
 ) -> Result<u64, String> {
     let page = processes.page();
     let plugin = id.clone();
+    let process_revision = revision.clone();
     let declared = with_manager(manager, move |manager| {
         manager
             .host_grants(&id, &revision)?
@@ -326,7 +467,15 @@ pub(crate) async fn plugin_host_process_spawn(
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
 
-    processes.start(page, plugin, &declared.program, command, on_event)
+    processes.start(
+        page,
+        plugin,
+        process_revision,
+        activation,
+        &declared.program,
+        command,
+        on_event,
+    )
 }
 
 /// Writes `data` to the process's stdin; `close` then ends its input.
@@ -334,22 +483,24 @@ pub(crate) async fn plugin_host_process_spawn(
 pub(crate) async fn plugin_host_process_write(
     processes: tauri::State<'_, HostProcesses>,
     id: String,
+    activation: u64,
     handle: u64,
     data: String,
     close: bool,
 ) -> Result<(), String> {
-    processes.write(&id, handle, data, close).await
+    processes.write(&id, activation, handle, data, close).await
 }
 
 /// Asks the process to stop, then kills it and its descendants. Its `exit`
 /// event follows.
 #[tauri::command]
-pub(crate) fn plugin_host_process_kill(
+pub(crate) async fn plugin_host_process_kill(
     processes: tauri::State<'_, HostProcesses>,
     id: String,
+    activation: u64,
     handle: u64,
 ) -> Result<(), String> {
-    processes.kill(&id, handle)
+    processes.kill(&id, activation, handle).await
 }
 
 /// Streams one pipe to the page as text. A page that stops listening stops

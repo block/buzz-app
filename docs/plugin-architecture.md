@@ -586,12 +586,13 @@ but the process can sign any event as the agent; the kind allowlist on
 `publish` does not bound it.
 
 A process lives until it exits, the plugin kills it, the plugin unloads, the
-page reloads or the app exits. `kill` sends SIGTERM to its process group and
+page reloads or the app exits. `kill` waits for actual exit, sends SIGTERM to its process group and
 SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access and no sandbox; the import preview says so.
 
-Bundled host grants use the effective compiled manifest at revision `bundled` and
+Bundled host grants use the effective compiled manifest at revision `bundled`, or
+the explicitly attached development artifact at its current revision, and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
@@ -615,6 +616,74 @@ The install/update action accepts that displayed version; an enabled update may 
 immediately. These declarations help review and catch mistakes. Plugins share the
 main WebView and can invoke app commands directly, so the declarations do not
 isolate a malicious plugin. Load only trusted plugin code.
+
+### Bundled-plugin local development (development builds only)
+
+Build a catalog plugin under its original identity:
+
+```sh
+bin/pnpm plugin:dev inbox
+bin/pnpm plugin:dev links
+```
+
+The command discovers the bundled catalog, rather than a separate plugin list.
+Output defaults to `dist-plugins/<catalog-name>/manifest.json` and `plugin.js`; an
+optional second argument selects another output folder. It refuses unrelated files
+in that folder. These are local development artifacts, not ordinary external
+installations; **Load from folder still refuses bundled identities**.
+
+In a native development host built from the same checkout:
+
+1. Open Settings → Plugins → Inbox → **Use local dev build** and select
+   `dist-plugins/inbox`.
+2. Review the exact identity, source folder and declared host access, then choose
+   **Attach local build**. The same catalog row, page identity and saved enabled
+   state are retained. An enabled plugin may run immediately.
+3. Edit `src/bundled/inbox`, run the command again, then choose **Reload** on
+   Inbox's row. An enabled local selection stays enabled while its implementation
+   is replaced. Reload revalidates identity, host compatibility and unchanged
+   declarations; changed declarations require a fresh reviewed attachment.
+4. Choose **Use compiled** to restore the compiled implementation. Restarting the
+   native app also clears local selection. Neither action rolls back data writes.
+
+The host owns these controls and recovery independently of the selected plugin.
+The selection is native-process-local, never a persistent install or public update
+policy. Safe mode and release hosts reject it. Browser mode is not a native attach
+acceptance environment. Installed-app development support is not implemented here.
+
+Plugin-only edits do not require a host rebuild. Shared host/native changes or newly
+consumed shared exports require rebuilding/restarting the host and rebuilding the
+artifact. Per-plugin fingerprints include shared dependencies and host contracts,
+exclude plugin-private implementation, and fail closed on mismatch. Builderlab
+artifacts also capture the public `BUZZ_BUILDERLAB_URL` target and its exact HTTPS
+origin grant; a different target requires a matching host restart/rebuild. Missing Git
+metadata leaves compiled plugins usable, but prevents attachable artifact builds.
+Artifacts are not portable across arbitrary Buzz versions.
+
+The private `globalThis.__BUZZ_HOST_MODULES__` map uses the running host's React,
+shared capabilities and reusable components. It is development-only, not an external
+SDK. Plugin-private modules/vendors, literal lazy imports, CSS and fonts are bundled
+into one Blob-loadable module; styles are removed on disposal. Shared drafts and
+attachments stay host-owned; transient plugin UI state ends on reload.
+
+Local builds reject plugin-private implementation consumed by the host or another
+plugin. **Me, Sessions, Emoji, Agents and Channels** currently have such imports.
+The ownership baseline can shrink, not grow; new catalog entries must satisfy
+these same boundaries rather than silently opting out of build support.
+
+Reload waits for Cordis disposal and native process retirement before starting the
+next implementation. Native processes belong to a unique activation, including
+repeated activations of the same code revision. Retirement fences late spawns and
+waits for actual exit; stale activation handles cannot write or kill successor
+processes. Pending native activation from a retired WebView is rejected. Cleanup
+failure/timeout fails the replacement instead of allowing overlap; restart remains
+the recovery path for stuck cleanup. Output callbacks stop at scope disposal,
+including a spawn still awaiting its native response.
+
+This does not sandbox plugins: only attach trusted code. Developer replacement
+support says nothing about whether bundled features should be visible, toggleable
+or updatable for ordinary users. Deterministic lifecycle/manager tests do not prove
+native picker/WebView edit → build → Reload acceptance on macOS or Windows.
 
 ### Loading from folders and repositories
 

@@ -58,9 +58,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       );
       assert.equal(
         plugin.enabledByDefault,
-        !["buzz.bestie", "buzz.todos", "buzz.channel-templates"].includes(
-          plugin.manifest.id,
-        ),
+        ![
+          "buzz.bestie",
+          "buzz.todos",
+          "buzz.channel-templates",
+          "buzz.mesh-compute",
+        ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }

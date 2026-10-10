@@ -1166,3 +1166,72 @@ controls must remain reachable. Linked profiles remain visible on identity cards
 
 Before starting an imported identity, stop the old agent and disable its automatic
 startup in the old application. Do not run duplicate copies of the same identity.
+
+## Shared compute preview
+
+The opt-in **Shared compute** plugin contributes Settings → selected community →
+Shared compute. It selects a catalog-backed model for this device; Advanced owns
+manual model selection. **Create community agent** opens the normal creation
+form prefilled with Buzz Agent, Buzz shared compute and Auto. Creation, startup,
+profile publication and recovery remain owned by the existing agent controller.
+No identity is created just by opening the page or shortcut.
+
+Mesh agents saved to start on launch wait for their community's plugin lease;
+selecting that community resumes queued agents without opening Settings. Explicit
+Stop cancels that pending restore. This preview still supports one selected
+community node, not concurrent nodes for every saved community.
+
+Old unbound `mesh-sharing.json` files are preserved. They do not grant permission
+to resume sharing for the current viewer. A later explicit Share writes the
+viewer/community-bound `mesh-sharing-viewer.json` checkpoint instead. A corrupt
+bound sidecar remains a visible storage failure; it is not silently overwritten.
+
+The Mesh SDK is pinned to v0.78.1. Local catalog probing verifies hardware-based
+selection, and synthetic native/browser checks cover legacy settings, restore
+admission and the creation shortcut. These do not establish packaged live
+community → sharing → agent reply → quit/relaunch acceptance.
+
+### Mesh community lifetime and failure recovery
+
+Foreground navigation does not move a selected Mesh binding. The Shared compute
+page discloses the bound origin while viewing another community and hides its
+share/reset controls there. **Use compute in this community instead** requires a
+second confirmation: pending Mesh launches are cancelled and captured running
+Mesh consumers must exit before the node's loopback endpoint can be reused.
+Agent enabled/start-on-launch settings are not rewritten. An agent whose community
+differs from the bound community cannot prepare a launch, including restore.
+Plugin disable/disposal stops processes; ordinary page navigation does not.
+
+Authoritative membership is read independently of optional advertisements. Older
+rosters cannot revoke newer admitted membership. Confirmed removal rebuilds from
+retained, signed owner bindings without requiring a successful status read; no
+new owner is admitted on that partial evidence. Fresh routes are filtered to that
+retained admission; if discovery fails, a consumer restarts without expired routes
+and the existing coordinator can discover routes on its next tick. Viewer removal
+requests compute shutdown independently of agent-cleanup errors. A revoked binding
+still requires consumer retirement before another selection; a pristine first
+selection preserves queued launch restores. Peer join failure keeps the healthy
+node running. Repeated queued/in-flight join tokens coalesce until completion. Mesh v0.78.1 still
+serializes Shutdown behind an in-flight Join: status remains available, queued
+joins are discarded on stop, and the UI reports finishing the peer connection.
+The shutdown budget is 120 seconds for that outstanding join plus the usual
+12 seconds; uncertain shutdown still refuses replacement.
+
+Native initialization and embedded startup use the same explicit isolated
+configuration. Only a failure proven to precede node creation is retryable without
+process restart; unknown SDK startup/teardown failures remain fenced.
+
+Enrollment matches legacy Buzz: the member/device-owner binding is published
+only while Mesh actually runs on this device (Share, or a Mesh agent starting a
+node), never merely because the plugin is enabled. When a run ends, one
+non-serving note is published and publication then stops until Mesh runs again.
+Starting Share or a Mesh agent is the consent; there is no separate withdrawal.
+
+Native artifact trust is unchanged from legacy Buzz: both use the Mesh SDK's
+runtime installer, which downloads the native runtime and verifies its sha256
+against the release manifest (checksum-only; the SDK does not yet implement
+signature verification). The Rust tag pin does not independently pin downloaded
+native artifact bytes. Stronger artifact policy (pinned hashes, bundling or
+upstream signatures) is a separate follow-up, not part of this port. Optional failed
+old-community retirement is best-effort; routing advertisements expire after
+120 seconds. No live packaged acceptance is claimed by fixture tests.

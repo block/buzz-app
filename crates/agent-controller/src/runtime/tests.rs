@@ -3669,6 +3669,166 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
 }
 
 #[test]
+fn mesh_launch_is_bound_and_runtime_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    saved.environment.insert(
+        "OPENAI_COMPAT_BASE_URL".into(),
+        "https://wrong.example".into(),
+    );
+    saved
+        .environment
+        .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "8192".into());
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "shared-model".into(),
+        19337,
+    )
+    .unwrap();
+    let runtime = grant.apply(&saved).unwrap();
+    assert_eq!(
+        runtime.environment["OPENAI_COMPAT_BASE_URL"],
+        "http://127.0.0.1:19337/v1"
+    );
+    assert_eq!(runtime.environment["BUZZ_AGENT_MODEL"], "shared-model");
+    assert_eq!(saved.harness.provider, "relay-mesh");
+    let mut changed = saved.clone();
+    changed.revision += 1;
+    assert!(grant.apply(&changed).is_err());
+    changed = saved.clone();
+    changed.relay_url = "wss://other.example".into();
+    assert!(grant.apply(&changed).is_err());
+    changed = saved.clone();
+    changed.harness.command = "goose".into();
+    assert!(grant.apply(&changed).is_err());
+}
+
+#[test]
+fn mesh_output_default_matches_legacy_and_user_generation_controls_win() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "mesh".into(),
+        19337,
+    )
+    .unwrap();
+    let runtime = grant.apply(&saved).unwrap();
+    // Legacy relay_mesh: 4096 output default, no catalog-derived context window.
+    assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "4096");
+    assert!(!runtime
+        .environment
+        .contains_key("BUZZ_AGENT_MAX_CONTEXT_TOKENS"));
+    assert_eq!(runtime.environment["BUZZ_AGENT_LLM_TIMEOUT_SECS"], "660");
+    assert!(!saved
+        .environment
+        .contains_key("BUZZ_AGENT_MAX_OUTPUT_TOKENS"));
+    for (name, value) in [
+        ("BUZZ_AGENT_MAX_OUTPUT_TOKENS", "20000"),
+        ("BUZZ_AGENT_MAX_CONTEXT_TOKENS", "65536"),
+        ("BUZZ_AGENT_LLM_TIMEOUT_SECS", "90"),
+    ] {
+        saved.environment.insert(name.into(), value.into());
+    }
+    let runtime = grant.apply(&saved).unwrap();
+    assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "20000");
+    assert_eq!(
+        runtime.environment["BUZZ_AGENT_MAX_CONTEXT_TOKENS"],
+        "65536"
+    );
+    // Legacy relay_mesh preserves an explicit request timeout.
+    assert_eq!(runtime.environment["BUZZ_AGENT_LLM_TIMEOUT_SECS"], "90");
+}
+
+#[test]
+fn mesh_preflight_and_launch_resolve_the_same_environment_without_persistence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "relay-mesh".into());
+    saved
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "auto".into());
+    let root = dir.path().join("config");
+    let mut store = Store::open(root.clone()).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let before = fs::read(root.join("agents.json")).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("fixture".into()),
+        dir.path().join("ownership"),
+    );
+    let request = controller.mesh_request(&saved.id).unwrap().unwrap();
+    assert_eq!(request.model, "auto");
+    assert_eq!(request.relay, saved.relay_url);
+    let config = crate::MeshLaunch::new(
+        request.agent_id,
+        request.revision,
+        request.relay,
+        "mesh".into(),
+        19337,
+    )
+    .unwrap();
+    let runtime = config.apply(&saved).unwrap();
+    assert_eq!(runtime.harness.model, "mesh");
+    assert_eq!(runtime.environment["BUZZ_AGENT_PROVIDER"], "openai");
+    assert_eq!(
+        runtime.environment["OPENAI_COMPAT_BASE_URL"],
+        "http://127.0.0.1:19337/v1"
+    );
+    assert_eq!(fs::read(root.join("agents.json")).unwrap(), before);
+    saved
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+    assert!(config.apply(&saved).is_err());
+}
+
+#[test]
+fn shared_compute_model_context_resolves_defaults_and_environment_without_cloud_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "relay-mesh".into();
+    agent
+        .environment
+        .insert("DATABRICKS_TOKEN".into(), "unused".into());
+    let context = model_context(&agent.harness, &agent.environment).unwrap();
+    assert!(context.mesh);
+    assert!(context.host.is_none());
+    assert!(context.filter.is_none());
+    let mut defaults = deployment_defaults();
+    defaults.provider = "relay-mesh".into();
+    agent.harness.provider.clear();
+    assert!(
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults)
+            .unwrap()
+            .mesh
+    );
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "relay-mesh".into());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "saved".into());
+    assert!(
+        model_context(&agent.harness, &agent.environment)
+            .unwrap()
+            .model_overridden
+    );
+}
+
+#[test]
 fn protection_revision_limit_preserves_saved_agent() {
     use crate::security::Request;
     let root = tempfile::tempdir().unwrap();
@@ -4022,6 +4182,157 @@ while :; do /bin/sleep 0.1; done
 
 #[cfg(target_os = "macos")]
 mod protection_integration;
+
+#[test]
+fn mesh_defaults_preserve_explicit_agent_choices_and_do_not_mutate_saved_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    for expected in ["4096"] {
+        let grant = crate::MeshLaunch::new(
+            saved.id.clone(),
+            saved.revision,
+            saved.relay_url.clone(),
+            "shared-model".into(),
+            19337,
+        )
+        .unwrap();
+        let runtime = grant.apply(&saved).unwrap();
+        assert_eq!(
+            runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"],
+            expected
+        );
+        assert_eq!(runtime.environment["BUZZ_AGENT_REQUIRE_REPLY"], "1");
+        assert_eq!(runtime.environment["BUZZ_AGENT_THINKING_EFFORT"], "none");
+        for key in [
+            "BUZZ_AGENT_MAX_OUTPUT_TOKENS",
+            "BUZZ_AGENT_REQUIRE_REPLY",
+            "BUZZ_AGENT_THINKING_EFFORT",
+        ] {
+            assert!(!saved.environment.contains_key(key));
+        }
+    }
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "shared-model".into(),
+        19337,
+    )
+    .unwrap();
+    for (reply, effort) in [("0", "none"), ("1", "high")] {
+        saved
+            .environment
+            .insert("BUZZ_AGENT_REQUIRE_REPLY".into(), reply.into());
+        saved
+            .environment
+            .insert("BUZZ_AGENT_THINKING_EFFORT".into(), effort.into());
+        saved
+            .environment
+            .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "8192".into());
+        let runtime = grant.apply(&saved).unwrap();
+        assert_eq!(runtime.environment["BUZZ_AGENT_REQUIRE_REPLY"], reply);
+        assert_eq!(runtime.environment["BUZZ_AGENT_THINKING_EFFORT"], effort);
+        assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "8192");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn mesh_replacement_stops_captured_consumer_without_changing_saved_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    saved.start_on_app_launch = Some(true);
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "mesh".into(),
+        19337,
+    )
+    .unwrap();
+    controller
+        .action_with_mesh(
+            &saved.id,
+            Action::Start,
+            saved.revision,
+            &Secret::parse(KEY, PUB).unwrap(),
+            None,
+            (&crate::pi::LaunchPreflight::new(None), grant),
+        )
+        .unwrap();
+    assert!(controller.running.contains_key(&saved.id));
+    // Persisted edits must not hide an already-running consumer of the old endpoint.
+    controller.store.agents().unwrap();
+    controller.stop_mesh_consumers().unwrap();
+    assert!(!controller.running.contains_key(&saved.id));
+    assert!(controller.launch_ids().unwrap().contains(&saved.id));
+    let snapshot = controller.snapshot().unwrap();
+    assert!(snapshot.agents[0].enabled);
+    assert!(snapshot.agents[0].start_on_app_launch);
+}
+
+#[test]
+fn saved_shared_compute_discovery_validates_edit_without_mutating_saved_agent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut saved = agent(root.path());
+    saved.harness.provider = "relay-mesh".into();
+    let mut store = Store::open(root.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let before = fs::read(root.path().join("config/agents.json")).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("Runtime bundle is missing".into()),
+        root.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: "Model discovery".into(),
+        effort: None,
+        picture: None,
+        system_prompt: String::new(),
+        session_policy: Some(None),
+        workspace: saved.workspace.clone(),
+        harness: HarnessEdit {
+            model: String::new(),
+            ..saved.harness.clone()
+        },
+        environment: BTreeMap::new(),
+    };
+    // The old picker payload fails at the real saved-agent validation boundary.
+    let mut invalid = edit.clone();
+    invalid.name.clear();
+    assert!(controller
+        .model_context(&saved.id, saved.revision, invalid)
+        .err()
+        .unwrap()
+        .contains("Agent name is required"));
+    // Repeated Browse/Retry succeeds without changing name, prompt or revision.
+    for _ in 0..2 {
+        let context = controller
+            .model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap();
+        assert!(context.mesh);
+        assert_eq!(context.relay.as_deref(), Some("wss://relay.example"));
+    }
+    assert!(controller
+        .model_context(&saved.id, saved.revision + 1, edit)
+        .is_err());
+    assert_eq!(
+        fs::read(root.path().join("config/agents.json")).unwrap(),
+        before
+    );
+}
 
 #[test]
 #[cfg(unix)]

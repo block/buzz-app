@@ -113,6 +113,8 @@ export function AgentCreateDialog({
   owner,
   source,
   initialSettings,
+  sharedCompute = false,
+  preset,
   onClose,
   onCreated,
   onOpenHarnesses,
@@ -128,6 +130,10 @@ export function AgentCreateDialog({
   owner: string;
   source?: AgentView;
   initialSettings?: CloneSettings | CatalogSeed | undefined;
+  sharedCompute?: boolean;
+  /** Prefilled name and instructions; the owner still reviews before creating. */
+  preset?: { name: string; systemPrompt: string } | undefined;
+
   onClose(): void;
   /** The new identity exists, even if starting or profile setup fails later. */
   onCreated?: ((agent: AgentView) => void) | undefined;
@@ -166,7 +172,22 @@ export function AgentCreateDialog({
           name: `${source.name} copy`,
         }
       : seededDraft(state, initialSettings);
-    return { ...initial, environment: { BUZZ_ACP_AGENTS: "10" } };
+    return {
+      ...initial,
+      ...(preset
+        ? { name: preset.name, systemPrompt: preset.systemPrompt }
+        : {}),
+      ...(sharedCompute
+        ? {
+            name: preset?.name ?? "Community agent",
+            command: "buzz-agent",
+            args: "[]",
+            provider: "relay-mesh",
+            model: "auto",
+          }
+        : {}),
+      environment: { BUZZ_ACP_AGENTS: "10" },
+    };
   });
   // Catalog seeds carry more than the clone notice describes.
   const cloned = !!initialSettings && !("origin" in initialSettings);

@@ -45,6 +45,7 @@ impl AgentHost {
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
             owner::Owner::Native(crate::identity::IdentityHost::fixture_owner()),
+            None,
         )
     }
 }
@@ -464,11 +465,17 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["createAvailable"], true);
     // Windows omits Databricks, whose sign-in it refuses; Unix lists it first.
     let openai = json!({"value":"openai", "label":"OpenAI"});
-    let providers = if cfg!(windows) {
+    let mut providers = if cfg!(windows) {
         json!([openai])
     } else {
         json!([{"value":"databricks_v2", "label":"Databricks v2"}, openai])
     };
+    if cfg!(feature = "mesh") {
+        providers
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"value":"relay-mesh", "label":"Buzz shared compute"}));
+    }
     assert_eq!(
         before["harnessOptions"][0],
         json!({
@@ -2862,6 +2869,40 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     }
 }
 
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn shared_compute_restore_waits_for_community_before_attempting_credentials() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut data: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    data["agents"][0]["harness"]["provider"] = json!("relay-mesh");
+    data["agents"][0]["startOnAppLaunch"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    host.restore().await;
+    host.with(|h| {
+        assert!(h.queued.contains_key(&id));
+        assert!(h.snapshot()?.data.agents[0].error.is_none());
+        Ok(())
+    })
+    .unwrap();
+    let mesh = crate::mesh_compute::MeshHost::default();
+    crate::mesh_compute::retire_selection(&mesh, &host, "https://other.example", "viewer")
+        .await
+        .unwrap();
+    assert!(host.with(|h| Ok(h.queued.contains_key(&id))).unwrap());
+    host.restore_mesh("https://other.example".into()).await;
+    assert!(host.with(|h| Ok(h.queued.contains_key(&id))).unwrap());
+    let relay = host
+        .with(|h| Ok(h.controller.mesh_request(&id)?.unwrap().relay))
+        .unwrap();
+    host.restore_mesh(crate::mesh_compute::agent_community(&relay).unwrap())
+        .await;
+    let data = host.with(|h| h.snapshot()).unwrap().data;
+    // Matching selection resumes the normal start gate; the synthetic runtime refuses it.
+    assert_eq!(data.agents[0].error.as_deref(), Some(RUNTIME_GATE));
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_claude_manual_setup_uses_runnable_launchers() {
@@ -3218,6 +3259,7 @@ fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
         host.1.clone(),
         host.2.clone(),
         owner::Owner::Native(crate::identity::IdentityHost::default()),
+        host.4.clone(),
     );
     let missing = start(signed_out);
     assert!(!missing.contains("different Buzz identity"), "{missing}");

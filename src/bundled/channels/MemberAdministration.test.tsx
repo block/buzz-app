@@ -967,9 +967,12 @@ it("retains roster and displays rejection with explicit refresh recovery", async
       "Permission changed",
     ),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: /Open profile for Morgan/ }),
-  ).toBeVisible();
+  // The rejection can arrive before the members step finishes entering.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /Open profile for Morgan/ }),
+    ).toBeVisible(),
+  );
   await t.user.click(
     screen.getByRole("button", { name: "Refresh member data" }),
   );

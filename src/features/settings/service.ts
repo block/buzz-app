@@ -6,6 +6,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+
 export type SettingsCard = {
   id: string;
   title: string;

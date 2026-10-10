@@ -18,6 +18,7 @@ import {
 } from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
+import { SharedComputeModelPicker } from "./SharedComputeModelPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { CodexConfigurationFields } from "./CodexConfigurationFields";
 import { ProviderApiKeyField } from "./ProviderApiKeyField";
@@ -319,6 +320,14 @@ export function AgentSettingsFields({
                 </div>
               )}
             </div>
+          ) : buzzAgent && buzzProvider === "relay-mesh" ? (
+            <SharedComputeModelPicker
+              id={id}
+              draft={draft}
+              control={control}
+              disabled={disabled}
+              onChange={change}
+            />
           ) : codex ? (
             <CodexConfigurationFields
               id={id}

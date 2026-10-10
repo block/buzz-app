@@ -531,6 +531,7 @@ struct Running {
     /// Native-only: holds environment values and is never serialized.
     spawned: serde_json::Value,
     databricks_host: Option<String>,
+    mesh_consumer: bool,
     #[cfg(all(test, unix))]
     temporary: Option<PathBuf>,
 }
@@ -541,6 +542,8 @@ impl Drop for Running {
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
 pub struct ModelContext {
+    pub mesh: bool,
+    pub relay: Option<String>,
     pub host: Option<String>,
     pub filter: Option<String>,
     pub model_overridden: bool,
@@ -663,7 +666,9 @@ impl Controller {
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        model_context(&agent.harness, &agent.environment)
+        let mut context = model_context(&agent.harness, &agent.environment)?;
+        context.relay = Some(agent.relay_url);
+        Ok(context)
     }
     pub fn goose_model_context(
         &self,
@@ -1048,6 +1053,17 @@ impl Controller {
         }
         self.snapshot()
     }
+    pub(crate) fn mesh_agent(&self, id: &str) -> Result<Agent> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        let mut agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        agent.harness = crate::build_defaults().resolve(&agent.harness, &agent.environment);
+        Ok(agent)
+    }
     pub fn credential_request(&self, id: &str) -> Result<(String, String, u64, Option<String>)> {
         let agent = self
             .store
@@ -1072,7 +1088,7 @@ impl Controller {
         key: &crate::Secret,
         replay_floor: Option<u64>,
     ) -> Result<()> {
-        self.action_checked(id, action, revision, key, replay_floor, None)
+        self.action_checked(id, action, revision, key, replay_floor, (None, None))
     }
     pub fn action_with_preflight(
         &mut self,
@@ -1083,7 +1099,33 @@ impl Controller {
         replay_floor: Option<u64>,
         preflight: &crate::pi::LaunchPreflight,
     ) -> Result<()> {
-        self.action_checked(id, action, revision, key, replay_floor, Some(preflight))
+        self.action_checked(
+            id,
+            action,
+            revision,
+            key,
+            replay_floor,
+            (Some(preflight), None),
+        )
+    }
+    /// Start with an identity-bound Mesh grant and the host's verified preflight.
+    pub fn action_with_mesh(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        launch: (&crate::pi::LaunchPreflight, crate::MeshLaunch),
+    ) -> Result<()> {
+        self.action_checked(
+            id,
+            action,
+            revision,
+            key,
+            replay_floor,
+            (Some(launch.0), Some(launch.1)),
+        )
     }
     fn action_checked(
         &mut self,
@@ -1092,8 +1134,12 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-        preflight: Option<&crate::pi::LaunchPreflight>,
+        launch: (
+            Option<&crate::pi::LaunchPreflight>,
+            Option<crate::MeshLaunch>,
+        ),
     ) -> Result<()> {
+        let (preflight, mesh) = launch;
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
@@ -1107,7 +1153,7 @@ impl Controller {
                 return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor, preflight) {
+        match self.start_with_key(id, Some(key), replay_floor, preflight, mesh) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -1130,7 +1176,7 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None, None)
+        self.start_with_key(id, None, None, None, None)
     }
     fn start_with_key(
         &mut self,
@@ -1138,6 +1184,7 @@ impl Controller {
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
         preflight: Option<&crate::pi::LaunchPreflight>,
+        mesh: Option<crate::MeshLaunch>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -1182,10 +1229,12 @@ impl Controller {
             .map_err(|_| "Could not create private runtime directory")?;
         let scratch = temporary.path().join("tmp");
         crate::connection::private_directory(&scratch)?;
+        let runtime_agent = mesh.as_ref().map(|grant| grant.apply(&agent)).transpose()?;
+        let launch_agent = runtime_agent.as_ref().unwrap_or(&agent);
         let mut command = if let Some(preflight) = preflight {
-            bundle.command_checked(&agent, key, &crate::build_defaults(), Some(preflight))?
+            bundle.command_checked(launch_agent, key, &crate::build_defaults(), Some(preflight))?
         } else {
-            bundle.command(&agent, key)?
+            bundle.command(launch_agent, key)?
         };
         // Per-send startup input, never saved configuration or inherited environment.
         if let Some(floor) = replay_floor {
@@ -1225,6 +1274,7 @@ impl Controller {
                 revision: agent.revision,
                 spawned: crate::restart::spawn_config(&agent),
                 databricks_host: settings.map(|s| s.host),
+                mesh_consumer: mesh.is_some(),
                 #[cfg(all(test, unix))]
                 temporary: Some(temporary),
             },
@@ -1264,6 +1314,24 @@ impl Controller {
         }
         let cache = crate::connection::oauth_root(self.store.root())?;
         crate::connection::disconnect(&cache, &workspace)
+    }
+    /// Whether any running agent was launched as a Mesh consumer.
+    pub fn has_mesh_consumers(&self) -> bool {
+        self.running.values().any(|run| run.mesh_consumer)
+    }
+    /// Stop exact running Mesh consumers using captured launch evidence, not edited settings.
+    /// A failed process teardown retains ownership and prevents endpoint replacement.
+    pub fn stop_mesh_consumers(&mut self) -> Result<()> {
+        let ids: Vec<_> = self
+            .running
+            .iter()
+            .filter(|(_, run)| run.mesh_consumer)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            self.stop(&id)?;
+        }
+        Ok(())
     }
     pub fn shutdown(&mut self) -> Result<()> {
         let ids: Vec<_> = self.running.keys().cloned().collect();
@@ -1313,6 +1381,15 @@ fn model_context_with_defaults(
     let provider = environment
         .get("BUZZ_AGENT_PROVIDER")
         .unwrap_or(&harness.provider);
+    if provider == "relay-mesh" {
+        return Ok(ModelContext {
+            mesh: true,
+            relay: None,
+            host: None,
+            filter: None,
+            model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+        });
+    }
     if !matches!(provider.as_str(), "databricks_v2" | "databricks-v2") {
         return Err(
             "Effective provider is not Databricks v2; check the provider and environment overrides"
@@ -1323,6 +1400,8 @@ fn model_context_with_defaults(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
+        mesh: false,
+        relay: None,
         host: environment
             .get("DATABRICKS_HOST")
             .cloned()

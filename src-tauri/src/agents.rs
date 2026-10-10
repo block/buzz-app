@@ -362,6 +362,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                         value: "openai",
                         label: "OpenAI",
                     },
+                    #[cfg(feature = "mesh")]
+                    ProviderOption {
+                        value: "relay-mesh",
+                        label: "Buzz shared compute",
+                    },
                 ][usize::from(cfg!(windows))..],
             },
             HarnessOption {
@@ -718,15 +723,17 @@ pub(crate) struct AgentHost(
     Arc<tokio::sync::Mutex<()>>,
     /// Starts compare each agent's attested owner with the signed-in human.
     owner::Owner,
+    Option<tauri::AppHandle>,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
         identity: owner::Owner,
+        app: tauri::AppHandle,
     ) -> Self {
         buzz_agent_controller::warm_tools_path();
-        Self::initialize_with(identity, move || {
+        Self::initialize_with_app(identity, Some(app), move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
                 Host::open(
@@ -739,8 +746,16 @@ impl AgentHost {
             })
         })
     }
+    #[cfg(test)]
     fn initialize_with(
         identity: owner::Owner,
+        open: impl FnOnce() -> Result<Host, String> + Send + 'static,
+    ) -> Self {
+        Self::initialize_with_app(identity, None, open)
+    }
+    fn initialize_with_app(
+        identity: owner::Owner,
+        app: Option<tauri::AppHandle>,
         open: impl FnOnce() -> Result<Host, String> + Send + 'static,
     ) -> Self {
         let state = Arc::new(Mutex::new(Err(
@@ -759,6 +774,7 @@ impl AgentHost {
             closed.clone(),
             admission.clone(),
             identity.clone(),
+            app.clone(),
         );
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(open)
@@ -771,7 +787,9 @@ impl AgentHost {
                 *state = opened;
             }
             drop(initializing); // restore itself enters through native admission.
-            Self(state, closed, admission, identity).restore().await;
+            Self(state, closed, admission, identity, app)
+                .restore()
+                .await;
         });
         owner
     }
@@ -831,6 +849,10 @@ impl AgentHost {
         .await
         .unwrap_or_default();
         for id in ids {
+            #[cfg(feature = "mesh")]
+            if self.mesh_restore_waiting(&id).await {
+                continue;
+            }
             let begin = std::time::Instant::now();
             startup_trace(serde_json::json!({"phase": "start", "agent": id}));
             let result = start(self.clone(), id.clone(), Action::Start, true, None, None).await;
@@ -844,6 +866,88 @@ impl AgentHost {
                 "elapsedMs": begin.elapsed().as_millis(),
             }));
         }
+    }
+    #[cfg(feature = "mesh")]
+    async fn mesh_restore_waiting(&self, id: &str) -> bool {
+        let id = id.to_owned();
+        let relay = run(self.clone(), move |host| {
+            Ok(host
+                .controller
+                .mesh_request(&id)?
+                .map(|request| request.relay))
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(relay) = relay else {
+            return false;
+        };
+        self.4.as_ref().map_or(true, |app| {
+            crate::mesh_compute::selected_for_agent(app, &relay).is_err()
+        })
+    }
+    #[cfg(feature = "mesh")]
+    pub(crate) async fn restore_mesh(&self, community: String) {
+        let ids = run(self.clone(), move |host| {
+            Ok(host
+                .queued
+                .keys()
+                .filter(|id| !host.acted.contains(*id))
+                .filter(|id| {
+                    host.controller
+                        .mesh_request(id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|request| {
+                            crate::mesh_compute::agent_community(&request.relay)
+                                .ok()
+                                .as_ref()
+                                == Some(&community)
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>())
+        })
+        .await
+        .unwrap_or_default();
+        for id in ids {
+            let _ = start(self.clone(), id, Action::Start, true, None, None).await;
+        }
+    }
+    #[cfg(feature = "mesh")]
+    pub(crate) async fn has_mesh_consumers(&self) -> bool {
+        run(self.clone(), |host| {
+            Ok(host.controller.has_mesh_consumers())
+        })
+        .await
+        .unwrap_or(false)
+    }
+    #[cfg(feature = "mesh")]
+    pub(crate) async fn stop_mesh_consumers(&self) -> Result<(), String> {
+        run(self.clone(), |host| {
+            // Cancel preparation tickets/restore queue as well as captured running consumers.
+            let ids: Vec<_> = host
+                .controller
+                .snapshot()?
+                .agents
+                .into_iter()
+                .filter(|agent| {
+                    host.controller
+                        .mesh_request(&agent.id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                })
+                .map(|agent| agent.id)
+                .collect();
+            for id in ids {
+                host.starts.remove(&id);
+                host.queued.remove(&id);
+                host.acted.insert(id);
+            }
+            host.controller.stop_mesh_consumers()
+        })
+        .await
     }
     pub(crate) async fn ensure_open(&self) -> Result<(), String> {
         run(self.clone(), |_| Ok(())).await
@@ -1268,10 +1372,13 @@ async fn start_guarded(
     let target = id.clone();
     let prepared = run(owner.clone(), move |host| {
         let id = target;
-        let queued_replay = host.queued.remove(&id).flatten();
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
+        if restore && !host.queued.contains_key(&id) {
+            return Err("Agent restore already claimed or cancelled".into());
+        }
+        let queued_replay = host.queued.remove(&id).flatten();
         // Re-check while holding the controller, not just when the caller
         // chose this agent: Stop or Edit may have changed it since.
         check_guard(host, &id, guard)?;
@@ -1303,6 +1410,7 @@ async fn start_guarded(
             host.controller.record_error(&id, error.clone());
             return Err(error);
         }
+        let mesh_request = host.controller.mesh_request(&id)?;
         host.next_start = host
             .next_start
             .checked_add(1)
@@ -1319,10 +1427,17 @@ async fn start_guarded(
             },
         );
         let attested = host.controller.attested_owner(&id)?;
-        Ok((request, ticket, host.credentials.clone(), attested))
+        Ok((
+            request,
+            ticket,
+            host.credentials.clone(),
+            attested,
+            mesh_request,
+        ))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested, mesh_request) =
+        prepared;
     prepare_tools_path().await;
     let target = id.clone();
     let pi = run(owner.clone(), move |host| {
@@ -1333,6 +1448,7 @@ async fn start_guarded(
         Ok(host.controller.pi_launch_context(&target, revision))
     })
     .await?;
+
     let probed_pi = matches!(&pi, Ok(Some(_)));
     let preflight = match pi {
         Ok(Some(pi)) => crate::pi_models::verify(pi)
@@ -1397,6 +1513,19 @@ async fn start_guarded(
         })
         .await?;
     }
+    let mesh = if acquired.is_ok() {
+        match mesh_request {
+            Some(request) => match owner.4.as_ref() {
+                Some(app) => crate::mesh_compute::prepare_agent(app, request)
+                    .await
+                    .map(Some),
+                None => Err("Shared compute native host is unavailable".into()),
+            },
+            None => Ok(None),
+        }
+    } else {
+        Ok(None)
+    };
     run(owner, move |host| {
         let replay_floor = host.take_start(&id, ticket)?.replay_floor;
         let key = match acquired {
@@ -1413,14 +1542,35 @@ async fn start_guarded(
         // The OS credential prompt can outlast the agent (e.g. its listener
         // exited); eligibility must still hold right before Restart enables it.
         check_guard(host, &id, guard)?;
-        if let Err(error) = host.controller.action_with_preflight(
-            &id,
-            action,
-            revision,
-            &key,
-            replay_floor,
-            &preflight?,
-        ) {
+        let launch = match mesh {
+            Ok(launch) => launch,
+            Err(error) => {
+                host.controller.record_error(&id, error);
+                return host.snapshot();
+            }
+        };
+        let preflight = preflight?;
+        let result = match launch {
+            Some(launch) => launch.with_current(|config| {
+                host.controller.action_with_mesh(
+                    &id,
+                    action,
+                    revision,
+                    &key,
+                    replay_floor,
+                    (&preflight, config),
+                )
+            }),
+            None => host.controller.action_with_preflight(
+                &id,
+                action,
+                revision,
+                &key,
+                replay_floor,
+                &preflight,
+            ),
+        };
+        if let Err(error) = result {
             host.controller.record_error(&id, error);
         }
         host.snapshot()

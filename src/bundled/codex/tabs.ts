@@ -1,6 +1,7 @@
 import type * as ReactModule from "react";
 import type { ReactNode } from "react";
 import type { AgentViewProps } from "../../features/agents2/service";
+import { Button } from "../../shared/design-system/ui/Button";
 import {
   config,
   effortName,
@@ -10,8 +11,18 @@ import {
 } from "./config";
 import { AppServer, listModels, type Spawn } from "./rpc";
 import type { CodexRuntime } from "./runtime";
+import type { CodexSetup, Step } from "./setup";
 
 type Catalog = { models: Model[]; account: string };
+class SignedOut extends Error {}
+/** The setup step a failed check calls for, if any. */
+const needed = (reason: unknown): Step | undefined =>
+  reason instanceof SignedOut
+    ? "login"
+    : // Native reports a program it cannot find as a failure to start it.
+      reason instanceof Error && /could not start/i.test(reason.message)
+      ? "install"
+      : undefined;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
   const rpc = new AppServer();
@@ -26,10 +37,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     const account = await rpc.request<{
       account: { type: string; email?: string } | null;
     }>("account/read");
-    if (!account.account)
-      throw new Error(
-        "Codex needs you to sign in. Run codex login in a terminal, then check again.",
-      );
+    if (!account.account) throw new SignedOut();
     const models = await listModels(rpc);
     return { models, account: account.account.email ?? account.account.type };
   } finally {
@@ -38,11 +46,13 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
   }
 }
 
-// Installed plugins use host React and its shared control classes, as #732 does.
+// Uses host React and its shared control classes, as #732 does; setup actions
+// use the shared Button for its loading state.
 export function createTabs(
   React: typeof ReactModule,
   spawn: Spawn,
   runtime: CodexRuntime,
+  setup: CodexSetup,
 ) {
   const h = React.createElement;
   const button = (label: string, onClick: () => void, disabled = false) =>
@@ -80,8 +90,13 @@ export function createTabs(
   function useCatalog() {
     const [data, setData] = React.useState<Catalog>();
     const [error, setError] = React.useState("");
+    const [need, setNeed] = React.useState<Step>();
     const [checking, setChecking] = React.useState(true);
     const [attempt, setAttempt] = React.useState(0);
+    const { finished } = React.useSyncExternalStore(
+      setup.subscribe,
+      setup.snapshot,
+    );
     React.useEffect(() => {
       let current = true;
       const abort = new AbortController();
@@ -90,13 +105,24 @@ export function createTabs(
       void catalog(spawn, abort.signal)
         .then(
           (value) => {
-            if (current) setData(value);
+            if (current) {
+              setData(value);
+              setNeed(undefined);
+            }
           },
           (reason) => {
             if (current) {
+              const step = needed(reason);
               setData(undefined);
+              setNeed(step);
               setError(
-                reason instanceof Error ? reason.message : String(reason),
+                step === "install"
+                  ? "Codex is not installed. Install it from the Codex tab."
+                  : step === "login"
+                    ? "Codex needs you to sign in. Sign in from the Codex tab."
+                    : reason instanceof Error
+                      ? reason.message
+                      : String(reason),
               );
             }
           },
@@ -108,19 +134,32 @@ export function createTabs(
         current = false;
         abort.abort();
       };
-    }, [attempt]);
+    }, [attempt, finished]);
     return {
       data,
       error,
+      need,
       checking,
       retry: () => setAttempt((value) => value + 1),
     };
   }
   function CodexTab({ agent }: AgentViewProps<Config>) {
-    const { data, error, checking, retry } = useCatalog();
+    const { data, error, need, checking, retry } = useCatalog();
+    const { running, output } = React.useSyncExternalStore(
+      setup.subscribe,
+      setup.snapshot,
+    );
     const sessions = React.useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
     );
+    // One button per slot, so focus stays put as Install becomes Sign in and
+    // Cancel becomes Check again.
+    const action =
+      need === "install"
+        ? ({ step: "install", label: "Install Codex" } as const)
+        : need === "login"
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
     return h(
       "div",
       { style: { display: "grid", gap: "var(--space-4)" } },
@@ -131,15 +170,62 @@ export function createTabs(
           ? "Checking Codex…"
           : data
             ? `Codex is ready (${data.account}).`
-            : "Codex needs attention.",
+            : need === "install"
+              ? "Codex is not installed."
+              : need === "login"
+                ? "Codex needs you to sign in."
+                : "Codex needs attention.",
       ),
-      error ? h("p", { role: "alert" }, error) : null,
-      button("Check again", retry, checking),
+      error && !need ? h("p", { role: "alert" }, error) : null,
       h(
-        "p",
-        { className: "buzz-field-description" },
-        "Uses your existing Codex sign-in. Install Codex and run codex login in a terminal if needed.",
+        "div",
+        { className: "flex flex-wrap gap-2" },
+        action
+          ? h(Button, {
+              variant: "prominent",
+              loading: running === action.step,
+              disabled: !!running && running !== action.step,
+              onClick: () => void setup.run(action.step),
+              children: action.label,
+            })
+          : null,
+        h(Button, {
+          variant: "ghost",
+          disabled: !running && checking,
+          focusableWhenDisabled: true,
+          onClick: () => void (running ? setup.cancel() : retry()),
+          children: running ? "Cancel" : "Check again",
+        }),
       ),
+      need === "install"
+        ? h(
+            "p",
+            { className: "buzz-field-description" },
+            "Runs the official installer, ",
+            h(
+              "code",
+              null,
+              "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+            ),
+            ", which puts ",
+            h("code", null, "codex"),
+            " in ",
+            h("code", null, "~/.local/bin"),
+            ".",
+          )
+        : null,
+      output
+        ? h(
+            "pre",
+            {
+              role: "log",
+              "aria-label": "Setup output",
+              className:
+                "m-0 max-h-60 overflow-auto whitespace-pre-wrap text-caption",
+            },
+            output,
+          )
+        : null,
       h("h3", { style: { fontSize: "inherit", margin: 0 } }, "Conversations"),
       sessions.length
         ? h(

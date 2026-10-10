@@ -18,8 +18,9 @@ BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
 2. Open **Agents2 → New agent**, choose **Codex**, and create an agent. The Codex
-   tab checks the installed CLI and existing account. If needed, install Codex
-   and run `codex login` in a terminal, then click **Check again**.
+   tab checks the installed CLI and existing account. If Codex is missing,
+   **Install Codex** runs the official installer into `~/.local/bin`; if it is
+   signed out, **Sign in** runs `codex login`. Each checks again when it ends.
 3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,

@@ -9,9 +9,19 @@
         "program": "pwd"
       },
       {
-        "id": "app-server",
+        "id": "codex-app-server",
         "program": "codex",
         "args": ["app-server"]
+      },
+      {
+        "id": "install",
+        "program": "sh",
+        "args": ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"]
+      },
+      {
+        "id": "login",
+        "program": "codex",
+        "args": ["login"]
       },
       {
         "id": "read",

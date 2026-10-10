@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import * as React from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -15,6 +16,7 @@ import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
+import { CodexSetup } from "./setup";
 import type { Wire } from "./rpc";
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,17 +26,32 @@ function deferred<T>() {
   return { promise, resolve };
 }
 afterEach(cleanup);
-function fixture() {
-  const processes: { end: ReturnType<typeof vi.fn> }[] = [];
-  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+function fixture(machine = { installed: true, signedIn: true }) {
+  const processes: {
+    id: string;
+    options: HostProcessOptions | undefined;
+    end: ReturnType<typeof vi.fn>;
+    kill: ReturnType<typeof vi.fn>;
+    finish(code: number): void;
+  }[] = [];
+  const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
+    if (id === "codex-app-server" && !machine.installed)
+      throw new Error("Could not start codex: No such file or directory");
     const exit = deferred<number | null>();
     const process = {
+      id,
+      options,
+      finish: exit.resolve,
       write: async (text: string) => {
         const wire: Wire = JSON.parse(text);
         if (wire.id == null) return;
         let result: unknown = {};
         if (wire.method === "account/read")
-          result = { account: { type: "chatgpt", email: "test@example.com" } };
+          result = {
+            account: machine.signedIn
+              ? { type: "chatgpt", email: "test@example.com" }
+              : null,
+          };
         if (wire.method === "model/list")
           result = {
             data: [
@@ -73,14 +90,70 @@ function fixture() {
     return process;
   });
   const runtime = new CodexRuntime(spawn, {} as RelayData, {} as Storage);
-  const tabs = createTabs(React, spawn, runtime);
+  const tabs = createTabs(React, spawn, runtime, new CodexSetup(spawn));
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
       agent: { pubkey: "a".repeat(64), config: settings },
       save,
     }) as unknown as AgentViewProps<Config>;
-  return { spawn, processes, tabs, props };
+  const step = (id: string) => {
+    const found = processes.find((process) => process.id === id);
+    if (!found) throw new Error(`No ${id} process`);
+    return found;
+  };
+  return { machine, spawn, processes, step, tabs, props };
 }
+it("installs a missing Codex, streaming the installer, then checks again", async () => {
+  const f = fixture({ installed: false, signedIn: true });
+  render(<f.tabs.CodexTab {...f.props()} />);
+  await screen.findByText("Codex is not installed.");
+  fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
+  await waitFor(() =>
+    expect(f.spawn).toHaveBeenCalledWith(
+      "install",
+      expect.objectContaining({ env: { CODEX_NON_INTERACTIVE: "1" } }),
+    ),
+  );
+  const install = f.step("install");
+  try {
+    act(() => install.options?.onStdout?.("Installing Codex\n"));
+    expect(screen.getByRole("log", { name: "Setup output" })).toHaveTextContent(
+      "Installing Codex",
+    );
+    expect(
+      screen.getByRole("button", { name: "Install Codex" }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    f.machine.installed = true;
+  } finally {
+    install.finish(0);
+  }
+  await screen.findByText("Codex is ready (test@example.com).");
+  expect(
+    screen.queryByRole("button", { name: "Install Codex" }),
+  ).not.toBeInTheDocument();
+});
+it("offers sign-in without an account and cancels a running sign-in", async () => {
+  const f = fixture({ installed: true, signedIn: false });
+  render(<f.tabs.SettingsTab {...f.props()} />);
+  expect(
+    await screen.findByText(
+      "Codex needs you to sign in. Sign in from the Codex tab.",
+    ),
+  ).toBeInTheDocument();
+  cleanup();
+  render(<f.tabs.CodexTab {...f.props()} />);
+  await screen.findByText("Codex needs you to sign in.");
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() =>
+    expect(f.spawn).toHaveBeenCalledWith("login", expect.anything()),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(f.step("login").kill).toHaveBeenCalled();
+  await screen.findByText(/Sign-in ended \(stopped\)\./);
+  await screen.findByRole("button", { name: "Check again" });
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+});
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
   const saving = deferred<void>();

@@ -185,7 +185,15 @@ function ProfileDetails({
   );
   const sections =
     plugin && agents2
-      ? agentSections({ agents2, ...plugin, channels: channelChoices })
+      ? agentSections({
+          agents2,
+          ...plugin,
+          channels: channelChoices,
+          conversation: context && {
+            channelId: context.channelId,
+            ...(context.rootId && { rootId: context.rootId }),
+          },
+        })
       : [];
   const section = sections.find((item) => item.value === tab);
   const tabHost = usePanelTabHost();

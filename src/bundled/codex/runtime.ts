@@ -28,6 +28,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   event: EventData;
@@ -76,8 +77,6 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
-/** Bindings listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -187,7 +186,7 @@ export class CodexRuntime {
     }
     return {};
   }
-  /** The agent's most recently used bindings in this community. */
+  /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const saved = this.entries.get(pubkey)?.saved ?? this.load(pubkey);
     const snapshot = this.relay.snapshot();
@@ -218,8 +217,35 @@ export class CodexRuntime {
           return [];
         }
       })
-      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-      .slice(0, CONVERSATION_LIMIT);
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay.snapshot();
+    const name =
+      snapshot.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
   }
   private storageKey(pubkey: string) {
     // Resume restores the persisted tool schema; pre-tools bindings start fresh.
@@ -667,7 +693,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
-        name: sessionName(agent, request.conversation),
+        name: await sessionName(agent, request.conversation),
       });
       const context = await this.history(request, signal);
       signal.throwIfAborted();

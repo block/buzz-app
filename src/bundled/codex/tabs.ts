@@ -9,6 +9,11 @@ import {
   type Model,
 } from "./config";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import {
+  OpenedConversation,
+  useOpenedSession,
+} from "../../features/agents2/OpenedConversation";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { AppServer, listModels, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
@@ -44,6 +49,8 @@ const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+/** Conversations listed below the one the profile was opened from. */
+const CONVERSATION_LIMIT = 30;
 type Read =
   | { status: "ready"; transcript: CodexTranscript }
   | { status: "missing" }
@@ -146,8 +153,7 @@ export function createTabs(
       setLoading(true);
       void readTranscript(
         spawn,
-        conversation.threadId,
-        conversation,
+        { agent: { pubkey: agent.pubkey, name: agent.name }, ...conversation },
         abort.signal,
       )
         .then(
@@ -163,7 +169,7 @@ export function createTabs(
           setLoading(false);
         });
       return () => abort.abort();
-    }, [conversation, attempt]);
+    }, [conversation, agent.pubkey, agent.name, attempt]);
     const description = (text: string) =>
       h("p", { className: "buzz-field-description" }, text);
     return h(
@@ -202,7 +208,7 @@ export function createTabs(
               }),
     );
   }
-  function CodexTab({ agent }: AgentViewProps<Config>) {
+  function CodexTab({ agent, conversation }: AgentViewProps<Config>) {
     const { data, error, checking, retry } = useCatalog();
     const sessions = React.useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
@@ -210,6 +216,13 @@ export function createTabs(
     // Read on each render: bindings change as turns start, which also
     // changes the session list this tab subscribes to.
     const conversations = runtime.conversations(agent.pubkey);
+    const {
+      session: here,
+      searching,
+      error: lookupError,
+    } = useOpenedSession(conversations, conversation, (place, signal) =>
+      runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
+    );
     const [open, setOpen] = React.useState<SavedConversation>();
     if (open)
       return h(TranscriptView, {
@@ -219,6 +232,9 @@ export function createTabs(
       });
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
+    const recent = conversations
+      .filter((row) => row.key !== here?.key)
+      .slice(0, CONVERSATION_LIMIT);
     const detail = (text: string) =>
       h(
         "pre",
@@ -251,8 +267,19 @@ export function createTabs(
         { className: "buzz-field-description" },
         "Uses your existing Codex sign-in. Install Codex and run codex login in a terminal if needed.",
       ),
-      h("h3", { style: { fontSize: "inherit", margin: 0 } }, "Conversations"),
-      conversations.length || sessions.length
+      conversation
+        ? h(OpenedConversation, {
+            conversation,
+            harness: "Codex",
+            session: here,
+            searching,
+            error: lookupError,
+            status: here && views.get(here.key)?.status,
+            onView: () => here && setOpen(here),
+          })
+        : null,
+      h(InlineHeader, { title: "Recent conversations" }),
+      recent.length || sessions.some((view) => !saved.has(view.key))
         ? h(
             "ul",
             {
@@ -275,23 +302,21 @@ export function createTabs(
                   view.detail ? detail(view.detail) : null,
                 ),
               ),
-            conversations.map((conversation) => {
-              const view = views.get(conversation.key);
+            recent.map((row) => {
+              const view = views.get(row.key);
               return h(
                 "li",
                 {
-                  key: conversation.key,
+                  key: row.key,
                   style: { display: "grid", gap: "var(--space-2)" },
                 },
                 h(
                   "p",
                   { style: { margin: 0 } },
-                  label(conversation),
+                  label(row),
                   [
                     view?.status,
-                    conversation.at
-                      ? new Date(conversation.at).toLocaleString()
-                      : undefined,
+                    row.at ? new Date(row.at).toLocaleString() : undefined,
                   ]
                     .filter(Boolean)
                     .map((part) => ` · ${part}`)
@@ -301,7 +326,7 @@ export function createTabs(
                 h(
                   "div",
                   null,
-                  button("View transcript", () => setOpen(conversation)),
+                  button("View transcript", () => setOpen(row)),
                 ),
               );
             }),

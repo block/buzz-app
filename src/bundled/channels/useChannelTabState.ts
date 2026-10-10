@@ -7,6 +7,8 @@ import type {
 
 export type PanelOpening = {
   channelId: string;
+  /** Thread root of the message the opening link was in. */
+  rootId?: string;
   panel: RegisteredPanel;
   target: string;
   channelContext?: ChannelPanelContext;

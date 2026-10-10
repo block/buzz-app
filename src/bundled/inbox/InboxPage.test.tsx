@@ -1813,9 +1813,7 @@ it.each([false, true])(
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toHaveTextContent("Please review this");
     expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
-    await userEvent
-      .setup()
-      .click(screen.getByRole("checkbox", { name: "Unread only" }));
+    await chooseFilter("Unread only", "Attention");
     await waitFor(() => expect(rows()).toHaveLength(0));
     const fresh = message(h.alice, "room", "Another decision", 32, [
       ["e", h.mention.id, "", "reply"],

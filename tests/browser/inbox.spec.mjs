@@ -459,6 +459,61 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
   await page.getByRole("button", { name: "Go back", exact: true }).click();
   await expect(inbox).toBeVisible();
+  await mentionRow.getByRole("button", { name: /^Open / }).click();
+  const channelHeading = detail.getByRole("heading", {
+    name: "Alpha",
+    exact: true,
+  });
+  const channelLink = channelHeading.getByRole("button", { name: "Alpha" });
+  await expect(channelLink).toHaveAttribute("title", "Open full thread");
+  await page.keyboard.press("Tab");
+  const focusRing = await channelLink.evaluate((button) => {
+    document.documentElement.setAttribute("data-keyboard-navigation", "");
+    button.focus();
+    const style = getComputedStyle(button);
+    return {
+      focused: document.activeElement === button,
+      focusVisible: button.matches(":focus-visible"),
+      width: Number.parseFloat(style.outlineWidth),
+      offset: Number.parseFloat(style.outlineOffset),
+      color: style.outlineColor,
+      background: getComputedStyle(button.parentElement).backgroundColor,
+      clipping: getComputedStyle(button.parentElement).overflow,
+      link: button.getBoundingClientRect().toJSON(),
+      heading: button.parentElement.getBoundingClientRect().toJSON(),
+    };
+  });
+  expect(focusRing.focused).toBe(true);
+  expect(focusRing.focusVisible).toBe(true);
+  expect(focusRing.clipping).toBe("hidden");
+  expect(focusRing.width).toBeGreaterThanOrEqual(2);
+  expect(focusRing.color).not.toBe(focusRing.background);
+  const outside = focusRing.width + focusRing.offset;
+  expect(focusRing.link.left - outside).toBeGreaterThanOrEqual(
+    focusRing.heading.left,
+  );
+  expect(focusRing.link.top - outside).toBeGreaterThanOrEqual(
+    focusRing.heading.top,
+  );
+  expect(focusRing.link.right + outside).toBeLessThanOrEqual(
+    focusRing.heading.right,
+  );
+  expect(focusRing.link.bottom + outside).toBeLessThanOrEqual(
+    focusRing.heading.bottom,
+  );
+  await channelLink.click();
+  await expect(page.getByRole("region", { name: "Channels" })).toBeVisible();
+  const channelTarget = await page.evaluate(
+    () => history.state.buzzNavigationV1.entry.target,
+  );
+  expect(channelTarget).toMatchObject({
+    kind: "conversation",
+    channelId: "alpha",
+    messageId: target.messageId,
+    threadRootId: expected.id,
+  });
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(inbox).toBeVisible();
   await chooseFilter("Mentions");
   // Opening reads; right-click and keyboard still expose local unread.
   const row = mentionRow;

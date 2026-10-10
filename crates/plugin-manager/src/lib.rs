@@ -224,6 +224,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/claude-code/manifest.json"
         ))
         .expect("claude code manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/codex/manifest.json"))
+            .expect("codex manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -265,6 +267,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.agents"
             | "buzz.agents2"
             | "buzz.claude-code"
+            | "buzz.codex"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"
@@ -273,7 +276,7 @@ fn enabled_by_default(id: &str) -> bool {
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
-const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code"];
+const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
 }
@@ -1566,7 +1569,7 @@ mod tests {
     }
 
     #[test]
-    fn formerly_installed_claude_code_upgrades_to_the_bundled_copy() {
+    fn formerly_installed_agent_plugins_upgrade_to_the_bundled_copy() {
         let manifest: serde_json::Value = serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
@@ -1608,16 +1611,17 @@ mod tests {
             plugins[0].enabled
         };
 
-        for was_enabled in [true, false] {
-            let (_temp, manager) = open(
-                serde_json::json!({ "buzz.claude-code": installed("buzz.claude-code", was_enabled) }),
-            );
-            assert_eq!(enabled(&manager, "buzz.claude-code"), was_enabled);
-            assert!(enabled(&manager, "buzz.todos"), "other overrides survive");
-            manager.change("enable", "buzz.claude-code").unwrap();
-            assert!(enabled(&manager, "buzz.claude-code"));
-            manager.change("disable", "buzz.claude-code").unwrap();
-            assert!(!enabled(&manager, "buzz.claude-code"));
+        for id in super::FORMERLY_INSTALLED {
+            for was_enabled in [true, false] {
+                let (_temp, manager) =
+                    open(serde_json::json!({ (*id): installed(id, was_enabled) }));
+                assert_eq!(enabled(&manager, id), was_enabled);
+                assert!(enabled(&manager, "buzz.todos"), "other overrides survive");
+                manager.change("enable", id).unwrap();
+                assert!(enabled(&manager, id));
+                manager.change("disable", id).unwrap();
+                assert!(!enabled(&manager, id));
+            }
         }
 
         let (_temp, manager) =

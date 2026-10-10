@@ -85,6 +85,7 @@ function ChooseInstructions({
 
 /** One team row: what it is, why it's here, and its one action. */
 function TeamRow({
+  row,
   team,
   names,
   note,
@@ -94,6 +95,7 @@ function TeamRow({
   disabled,
   onChoose,
 }: {
+  row: string;
   team: PendingBetaTeam;
   names: string;
   note?: string | undefined;
@@ -105,7 +107,7 @@ function TeamRow({
 }) {
   const Icon = stalled ? WarningCircleIcon : UsersIcon;
   return (
-    <div className="agent-inventory-row" data-team-row={team.teamId}>
+    <div className="agent-inventory-row" data-settle={row}>
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-secondary">
           <Icon size={18} aria-hidden="true" />
@@ -183,9 +185,11 @@ export function BetaTeamSetup({
   const find = useRef<HTMLButtonElement>(null);
   const [refind, setRefind] = useState(false);
   const section = useRef<HTMLElement>(null);
-  // A finished choice removes its row, and with it the focused control.
-  // Holds the team whose removal should hand focus to the section, from the
-  // choice until that row goes, the choice fails, or focus moves elsewhere.
+  // A finished choice removes its row, and a successful retry its button,
+  // taking the focused control along. Holds the `data-settle` key whose
+  // removal hands focus to the section, from the action until that element
+  // goes, the action fails, or focus moves elsewhere. A pending and a preview
+  // row can share a team, so rows are keyed by kind and team.
   const settle = useRef<string | null>(null);
   const ready = kit.status === "ready" && state.status === "ready";
   // A refused restore needs a fresh preview. The control hides this section
@@ -199,21 +203,22 @@ export function BetaTeamSetup({
     const moved = (event: FocusEvent) => {
       const row = settle.current;
       if (row === null || !(event.target instanceof Element)) return;
-      const at = event.target.closest<HTMLElement>("[data-team-row]");
-      if (at?.dataset.teamRow !== row) settle.current = null;
+      const at = event.target.closest<HTMLElement>("[data-settle]");
+      if (at?.dataset.settle !== row) settle.current = null;
     };
     document.addEventListener("focusin", moved);
     return () => document.removeEventListener("focusin", moved);
   }, []);
   useEffect(() => {
     const row = settle.current;
-    if (row === null || working) return;
-    const rows =
-      section.current?.querySelectorAll<HTMLElement>("[data-team-row]");
-    if ([...(rows ?? [])].some((el) => el.dataset.teamRow === row)) return;
+    // A hidden section (catalog reloading) proves nothing; wait for it.
+    if (row === null || working || !section.current) return;
+    const marks =
+      section.current.querySelectorAll<HTMLElement>("[data-settle]");
+    if ([...marks].some((el) => el.dataset.settle === row)) return;
     settle.current = null;
     const active = document.activeElement;
-    if (active === null || active === document.body) section.current?.focus();
+    if (active === null || active === document.body) section.current.focus();
   });
   const agents = sameCommunityAgents(state.data?.agents ?? [], session.scope);
   const unrecorded = agents.filter((agent) => agent.betaTeam === null);
@@ -234,6 +239,7 @@ export function BetaTeamSetup({
       },
       (reason) => {
         if (!live) return;
+        if (settle.current === "retry") settle.current = null;
         setPending(null);
         setReadProblem(message(reason));
       },
@@ -258,9 +264,9 @@ export function BetaTeamSetup({
     }
   };
   // Arms the focus handoff for one choice; failure or refusal disarms it.
-  const settled = (team: string, task: () => Promise<string | undefined>) =>
+  const settled = (row: string, task: () => Promise<string | undefined>) =>
     act("setting", async () => {
-      settle.current = team;
+      settle.current = row;
       try {
         const failed = await task();
         if (failed !== undefined) settle.current = null;
@@ -271,7 +277,7 @@ export function BetaTeamSetup({
       }
     });
   const finish = (team: PendingBetaTeam, text: string) =>
-    settled(team.teamId, async () => {
+    settled(`pending:${team.teamId}`, async () => {
       const { failed } = await runBetaTeamStep(
         session.channelKit,
         control,
@@ -286,7 +292,7 @@ export function BetaTeamSetup({
     group: PendingBetaTeam,
     text: string,
   ) =>
-    settled(group.teamId, async () => {
+    settled(`preview:${group.teamId}`, async () => {
       if (!control.restoreBetaTeam || !control.betaTeams)
         throw new Error("Teams from old Buzz are unavailable.");
       await control
@@ -357,6 +363,7 @@ export function BetaTeamSetup({
     ...known.map((team) => (
       <TeamRow
         key={`pending:${team.teamId}`}
+        row={`pending:${team.teamId}`}
         team={team}
         names={names(team)}
         stalled
@@ -369,6 +376,7 @@ export function BetaTeamSetup({
     ...(preview?.groups ?? []).map((group) => (
       <TeamRow
         key={`preview:${group.teamId}`}
+        row={`preview:${group.teamId}`}
         team={group}
         names={names(group)}
         note={
@@ -436,7 +444,7 @@ export function BetaTeamSetup({
         }
       />
       {readProblem && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" data-settle="retry">
           <p role="alert" className="m-0 text-body-sm text-danger">
             {readProblem}
           </p>
@@ -444,7 +452,10 @@ export function BetaTeamSetup({
             variant="ghost"
             size="compact"
             disabled={working}
-            onClick={() => setAttempt((n) => n + 1)}
+            onClick={() => {
+              settle.current = "retry";
+              setAttempt((n) => n + 1);
+            }}
           >
             Try again
           </Button>

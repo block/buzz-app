@@ -577,3 +577,131 @@ it("doesn't say it is reading teams while a team is being set up", async () => {
   expect(find).not.toHaveAttribute("aria-busy", "true");
   expect(find).toBeDisabled();
 });
+
+it("hands focus to the section when a pending row finishes beside a preview of the same team", async () => {
+  const user = userEvent.setup();
+  const betaTeams = vi.fn(async () => [team(["ONE"])]);
+  runner.runBetaTeamStep.mockReset().mockImplementation(async () => {
+    betaTeams.mockResolvedValue([]);
+    return { finished: ["a1"], failed: [] };
+  });
+  const c = control({
+    betaTeams,
+    restoreBetaTeam: vi.fn(),
+    restoreBetaTeams: vi.fn(async () => ({
+      token: "t",
+      groups: [{ ...team(["ONE"]), inferred: false }],
+    })),
+  });
+  const agents = (status: "pending" | "completed") => [
+    ...writers(status),
+    agent("a2", null),
+  ];
+  const view = (status: "pending" | "completed") => (
+    <BetaTeamSetup
+      control={c}
+      state={state(agents(status))}
+      session={session}
+      viewer={viewer}
+    />
+  );
+  const { rerender } = render(view("pending"));
+  await user.click(await screen.findByRole("button", { name: "Find teams" }));
+  await screen.findByRole("button", { name: "Restore team Writers" });
+  await tabTo(user, "Finish team setup for Writers");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  rerender(view("completed"));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Finish team setup for Writers" }),
+    ).toBeNull(),
+  );
+  // The same team's preview row stays; it isn't the row the action came from.
+  expect(
+    screen.getByRole("button", { name: "Restore team Writers" }),
+  ).toBeVisible();
+  const region = screen.getByRole("region", { name: "From old Buzz" });
+  await waitFor(() => expect(region).toHaveFocus());
+});
+
+it("keeps the focus handoff while the catalog reloads after a successful choice", async () => {
+  const user = userEvent.setup();
+  const loading = { status: "loading", entries: [] };
+  let status = "ready";
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const reloading = {
+    ...session,
+    channelKit: {
+      snapshot: () => (status === "ready" ? ready : loading),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  const betaTeams = vi.fn(async () => [team(["ONE"])]);
+  let release = () => {};
+  runner.runBetaTeamStep.mockReset().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => {
+          betaTeams.mockResolvedValue([]);
+          resolve({ finished: ["a1"], failed: [] });
+        };
+      }),
+  );
+  render(
+    <BetaTeamSetup
+      control={control({ betaTeams })}
+      state={state(writers("pending"))}
+      session={reloading}
+      viewer={viewer}
+    />,
+  );
+  await tabTo(user, "Finish team setup for Writers");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  // A background catalog read hides the section just as setup completes.
+  act(() => {
+    status = "loading";
+    notify();
+  });
+  await act(async () => release());
+  expect(screen.queryByRole("region", { name: "From old Buzz" })).toBeNull();
+  act(() => {
+    status = "ready";
+    notify();
+  });
+  const region = await screen.findByRole("region", { name: "From old Buzz" });
+  await waitFor(() => expect(region).toHaveFocus());
+});
+
+it("hands focus to the section after a keyboard retry succeeds", async () => {
+  const user = userEvent.setup();
+  const betaTeams = vi
+    .fn<() => Promise<PendingBetaTeam[]>>()
+    .mockRejectedValueOnce(new Error("Pending teams could not be read."))
+    .mockResolvedValue([team(["ONE"])]);
+  mount(
+    control({ betaTeams, restoreBetaTeam: vi.fn(), restoreBetaTeams: vi.fn() }),
+    writers("completed"),
+  );
+  expect(
+    await screen.findByRole("button", { name: /Find teams/ }),
+  ).toBeDisabled();
+  await tabTo(user, "Try again");
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).toBeNull();
+  const region = screen.getByRole("region", { name: "From old Buzz" });
+  await waitFor(() => expect(region).toHaveFocus());
+});

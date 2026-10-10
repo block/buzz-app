@@ -461,6 +461,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     model_overridden: context.model_overridden,
                     disconnected: false,
                     tested_model: None,
+                    codex: None,
                 })
             })
             .await;

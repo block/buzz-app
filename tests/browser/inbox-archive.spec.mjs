@@ -142,6 +142,11 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   const show = inbox.getByRole("combobox", { name: "Show" });
   await show.focus();
   await page.keyboard.press("Enter");
+  // Opening schedules focus into the list; End must target that option, not
+  // the trigger before the keyboard interaction is ready.
+  await expect(
+    page.getByRole("option", { name: "Inbox", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("End");
   const combined = page.getByRole("option", {
     name: "Inbox + archived",

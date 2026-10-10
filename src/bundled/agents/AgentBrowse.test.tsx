@@ -103,3 +103,40 @@ it("allows retrying a failed read without claiming the community is empty", asyn
     await screen.findByText("No shared agents found in this community yet."),
   ).toBeVisible();
 });
+
+it.each([
+  {
+    tags: [
+      ["d", "helper"],
+      ["shared", "true"],
+      ["shared", "false"],
+    ],
+  },
+  {
+    tags: [
+      ["d", "helper"],
+      ["d", "other"],
+      ["shared", "true"],
+    ],
+  },
+  {
+    tags: [
+      ["d", "invalid slug"],
+      ["shared", "true"],
+    ],
+  },
+  { content: JSON.stringify({ display_name: "Hidden\u202ename" }) },
+  {
+    content: JSON.stringify({
+      display_name: "Helper",
+      system_prompt: "x".repeat(65537),
+    }),
+  },
+])("rejects invalid catalog publications: %j", (invalid) => {
+  expect(sharedAgents([{ ...shared, ...invalid }])).toEqual([]);
+});
+it("does not revive a valid publication behind an invalid newer head", () => {
+  expect(
+    sharedAgents([shared, { ...shared, created_at: 2, content: "invalid" }]),
+  ).toEqual([]);
+});

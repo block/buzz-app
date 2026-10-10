@@ -201,7 +201,7 @@ it.each(["start", "profile"])(
   },
 );
 
-it("keeps catalog status recovery and Close available when Create cannot be confirmed", async () => {
+it("keeps catalog status recovery available and enables Close after status recovers", async () => {
   const f = fixture();
   f.create.mockRejectedValueOnce(Error("create timed out"));
   f.select();
@@ -217,11 +217,16 @@ it("keeps catalog status recovery and Close available when Create cannot be conf
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   expect(f.control.refresh).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  f.setState({ ...f.control.snapshot(), status: "ready" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(f.close).toHaveBeenCalledOnce();
 });
 
-it("allows Close during deferred catalog Create without late dismissal", async () => {
+it("blocks Close during deferred catalog Create and ignores completion after host unmount", async () => {
   const f = fixture();
   let complete!: (
     agent: Awaited<ReturnType<NonNullable<AgentControl["create"]>>>,
@@ -238,10 +243,10 @@ it("allows Close during deferred catalog Create without late dismissal", async (
     "Adding agent…",
   );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(f.close).toHaveBeenCalledOnce();
+  expect(f.close).not.toHaveBeenCalled();
   f.view.unmount();
   await act(async () => complete(f.native.agent));
-  expect(f.close).toHaveBeenCalledOnce();
+  expect(f.close).not.toHaveBeenCalled();
 });
 
 it("does not admit the viewer's own publication", () => {

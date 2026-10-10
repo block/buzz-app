@@ -1969,7 +1969,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
 
 for (const stage of ["create", "profile"] as const) {
   for (const recoverStop of [false, true]) {
-    it(`${stage} wait: dismiss Create, recovery Stop=${recoverStop}, no late UI replay`, async () => {
+    it(`${stage} wait: block Close, external recovery Stop=${recoverStop}, retain result`, async () => {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -1979,7 +1979,7 @@ for (const stage of ["create", "profile"] as const) {
       vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
         auth: [],
       });
-      const { f, control } = setup("connected", (fixture) => {
+      const { control } = setup("connected", (fixture) => {
         fixture.data.createAvailable = true;
         fixture.data.defaultWorkspace = "/fixture/workspace";
         fixture.host.prepareCreate = async () => ({
@@ -2032,38 +2032,27 @@ for (const stage of ["create", "profile"] as const) {
         );
         expect(control.snapshot().busy).toBe(true);
         await user.click(within(dialog).getByRole("button", { name: "Close" }));
-        expect(screen.queryByRole("dialog")).toBeNull();
-        const card = screen.getAllByRole("article", {
-          name: "Agent Fixture agent",
-        })[0];
-        if (!card) throw Error("Running fixture card missing");
-        const management = await manageCard(card);
-        const stop = within(management).getByRole("button", { name: "Stop" });
-        expect(stop).toBeVisible();
-        expect(stop).toBeEnabled();
-        if (recoverStop) {
-          await user.click(stop);
-          await waitFor(() =>
-            expect(f.calls).toContainEqual({
-              action: "stop",
-              payload: { id: "fixture-agent" },
-            }),
-          );
-          expect(
-            within(management).getByRole("button", { name: "Start" }),
-          ).toBeDisabled();
-        }
-        await closeManagement(management);
-        // A later dialog must not be closed by the dismissed operation's callback.
-        await user.click(screen.getByRole("button", { name: "New agent" }));
-        const newer = screen.getByRole("dialog", { name: "Create agent" });
+        expect(dialog).toBeVisible();
+        expect(
+          within(dialog).getByRole("button", { name: "Close" }),
+        ).toBeDisabled();
+        // Another surface may stop an existing agent while this dialog waits.
+        if (recoverStop)
+          await act(async () => control.action("fixture-agent", "stop"));
         await act(async () => {
           release();
           await gate;
         });
         await waitFor(() => expect(control.snapshot().busy).toBe(false));
-        expect(newer).toBeVisible();
-        await user.click(within(newer).getByRole("button", { name: "Close" }));
+        const remaining = screen.queryByRole("dialog", {
+          name: "Create agent",
+        });
+        if (remaining) {
+          expect(within(remaining).getByRole("alert")).toBeVisible();
+          await user.click(
+            within(remaining).getByRole("button", { name: "Close" }),
+          );
+        }
         await act(async () => control.refresh());
         expect(
           control

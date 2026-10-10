@@ -160,11 +160,6 @@
 .agent-new-tile:hover {
   background: var(--surface-hover);
 }
-.agent-new-tile:focus-visible,
-.agent-avatar-option:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
 .agent-avatar-picker {
   min-width: 0;
   border: 0;

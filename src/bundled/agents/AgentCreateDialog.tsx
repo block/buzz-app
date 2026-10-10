@@ -371,6 +371,7 @@ export function AgentCreateDialog({
             </Dialog.Title>
             <IconButton
               aria-label="Close"
+              disabled={blocked}
               icon={<XIcon size={20} />}
               onClick={onClose}
             />

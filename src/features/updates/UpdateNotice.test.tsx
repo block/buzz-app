@@ -8,15 +8,22 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UpdateNotice } from "./UpdateNotice";
 import { createUpdates, type Updates } from "./updates";
 
 let updates: Updates | undefined;
-afterEach(() => {
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+afterEach(async () => {
   cleanup();
   updates?.dispose();
+  // Sonner schedules removal after its exit animation. Drain it while jsdom
+  // still exists, rather than leaking React updates into the next environment.
+  await vi.runOnlyPendingTimersAsync();
+  vi.useRealTimers();
 });
 
 function deferred() {

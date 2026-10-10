@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { RelaySnapshot } from "../../features/relay/service";
-import { newer, type EventData } from "../../features/relay/events";
-import { avatarSource } from "../../shared/avatar-source";
+import type { EventData } from "../../features/relay/events";
+import {
+  AGENT_CATALOG_KIND,
+  catalogHeads,
+  parsePublication,
+} from "../../features/agents/catalog-protocol";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { AgentCard } from "./AgentCard";
@@ -17,43 +21,21 @@ type SharedAgent = {
 
 // Select replacement heads before checking sharing, so unsharing hides older heads.
 export function sharedAgents(events: readonly EventData[]): SharedAgent[] {
-  const heads = new Map<string, EventData>();
-  for (const event of events) {
-    const slug = event.tags.find((tag) => tag[0] === "d")?.[1];
-    if (event.kind !== 30175 || !slug) continue;
-    const id = `${event.pubkey}:${slug}`;
-    heads.set(id, newer(heads.get(id), event));
-  }
-  return [...heads.entries()]
-    .flatMap(([id, event]) => {
-      if (
-        !event.tags.some(
-          (tag) => tag.length === 2 && tag[0] === "shared" && tag[1] === "true",
-        )
-      )
-        return [];
-      try {
-        const body = JSON.parse(event.content);
-        if (
-          !body ||
-          typeof body.display_name !== "string" ||
-          !body.display_name.trim()
-        )
-          return [];
-        return [
-          {
-            id,
-            name: body.display_name.trim(),
-            owner: event.pubkey,
-            avatar: avatarSource(body.avatar_url),
-            model: typeof body.model === "string" ? body.model : "",
-            prompt:
-              typeof body.system_prompt === "string" ? body.system_prompt : "",
-          },
-        ];
-      } catch {
-        return [];
-      }
+  return [...catalogHeads(events).values()]
+    .flatMap((event) => {
+      const publication = parsePublication(event);
+      if (publication?.kind !== AGENT_CATALOG_KIND) return [];
+      const { agent, owner, d } = publication;
+      return [
+        {
+          id: `${owner}:${d}`,
+          name: agent.displayName.trim(),
+          owner,
+          avatar: agent.avatarUrl,
+          model: agent.model ?? "",
+          prompt: agent.systemPrompt,
+        },
+      ];
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }

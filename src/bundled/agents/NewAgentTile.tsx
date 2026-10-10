@@ -1,3 +1,4 @@
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 
 const artwork = [
@@ -18,7 +19,7 @@ export function NewAgentTile({
   onClick(): void;
 }) {
   return (
-    <button
+    <SurfaceButton
       type="button"
       className="agent-new-tile"
       aria-haspopup="dialog"
@@ -34,6 +35,6 @@ export function NewAgentTile({
         })}
       </span>
       <span className="agent-new-label text-label-sm">New agent</span>
-    </button>
+    </SurfaceButton>
   );
 }

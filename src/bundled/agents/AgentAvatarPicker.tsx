@@ -1,3 +1,4 @@
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useState } from "react";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
@@ -58,7 +59,7 @@ export function AgentAvatarPicker({
         {agentAvatars
           .filter((avatar) => avatar.collectionId === pack)
           .map((avatar) => (
-            <button
+            <SurfaceButton
               key={avatar.id}
               type="button"
               className="agent-avatar-option"
@@ -73,7 +74,7 @@ export function AgentAvatarPicker({
                 width={64}
                 height={64}
               />
-            </button>
+            </SurfaceButton>
           ))}
       </fieldset>
     </fieldset>

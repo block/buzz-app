@@ -1,5 +1,5 @@
 import { avatarSource } from "../../shared/avatar-source.ts";
-import type { RelayEvent } from "../relay/events.ts";
+import type { EventData } from "../relay/events.ts";
 import type { AgentView } from "./control.ts";
 import { harnessKind } from "./harness-presets.ts";
 import { effectiveSessionPolicy } from "./snapshot.ts";
@@ -312,23 +312,23 @@ export function catalogTemplate(
   };
 }
 
-const single = (event: RelayEvent, name: string) => {
+const single = (event: EventData, name: string) => {
   const values = event.tags.filter((tag) => tag[0] === name);
   return values.length === 1 ? values[0] : undefined;
 };
-export function catalogD(event: RelayEvent): string | undefined {
+export function catalogD(event: EventData): string | undefined {
   const tag = single(event, "d");
   return tag && tag.length >= 2 && tag[1] ? tag[1] : undefined;
 }
-export function isShared(event: RelayEvent): boolean {
+export function isShared(event: EventData): boolean {
   const [tag, ...extra] = event.tags.filter((tag) => tag[0] === "shared");
   return !!tag && !extra.length && tag.length === 2 && tag[1] === SHARED_TAG[1];
 }
 
 /** NIP-33: newest created_at, then lowest id, per (kind, owner, d). The head
  * is claimed before visibility so an unshared head hides older shared ones. */
-export function catalogHeads(events: readonly RelayEvent[]) {
-  const heads = new Map<string, RelayEvent>();
+export function catalogHeads<T extends EventData>(events: readonly T[]) {
+  const heads = new Map<string, T>();
   for (const event of [...events].sort(
     (a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1),
   )) {
@@ -405,7 +405,7 @@ function parseAgent(
 
 /** Untrusted boundary: any invalid field rejects the whole publication. */
 export function parsePublication(
-  event: RelayEvent,
+  event: EventData,
 ): CatalogPublication | undefined {
   const d = catalogD(event);
   const body = object(event.content);

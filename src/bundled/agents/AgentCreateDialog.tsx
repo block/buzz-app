@@ -222,6 +222,8 @@ export function AgentCreateDialog({
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
   const recoveryAction = useManagedAgentActions(state, control);
+  // Keep recovery outcomes mounted until the user explicitly closes the dialog.
+  const recoveryUsed = useRef(false);
   const closeBlocked = busy || !!state.stopping;
   const create = async (publication?: AgentPublication) => {
     if (
@@ -307,7 +309,7 @@ export function AgentCreateDialog({
       }
       if (mounted.current) {
         if (startFailure) setError(startFailure);
-        else onClose();
+        else if (!recoveryUsed.current) onClose();
       }
     } catch (problem) {
       if (mounted.current) setPhase("checking");
@@ -325,7 +327,7 @@ export function AgentCreateDialog({
         setError(undefined);
       } else if (step === "publishing" && current?.profilePending === false) {
         if (startFailure) setError(startFailure);
-        else onClose();
+        else if (!recoveryUsed.current) onClose();
       } else if (step === "creating") {
         setError(
           `We couldn't confirm whether the agent was created.${reason} Check the agent list before trying again.`,
@@ -353,7 +355,7 @@ export function AgentCreateDialog({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && (!dirty || error) && !closeBlocked) onClose();
+        if (!open && !dirty && !closeBlocked) onClose();
       }}
     >
       <Dialog.Portal>
@@ -380,7 +382,7 @@ export function AgentCreateDialog({
               onClick={onClose}
             />
           </header>
-          {busy && !!state.data?.agents.length && (
+          {(busy || recoveryUsed.current) && !!state.data?.agents.length && (
             <section
               aria-label="Agent recovery"
               className="flex flex-col gap-2"
@@ -392,7 +394,10 @@ export function AgentCreateDialog({
                     <Button
                       size="compact"
                       disabled={!canStopAgent(state, agent.id)}
-                      onClick={() => action.act("stop")}
+                      onClick={() => {
+                        recoveryUsed.current = true;
+                        action.act("stop");
+                      }}
                     >
                       Stop {agent.name}
                       {state.data?.agents.some(

@@ -75,6 +75,40 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       exact: true,
     });
     await expect(create.getByLabel("Name", { exact: true })).toBeVisible();
+    const nameInput = create.getByLabel("Name", { exact: true });
+    await page.keyboard.press("Tab");
+    await nameInput.focus();
+    await expect(nameInput).toBeFocused();
+    await expect(nameInput).toHaveCSS("border-top-width", "1px");
+    await expect(nameInput).not.toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    const choose = create.getByRole("button", {
+      name: "Choose avatar",
+      exact: true,
+    });
+    await choose.focus();
+    await choose.press("Enter");
+    await expect(create.locator('[data-avatar-view="selected"]')).toHaveCount(
+      0,
+    );
+    await expect(
+      create.locator('[data-avatar-view="collections"] button').first(),
+    ).toBeFocused();
+    const image = create.getByRole("button", {
+      name: "Use image",
+      exact: true,
+    });
+    await image.focus();
+    await image.press("Enter");
+    await expect(
+      create.locator('[data-avatar-view="collections"]'),
+    ).toHaveCount(0);
+    await expect(
+      create.locator('[data-avatar-view="image"] button').first(),
+    ).toBeFocused();
+
     await create.getByRole("button", { name: "Close", exact: true }).click();
     await expect(create).toBeHidden();
     await expect(add).toBeFocused();

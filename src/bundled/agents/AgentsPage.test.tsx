@@ -2050,7 +2050,11 @@ for (const stage of ["create", "profile"] as const) {
           name: "Create agent",
         });
         if (remaining) {
-          expect(within(remaining).getByRole("alert")).toBeVisible();
+          if (recoverStop)
+            expect(
+              within(remaining).getByRole("region", { name: "Agent recovery" }),
+            ).toBeVisible();
+          else expect(within(remaining).getByRole("alert")).toBeVisible();
           await user.click(
             within(remaining).getByRole("button", { name: "Close" }),
           );

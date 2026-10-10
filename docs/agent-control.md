@@ -42,7 +42,9 @@ creates another identity. A native Start response can confirm a saved agent whil
 reporting that its process could not run. During Create, Start, or profile setup,
 **Close** is disabled while setup is pending, and **Stop** remains available inside
 the setup dialog for each known agent, using the controller's recovery admission.
-The draft and operation result stay mounted. Once setup settles into an error,
+After Stop is used, recovery feedback remains mounted when setup settles, until
+explicit dismissal. Escape and backdrop clicks retain a dirty draft even after
+validation or setup failure. Once setup settles into an error,
 **Close** is available even if status refresh still fails. Late completion after a
 host unmount never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.

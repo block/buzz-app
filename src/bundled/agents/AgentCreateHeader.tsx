@@ -112,9 +112,7 @@ export function AgentCreateHeader({
     if (previousView.current !== view)
       root.current
         ?.querySelector<HTMLButtonElement>(
-          view === "selected"
-            ? '[data-avatar-view="selected"] button'
-            : "[data-avatar-view] button",
+          `[data-avatar-view="${view}"] button`,
         )
         ?.focus({ preventScroll: true });
     previousView.current = view;

@@ -11,6 +11,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   AgentControl,
@@ -40,10 +41,10 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(workspace = "/fixture/workspace") {
   const native = controlFixture();
   native.data.createAvailable = true;
-  native.data.defaultWorkspace = "/fixture/workspace";
+  native.data.defaultWorkspace = workspace;
   let state: AgentControlState = {
     status: "ready",
     data: native.data,
@@ -254,4 +255,51 @@ it("does not admit the viewer's own publication", () => {
   expect(
     screen.getByRole("button", { name: "Added to My Agents" }),
   ).toBeDisabled();
+});
+
+it.each(["write", "validation"])(
+  "retains a dirty draft after %s failure until explicit Close",
+  async (failure) => {
+    const f = fixture(failure === "validation" ? "" : undefined);
+    const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Keep me" },
+    });
+    f.create.mockRejectedValueOnce(Error("write failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await screen.findByRole("alert");
+    if (failure === "write") expect(f.create).toHaveBeenCalledOnce();
+    else expect(f.create).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
+    );
+    expect(f.close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Keep me");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(f.close).toHaveBeenCalledOnce();
+  },
+);
+
+it("retains a rejected recovery Stop after creation settles and status refresh succeeds", async () => {
+  const f = fixture();
+  let rejectCreate!: (reason: Error) => void;
+  f.create.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectCreate = reject;
+      }),
+  );
+  f.action.mockRejectedValueOnce(Error("stop rejected"));
+  f.native.agent.status = "running";
+  f.select();
+  fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Stop Fixture agent/ }));
+  const notice = await screen.findByText(/The agent didn't stop/);
+  await act(async () => rejectCreate(Error("create failed")));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled(),
+  );
+  expect(notice).toBeVisible();
+  expect(f.close).not.toHaveBeenCalled();
 });

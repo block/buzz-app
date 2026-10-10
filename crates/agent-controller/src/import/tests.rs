@@ -717,7 +717,14 @@ fn repair_only_adds_team_snapshot_without_keys_or_overwriting_edits() {
     let preview = team_preview(&mut imports, old.path(), dest.path());
     let ids = [preview.candidates[0].id.clone()];
     let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
-    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    let mut agent = resolve(
+        &data,
+        &data.records[1],
+        dest.path(),
+        "wss://relay.example",
+        LegacySource::Installed,
+    )
+    .unwrap();
     agent
         .imported
         .as_object_mut()
@@ -754,7 +761,14 @@ fn repair_refuses_changed_settings_and_wrong_source_team_binding() {
     let keys = Memory::default();
     let mut store = Store::open(dest.path().into()).unwrap();
     let data = read_source(&old.path().join(LegacySource::Installed.app_directory())).unwrap();
-    let mut agent = resolve(&data, &data.records[1], dest.path(), "wss://relay.example").unwrap();
+    let mut agent = resolve(
+        &data,
+        &data.records[1],
+        dest.path(),
+        "wss://relay.example",
+        LegacySource::Installed,
+    )
+    .unwrap();
     agent
         .imported
         .as_object_mut()
@@ -1162,4 +1176,88 @@ fn preview_does_not_flag_a_prompt_without_the_baked_suffix() {
     source(old.path());
     let preview = team_preview(&mut Imports::default(), old.path(), dest.path());
     assert!(!preview.candidates[0].strips_team_instructions);
+}
+#[test]
+fn import_records_the_beta_team_once_and_skips_teams_old_buzz_deleted() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let teams = team_source(old.path(), json!(" team prompt "));
+    let mut imports = Imports::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let team = crate::beta_team_id("crew");
+    assert_eq!(
+        preview.candidates[0].team,
+        Some(crate::BetaTeamView {
+            team_id: team.clone(),
+            name: crate::beta_migration::FALLBACK_NAME.into(),
+            status: crate::BetaTeamStatus::Pending,
+        })
+    );
+    assert!(!serde_json::to_string(&preview)
+        .unwrap()
+        .contains("team prompt"));
+    let ids = [preview.candidates[0].id.clone()];
+    imports
+        .commit(&preview.token, &ids, &mut store, &Memory::default())
+        .unwrap();
+    let agent = &store.agents().unwrap()[0];
+    assert_eq!(
+        agent.imported["betaTeam"],
+        json!({"sourceId": "crew", "teamId": team, "name": "Team from old Buzz",
+            "existed": true, "source": "installed", "betaText": "team prompt", "status": "pending"})
+    );
+    // A team missing from old Buzz's library is never created.
+    fs::write(&teams, b"[]").unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    assert_eq!(
+        preview.candidates[0].team.as_ref().unwrap().status,
+        crate::BetaTeamStatus::Skipped
+    );
+    // A name that would cross the app's 120 UTF-16 unit limit drops the whole
+    // non-BMP character.
+    let bee = format!("{}🐝", "a".repeat(119));
+    fs::write(
+        &teams,
+        serde_json::to_vec(&json!([{"id": "crew", "name": bee}])).unwrap(),
+    )
+    .unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    assert_eq!(
+        preview.candidates[0].team.as_ref().unwrap().name,
+        "a".repeat(119)
+    );
+}
+#[test]
+fn beta_text_reads_only_a_current_preview_candidate_without_writes() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let teams = team_source(old.path(), json!(" team prompt "));
+    let mut imports = Imports::default();
+    let store = Store::open(dest.path().into()).unwrap();
+    let preview = team_preview(&mut imports, old.path(), dest.path());
+    let id = &preview.candidates[0].id;
+    assert_eq!(
+        imports.beta_text(&preview.token, id).unwrap(),
+        "team prompt"
+    );
+    // Reading commits nothing and leaves the preview usable.
+    assert!(store.agents().unwrap().is_empty());
+    assert_eq!(
+        imports.beta_text(&preview.token, id).unwrap(),
+        "team prompt"
+    );
+    let refused = |result: crate::Result<String>| result.unwrap_err();
+    assert!(refused(imports.beta_text("wrong", id)).contains("expired"));
+    assert!(refused(imports.beta_text("", id)).contains("expired"));
+    assert!(refused(imports.beta_text(&preview.token, "unknown")).contains("not in this preview"));
+    // A source change after preview is refused rather than read.
+    fs::write(&teams, b"[]").unwrap();
+    assert!(refused(imports.beta_text(&preview.token, id)).contains("Source changed"));
+    // A new preview expires the old token.
+    let next = team_preview(&mut imports, old.path(), dest.path());
+    assert!(refused(imports.beta_text(&preview.token, id)).contains("expired"));
+    assert_eq!(imports.beta_text(&next.token, id).unwrap(), "");
+    imports.discard();
+    assert!(refused(imports.beta_text(&next.token, id)).contains("expired"));
 }

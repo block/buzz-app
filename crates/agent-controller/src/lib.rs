@@ -2,6 +2,7 @@
 //! No legacy desktop dependency, implicit identity creation, or credential projection.
 mod agent_defaults;
 mod app_agent;
+mod beta_migration;
 mod bundle;
 pub mod codex;
 mod community;
@@ -40,6 +41,10 @@ pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
 pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published};
+pub use beta_migration::{
+    beta_team_id, BetaTeamMember, BetaTeamStatus, BetaTeamView, PendingBetaTeam, RestoreGroup,
+    RestorePreview,
+};
 pub use bundle::RuntimeBundle;
 pub use config::{
     AgentEdit, AgentView, AiConfiguration, ControlSnapshot, EffortSelection, HarnessEdit,

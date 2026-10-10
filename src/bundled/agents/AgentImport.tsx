@@ -10,7 +10,48 @@ import type {
   ImportSource,
   CloneSettings,
 } from "../../features/agents/control";
+import { oldBuzzLabel } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
+import type { ChannelKit } from "../../features/channel-templates/capability";
+import {
+  betaTeamConflict,
+  setUpImportedTeam,
+} from "../../features/agents/beta-team-import";
+import { sessionCommunity } from "../../features/agents/team-instructions";
+import { relayOrigin } from "../../features/communities/destination";
+import { relayPartition } from "../../features/relay/partition";
+
+type Candidate = AgentImportPreview["candidates"][number];
+/** The candidate's old Buzz team text; the clash check needs the real text. */
+const betaText = (control: AgentControl, token: string, id: string) => {
+  if (!control.importBetaText)
+    throw new Error("Teams from old Buzz are unavailable.");
+  return control.importBetaText(token, id);
+};
+/** A team catalog and the relay session scope it belongs to. */
+export type BetaTeamAccess = { kit: ChannelKit; scope: string; viewer: string };
+/** The catalog only when it is ready and the import destination's, for this
+ * owner. */
+const teamsFor = (teams: BetaTeamAccess | undefined, destination: string) => {
+  if (teams?.kit.snapshot().status !== "ready") return undefined;
+  try {
+    return relayPartition(relayOrigin(destination), teams.viewer) ===
+      teams.scope
+      ? {
+          kit: teams.kit,
+          community: sessionCommunity(teams.scope, teams.viewer),
+        }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const JoinsTeam = ({ candidate }: { candidate: Candidate | undefined }) =>
+  candidate?.team?.status === "pending" ? (
+    <p className="m-0 text-body-sm text-secondary">
+      Joins team “{candidate.team.name}”
+    </p>
+  ) : null;
 
 const STRIPPED_TEAM_INSTRUCTIONS =
   "Old team instructions saved inside this agent's prompt are left out, so the agent doesn't get them twice.";
@@ -28,6 +69,7 @@ export function AgentImport({
   commitAvailable = true,
   onImported,
   onClone,
+  teams,
 }: {
   ref?: Ref<HTMLElement>;
   control: AgentControl;
@@ -41,7 +83,10 @@ export function AgentImport({
   managedAgents: readonly AgentView[];
   commitAvailable?: boolean;
   onClone?: ((settings: CloneSettings) => void) | undefined;
-  onImported?: (agents: AgentView[]) => void;
+  /** Without a ready catalog for the destination, imported agents keep their
+   * team pending until Finish team setup runs in that community. */
+  teams?: BetaTeamAccess | undefined;
+  onImported?: (agents: AgentView[], teamProblem?: string) => void;
 }) {
   const [source, setSource] = useState<ImportSource>(initialSource);
   const [destination, setDestination] = useState(initialDestination);
@@ -103,11 +148,37 @@ export function AgentImport({
       ? !selectedPubkey && saved.needsTeamImport
       : !repairOnly && !managedKeys.has(candidate.pubkey.toLowerCase());
   });
-  const commit = async (id: string, repair: boolean, name: string) => {
+  const commit = async (candidate: Candidate, repair: boolean) => {
+    const { id, name } = candidate;
     if (disabled || importing || !destination.trim() || !preview?.token) return;
     const current = generation.current;
     setImporting(true);
+    const team =
+      !repair && candidate.team?.status === "pending"
+        ? candidate.team
+        : undefined;
+    const access = teamsFor(teams, destination);
     try {
+      // Reads the candidate's old Buzz text from the preview and checks it
+      // against the team's current text. The team step rechecks with both.
+      const conflict =
+        team &&
+        access &&
+        (await betaTeamConflict(
+          access.kit,
+          control,
+          {
+            teamId: team.teamId,
+            name: team.name,
+            texts: [],
+            members: [{ id, pubkey: candidate.pubkey, revision: 0 }],
+          },
+          await betaText(control, preview.token, id),
+        ));
+      if (conflict) {
+        if (generation.current === current) setError(conflict);
+        return;
+      }
       const result = await control.commitImport(preview.token, [id]);
       if (generation.current !== current) return;
       if (repair) {
@@ -117,7 +188,20 @@ export function AgentImport({
         void load(source, destination);
         return;
       }
-      onImported?.(result.agents.filter((agent) => agent.id === id));
+      const teamProblem =
+        team && access
+          ? await setUpImportedTeam(
+              access.kit,
+              control,
+              access.community,
+              team.teamId,
+            )
+          : undefined;
+      if (generation.current !== current) return;
+      onImported?.(
+        result.agents.filter((agent) => agent.id === id),
+        teamProblem,
+      );
     } catch (problem) {
       if (generation.current === current) {
         setPreview(null);
@@ -166,9 +250,7 @@ export function AgentImport({
         )}
         <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-body-sm">
           <dt className="text-secondary">Source</dt>
-          <dd className="m-0">
-            {source === "installed" ? "Installed Buzz" : "Development Buzz"}
-          </dd>
+          <dd className="m-0">{oldBuzzLabel(source)}</dd>
           <dt className="text-secondary">Destination</dt>
           <dd className="m-0 break-all" title={destination}>
             {initialDestination ? (
@@ -207,6 +289,7 @@ export function AgentImport({
             )}
           </dd>
         </dl>
+        <JoinsTeam candidate={candidate} />
         {candidate?.stripsTeamInstructions && (
           <p className="m-0 text-body-sm text-secondary">
             {STRIPPED_TEAM_INSTRUCTIONS}
@@ -239,8 +322,10 @@ export function AgentImport({
                   void load(next, destination);
                 }}
               >
-                <option value="installed">Installed Buzz</option>
-                <option value="development">Development Buzz</option>
+                <option value="installed">{oldBuzzLabel("installed")}</option>
+                <option value="development">
+                  {oldBuzzLabel("development")}
+                </option>
               </select>
             </label>
             {preview && (
@@ -268,9 +353,7 @@ export function AgentImport({
               !candidate ||
               !preview?.token
             }
-            onClick={() =>
-              candidate && void commit(candidate.id, false, candidate.name)
-            }
+            onClick={() => candidate && void commit(candidate, false)}
           >
             {importing ? "Importing…" : "Import agent"}
           </Button>
@@ -346,6 +429,7 @@ export function AgentImport({
               <p className="m-0 text-body-sm text-secondary">
                 {repair ? "Team instructions not imported" : "Not imported"}
               </p>
+              {!repair && <JoinsTeam candidate={candidate} />}
               {!repair && candidate.stripsTeamInstructions && (
                 <p className="m-0 text-body-sm text-secondary">
                   {STRIPPED_TEAM_INSTRUCTIONS}
@@ -390,7 +474,7 @@ export function AgentImport({
                 !preview?.token
               }
               aria-label={`${repair ? "Repair team import for" : "Import"} ${candidate.name}`}
-              onClick={() => void commit(candidate.id, repair, candidate.name)}
+              onClick={() => void commit(candidate, repair)}
             >
               {repair ? "Repair team import" : "Import"}
             </Button>
@@ -417,8 +501,8 @@ export function AgentImport({
               {
                 label: "",
                 options: [
-                  { value: "installed", label: "Installed Buzz" },
-                  { value: "development", label: "Development Buzz" },
+                  { value: "installed", label: oldBuzzLabel("installed") },
+                  { value: "development", label: oldBuzzLabel("development") },
                 ],
               },
             ]}

@@ -90,6 +90,10 @@
     "allow-agent-control-team-preview",
     "allow-agent-control-team-export",
     "allow-agent-control-team-sync",
+    "allow-agent-control-beta-teams",
+    "allow-agent-control-beta-team-restore-preview",
+    "allow-agent-control-beta-team-restore",
+    "allow-agent-control-beta-team-finish",
 
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",
@@ -107,6 +111,7 @@
     "allow-agent-control-action",
     "allow-agent-control-attach-mention",
     "allow-agent-control-import-preview",
+    "allow-agent-control-import-beta-text",
     "allow-agent-control-import-commit",
     "allow-agent-control-local-clone-settings",
     "allow-agent-control-clone-settings",

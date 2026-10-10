@@ -1476,6 +1476,19 @@ pub(crate) async fn agent_control_import_preview(
     })
     .await
 }
+/// Read-only: one previewed candidate's team instructions from old Buzz, for
+/// the clash check before import. The ordinary preview stays text-free.
+#[tauri::command]
+pub(crate) async fn agent_control_import_beta_text(
+    state: tauri::State<'_, AgentHost>,
+    token: String,
+    id: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.imports.beta_text(&token, &id)
+    })
+    .await
+}
 #[tauri::command]
 pub(crate) async fn agent_control_import_commit(
     state: tauri::State<'_, AgentHost>,
@@ -1762,6 +1775,86 @@ pub(crate) async fn agent_control_team_sync(
     run(state.inner().clone(), move |host| {
         host.controller
             .sync_team_instructions(&community, &owner, &heads, &teams)?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
+/// Pending agents of teams from old Buzz in `community`, owned by this account.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_teams(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+) -> Result<Vec<buzz_agent_controller::PendingBetaTeam>, String> {
+    let owner = identity.inner().viewer().await?;
+    run(state.inner().clone(), move |host| {
+        host.controller.pending_beta_teams(&community, &owner)
+    })
+    .await
+}
+
+/// Read-only: group earlier imports by the team they had in old Buzz.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_team_restore_preview(
+    state: tauri::State<'_, AgentHost>,
+    source: LegacySource,
+    ids: Vec<String>,
+) -> Result<buzz_agent_controller::RestorePreview, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.restore_beta_teams_preview(
+            &mut host.imports,
+            source,
+            host.legacy_parent.clone(),
+            &ids,
+        )
+    })
+    .await
+}
+
+/// Start one restore-preview group's migration with the chosen text; its
+/// members then finish like any pending agent.
+#[tauri::command]
+pub(crate) async fn agent_control_beta_team_restore(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+    token: String,
+    team_id: String,
+    text: String,
+) -> Result<ControlSnapshot, String> {
+    let owner = identity.inner().viewer().await?;
+    run(state.inner().clone(), move |host| {
+        host.controller.restore_beta_team(
+            &host.imports,
+            &community,
+            &owner,
+            &token,
+            &team_id,
+            &text,
+        )?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
+/// Finish one agent's team from old Buzz against the owner's current catalog.
+/// `teams` maps every readable team to its current text, as for team sync.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn agent_control_beta_team_finish(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+    teams: std::collections::BTreeMap<String, String>,
+    id: String,
+    revision: u64,
+    outcome: buzz_agent_controller::BetaTeamStatus,
+) -> Result<ControlSnapshot, String> {
+    let (owner, heads) = crate::relay::current_team_members(identity.inner(), &community).await?;
+    run(state.inner().clone(), move |host| {
+        host.controller
+            .finish_beta_team(&id, revision, outcome, &community, &owner, &heads, &teams)?;
         Ok(host.snapshot()?.data)
     })
     .await

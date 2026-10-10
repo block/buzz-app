@@ -405,7 +405,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       .getByRole("combobox", { name: "Source library", exact: true })
       .click();
     await page
-      .getByRole("option", { name: "Development Buzz", exact: true })
+      .getByRole("option", { name: "Old Buzz (Development)", exact: true })
       .click();
     await panel
       .getByLabel("Destination community", { exact: true })
@@ -1328,7 +1328,7 @@ for (const changed of ["destination", "source"]) {
           .getByRole("combobox", { name: "Source library", exact: true })
           .click();
         await page
-          .getByRole("option", { name: "Development Buzz", exact: true })
+          .getByRole("option", { name: "Old Buzz (Development)", exact: true })
           .click();
       }
       if (changed === "destination") {
@@ -1373,7 +1373,7 @@ for (const changed of ["destination", "source"]) {
           .getByRole("combobox", { name: "Source library", exact: true })
           .click();
         await page
-          .getByRole("option", { name: "Installed Buzz", exact: true })
+          .getByRole("option", { name: "Old Buzz (Installed)", exact: true })
           .click();
       }
       await page.evaluate(() => window.agentControlFixture.releasePreview());
@@ -1533,7 +1533,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
       dialog.getByRole("button", { name: "Import agent" }),
     ).toBeEnabled();
     await expect(
-      dialog.getByText("Development Buzz", { exact: true }),
+      dialog.getByText("Old Buzz (Development)", { exact: true }),
     ).toBeVisible();
     await expect(dialog.getByLabel("Source library")).toHaveCount(0);
     await expect(

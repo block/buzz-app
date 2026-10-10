@@ -131,6 +131,7 @@ export function AgentControlPanel({
   const [exporting, setExporting] = useState<string | null>(null);
   const [importingSnapshot, setImportingSnapshot] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [teamProblem, setTeamProblem] = useState<string | null>(null);
   const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
     if (editTarget) onCloseTarget?.();
@@ -239,6 +240,15 @@ export function AgentControlPanel({
         state.status === "ready" && state.data.importAvailable !== false
       }
       disabled={state.busy}
+      teams={
+        session?.viewer
+          ? {
+              kit: session.channelKit,
+              scope: session.scope,
+              viewer: session.viewer,
+            }
+          : undefined
+      }
       onClone={
         control.cloneSettings && createOwner && importDestination
           ? (initialSettings) => {
@@ -251,8 +261,9 @@ export function AgentControlPanel({
             }
           : undefined
       }
-      onImported={(agents) => {
+      onImported={(agents, teamProblem) => {
         importCompleted.current = true;
+        setTeamProblem(teamProblem ?? null);
         setImportedId(agents[0]?.id ?? null);
         setImportSections([]);
         setImportSelection(null);
@@ -370,6 +381,7 @@ export function AgentControlPanel({
           ))}
         </div>
       )}
+      {teamProblem && <p role="alert">{teamProblem}</p>}
       {state.data &&
         !importSelection &&
         (state.data.parked === undefined || needsRepair) && (

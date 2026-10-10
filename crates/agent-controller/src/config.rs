@@ -91,6 +91,8 @@ pub struct AgentView {
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
     pub deployed_remote: bool,
     pub needs_team_import: bool,
+    /// The team from old Buzz this agent joins; `None` for other agents.
+    pub beta_team: Option<crate::BetaTeamView>,
     pub configured: bool,
 }
 #[derive(Clone, Serialize)]
@@ -392,6 +394,10 @@ impl Agent {
             restart_diff: Vec::new(),
             deployed_remote: self.deployed_remote(),
             needs_team_import: self.needs_team_import(),
+            beta_team: crate::beta_migration::BetaTeam::read(self)
+                .ok()
+                .flatten()
+                .map(|beta| beta.view()),
         }
     }
     pub fn needs_team_import(&self) -> bool {

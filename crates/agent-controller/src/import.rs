@@ -1,5 +1,9 @@
 //! Snapshot import, not a second writer of the old library. Chosen files are
 //! re-read before commit; key access happens only after explicit selection.
+use crate::beta_migration::{
+    beta_team_id, team_name, valid_source_id, BetaTeam, BetaTeamMember, BetaTeamStatus,
+    BetaTeamView, RestoreGroup, RestorePreview, FALLBACK_NAME,
+};
 use crate::config::{
     agent_id, canonical_key, canonical_relay, Agent, HarnessEdit, MAX_AGENTS, MAX_BYTES,
 };
@@ -49,6 +53,8 @@ pub struct Candidate {
     pub name: String,
     /// The imported prompt drops a team section old Buzz baked into it.
     pub strips_team_instructions: bool,
+    /// The 1.0 team this agent joins, or `skipped` when old Buzz deleted it.
+    pub team: Option<BetaTeamView>,
 }
 /// Reviewed text only. Never project legacy environment, commands, arguments,
 /// credentials, paths, owner authorization or retained source records for cloning.
@@ -70,6 +76,7 @@ struct Pending {
 pub struct Imports {
     sequence: u64,
     pending: Option<Pending>,
+    restore: Option<RestorePreview>,
 }
 struct Source {
     records: Vec<Value>,
@@ -102,6 +109,163 @@ impl Imports {
             name: string(record, "name").into(),
             system_prompt: imported_prompt(string(definition, "system_prompt")).into(),
         })
+    }
+    /// Group earlier imports (no `betaTeam` yet) by their beta team. Old Buzz's
+    /// files decide when every member is still listed there; otherwise the
+    /// grouping is inferred from the agents' own beta copies. An inferred group
+    /// with no text is never offered: it can't be told apart from a deleted team.
+    pub(crate) fn restore_preview(
+        &mut self,
+        source_kind: LegacySource,
+        app_data_parent: PathBuf,
+        ids: &[String],
+        agents: Vec<Agent>,
+    ) -> Result<RestorePreview> {
+        self.restore = None;
+        if ids.len() > MAX_AGENTS || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
+            return Err("Select distinct agents to restore".into());
+        }
+        let data = read_source(&app_data_parent.join(source_kind.app_directory())).ok();
+        let mut grouped: BTreeMap<String, Vec<&Agent>> = BTreeMap::new();
+        for id in ids {
+            let agent = agents
+                .iter()
+                .find(|agent| &agent.id == id)
+                .ok_or("Agent no longer exists")?;
+            let source_id = string(&agent.imported["record"], "team_id");
+            if valid_source_id(source_id) && BetaTeam::read(agent)?.is_none() {
+                grouped.entry(source_id.into()).or_default().push(agent);
+            }
+        }
+        let mut groups = Vec::new();
+        for (source_id, members) in grouped {
+            let listed = data.as_ref().filter(|data| {
+                members.iter().all(|agent| {
+                    data.records.iter().any(|record| {
+                        string(record, "pubkey") == agent.pubkey
+                            && string(record, "team_id") == source_id
+                    })
+                })
+            });
+            let (name, texts, inferred) = match listed {
+                Some(data) => {
+                    let Some(team) = data
+                        .teams
+                        .iter()
+                        .find(|team| string(team, "id") == source_id)
+                    else {
+                        continue;
+                    };
+                    let text = team_text(&team["instructions"])?.to_owned();
+                    (team_name(string(team, "name")), vec![text], false)
+                }
+                None => {
+                    // Only an unbound copy is still beta's text; a bound one came from a 1.0 team.
+                    let mut texts = Vec::new();
+                    for agent in members
+                        .iter()
+                        .filter(|a| a.imported.get("teamBindings").is_none())
+                    {
+                        let text = team_text(&agent.imported["teamInstructions"])?;
+                        if !text.is_empty() && !texts.iter().any(|t| t == text) {
+                            texts.push(text.to_owned());
+                        }
+                    }
+                    if texts.is_empty() {
+                        continue;
+                    }
+                    (FALLBACK_NAME.to_owned(), texts, true)
+                }
+            };
+            groups.push(RestoreGroup {
+                team_id: beta_team_id(&source_id),
+                name,
+                inferred,
+                texts,
+                members: members
+                    .iter()
+                    .map(|agent| BetaTeamMember {
+                        id: agent.id.clone(),
+                        pubkey: agent.pubkey.clone(),
+                        revision: agent.revision,
+                    })
+                    .collect(),
+                source_id,
+                source: (!inferred).then_some(source_kind),
+            });
+        }
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Import preview exhausted")?;
+        let preview = RestorePreview {
+            token: format!("restore-{}", self.sequence),
+            groups,
+        };
+        self.restore = Some(preview.clone());
+        Ok(preview)
+    }
+    /// The `betaTeam` a restore choice starts for every member of one group,
+    /// each paired with the revision the preview showed.
+    pub(crate) fn restored(
+        &self,
+        token: &str,
+        team_id: &str,
+        text: &str,
+    ) -> Result<Vec<(String, u64, BetaTeam)>> {
+        let preview = self
+            .restore
+            .as_ref()
+            .filter(|preview| preview.token == token)
+            .ok_or("Restore preview expired; preview it again")?;
+        let group = preview
+            .groups
+            .iter()
+            .find(|group| group.team_id == team_id)
+            .ok_or("Team was not in this restore preview")?;
+        if !group.texts.iter().any(|candidate| candidate == text) {
+            return Err("Choose one of the previewed team instructions".into());
+        }
+        let beta = BetaTeam {
+            source_id: group.source_id.clone(),
+            team_id: group.team_id.clone(),
+            name: group.name.clone(),
+            existed: (!group.inferred).then_some(true),
+            source: group.source,
+            beta_text: text.into(),
+            status: BetaTeamStatus::Pending,
+        };
+        Ok(group
+            .members
+            .iter()
+            .map(|member| (member.id.clone(), member.revision, beta.clone()))
+            .collect())
+    }
+    /// Read-only: the team instructions one previewed candidate would bring
+    /// from old Buzz, so the app can check team clashes before committing.
+    /// Empty when the candidate has no live team there.
+    pub fn beta_text(&self, token: &str, id: &str) -> Result<String> {
+        let pending = self
+            .pending
+            .as_ref()
+            .filter(|p| !token.is_empty() && p.preview.token == token)
+            .ok_or("Import preview expired; choose the source again")?;
+        let candidate = pending
+            .preview
+            .candidates
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or("Identity was not in this preview")?;
+        let data = read_source(&pending.source)?;
+        if data.digest != pending.digest {
+            return Err("Source changed after preview; preview it again".into());
+        }
+        let record = data
+            .records
+            .iter()
+            .find(|r| string(r, "pubkey") == candidate.pubkey)
+            .ok_or("Import identity disappeared")?;
+        team_instructions(&data, record)
     }
     pub fn discard(&mut self) {
         self.pending = None;
@@ -147,6 +311,7 @@ impl Imports {
                     imported_prompt(string(d, "system_prompt")).len()
                         != string(d, "system_prompt").len()
                 }),
+                team: beta_team(&data, record, source_kind)?.map(|beta| beta.view()),
             });
         }
         self.sequence = self
@@ -238,7 +403,13 @@ impl Imports {
             if existing.iter().any(|a| a.pubkey == candidate.pubkey) {
                 return Err("Selected identity is already imported".into());
             }
-            let agent = resolve(&data, record, &pending.workspace, &candidate.relay_url)?;
+            let agent = resolve(
+                &data,
+                record,
+                &pending.workspace,
+                &candidate.relay_url,
+                pending.source_kind,
+            )?;
             agent.validate()?;
             agents.push((agent, string(record, "private_key_nsec").to_owned()));
         }
@@ -375,7 +546,13 @@ pub(crate) fn imported_prompt(prompt: &str) -> &str {
         .rfind(BAKED_TEAM_DELIMITER)
         .map_or(prompt, |at| &prompt[..at])
 }
-fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -> Result<Agent> {
+fn resolve(
+    data: &Source,
+    record: &Value,
+    workspace: &Path,
+    destination: &str,
+    source_kind: LegacySource,
+) -> Result<Agent> {
     let definition = source_definition(data, record)?;
     let fallback = |key| {
         let selected = string(definition, key);
@@ -436,6 +613,11 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
     if let Some(record) = retained.as_object_mut() {
         record.remove("private_key_nsec");
     }
+    let mut imported = json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "teamSuffixCleaned": true, "harness": custom, "teamInstructions": team_instructions(data, record)? });
+    if let Some(beta) = beta_team(data, record, source_kind)? {
+        imported[crate::beta_migration::KEY] =
+            serde_json::to_value(beta).map_err(|_| "Could not encode source team")?;
+    }
     Ok(Agent {
         picture: None,
         id: id.clone(),
@@ -464,9 +646,34 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
             .get("auth_tag")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "teamSuffixCleaned": true, "harness": custom, "teamInstructions": team_instructions(data, record)? }),
+        imported,
         extra: BTreeMap::new(),
     })
+}
+/// The beta team this record names. A team missing from `teams.json` was
+/// deleted in old Buzz: it is recorded as skipped and never created.
+fn beta_team(data: &Source, record: &Value, source: LegacySource) -> Result<Option<BetaTeam>> {
+    let id = string(record, "team_id");
+    if id.is_empty() {
+        return Ok(None);
+    }
+    if !valid_source_id(id) {
+        return Err("Source contains an invalid team ID".into());
+    }
+    let team = data.teams.iter().find(|team| string(team, "id") == id);
+    Ok(Some(BetaTeam {
+        source_id: id.into(),
+        team_id: beta_team_id(id),
+        name: team_name(team.map_or("", |team| string(team, "name"))),
+        existed: Some(team.is_some()),
+        source: Some(source),
+        beta_text: team_instructions(data, record)?,
+        status: if team.is_some() {
+            BetaTeamStatus::Pending
+        } else {
+            BetaTeamStatus::Skipped
+        },
+    }))
 }
 // Match old Buzz's deployment-team lookup: a deleted team contributes no section.
 fn team_instructions(data: &Source, record: &Value) -> Result<String> {

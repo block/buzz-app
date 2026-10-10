@@ -107,6 +107,18 @@ export function teamTextConflict(
     : undefined;
 }
 
+/** The community part of a relay session's scope, as native team calls take it. */
+export const sessionCommunity = (scope: string, viewer: string) =>
+  scope.slice(0, -(viewer.length + 1));
+
+/** The text map native team calls take: unreadable teams are left out. */
+export const readableTexts = (texts: readonly TeamText[]) =>
+  Object.fromEntries(
+    texts.flatMap(({ team, text }) =>
+      text === undefined ? [] : [[team.id, text]],
+    ),
+  );
+
 /** The agent and two teams that make a delivery impossible: one of the
  * owner's agents is listed on two teams with different text. Names them so
  * the user knows which team to edit. */
@@ -184,17 +196,12 @@ async function deliverNow(
   session: RelaySession | undefined,
 ) {
   if (!control?.syncTeamInstructions || !session?.viewer) return;
-  const relay = session.scope.slice(0, -(session.viewer.length + 1));
   const texts = await readTeamTexts(kit, control);
   const conflict = deliveryConflict(texts, control, session.scope);
   if (conflict) throw new Error(conflict);
   await control.syncTeamInstructions(
-    relay,
-    Object.fromEntries(
-      texts.flatMap(({ team, text }) =>
-        text === undefined ? [] : [[team.id, text]],
-      ),
-    ),
+    sessionCommunity(session.scope, session.viewer),
+    readableTexts(texts),
   );
   setSyncError(kit, undefined);
 }

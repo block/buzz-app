@@ -35,6 +35,7 @@ import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
+import { BetaTeamSetup } from "./BetaTeamSetup";
 import {
   ManagedAgentActions,
   useManagedAgentActions,
@@ -355,8 +356,24 @@ export function AgentsPage({
                       onUseHere,
                       onImport,
                       onShare,
-                    ) =>
-                      state.status === "unavailable" ? (
+                    ) => {
+                      // Restored teams appear in Agent teams, right above.
+                      const teamSections = (
+                        <>
+                          {teams}
+                          {connection.status === "ready" &&
+                            connection.session.viewer &&
+                            control.betaTeams && (
+                              <BetaTeamSetup
+                                control={control}
+                                state={state}
+                                session={connection.session}
+                                viewer={connection.session.viewer}
+                              />
+                            )}
+                        </>
+                      );
+                      return state.status === "unavailable" ? (
                         <>
                           {teams}
                           {library}
@@ -364,7 +381,7 @@ export function AgentsPage({
                       ) : state.data?.parked !== undefined ? (
                         <UnifiedInventory
                           key={connection.viewer ?? "offline"}
-                          teams={teams}
+                          teams={teamSections}
                           headerActions={headerActions}
                           state={state}
                           edit={edit}
@@ -403,10 +420,10 @@ export function AgentsPage({
                           destination={importDestination}
                           resolveProfile={resolveProfile}
                           headerActions={headerActions}
-                          teams={teams}
+                          teams={teamSections}
                         />
-                      )
-                    }
+                      );
+                    }}
                   </AgentControlPanel>
                 ) : (
                   <>

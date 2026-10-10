@@ -485,6 +485,7 @@ fn catalog(created_at: u64, members: Vec<String>) -> crate::TeamCatalogEntry {
         created_at,
         event_id: format!("{created_at:064x}"),
         members,
+        deleted: false,
     }
 }
 

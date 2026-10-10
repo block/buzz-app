@@ -2696,6 +2696,31 @@ it.each([true, false])(
   },
 );
 
+it("keeps Show's open keyboard selection through incoming row updates", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const show = screen.getByRole("combobox", { name: "Show" });
+  await user.click(show);
+  await user.keyboard("{End}");
+  const combined = screen.getByRole("option", { name: "Inbox + archived" });
+  expect(combined).toHaveAttribute("data-highlighted");
+
+  const incoming = message(h.alice, "room", "Another review request", 50, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.addEvent(incoming);
+  await act(async () => h.emit([incoming]));
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  expect(screen.getAllByRole("option")).toHaveLength(3);
+  expect(combined).toHaveAttribute("data-highlighted");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  expect(show).toHaveTextContent("Inbox + archived");
+  expect(show).toHaveFocus();
+});
+
 it("shows Inbox scope as a filter without resetting attention filters", async () => {
   const h = fixture({ withSenders: true });
   render(h.view);

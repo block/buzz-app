@@ -158,8 +158,8 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
       };
     });
   const measured = await geometry();
-  // Main's NavigationItem still truncates long text at this size; this checks
-  // that Archive consumes no additional inline space, not full visual approval.
+  // NavigationItem truncates long labels at enlarged text sizes; this checks
+  // that Archive reserves no additional inline space, not full visual acceptance.
   expect(measured.label.width).toBeGreaterThanOrEqual(2 * measured.root);
   expect(measured.open.x + measured.open.width).toBe(
     measured.row.x + measured.row.width,

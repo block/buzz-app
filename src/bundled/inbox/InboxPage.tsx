@@ -44,7 +44,7 @@ import {
   ArchiveOffIcon,
   BellIcon,
 } from "../../shared/design-system/icons";
-import { InboxFilter } from "./InboxFilter";
+import { Select } from "../../shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -738,7 +738,8 @@ export function InboxView({
   const toolbar = (
     <header className={styles.toolbar}>
       {!drafts && (
-        <InboxFilter
+        <Select
+          variant="compact"
           label="Show"
           value={show}
           groups={showGroups}

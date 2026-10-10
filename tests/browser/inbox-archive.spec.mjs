@@ -138,6 +138,34 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
+  // Keep the open choice and keyboard highlight while relay activity updates rows.
+  const show = inbox.getByRole("combobox", { name: "Show" });
+  await show.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("End");
+  const combined = page.getByRole("option", {
+    name: "Inbox + archived",
+    exact: true,
+  });
+  await expect(combined).toHaveAttribute("data-highlighted", "");
+  app.append(
+    "primary",
+    channel,
+    "Another review request",
+    true,
+    false,
+    undefined,
+    undefined,
+    [["p", app.viewer]],
+  );
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByRole("option")).toHaveCount(3);
+  await expect(combined).toHaveAttribute("data-highlighted", "");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(show).toContainText("Inbox + archived");
+  await expect(show).toBeFocused();
+  await expect(rows).toHaveCount(2);
 });
 
 test("Inbox archive survives reload and reopens Threads before fresh Mentions", async ({

@@ -128,6 +128,28 @@ it("installs a missing Codex, streaming the installer, then checks again", async
   } finally {
     install.finish(0);
   }
+  // Hold the check that follows the install: Install must not run again.
+  const original = f.spawn.getMockImplementation();
+  if (!original) throw new Error("Missing spawn fixture");
+  const checking = deferred<void>();
+  const release = deferred<void>();
+  f.spawn.mockImplementationOnce(async (id, options) => {
+    checking.resolve();
+    await release.promise;
+    return original(id, options);
+  });
+  await checking.promise;
+  try {
+    await screen.findByText("Checking Codex…");
+    const again = screen.getByRole("button", { name: "Install Codex" });
+    expect(again).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(again);
+    expect(f.spawn.mock.calls.filter(([id]) => id === "install")).toHaveLength(
+      1,
+    );
+  } finally {
+    release.resolve();
+  }
   await screen.findByText("Codex is ready (test@example.com).");
   expect(
     screen.queryByRole("button", { name: "Install Codex" }),

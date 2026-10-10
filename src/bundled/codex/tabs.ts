@@ -184,7 +184,9 @@ export function createTabs(
           ? h(Button, {
               variant: "prominent",
               loading: running === action.step,
-              disabled: !!running && running !== action.step,
+              // Until the check after a step ends, a second run could repeat it.
+              disabled: running ? running !== action.step : checking,
+              focusableWhenDisabled: true,
               onClick: () => void setup.run(action.step),
               children: action.label,
             })

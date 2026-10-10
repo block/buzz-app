@@ -534,3 +534,46 @@ it("forgets the focus handoff once focus moves away during a successful choice",
   ).toBeVisible();
   expect(document.body).toHaveFocus();
 });
+
+it("retries a failed pending-team read and clears its error", async () => {
+  const betaTeams = vi
+    .fn<() => Promise<PendingBetaTeam[]>>()
+    .mockRejectedValueOnce(new Error("Pending teams could not be read."))
+    .mockResolvedValue([team(["ONE"])]);
+  mount(
+    control({ betaTeams, restoreBetaTeam: vi.fn(), restoreBetaTeams: vi.fn() }),
+    writers("pending"),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Pending teams could not be read.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("doesn't say it is reading teams while a team is being set up", async () => {
+  runner.runBetaTeamStep.mockReset().mockReturnValue(new Promise(() => {}));
+  mount(
+    control({
+      betaTeams: vi.fn(async () => [team(["ONE"])]),
+      restoreBetaTeam: vi.fn(),
+      restoreBetaTeams: vi.fn(),
+    }),
+    [...writers("pending"), agent("a2", null)],
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  );
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  expect(screen.queryByText("Reading teams from old Buzz…")).toBeNull();
+  const find = screen.getByRole("button", { name: /Find teams/ });
+  expect(find).not.toHaveAttribute("aria-busy", "true");
+  expect(find).toBeDisabled();
+});

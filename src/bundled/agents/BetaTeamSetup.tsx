@@ -173,8 +173,13 @@ export function BetaTeamSetup({
   const [pending, setPending] = useState<PendingBetaTeam[] | null>(null);
   const [preview, setPreview] = useState<BetaTeamRestorePreview | null>(null);
   const [source, setSource] = useState<ImportSource>("installed");
-  const [working, setWorking] = useState(false);
+  // Which operation runs; every control waits on any of them.
+  const [busy, setBusy] = useState<"finding" | "setting" | null>(null);
+  const working = busy !== null;
   const [problem, setProblem] = useState<string | null>(null);
+  // The pending-team read fails apart from actions, and retries on its own.
+  const [readProblem, setReadProblem] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const find = useRef<HTMLButtonElement>(null);
   const [refind, setRefind] = useState(false);
   const section = useRef<HTMLElement>(null);
@@ -220,33 +225,41 @@ export function BetaTeamSetup({
     if (!ready || !control.betaTeams) return;
     let live = true;
     void statusKey;
+    void attempt;
     control.betaTeams(community).then(
-      (teams) => live && setPending(teams),
+      (teams) => {
+        if (!live) return;
+        setPending(teams);
+        setReadProblem(null);
+      },
       (reason) => {
         if (!live) return;
         setPending(null);
-        setProblem(message(reason));
+        setReadProblem(message(reason));
       },
     );
     return () => {
       live = false;
     };
-  }, [control, community, ready, statusKey]);
+  }, [control, community, ready, statusKey, attempt]);
   if (!ready || !control.finishBetaTeam) return null;
-  const act = async (task: () => Promise<string | undefined>) => {
-    setWorking(true);
+  const act = async (
+    kind: "finding" | "setting",
+    task: () => Promise<string | undefined>,
+  ) => {
+    setBusy(kind);
     setProblem(null);
     try {
       setProblem((await task()) ?? null);
     } catch (reason) {
       setProblem(message(reason));
     } finally {
-      setWorking(false);
+      setBusy(null);
     }
   };
   // Arms the focus handoff for one choice; failure or refusal disarms it.
   const settled = (team: string, task: () => Promise<string | undefined>) =>
-    act(async () => {
+    act("setting", async () => {
       settle.current = team;
       try {
         const failed = await task();
@@ -312,7 +325,7 @@ export function BetaTeamSetup({
       .filter(Boolean)
       .join(", ");
   const findTeams = () =>
-    act(async () => {
+    act("finding", async () => {
       if (!control.restoreBetaTeams)
         throw new Error("Teams from old Buzz are unavailable.");
       // Finding again can expire the shown token, even on failure.
@@ -327,7 +340,7 @@ export function BetaTeamSetup({
   const known = pending ?? [];
   const done = pending !== null && !pending.length && !unrecorded.length;
   const body = () => {
-    if (working && !preview) return "Reading teams from old Buzz…";
+    if (busy === "finding") return "Reading teams from old Buzz…";
     if (done) return null;
     if (preview && !preview.groups.length)
       return `${oldBuzzLabel(library)} has no teams for your imported agents.${
@@ -411,7 +424,7 @@ export function BetaTeamSetup({
                 ref={find}
                 variant="ghost"
                 size="sm"
-                loading={working}
+                loading={busy === "finding"}
                 disabled={working || !unrecorded.length}
                 onClick={() => void findTeams()}
               >
@@ -422,6 +435,21 @@ export function BetaTeamSetup({
           )
         }
       />
+      {readProblem && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {readProblem}
+          </p>
+          <Button
+            variant="ghost"
+            size="compact"
+            disabled={working}
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
       {problem && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {problem}

@@ -38,7 +38,9 @@ type Request = {
   toolRoot?: string;
   interest: string;
 };
-type Saved = { threadId: string; workspace: string };
+/** `at` is when the binding last started a turn; bindings saved before it
+ * existed have none. */
+type Saved = { threadId: string; workspace: string; at?: number };
 type Active = {
   threadId?: string;
   turnId?: string;
@@ -64,6 +66,18 @@ type Entry = {
   saved: Record<string, Saved>;
 };
 export type SessionView = { key: string; status: string; detail: string };
+/** A saved binding, newest first, for the owner's transcript list. */
+export type SavedConversation = {
+  key: string;
+  channelId: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  root?: string;
+  threadId: string;
+  at?: number;
+};
+/** Bindings listed for the owner. */
+const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -128,23 +142,7 @@ export class CodexRuntime {
     const pubkey = request.agent.pubkey;
     const prior = this.entries.get(pubkey);
     if (prior) return prior;
-    let saved: Record<string, Saved> = {};
-    try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(pubkey)) ?? "{}",
-      );
-      if (stored && typeof stored === "object" && !Array.isArray(stored))
-        saved = Object.fromEntries(
-          Object.entries(stored).filter(
-            ([, value]) =>
-              value &&
-              typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
-          ),
-        );
-    } catch {
-      /* Start fresh after malformed local data. */
-    }
+    const saved = this.load(pubkey);
     const rpc = new AppServer((call) => this.tool(entry, call));
     const entry: Entry = {
       storageKey: this.storageKey(pubkey),
@@ -170,11 +168,66 @@ export class CodexRuntime {
     this.entries.set(pubkey, entry);
     return entry;
   }
+  private load(pubkey: string) {
+    try {
+      const stored: unknown = JSON.parse(
+        this.storage.getItem(this.storageKey(pubkey)) ?? "{}",
+      );
+      if (stored && typeof stored === "object" && !Array.isArray(stored))
+        return Object.fromEntries(
+          Object.entries(stored).filter(
+            ([, value]) =>
+              value &&
+              typeof value.threadId === "string" &&
+              typeof value.workspace === "string",
+          ),
+        ) as Record<string, Saved>;
+    } catch {
+      /* Start fresh after malformed local data. */
+    }
+    return {};
+  }
+  /** The agent's most recently used bindings in this community. */
+  conversations(pubkey: string): SavedConversation[] {
+    const saved = this.entries.get(pubkey)?.saved ?? this.load(pubkey);
+    const snapshot = this.relay.snapshot();
+    const channels =
+      snapshot.status === "ready"
+        ? snapshot.session.channels.list().channels
+        : [];
+    // Untimestamped bindings keep save order, newest last; listed newest first.
+    return Object.entries(saved)
+      .reverse()
+      .flatMap(([key, { threadId, at }]) => {
+        try {
+          const [channelId, root] = JSON.parse(key) as unknown[];
+          if (typeof channelId !== "string" || typeof root !== "string")
+            return [];
+          const name = channels.find((row) => row.id === channelId)?.name;
+          return [
+            {
+              key,
+              channelId,
+              ...(name ? { name } : {}),
+              ...(root === "channel" ? {} : { root }),
+              threadId,
+              ...(at === undefined ? {} : { at }),
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+      .slice(0, CONVERSATION_LIMIT);
+  }
   private storageKey(pubkey: string) {
     // Resume restores the persisted tool schema; pre-tools bindings start fresh.
     return `buzz.codex.sessions.v3:${this.scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
+    // Reinserted so the bounded set keeps the most recently used bindings.
+    delete entry.saved[key];
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
@@ -638,6 +691,7 @@ export class CodexRuntime {
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
+        at: Date.now(),
       });
       ready();
       this.status(agent.pubkey, key, "Working");

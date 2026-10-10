@@ -8,8 +8,10 @@ import {
   type Config,
   type Model,
 } from "./config";
+import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AppServer, listModels, type Spawn } from "./rpc";
-import type { CodexRuntime } from "./runtime";
+import type { CodexRuntime, SavedConversation } from "./runtime";
+import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
 
 type Catalog = { models: Model[]; account: string };
 /** Read-only setup/catalog discovery uses the same declared native transport. */
@@ -37,6 +39,15 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     await rpc.close();
   }
 }
+
+const message = (reason: unknown) =>
+  reason instanceof Error ? reason.message : String(reason);
+const label = ({ channelId, name, root }: SavedConversation) =>
+  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+type Read =
+  | { status: "ready"; transcript: CodexTranscript }
+  | { status: "missing" }
+  | { status: "error"; error: string };
 
 // Installed plugins use host React and its shared control classes, as #732 does.
 export function createTabs(
@@ -116,11 +127,111 @@ export function createTabs(
       retry: () => setAttempt((value) => value + 1),
     };
   }
+  /** One conversation's Codex thread, read on open and on Refresh. A refresh
+   * keeps the last result in place until the new one arrives. */
+  function TranscriptView({
+    agent,
+    conversation,
+    onBack,
+  }: {
+    agent: AgentViewProps<Config>["agent"];
+    conversation: SavedConversation;
+    onBack(): void;
+  }) {
+    const [read, setRead] = React.useState<Read>();
+    const [loading, setLoading] = React.useState(true);
+    const [attempt, setAttempt] = React.useState(0);
+    React.useEffect(() => {
+      const abort = new AbortController();
+      setLoading(true);
+      void readTranscript(
+        spawn,
+        conversation.threadId,
+        conversation,
+        abort.signal,
+      )
+        .then(
+          (transcript): Read =>
+            transcript
+              ? { status: "ready", transcript }
+              : { status: "missing" },
+          (reason): Read => ({ status: "error", error: message(reason) }),
+        )
+        .then((next) => {
+          if (abort.signal.aborted) return;
+          setRead(next);
+          setLoading(false);
+        });
+      return () => abort.abort();
+    }, [conversation, attempt]);
+    const description = (text: string) =>
+      h("p", { className: "buzz-field-description" }, text);
+    return h(
+      "div",
+      { style: { display: "grid", gap: "var(--space-4)" } },
+      h(
+        "div",
+        { style: { display: "flex", gap: "var(--space-2)" } },
+        button("Back", onBack),
+        button("Refresh", () => setAttempt((value) => value + 1), loading),
+      ),
+      h(
+        "h3",
+        { style: { fontSize: "inherit", margin: 0 } },
+        label(conversation),
+      ),
+      !read
+        ? h("p", { role: "status" }, "Reading the Codex session…")
+        : read.status === "missing"
+          ? description(
+              "Codex has no history for this conversation on this computer. Its session may have been deleted.",
+            )
+          : read.status === "error"
+            ? h(
+                "p",
+                { role: "alert" },
+                `Could not read the Codex session: ${read.error}`,
+              )
+            : h(ActivityTranscript, {
+                transcript: read.transcript,
+                agentName: agent.name,
+                state: () => (read.transcript.working ? "working" : undefined),
+                before: read.transcript.more
+                  ? description(`Showing the latest ${TURN_LIMIT} turns.`)
+                  : undefined,
+              }),
+    );
+  }
   function CodexTab({ agent }: AgentViewProps<Config>) {
     const { data, error, checking, retry } = useCatalog();
     const sessions = React.useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
     );
+    // Read on each render: bindings change as turns start, which also
+    // changes the session list this tab subscribes to.
+    const conversations = runtime.conversations(agent.pubkey);
+    const [open, setOpen] = React.useState<SavedConversation>();
+    if (open)
+      return h(TranscriptView, {
+        agent,
+        conversation: open,
+        onBack: () => setOpen(undefined),
+      });
+    const saved = new Set(conversations.map((row) => row.key));
+    const views = new Map(sessions.map((view) => [view.key, view]));
+    const detail = (text: string) =>
+      h(
+        "pre",
+        {
+          style: {
+            whiteSpace: "pre-wrap",
+            maxHeight: "12rem",
+            overflow: "auto",
+            fontSize: "0.75rem",
+          },
+        },
+        text,
+      );
     return h(
       "div",
       { style: { display: "grid", gap: "var(--space-4)" } },
@@ -141,7 +252,7 @@ export function createTabs(
         "Uses your existing Codex sign-in. Install Codex and run codex login in a terminal if needed.",
       ),
       h("h3", { style: { fontSize: "inherit", margin: 0 } }, "Conversations"),
-      sessions.length
+      conversations.length || sessions.length
         ? h(
             "ul",
             {
@@ -153,33 +264,47 @@ export function createTabs(
                 gap: "var(--space-4)",
               },
             },
-            sessions.map((session) =>
-              h(
+            // Work that failed before Codex started a thread has no binding.
+            sessions
+              .filter((view) => !saved.has(view.key))
+              .map((view) =>
+                h(
+                  "li",
+                  { key: view.key },
+                  h("p", null, h("code", null, view.key), " · ", view.status),
+                  view.detail ? detail(view.detail) : null,
+                ),
+              ),
+            conversations.map((conversation) => {
+              const view = views.get(conversation.key);
+              return h(
                 "li",
-                { key: session.key },
+                {
+                  key: conversation.key,
+                  style: { display: "grid", gap: "var(--space-2)" },
+                },
                 h(
                   "p",
-                  null,
-                  h("code", null, session.key),
-                  " · ",
-                  session.status,
+                  { style: { margin: 0 } },
+                  label(conversation),
+                  [
+                    view?.status,
+                    conversation.at
+                      ? new Date(conversation.at).toLocaleString()
+                      : undefined,
+                  ]
+                    .filter(Boolean)
+                    .map((part) => ` · ${part}`)
+                    .join(""),
                 ),
-                session.detail
-                  ? h(
-                      "pre",
-                      {
-                        style: {
-                          whiteSpace: "pre-wrap",
-                          maxHeight: "12rem",
-                          overflow: "auto",
-                          fontSize: "0.75rem",
-                        },
-                      },
-                      session.detail,
-                    )
-                  : null,
-              ),
-            ),
+                view?.detail ? detail(view.detail) : null,
+                h(
+                  "div",
+                  null,
+                  button("View transcript", () => setOpen(conversation)),
+                ),
+              );
+            }),
           )
         : h(
             "p",

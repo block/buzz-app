@@ -1253,3 +1253,53 @@ it.each([false, true])(
     });
   },
 );
+
+it("lists saved conversations newest first from storage, and moves a started one to the front", async () => {
+  const f = fixture();
+  const thread = JSON.stringify(["channel", root]);
+  const channel = JSON.stringify(["channel", "channel"]);
+  const elsewhere = JSON.stringify(["unlisted", root]);
+  f.storage.set(
+    `buzz.codex.sessions.v3:${scope}:${pubkey}`,
+    JSON.stringify({
+      [channel]: { threadId: "before-timestamps", workspace: "/w" },
+      [thread]: { threadId: "older", workspace: "/w", at: 1 },
+      [elsewhere]: { threadId: "newer", workspace: "/w", at: 2 },
+      "not a key": { threadId: "ignored", workspace: "/w", at: 3 },
+    }),
+  );
+  expect(f.runtime.conversations(pubkey)).toEqual([
+    {
+      key: elsewhere,
+      channelId: "unlisted",
+      root,
+      threadId: "newer",
+      at: 2,
+    },
+    {
+      key: thread,
+      channelId: "channel",
+      name: "test",
+      root,
+      threadId: "older",
+      at: 1,
+    },
+    {
+      key: channel,
+      channelId: "channel",
+      name: "test",
+      threadId: "before-timestamps",
+    },
+  ]);
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const [latest] = f.runtime.conversations(pubkey);
+  expect(latest?.at).toBeGreaterThan(2);
+  const stored = Object.keys(
+    JSON.parse(
+      f.storage.get(`buzz.codex.sessions.v3:${scope}:${pubkey}`) ?? "{}",
+    ),
+  );
+  expect(stored.at(-1)).toBe(latest?.key);
+  await f.complete();
+});

@@ -543,6 +543,7 @@ function ManagedAgents({
                   agent={agent}
                   control={control}
                   state={state}
+                  onConfigure={() => edit(agent, identity?.avatar)}
                 />
               }
               imported={agent.id === importedId}

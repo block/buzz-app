@@ -184,6 +184,7 @@ export function InventoryIdentityCard({
               agent={modelSetup}
               control={control}
               state={state}
+              onConfigure={() => edit(modelSetup, avatar)}
             />
           ) : decision.action === "unavailable" ? (
             <span

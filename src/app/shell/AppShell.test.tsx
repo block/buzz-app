@@ -222,6 +222,7 @@ it("keeps the sidebar unchanged while the card model picker opens and closes", a
           agent={fixture.agent}
           control={control}
           state={control.snapshot()}
+          onConfigure={() => {}}
         />
       </AppShell>
     </ToastProvider>,

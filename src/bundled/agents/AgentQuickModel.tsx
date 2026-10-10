@@ -1,3 +1,5 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { harnessPreset } from "../../features/agents/harness-presets";
 import { useRef, useState } from "react";
 import type {
@@ -12,15 +14,34 @@ export function AgentQuickModel({
   agent,
   control,
   state,
+  onConfigure,
 }: {
   agent: AgentView;
   control: AgentControl;
   state: AgentControlState;
+  onConfigure(): void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef(false);
   if (harnessPreset(agent.harness.command)) return null;
+  // Codex validates model and effort as one draft; model-only immediate saves
+  // cannot safely apply its configuration patches.
+  if (agent.harness.integration === "codex") {
+    return (
+      <Button
+        onClick={onConfigure}
+        disabled={state.busy}
+        variant="ghost"
+        aria-label="Configure Codex"
+      >
+        <CodexLogoIcon size={18} />
+        {agent.harness.configuration?.mode === "advanced"
+          ? agent.harness.model || "Codex"
+          : "Codex defaults"}
+      </Button>
+    );
+  }
   return (
     <div className="agent-quick-model">
       <div className="agent-quick-model-picker">

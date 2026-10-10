@@ -147,11 +147,11 @@ test("Codex Create supports keyboard selection, model-specific effort and edit",
       name: "Agent Browser Codex",
       exact: true,
     });
+    await expect(
+      created.getByRole("combobox", { name: "Codex configuration" }),
+    ).toHaveCount(0);
     await created
-      .getByRole("button", { name: "Actions for Browser Codex", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .getByRole("button", { name: "Configure Codex", exact: true })
       .click();
     const editor = page.getByRole("dialog", {
       name: "Edit agent",

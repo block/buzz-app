@@ -394,6 +394,7 @@ export function AgentControlPanel({
                     agent={agent}
                     control={control}
                     state={state}
+                    onConfigure={() => edit(agent)}
                   />
                 }
                 onEdit={edit}

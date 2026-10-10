@@ -17,6 +17,9 @@ import { createOAuthSession } from "./oauth/session";
 import { enrollmentFixture } from "./agents/enrollment-testing";
 import { createNameProvider } from "../../features/identity-names/directory";
 import { resolveIdentityNames } from "../../features/identity-names/policy";
+import { createRemoteBestie } from "../bestie/setup";
+import { BestiePage } from "../bestie";
+import type { Navigation } from "../../features/navigation/controller";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -283,6 +286,32 @@ it("binds login, list and creation to the plugin host and clears the session on 
           input.id === "block.builderlab" && input.revision === "bundled",
       ),
     ).toBe(true);
+    // Leaving Settings preserves the real provider's login for Bestie.
+    mounted.unmount();
+    community.setCommunity(null);
+    const bestie = createRemoteBestie(root.builderlab, community.relay);
+    try {
+      render(
+        <BestiePage
+          bestie={bestie}
+          navigation={{ open: vi.fn() } as unknown as Navigation}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Choose a community",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+      ).not.toBeInTheDocument();
+      act(() => community.setCommunity("https://community.example"));
+      expect(
+        screen.getByRole("button", { name: "Set up Bestie" }),
+      ).toBeEnabled();
+      cleanup();
+    } finally {
+      bestie.dispose();
+    }
+    const restored = render(<Card active={() => true} />);
     await act(async () => {
       runtime.reconcile([]);
     });
@@ -291,7 +320,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
-    mounted.unmount();
+    restored.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
     expect(agents2.types()).toMatchObject([

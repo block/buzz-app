@@ -48,7 +48,7 @@
   min-height: 0;
 }
 
-.listPane {
+.scroll {
   container-name: inbox-list;
   container-type: inline-size;
 }

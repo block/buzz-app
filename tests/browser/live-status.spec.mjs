@@ -275,3 +275,74 @@ async function openDiagnostics(page) {
     await summary.click();
   await expect(summary.locator("..")).toHaveAttribute("open", "");
 }
+
+test.describe("public preview recovery", () => {
+  test.use({ openSearch: true });
+  // Real browser geometry and focus: the wrapped recovery must remain outside
+  // the floating invitation, and removing Retry must leave focus in history.
+  test("keeps wrapped recovery clear of Join and restores keyboard focus to history", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto(app.origin);
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    await page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ })
+      .click();
+    const notice = page.getByRole("region", {
+      name: "Channel preview",
+      exact: true,
+    });
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    await expect(notice).toBeVisible();
+    await expect
+      .poll(() => app.relay.hasRoute("primary", app.openChannelId))
+      .toBe(true);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "20px";
+    });
+    app.relay.failRoute(
+      "primary",
+      app.openChannelId,
+      "error: Live updates are temporarily unavailable. Try reconnecting to this channel.",
+    );
+    const warning = page.getByRole("status", {
+      name: "Live updates need attention",
+      exact: true,
+    });
+    const retry = warning.getByRole("button", { name: "Retry live updates" });
+    await expect(warning).toBeVisible();
+    await expect
+      .poll(async () => {
+        const capsule = await notice.boundingBox();
+        const recovery = await warning.boundingBox();
+        return (
+          !!capsule && !!recovery && capsule.y + capsule.height <= recovery.y
+        );
+      })
+      .toBe(true);
+    await retry.click({ trial: true });
+    app.relay.holdEose(app.openChannelId);
+    try {
+      await retry.focus();
+      await retry.press("Enter");
+      await expect(history).toBeFocused();
+    } finally {
+      app.relay.releaseEose(app.openChannelId);
+    }
+    await expect(warning).toHaveCount(0);
+    await expect(history).toBeFocused();
+    await expect(
+      notice.getByRole("button", { name: "Join", exact: true }),
+    ).toBeVisible();
+  });
+});

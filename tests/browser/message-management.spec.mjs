@@ -391,7 +391,7 @@ test("media comment deletion keeps keyboard focus in its confirmation", async ({
     name: "Delete message?",
   });
   for (const cancelWith of ["Escape", "Cancel"]) {
-    await commentRow.hover();
+    await commentRow.getByText("My review comment", { exact: true }).hover();
     await trigger.click();
     await page
       .getByRole("menuitem", { name: "Delete message", exact: true })

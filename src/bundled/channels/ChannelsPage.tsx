@@ -24,7 +24,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
-import { ChannelJoinNotice } from "./ChannelJoinNotice";
+import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -218,7 +218,10 @@ function ChannelWorkspace({
     channelId: string;
     navigation: PageNavigation | undefined;
   }>();
+  const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  const historyContainer = useRef<HTMLDivElement>(null);
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
@@ -338,6 +341,19 @@ function ChannelWorkspace({
     !joinedRequest &&
     !!queries.channels.resolve &&
     resolved?.request !== navigation;
+  // Thread navigation revalidates access, but should not tear down the
+  // already-visible preview in this channel while that lookup is pending.
+  // Navigation can also briefly omit its request during the route handoff.
+  const visiblePreview = useRef<{
+    channelId: string;
+    queries: RelaySession;
+  }>(undefined);
+  const previewAvailable =
+    resolved?.request === navigation
+      ? resolved?.available
+      : !cached &&
+        visiblePreview.current?.channelId === requestedChannel &&
+        visiblePreview.current?.queries === queries;
   // Lifecycle completion must not reopen retained archived/hidden membership
   // through the mounted workspace's saved selection or first-channel fallback.
   const emptyDestination =
@@ -349,11 +365,20 @@ function ChannelWorkspace({
       ? (channels.find((channel) => channel.id === requestedChannel) ??
         // Sidebar visibility is not access: retain a joined archived selection.
         list.channels.find((channel) => channel.id === requestedChannel) ??
-        (resolved?.request === navigation && resolved?.available
+        (previewAvailable
           ? queries.channels.get?.(requestedChannel)
           : undefined))
-      : (channels.find((channel) => channel.id === selected) ??
+      : ((!navigation && !cached && visiblePreview.current?.queries === queries
+          ? queries.channels.get?.(visiblePreview.current.channelId)
+          : undefined) ??
+        channels.find((channel) => channel.id === selected) ??
         channels.find((item) => item.channelType !== "session"));
+  useLayoutEffect(() => {
+    visiblePreview.current =
+      current?.readOnly && !current.cached && !cached
+        ? { channelId: current.id, queries }
+        : undefined;
+  });
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
@@ -1241,6 +1266,14 @@ function ChannelWorkspace({
         {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
           className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
+          style={
+            {
+              "--channel-preview-inset":
+                current?.readOnly && !current.cached
+                  ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                  : "0px",
+            } as React.CSSProperties
+          }
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
@@ -1431,91 +1464,108 @@ function ChannelWorkspace({
               )}
               <SessionColumn enabled={flatSession}>
                 <MessageManagementStatus />
-                {flatSession &&
-                current &&
-                navigation &&
-                requestedMessage &&
-                exact &&
-                !exact.inTimeline ? (
-                  <SessionMessageTarget
-                    key={`${current.id}:${requestedMessage}`}
-                    session={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    messageId={requestedMessage}
-                    navigation={navigation}
-                    extensions={extensions}
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onLatest={() => select(current.id)}
-                    onRetry={() => {
-                      void navigator?.retry();
-                    }}
-                  />
-                ) : current ? (
-                  <ChannelBody
-                    viewer={viewer}
-                    extensions={extensions}
-                    key={current.id}
-                    queries={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    cached={cached}
-                    navigation={
-                      flatSession || !requestedMessage || exact?.inTimeline
-                        ? navigation
-                        : undefined
-                    }
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onOpenThread={flatSession ? undefined : openThread}
-                    onOpenMediaReview={openMediaReview}
-                    revealMessageId={
-                      sent?.channelId === current.id ? sent.id : undefined
-                    }
-                  />
-                ) : (
-                  <div
-                    className={styles.empty}
-                    data-buzz-launch-pending={
-                      resolving && !navigation?.signal.aborted
-                        ? "required"
-                        : undefined
-                    }
-                  >
-                    {resolving
-                      ? "Checking conversation access…"
-                      : "Select a channel to read it."}
-                  </div>
-                )}
-                {current?.readOnly && !current.cached && (
-                  <ChannelJoinNotice
-                    key={`join:${current.id}`}
-                    channelId={current.id}
-                    lifecycle={queries.channelLifecycle}
-                    joinable={
-                      !current.archived &&
-                      (current.channelType === "stream" ||
-                        current.channelType === "forum")
-                    }
-                    onJoin={() => setJoiningChannel(current.id)}
-                  />
-                )}
+                <div
+                  ref={historyContainer}
+                  className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
+                >
+                  {flatSession &&
+                  current &&
+                  navigation &&
+                  requestedMessage &&
+                  exact &&
+                  !exact.inTimeline ? (
+                    <SessionMessageTarget
+                      key={`${current.id}:${requestedMessage}`}
+                      session={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      messageId={requestedMessage}
+                      navigation={navigation}
+                      extensions={extensions}
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onLatest={() => select(current.id)}
+                      onRetry={() => {
+                        void navigator?.retry();
+                      }}
+                    />
+                  ) : current ? (
+                    <ChannelBody
+                      onContentReady={setContentReadyChannel}
+                      viewer={viewer}
+                      extensions={extensions}
+                      key={current.id}
+                      queries={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      cached={cached}
+                      navigation={
+                        flatSession || !requestedMessage || exact?.inTimeline
+                          ? navigation
+                          : undefined
+                      }
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onOpenThread={flatSession ? undefined : openThread}
+                      onOpenMediaReview={openMediaReview}
+                      revealMessageId={
+                        sent?.channelId === current.id ? sent.id : undefined
+                      }
+                    />
+                  ) : (
+                    <div
+                      className={styles.empty}
+                      data-buzz-launch-pending={
+                        resolving && !navigation?.signal.aborted
+                          ? "required"
+                          : undefined
+                      }
+                    >
+                      {resolving
+                        ? "Checking conversation access…"
+                        : "Select a channel to read it."}
+                    </div>
+                  )}
+                  {current?.readOnly && !current.cached && (
+                    <ChannelJoinNotice
+                      key={`join:${current.id}`}
+                      ready={contentReadyChannel === current.id}
+                      channelId={current.id}
+                      lifecycle={queries.channelLifecycle}
+                      joinable={
+                        !current.archived &&
+                        (current.channelType === "stream" ||
+                          current.channelType === "forum")
+                      }
+                      onJoin={() => setJoiningChannel(current.id)}
+                      onHeightChange={setJoinNoticeHeight}
+                    />
+                  )}
+                </div>
                 {!cached && (
                   <LiveStatus
                     live={queries.live}
                     channelId={current?.id}
                     partialRoster={list.coverage === "partial"}
-                    // Retry removes this focused control. Reuse the composer’s
-                    // explicit focus handoff instead of relying on browser Tab memory.
+                    // Retry removes this control; previews have no composer.
                     onRetry={
                       current
-                        ? () => setComposerFocus((value) => value + 1)
+                        ? () => {
+                            if (current.readOnly && !current.cached) {
+                              historyContainer.current
+                                ?.querySelector<HTMLElement>(
+                                  "[data-message-scroller]",
+                                )
+                                ?.focus({ preventScroll: true });
+                            } else {
+                              setComposerFocus((value) => value + 1);
+                            }
+                          }
                         : undefined
                     }
                   />
                 )}
-                {current && (
+                {current && (!current.readOnly || current.cached) && (
                   <MessageComposer
                     sessionConversation={current.channelType === "session"}
                     extensions={extensions}
@@ -1525,7 +1575,10 @@ function ChannelWorkspace({
                     channelId={current.id}
                     channelName={current.name}
                     autoFocus={
-                      !current.readOnly && !requestedMessage && !requestedThread
+                      !current.readOnly &&
+                      !requestedMessage &&
+                      !requestedThread &&
+                      !showingThread
                     }
                     onOpenLink={openLink}
                     canOpenLink={canOpenLink}

@@ -368,3 +368,81 @@ it("recovers a refused restore through the real agent control", async () => {
   );
   real.dispose();
 });
+
+it("offers both libraries when the host reports no inventory", async () => {
+  const restoreBetaTeams = vi.fn(async () => previewed("t"));
+  render(
+    <BetaTeamSetup
+      control={control({ restoreBetaTeam: vi.fn(), restoreBetaTeams })}
+      state={
+        {
+          status: "ready",
+          busy: false,
+          data: { agents: [agent("a1", null)] },
+        } as unknown as AgentControlState
+      }
+      session={session}
+      viewer={viewer}
+    />,
+  );
+  await screen.findByRole("button", { name: "Find teams" });
+  await choose("Old Buzz (Development)");
+  fireEvent.click(screen.getByRole("button", { name: "Find teams" }));
+  expect(
+    await screen.findByRole("button", { name: "Restore team Writers" }),
+  ).toBeVisible();
+  expect(restoreBetaTeams).toHaveBeenCalledWith("development", ["a1"]);
+});
+
+it("never claims setup is done when pending teams could not be read", async () => {
+  const betaTeams = vi.fn(async () => {
+    throw new Error("Pending teams could not be read.");
+  });
+  mount(
+    control({ betaTeams, restoreBetaTeam: vi.fn(), restoreBetaTeams: vi.fn() }),
+    [agent("a1", { teamId: "beta-1", name: "W", status: "pending" })],
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Pending teams could not be read.",
+  );
+  expect(screen.queryByText("All teams from old Buzz are set up.")).toBeNull();
+});
+
+it("keeps keyboard focus in the section after a chosen text finishes its row", async () => {
+  const betaTeams = vi.fn(async () => [team(["ONE", "TWO"])]);
+  runner.runBetaTeamStep.mockReset().mockImplementation(async () => {
+    betaTeams.mockResolvedValue([]);
+    return { finished: ["a1"], failed: [] };
+  });
+  const c = control({ betaTeams });
+  const { rerender } = mount(c, [
+    agent("a1", { teamId: "beta-1", name: "Writers", status: "pending" }),
+  ]);
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Choose instructions for Writers",
+    }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers with instructions 2",
+    }),
+  );
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  // The finished agent's new status triggers the re-read that drops the row.
+  rerender(
+    <BetaTeamSetup
+      control={c}
+      state={state([
+        agent("a1", { teamId: "beta-1", name: "Writers", status: "completed" }),
+      ])}
+      session={session}
+      viewer={viewer}
+    />,
+  );
+  expect(
+    await screen.findByText("All teams from old Buzz are set up."),
+  ).toBeVisible();
+  const region = screen.getByRole("region", { name: "From old Buzz" });
+  await waitFor(() => expect(region).toHaveFocus());
+});

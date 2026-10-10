@@ -169,13 +169,17 @@ export function BetaTeamSetup({
   );
   useEffect(() => session.channelKit.ensure(), [session]);
   const community = sessionCommunity(session.scope, viewer);
-  const [pending, setPending] = useState<PendingBetaTeam[]>([]);
+  // Null until the first successful read: unknown is never "all set up".
+  const [pending, setPending] = useState<PendingBetaTeam[] | null>(null);
   const [preview, setPreview] = useState<BetaTeamRestorePreview | null>(null);
   const [source, setSource] = useState<ImportSource>("installed");
   const [working, setWorking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const find = useRef<HTMLButtonElement>(null);
   const [refind, setRefind] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  // A finished choice removes its row, and with it the focused control.
+  const settle = useRef(false);
   const ready = kit.status === "ready" && state.status === "ready";
   // A refused restore needs a fresh preview. The control hides this section
   // until status is confirmed again, so wait for an enabled Find to exist.
@@ -184,6 +188,13 @@ export function BetaTeamSetup({
     find.current.focus();
     setRefind(false);
   }, [refind, working, ready]);
+  useEffect(() => {
+    if (!settle.current || working) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    settle.current = false;
+    section.current?.focus();
+  });
   const agents = sameCommunityAgents(state.data?.agents ?? [], session.scope);
   const unrecorded = agents.filter((agent) => agent.betaTeam === null);
   // Re-read whenever an agent's team status or revision changes.
@@ -196,7 +207,11 @@ export function BetaTeamSetup({
     void statusKey;
     control.betaTeams(community).then(
       (teams) => live && setPending(teams),
-      (reason) => live && setProblem(message(reason)),
+      (reason) => {
+        if (!live) return;
+        setPending(null);
+        setProblem(message(reason));
+      },
     );
     return () => {
       live = false;
@@ -216,6 +231,7 @@ export function BetaTeamSetup({
   };
   const finish = (team: PendingBetaTeam, text: string) =>
     act(async () => {
+      settle.current = true;
       const { failed } = await runBetaTeamStep(
         session.channelKit,
         control,
@@ -231,6 +247,7 @@ export function BetaTeamSetup({
     text: string,
   ) =>
     act(async () => {
+      settle.current = true;
       if (!control.restoreBetaTeam || !control.betaTeams)
         throw new Error("Teams from old Buzz are unavailable.");
       await control
@@ -254,10 +271,13 @@ export function BetaTeamSetup({
       return failed[0];
     });
   const canRestore = !!control.restoreBetaTeams && !!control.restoreBetaTeam;
-  // Which old Buzz libraries this machine has, from the agent inventory.
-  const libraries = (["installed", "development"] as const).filter((value) =>
+  // Only an inventory naming exactly one library hides the other; older
+  // hosts omit it, and an unreadable library can keep stale rows.
+  const sources = ["installed", "development"] as const;
+  const listed = sources.filter((value) =>
     state.data?.parked?.some((row) => row.sources.includes(value)),
   );
+  const libraries = listed.length === 1 ? listed : sources;
   const library =
     libraries.length === 1 ? (libraries[0] as ImportSource) : source;
   const names = (team: PendingBetaTeam) =>
@@ -278,7 +298,8 @@ export function BetaTeamSetup({
       setPreview(next);
       return undefined;
     });
-  const done = !pending.length && !unrecorded.length;
+  const known = pending ?? [];
+  const done = pending !== null && !pending.length && !unrecorded.length;
   const body = () => {
     if (working && !preview) return "Reading teams from old Buzz…";
     if (done) return null;
@@ -288,13 +309,13 @@ export function BetaTeamSetup({
           ? " If your agents also lived in the other library, choose it above and find again."
           : ""
       }`;
-    if (!preview && !pending.length)
+    if (!preview && !known.length)
       return "Find the teams your imported agents belonged to in old Buzz. Nothing changes until you restore a team.";
     return null;
   };
   const line = body();
   const rows = [
-    ...pending.map((team) => (
+    ...known.map((team) => (
       <TeamRow
         key={`pending:${team.teamId}`}
         team={team}
@@ -325,8 +346,10 @@ export function BetaTeamSetup({
   ];
   return (
     <section
+      ref={section}
+      tabIndex={-1}
       aria-labelledby="old-buzz-teams"
-      className="flex flex-col gap-3 text-body"
+      className="flex flex-col gap-3 text-body outline-none"
     >
       <InlineHeader
         id="old-buzz-teams"

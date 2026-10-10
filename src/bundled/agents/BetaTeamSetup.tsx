@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -81,6 +81,14 @@ export function BetaTeamSetup({
   const [source, setSource] = useState<ImportSource>("installed");
   const [working, setWorking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const find = useRef<HTMLButtonElement>(null);
+  const [refind, setRefind] = useState(false);
+  // A refused restore needs a fresh preview; offer it once the button is enabled.
+  useEffect(() => {
+    if (!refind || working) return;
+    find.current?.focus();
+    setRefind(false);
+  }, [refind, working]);
   const agents = sameCommunityAgents(state.data?.agents ?? [], session.scope);
   const unrecorded = agents.filter((agent) => agent.betaTeam === null);
   // Re-read whenever an agent's team status or revision changes.
@@ -130,12 +138,12 @@ export function BetaTeamSetup({
     act(async () => {
       if (!control.restoreBetaTeam || !control.betaTeams)
         throw new Error("Teams from old Buzz are unavailable.");
-      await control.restoreBetaTeam(
-        community,
-        preview.token,
-        group.teamId,
-        text,
-      );
+      await control
+        .restoreBetaTeam(community, preview.token, group.teamId, text)
+        .catch((reason) => {
+          setRefind(true);
+          throw reason;
+        });
       setPreview(null);
       const team = (await control.betaTeams(community)).find(
         (t) => t.teamId === group.teamId,
@@ -177,7 +185,7 @@ export function BetaTeamSetup({
           />
         </div>
       ))}
-      {canRestore && !preview && (
+      {canRestore && (
         <div className="flex items-center gap-2">
           <label className="agent-control-field">
             <span>Old Buzz library</span>
@@ -193,6 +201,7 @@ export function BetaTeamSetup({
             </select>
           </label>
           <Button
+            ref={find}
             disabled={working}
             onClick={() =>
               void act(async () => {
@@ -209,7 +218,7 @@ export function BetaTeamSetup({
               })
             }
           >
-            Find teams from old Buzz
+            {preview ? "Find teams again" : "Find teams from old Buzz"}
           </Button>
         </div>
       )}

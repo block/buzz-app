@@ -159,3 +159,78 @@ it("shows nothing without pending teams or unrecorded imports", async () => {
   await waitFor(() => expect(betaTeams).toHaveBeenCalled());
   expect(view.container).toBeEmptyDOMElement();
 });
+
+it("finds again after an empty result, in the other library", async () => {
+  const restoreBetaTeams = vi
+    .fn()
+    .mockResolvedValueOnce({ token: "t1", groups: [] })
+    .mockResolvedValueOnce({ token: "t2", groups: [] })
+    .mockResolvedValueOnce({
+      token: "t3",
+      groups: [{ ...team(["BETA"]), inferred: false }],
+    });
+  const c = control({ restoreBetaTeam: vi.fn(), restoreBetaTeams });
+  mount(c, [agent("a1", null)]);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(/No teams/);
+  const again = screen.getByRole("button", { name: "Find teams again" });
+  fireEvent.click(again);
+  await waitFor(() => expect(restoreBetaTeams).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(again).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Old Buzz library"), {
+    target: { value: "development" },
+  });
+  fireEvent.click(again);
+  expect(
+    await screen.findByRole("button", { name: "Restore team Writers" }),
+  ).toBeVisible();
+  expect(restoreBetaTeams).toHaveBeenLastCalledWith("development", ["a1"]);
+});
+
+it("re-previews after a refused restore, then restores with the new token", async () => {
+  runner.runBetaTeamStep
+    .mockReset()
+    .mockResolvedValue({ finished: ["a1"], failed: [] });
+  const restoreBetaTeam = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("preview the restore again"))
+    .mockResolvedValueOnce({});
+  const restoreBetaTeams = vi
+    .fn()
+    .mockResolvedValueOnce({
+      token: "old",
+      groups: [{ ...team(["BETA"]), inferred: false }],
+    })
+    .mockResolvedValueOnce({
+      token: "new",
+      groups: [{ ...team(["BETA"]), inferred: false }],
+    });
+  const c = control({ restoreBetaTeam, restoreBetaTeams });
+  mount(c, [agent("a1", null)]);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Restore team Writers" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "preview the restore again",
+  );
+  const again = screen.getByRole("button", { name: "Find teams again" });
+  await waitFor(() => expect(again).toHaveFocus());
+  fireEvent.click(again);
+  await waitFor(() => expect(restoreBetaTeams).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(again).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Restore team Writers" }));
+  await waitFor(() =>
+    expect(restoreBetaTeam).toHaveBeenLastCalledWith(
+      "https://relay.example.test",
+      "new",
+      "beta-1",
+      "BETA",
+    ),
+  );
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});

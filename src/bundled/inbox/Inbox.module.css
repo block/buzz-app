@@ -48,6 +48,11 @@
   min-height: 0;
 }
 
+.listPane {
+  container-name: inbox-list;
+  container-type: inline-size;
+}
+
 .detail {
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
@@ -169,6 +174,16 @@
   align-items: center;
   gap: var(--space-row-gap);
   min-width: 0;
+}
+
+/* Keep the sibling action from consuming the label in a narrow list pane. */
+@container inbox-list (max-width: 24rem) {
+  .rowSurface {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rowArchive {
+    justify-self: end;
+  }
 }
 
 .unreadSlot {

@@ -8,11 +8,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "vite",
-    "dev:desktop": "vite --strictPort",
+    "dev": "vite --force",
+    "dev:desktop": "vite --strictPort --force",
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "author:build": "node scripts/build-author.mjs",
+    "buzz-mcp": "vite build --config vite.buzz-mcp.config.ts",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -43,6 +44,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@jsquash/webp": "1.5.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "@noble/curves": "2.0.1",
     "@tabler/icons": "3.46.0",
     "@tabler/icons-react": "3.46.0",
@@ -77,6 +79,7 @@
     "react-markdown": "10.1.0",
     "remark-breaks": "4.0.0",
     "remark-gfm": "4.0.1",
+    "sonner": "2.0.8",
     "virtua": "0.51.0",
     "yaml": "2.9.1"
   },

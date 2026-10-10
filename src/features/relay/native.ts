@@ -21,8 +21,7 @@ import {
   privateTag,
   privateCoordinate,
   parsePrivateRecord,
-  type PayloadRecord,
-  type KitRecord,
+  type PrivateRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
 import { communityGitRepository } from "../projects/git";
@@ -37,7 +36,7 @@ import { projectGitHost } from "../projects/git";
 import { PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
-import type { ReadStateSigning } from "./read-state-host";
+import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
 import {
   readSnapshotCommunity,
   readSnapshotFilter,
@@ -54,6 +53,7 @@ import { observerFrame } from "../agents/observer";
 import { archiveClient } from "../archive/client";
 import {
   acceptPublish,
+  acceptReadStatePublish,
   admitSignedRequest,
   connectSignedTransport,
   admittedSignedWorkflowRead,
@@ -477,7 +477,7 @@ export async function connectNativeTransport(
       return id;
     },
     channelKit: {
-      async prepare(record: KitRecord | PayloadRecord, signal) {
+      async prepare(record: PrivateRecord, signal) {
         signal.throwIfAborted();
         const valid = parsePrivateRecord(record, origin);
         const content = await invoke<string>("relay_kit_prepare", {
@@ -495,7 +495,7 @@ export async function connectNativeTransport(
           throw new Error("Recipe decode capacity exceeded");
         const owned = events.map(eventDto);
         const decoded = await invoke<
-          { eventId: string; record: KitRecord | PayloadRecord }[]
+          { eventId: string; record: PrivateRecord }[]
         >("relay_kit_decode", {
           community: origin,
           events: owned,
@@ -775,9 +775,11 @@ export async function connectNativeTransport(
             return nativeResponse(result);
           },
           signal,
+          "foreground",
+          readStateRefusal,
         );
         signal.throwIfAborted();
-        await acceptPublish(response, event.id);
+        await acceptReadStatePublish(response, event.id);
       },
     },
     ...(readCommunity

@@ -441,30 +441,6 @@ test("saved icon discovery survives join-policy failure without changing join di
   }
 });
 
-test("GIF capability discovery does not depend on join-policy availability", async () => {
-  const h = await harness((call) => {
-    if (call.url === fixtureRelayUrl)
-      return Response.json({
-        supported_extensions: ["buzz-gif"],
-        gif: { provider: "klipy", search: "/gifs/search" },
-      });
-    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
-      return new Response("unavailable", { status: 503 });
-    return new Response(null, { status: 404 });
-  });
-  try {
-    const response = await h.get("gif-info");
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      supported_extensions: ["buzz-gif"],
-      gif: { provider: "klipy", search: "/gifs/search" },
-    });
-    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
-  } finally {
-    await h.close();
-  }
-});
-
 test("GIF discovery retries unsupported relays and caches confirmed support", async () => {
   let supported = false;
   const descriptor = {
@@ -913,32 +889,6 @@ test("media proxy neutralizes non-media content types as downloads", async () =>
     expect(response.headers.get("content-disposition")).toBe("attachment");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("accept-ranges")).toBeNull();
-    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
-  } finally {
-    await h.close();
-  }
-});
-
-test("media proxy strips smuggled audio content type parameters", async () => {
-  const bytes = Buffer.from("fake audio then svg");
-  const h = await harness(
-    () =>
-      new Response(bytes, {
-        headers: {
-          "Content-Type": "audio/mpeg;x, image/svg+xml",
-          "Content-Length": String(bytes.length),
-          "Accept-Ranges": "bytes",
-        },
-      }),
-  );
-  try {
-    const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
-    );
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("audio/mpeg");
-    expect(response.headers.get("content-disposition")).toBeNull();
-    expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
   } finally {
     await h.close();
@@ -3059,7 +3009,6 @@ test.each([
     "TimeoutError",
     500,
   ],
-  [new SyntaxError("private response body"), "SyntaxError", 500],
   [
     new TypeError("private URL", { cause: { code: "ECONNREFUSED" } }),
     "TypeError (ECONNREFUSED)",

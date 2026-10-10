@@ -354,6 +354,7 @@ function teamFixture() {
   } as unknown as AgentControl;
   const kit = {
     loadTeam: vi.fn(async () => portable),
+    readText: vi.fn(async () => ({ text: "CURRENT", head: "h" })),
   } as unknown as ChannelKit;
   const artifacts: TeamSnapshot[] = [];
   const empty: unknown[] = [];
@@ -404,7 +405,7 @@ it("team adapter defaults to none and actual PNG preserves the native portable p
   );
   await copy();
   expect(f.exported).toHaveBeenCalledExactlyOnceWith(
-    f.portable,
+    { name: "Harmless team", instructions: "CURRENT" },
     ["ab".repeat(32)],
     "https://connected.example",
     "none",
@@ -434,7 +435,7 @@ it("team adapter calls memory export only after explicit confirmation and encode
   );
   await screen.findByRole("button", { name: "Copied" });
   expect(f.exported).toHaveBeenCalledExactlyOnceWith(
-    f.portable,
+    { name: "Harmless team", instructions: "CURRENT" },
     ["ab".repeat(32)],
     "https://connected.example",
     "core",

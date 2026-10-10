@@ -38,6 +38,11 @@ pub(crate) struct Request {
     host: String,
     filter: String,
     action: Operation,
+    /// Stable native identity. Editable executable names never grant managed
+    /// Codex behavior.
+    integration: Option<buzz_agent_controller::HarnessIntegration>,
+    /// Optional model whose reported effort metadata should be returned.
+    selected_model: Option<String>,
     /// Blank host/filter are inherited from write-only Agent defaults the UI
     /// cannot see, so native supplies them instead of treating blank as explicit.
     #[serde(default)]
@@ -61,11 +66,30 @@ pub(crate) struct Catalog {
     disconnected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tested_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codex: Option<CodexCatalog>,
 }
 #[derive(Serialize)]
 struct Model {
     id: String,
     name: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexCatalog {
+    /// False means no usable model option was published. True with an empty
+    /// `models` array is a known-empty catalog.
+    models_known: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<CodexEffort>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexEffort {
+    model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current: Option<String>,
+    options: Vec<Model>,
 }
 struct Ticket {
     id: u64,
@@ -262,6 +286,37 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
 ) -> Result<Catalog, String> {
     let host = state.inner().clone();
     let controller = agents.inner().clone();
+    if request.integration == Some(buzz_agent_controller::HarnessIntegration::Codex) {
+        if !matches!(request.action, Operation::Connect | Operation::Refresh) {
+            return host
+                .run(ticket, async {
+                    Err("Codex model discovery supports Browse and Refresh only".into())
+                })
+                .await;
+        }
+        let prepared = match request.edit.clone() {
+            Some(edit) => {
+                controller
+                    .codex_model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
+            }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        };
+        let selected_model = request.selected_model.clone();
+        return host
+            .run(ticket, async move {
+                #[cfg(unix)]
+                return crate::codex_models::discover(&prepared?, selected_model.as_deref())
+                    .await
+                    .map(codex_catalog);
+                #[cfg(not(unix))]
+                {
+                    let _ = (prepared, selected_model);
+                    Err("Codex model discovery is not supported on this platform".into())
+                }
+            })
+            .await;
+    }
     if request.edit.as_ref().is_some_and(|e| {
         std::path::Path::new(&e.harness.command)
             .file_name()
@@ -292,6 +347,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                         model_overridden: false,
                         disconnected: false,
                         tested_model: Some(tested_model),
+                        codex: None,
                     });
                 }
                 let models = crate::pi_models::fetch(context)
@@ -308,6 +364,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     model_overridden: false,
                     disconnected: false,
                     tested_model: None,
+                    codex: None,
                 })
             })
             .await;
@@ -351,6 +408,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                         model_overridden: false,
                         disconnected: false,
                         tested_model: (!selection_overridden).then_some(tested_model),
+                        codex: None,
                     });
                 }
                 let model_overridden = context.model_overridden;
@@ -368,6 +426,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     model_overridden,
                     disconnected: false,
                     tested_model: None,
+                    codex: None,
                 })
             })
             .await;
@@ -464,6 +523,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 model_overridden,
                 disconnected: true,
                 tested_model: None,
+                codex: None,
             });
         }
         execute(
@@ -645,7 +705,43 @@ async fn execute(
         model_overridden,
         disconnected: false,
         tested_model: None,
+        codex: None,
     })
+}
+
+#[cfg(unix)]
+fn codex_catalog(discovery: crate::codex_models::Discovery) -> Catalog {
+    let models = discovery
+        .models
+        .into_iter()
+        .map(|entry| Model {
+            id: entry.id,
+            name: entry.name,
+        })
+        .collect();
+    let effort = discovery.effort.map(|effort| CodexEffort {
+        model: effort.model,
+        current: effort.current,
+        options: effort
+            .options
+            .into_iter()
+            .map(|entry| Model {
+                id: entry.id,
+                name: entry.name,
+            })
+            .collect(),
+    });
+    Catalog {
+        host: String::new(),
+        models,
+        model_overridden: false,
+        disconnected: false,
+        tested_model: None,
+        codex: Some(CodexCatalog {
+            models_known: true,
+            effort,
+        }),
+    }
 }
 
 #[cfg(test)]

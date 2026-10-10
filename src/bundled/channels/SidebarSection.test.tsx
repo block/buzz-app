@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -114,3 +115,198 @@ it("retains an expansion requested by an offscreen unread cue on subsequent rend
   expect(details).toHaveAttribute("open");
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();
 });
+
+it("offers confirmed removal for custom sections", async () => {
+  const user = userEvent.setup();
+  const remove = vi.fn();
+  render(
+    <SidebarSection
+      sectionKey="group:work"
+      title="Work"
+      open
+      onToggle={() => {}}
+      onRemove={remove}
+      channelCount={1}
+    >
+      <button type="button">General</button>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Work" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove section" }),
+  );
+  const confirmation = screen.getByRole("dialog", { name: "Remove Work?" });
+  expect(confirmation).toHaveAccessibleDescription(
+    "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+  );
+  expect(remove).not.toHaveBeenCalled();
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Cancel" }),
+  );
+  expect(remove).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Work" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove section" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Remove Work?" })).getByRole(
+      "button",
+      { name: "Remove section" },
+    ),
+  );
+  expect(remove).toHaveBeenCalledOnce();
+});
+
+it("holds confirmation while removing, shows failure, and permits explicit retry", async () => {
+  const user = userEvent.setup();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, no) => {
+    reject = no;
+  });
+  const remove = vi
+    .fn()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValueOnce(undefined);
+  render(
+    <SidebarSection
+      sectionKey="group:work"
+      title="Work"
+      open
+      onToggle={() => {}}
+      onRemove={remove}
+    >
+      <button type="button">General</button>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Work" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove section" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Remove Work?" });
+  try {
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    await waitFor(() => expect(remove).toHaveBeenCalledOnce());
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toBeDisabled();
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "waiting for confirmation",
+    );
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeVisible();
+  } finally {
+    reject(new Error("Publication not confirmed"));
+  }
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Publication not confirmed",
+  );
+  // The modal deliberately makes the retained sidebar aria-hidden.
+  expect(screen.getByText("General", { exact: true })).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove section" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(remove).toHaveBeenCalledTimes(2);
+});
+it.each(["Cancel", "Escape"])(
+  "restores section focus after failure then %s",
+  async (dismiss) => {
+    const user = userEvent.setup();
+    const remove = vi
+      .fn()
+      .mockRejectedValue(new Error("Publication not confirmed"));
+    render(
+      <SidebarSection
+        sectionKey="group:work"
+        title="Work"
+        open
+        onToggle={() => {}}
+        onRemove={remove}
+      >
+        <button type="button">General</button>
+      </SidebarSection>,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "More actions for Work",
+    });
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove section" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Remove Work?" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove section" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Publication not confirmed",
+    );
+    if (dismiss === "Cancel")
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    else await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(remove).toHaveBeenCalledOnce();
+  },
+);
+
+it("never offers removal for built-in sections even when a callback is supplied", async () => {
+  const user = userEvent.setup();
+  const remove = vi.fn();
+  render(
+    <SidebarSection
+      sectionKey="channels"
+      title="Channels"
+      open
+      onToggle={() => {}}
+      onRemove={remove}
+    >
+      <button type="button">General</button>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await screen.findByRole("menuitem", { name: "Collapse section" });
+  expect(screen.queryByRole("menuitem", { name: "Remove section" })).toBeNull();
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it.each([0, 2])(
+  "describes %s channels in removal confirmation",
+  async (count) => {
+    const user = userEvent.setup();
+    render(
+      <SidebarSection
+        sectionKey="group:work"
+        title="Work"
+        open
+        onToggle={() => {}}
+        onRemove={() => {}}
+        channelCount={count}
+      >
+        <span>Rows</span>
+      </SidebarSection>,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove section" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Remove Work?" }),
+    ).toHaveAccessibleDescription(
+      `${count} channels will move back to Channels. This does not delete any channels or saved templates.`,
+    );
+  },
+);

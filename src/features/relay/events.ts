@@ -53,6 +53,13 @@ export function eventDto(value: unknown): RelayEvent {
   return checkedEvent(value, verifyEvent);
 }
 
+/** A whole query response; one bad event rejects it, as relay reads do. */
+export function eventsDto(value: unknown): RelayEvent[] {
+  if (!Array.isArray(value))
+    throw new Error("Relay response is not an event array");
+  return value.map(eventDto);
+}
+
 /** One HTTP connection's bounded proof memo, not an event/result cache. Only a
  * matching content hash AND exact signature can reuse a successful verification.
  * Retains no payload, authorization, freshness or caller-supplied proof symbols. */

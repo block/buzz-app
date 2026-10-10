@@ -9,6 +9,8 @@ it.each([
   "[#we",
   "line\n#we",
   "#日本語",
+  "#wes crew",
+  "#we ",
 ])("matches a prose trigger: %s", (text) => {
   const start = text.lastIndexOf("#");
   expect(channelQuery(text, text.length)).toEqual({
@@ -23,7 +25,7 @@ it.each([
   "https://example.test/#we",
   "\\#we",
   "##we",
-  "#we ",
+  "#we\nnext",
   "#we#other",
   "#we`",
   `word${"x".repeat(160)}#we`,

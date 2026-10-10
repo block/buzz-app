@@ -34,6 +34,23 @@ Bundled and local plugins use the same contribution contracts. Within the source
 tree, shared implementation code remains importable without another registration
 layer; this is not a promise that external artifacts can import host source paths.
 
+### Interface composition
+
+Owning a React tree does not require inventing its visual system. Use the
+[design guide's surface recipes](../src/shared/design-system/DESIGN.md#compose-the-whole-surface)
+and [contribution ownership table](../src/shared/design-system/DESIGN.md#plugin-contribution-boundaries)
+before building a page, panel, Settings contribution, dialog, or menu. Establish
+which host supplies the outer surface, header, scrolling, and dismissal before
+adding any of them. The Settings host renders contributed content directly;
+registration metadata does not supply its content heading or group layout.
+
+Source plugins reuse shared components; external artifacts use their supported
+author contract and exposed roles. This is design guidance, not a new component
+SDK or automatic conformance guarantee. Keep specialized layouts and product
+behavior with the plugin, while preserving shared controls, states, and host
+lifecycle. The [adoption review](design-system-adoption.md#composition-review)
+distinguishes reusable examples from existing gaps.
+
 
 ## Code arrangement
 
@@ -81,7 +98,7 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -134,13 +151,51 @@ External plugins ship no separate assets, so inline the art into `plugin.js`, fo
 example with a bundler `?inline` import.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
-contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Panels receive `{ target, close }` plus
+contribution, the target string, and a close callback. Among active panels whose
+matcher accepts the target, the lowest `order` wins; a throwing matcher is
+skipped. Panels receive `{ target, close }` plus
 optional host context. A conversation host may supply
 `context: { channelId, canOpen, open }` for contextual panel-to-panel actions.
 `canOpen` is advisory active-target availability; `open` re-resolves at click time
 and returns false after the originating opening, channel, session or host
 presentation retires. This is not a global navigation API or an access grant.
+
+### Resolution order
+
+Panels and link renderers share one rule when several match the same target.
+It covers only those two: message renderers (`registerMessage`, rendered by
+`MessageBody`) keep first-active-match semantics and accept no `order`.
+`order` is optional and defaults to `0`; lower wins, and equal orders fall to
+ascending contribution key (`pluginId/contributionId`), so activation, load
+latency and disable/re-enable never decide the winner. `matches` stays boolean,
+so `canOpen` is unchanged. Three bands by convention:
+
+| Band | Meaning |
+| --- | --- |
+| `-10` | Specialises a target another plugin already handles (a richer GitHub PR view). |
+| `0` | Default: the plugin is specific to the targets it matches (GitHub, Profiles, Activity). |
+| `100` | Catch-all or fallback: anything under a scheme or host (a website panel, a globe icon). |
+
+Bundled catch-alls declare `100` themselves, so a third-party plugin specific to
+one service wins at the default without knowing the convention. A static number
+covers a plugin that is uniformly broad or specific. A plugin whose matcher already
+knows which class it hit can instead supply a function, evaluated per target; a
+throwing or non-finite result counts as `0`:
+
+```ts
+ctx.panels.register({
+  id: "docs",
+  title: "Docs",
+  matches: (target) => target.startsWith("https://docs.google.com/"),
+  // Previews Docs natively; embeds anything else under the host as a fallback.
+  order: (target) => (/\/document\//.test(target) ? 0 : 100),
+  component: DocsPanel,
+});
+```
+
+Same-band overlaps between two plugins that both consider themselves specific are
+not arbitrated; the key decides. Register a separate contribution per band when
+one plugin needs different titles for its specific and fallback views.
 Channel-header launchers use the separate public `channelContext` metadata
 contract described below; launcher/fallback panels need not have either context.
 A plugin that needs shared data declares `relay` in its
@@ -313,8 +368,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
-toggle, check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, In progress and Done, with add, a per-item status
+selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
@@ -464,10 +519,10 @@ Plugins can declare host access in `manifest.json`:
 }
 ```
 
-Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id, input?)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
 ID; the program and arguments come only from the plugin's manifest. Native
-execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
+execution uses no shell, accepts no stdin by default, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
 1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
 bound returns `null` without truncation. Existing declarations retain the 4 KiB
@@ -489,6 +544,9 @@ This is a command entry inside `host.commands`. The plugin parses the inventory;
 the host only enforces the declared byte limit.
 
 The direct command invocation has a five-second deadline;
+commands may declare `maxInputBytes` (1–65536) for optional UTF-8 stdin data.
+Undeclared or oversized input is rejected before spawning. Input never changes
+the installed program or arguments, and its delivery shares the existing deadline.
 cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
@@ -774,19 +832,23 @@ whose search index allowlist excludes that kind cannot return them. Metadata is
 untrusted presentation, not repository access authority. No sending, applying,
 repository fetching or sidebar panels are added.
 
-`registerLink({ id, title, matches, className?, component })` contributes optional
-presentation for links already recognized by messages. The host retains the anchor,
-destination, new-tab/modifier behavior and panel activation. Components receive
-`{ url }` and render non-interactive inline content inside that anchor. They must
-not nest links or buttons. The first active matching renderer wins; throwing
-matchers are skipped. A render failure or plugin removal restores the ordinary
-link, including its styling. Registration follows the existing plugin lifetime.
+`registerLink({ id, title, matches, order?, className?, component })` contributes
+optional presentation for links already recognized by messages. The host retains
+the anchor, destination, new-tab/modifier behavior and panel activation. Components
+receive `{ url }` and render non-interactive inline content inside that anchor.
+They must not nest links or buttons. Among matching renderers the lowest `order`
+wins under the panel [resolution order](#resolution-order); throwing matchers are
+skipped. A render failure or plugin removal restores the ordinary link, including
+its styling. Registration follows the existing plugin lifetime.
 
 The bundled Links plugin uses blue text, a blue fill only on hover, 2px padding
 4px corners, and service icons for GitHub, Google Drive, Figma, Notion, Slack,
 Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets and
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
+Its `order` is a function: recognised services and Buzz entities claim the default
+band, the globe case the catch-all band, so a renderer dedicated to one website
+wins it at the default.
 It does not fetch titles. Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
@@ -952,13 +1014,30 @@ bounded background enrichment through the shared profile directory, not per-key
 network reads or a separate identity cache. Multi-word filtering stays in the
 provider so a delayed name can appear without another editor event.
 
-Channels filters the session's confirmed joined stream/forum roster locally, including
-private channels but excluding archived, cached, read-only and unnamed entries.
-`#` opens at most 20 choices, ranked exact, prefix, then substring with alphabetical
-ties; namesakes include their channel IDs. No typing-driven reads or public-channel
-discovery are added. Empty ready results hide the popup; loading and explicit
-error/retry states remain visible. Selection rechecks current membership and name,
-then inserts an escaped, ID-backed Markdown link without notification recipients.
+Channels filters the session's joined channel roster locally, including private
+channels and joined channels restored from cache (the store marks those
+`readOnly` and `cached` until the relay reconfirms them), but excluding DMs,
+sessions, archived, hidden, unnamed and other read-only entries. After a 180 ms
+typing pause, a query also asks `searchPublic`, through the same
+`usePublicChannelSearch` hook as Command-K, for open channels the viewer has not
+joined; they are labeled "Not joined", and private results are never offered.
+The relay has no name search, so that lookup covers only its newest page of
+channel metadata, which the store reuses while the viewer types. While the next
+lookup runs, the previous one's still-matching rows stay. Names match by the
+channel pickers' rule (`matchName`): exact, prefix, word start, then substring,
+with alphabetical ties. Its fuzzy ranks are left out, because Enter and Tab pick
+the first row while the viewer writes prose. Open channels follow joined ones, as
+in Command-K, so a late search result never moves the first row; when joined
+matches would fill the 20 rows, five stay reserved for open channels. Namesakes
+include their channel IDs. A query containing a space completes only names it
+prefixes, as person names do, so ordinary prose after `#name` closes the popup.
+Empty ready results hide the popup. Loading (only while the channel list is
+loading), open-channel search and explicit error/retry states stay visible; a
+failed open-channel search keeps joined matches and offers a retry. When the
+search covered only the newest page and found no open match, a note says so
+beside the rows already shown. Selection rechecks current membership (or the
+public preview) and name, then inserts an escaped, ID-backed Markdown link
+without notification recipients.
 The shared editor host checks raw Markdown and rich code/link/literal ranges only
 after a Channels syntax match, keeping suggestions in prose (including headings).
 Ordinary typing skips that extra context scan. Popup positioning and keyboard/IME

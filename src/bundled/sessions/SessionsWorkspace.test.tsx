@@ -37,38 +37,6 @@ function unreadSession(observedCount: number | null) {
   } as unknown as RelaySession;
 }
 
-it("visibly marks ordinary unread state from the real unread badge", () => {
-  const session = unreadSession(1);
-  render(
-    <SessionsWorkspace
-      sessions={[
-        {
-          id: "session",
-          title: "Plan the release",
-          content: (
-            <UnreadBadge
-              session={session}
-              channelId="session"
-              label="Plan the release"
-            />
-          ),
-        },
-      ]}
-      selected=""
-      onSelect={vi.fn()}
-      onNew={vi.fn()}
-    >
-      <div>Session content</div>
-    </SessionsWorkspace>,
-  );
-  const row = screen.getByRole("button", { name: /Plan the release/ });
-  expect(
-    row.querySelector('[data-channel-unread-title="true"]'),
-  ).toHaveTextContent("Plan the release");
-  expect(row.querySelector("[data-channel-unread]")).toBeInTheDocument();
-  expect(row.querySelector("[data-channel-priority]")).toBeNull();
-});
-
 it.each([0, null])(
   "keeps the session title quiet when the unread count is %s",
   (observedCount) => {

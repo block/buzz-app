@@ -1,4 +1,5 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
@@ -1168,6 +1169,10 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const mePreferences = createMePreferences(
+    channelKit.capability,
+    lifetime.signal,
+  );
   const reminders =
     transport?.reminders && writer
       ? createReminders({
@@ -1261,29 +1266,38 @@ export function createRelaySession(
     })(),
     options.persistence,
     (() => {
-      const remove = transport?.removeSidebarSection;
-      return remove
-        ? activeSidebarSectionRemoval(channelKit.capability, (id, signal) =>
-            remove(
-              id,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            ),
+      const write = transport?.removeSidebarSection;
+      return write
+        ? activeSidebarSectionRemoval(
+            channelKit.capability,
+            (sectionId, signal) =>
+              write(
+                sectionId,
+                AbortSignal.any([
+                  lifetime.signal,
+                  AbortSignal.timeout(20_000),
+                  signal,
+                ]),
+              ),
           )
         : undefined;
     })(),
   );
   let groupHead: string | undefined;
+  let meHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
     const head = personalGroups(state.entries)?.eventId;
-    if (head === groupHead) return;
-    groupHead = head;
-    void sidebarPreferences.queries.refresh();
+    if (head !== groupHead) {
+      groupHead = head;
+      void sidebarPreferences.queries.refresh();
+    }
+    const nextMe = meGroups(state.entries)?.eventId;
+    if (nextMe !== meHead) {
+      meHead = nextMe;
+      void mePreferences.queries.refresh();
+    }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
   let setupNotices: readonly SetupNotice[] = [];
@@ -1655,6 +1669,8 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    mePreferences: mePreferences.queries,
+    mePlacement: mePreferences.placement,
     reminders: reminders?.capability,
     live,
     profiling,
@@ -2497,6 +2513,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               communityCatalog.reconnect();
               activityRosterKey = undefined;
@@ -2599,6 +2616,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
+        mePreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2640,6 +2658,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
+      mePreferences.dispose();
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();

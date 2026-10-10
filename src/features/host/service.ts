@@ -28,9 +28,6 @@ export type HostProcessOptions = Readonly<{
   cwd?: string;
   /** Added to the app's environment; `null` removes a variable. */
   env?: Readonly<Record<string, string | null>>;
-  /** Runs as this agent of the plugin's own type: its key, community and owner
-   * attestation are in the environment and the bundled `buzz` CLI is on PATH. */
-  agent?: string;
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
@@ -47,7 +44,7 @@ type ProcessEvent =
   | { type: "stdout" | "stderr"; data: string }
   | { type: "exit"; code: number | null };
 export interface Host {
-  runCommand(id: string): Promise<string | null>;
+  runCommand(id: string, input?: string): Promise<string | null>;
   /** Starts a process the manifest declares in `host.processes`. It lives until
    * it exits, is killed, or the plugin unloads. Desktop only. */
   spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
@@ -129,7 +126,7 @@ export class HostService extends Service implements Host {
     return tag;
   }
 
-  async runCommand(id: string): Promise<string | null> {
+  async runCommand(id: string, input?: string): Promise<string | null> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri()) return null;
     try {
@@ -137,6 +134,7 @@ export class HostService extends Service implements Host {
         id: owner.id,
         revision: owner.revision,
         commandId: id,
+        ...(input === undefined ? {} : { input }),
       });
     } catch {
       return null;
@@ -173,7 +171,6 @@ export class HostService extends Service implements Host {
       args: options.args ?? [],
       cwd: options.cwd ?? null,
       env: options.env ?? null,
-      agent: options.agent ?? null,
       onEvent,
     });
     const write = (data: string, close: boolean) =>

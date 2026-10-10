@@ -63,16 +63,6 @@ test("ignores a non-string name rather than rendering it", () => {
   assert.equal(readWorkflowDocumentFields("name: 42\n").name, null);
 });
 
-test("enabled is explicit or absent; incomplete steps do not block header edits", () => {
-  assert.equal(readWorkflowDocumentFields(INCOMPLETE_STEP_YAML).editable, true);
-  assert.equal(readWorkflowDocumentFields(INCOMPLETE_STEP_YAML).enabled, null);
-  assert.equal(
-    readWorkflowDocumentFields(`enabled: false\n${INCOMPLETE_STEP_YAML}`)
-      .enabled,
-    false,
-  );
-});
-
 test("writes the name back without disturbing the rest of the document", () => {
   const next = yamlWithWorkflowName(INCOMPLETE_STEP_YAML, "renamed");
   assert.equal(readWorkflowDocumentFields(next).name, "renamed");

@@ -27,6 +27,7 @@ it("all command names and camelCase payloads match the native contract", async (
   );
   await host.installPi?.();
   await host.installClaude?.();
+  await host.installCodex?.();
   await host.checkClaudeAuth?.();
   const edit = {
     name: "Agent",
@@ -64,6 +65,7 @@ it("all command names and camelCase payloads match the native contract", async (
     ],
     ["pi_install"],
     ["claude_install"],
+    ["codex_install"],
     ["claude_auth_status"],
     ["agent_control_save", { id: "exact-id", expectedRevision: 3, edit }],
     ["agent_control_delete", { id: "exact-id", expectedRevision: 3 }],

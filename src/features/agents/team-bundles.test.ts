@@ -126,41 +126,41 @@ it("forwards explicit memory export selection while defaulting to team only", as
   const control = createAgentControl(fixture.host);
   expect(
     await control.exportTeam?.(
-      snapshot,
+      snapshot.team,
       ["one", "two"],
       "https://relay.example",
     ),
   ).toBe(snapshot);
   expect(fixture.host.exportTeam).toHaveBeenLastCalledWith(
-    snapshot,
+    snapshot.team,
     ["one", "two"],
     "https://relay.example",
     "none",
   );
   expect(
     await control.exportTeam?.(
-      snapshot,
+      snapshot.team,
       ["one", "two"],
       "https://relay.example",
       "core",
     ),
   ).toBe(snapshot);
   expect(fixture.host.exportTeam).toHaveBeenLastCalledWith(
-    snapshot,
+    snapshot.team,
     ["one", "two"],
     "https://relay.example",
     "core",
   );
   expect(
     await control.exportTeam?.(
-      snapshot,
+      snapshot.team,
       ["one", "two"],
       "https://relay.example",
       "everything",
     ),
   ).toBe(snapshot);
   expect(fixture.host.exportTeam).toHaveBeenLastCalledWith(
-    snapshot,
+    snapshot.team,
     ["one", "two"],
     "https://relay.example",
     "everything",

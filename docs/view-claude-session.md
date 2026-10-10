@@ -81,8 +81,13 @@ bin/node scripts/export-claude-session.mjs "$session" /tmp/claude-session.html
 ```
 
 Give the human the absolute output path, or open it with the app's file viewer.
-On macOS, `open /tmp/claude-session.html` opens it in a browser. Messages are
-visible in order; tool inputs, results, and recorded thinking expand on click.
+On macOS, `open /tmp/claude-session.html` opens it in a browser. The exporter
+renders through the shared session viewer (`scripts/session-viewer.mjs`): a
+searchable sidebar with Default, No-tools, User, and All filters, and the
+conversation in order. Buzz turns show their `Content:` text, with the full turn
+context expandable. Each tool call shows its input and paired result, marked
+when the result is an error; long text expands on click. Meta records appear
+only under All.
 The viewer contains escaped text, requires no server or network resources, and
 does not execute transcript content. It includes every recorded message in the
 matched session, which can contain other Buzz threads; non-message metadata

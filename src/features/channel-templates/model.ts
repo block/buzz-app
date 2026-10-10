@@ -2,6 +2,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import {
   parseTeamManifest,
   parseTeamPayload,
+  parseTextManifest,
   payloadCoordinate,
   TEAM_PAYLOAD_TAG,
   type TeamPayload,
@@ -11,6 +12,8 @@ import {
 
 /** Private, community-scoped recipes. Never an OG channel-sections writer. */
 export const KIT_TAG = "buzz-channel-kit-v1";
+/** Separate discovery prevents older clients from rejecting the whole catalog. */
+export const ME_KIT_TAG = "buzz-me-kit-v1";
 export const KIT_RECORD_BYTES = 16 * 1024;
 export const CANVAS_BYTES = 24 * 1024;
 export type Lineup = { teamIds: string[]; agents: string[]; canvas: string };
@@ -30,9 +33,11 @@ export type Template = Lineup & {
 export type Group = { id: string; name: string; defaultTemplateId: string };
 export type Groups = {
   type: "groups";
-  id: "personal";
+  id: "personal" | "me";
   groups: Group[];
   assignments: Record<string, string>;
+  /** Me placement is independent of group membership. Never used by Messages groups. */
+  channels?: string[];
 };
 export type KitValue = Team | Template | Groups;
 export type PayloadRecord = {
@@ -41,6 +46,21 @@ export type PayloadRecord = {
   deleted: false;
   value: TeamPayload & { type: "team-payload"; id: string };
 };
+/** A team's shared instructions, kept apart from its v1/v2 team record so
+ * older builds that only read team records never see it. */
+export const TEAM_TEXT_TAG = "buzz-team-text-v1";
+export type TextRecord = {
+  version: 1;
+  community: string;
+  deleted: boolean;
+  value: {
+    type: "team-text";
+    id: string;
+    owner: string;
+    manifest: TeamManifest | null;
+  };
+};
+export type PrivateRecord = KitRecord | PayloadRecord | TextRecord;
 export type KitRecord = {
   version: 1 | 2;
   community: string;
@@ -104,6 +124,14 @@ export function parseLineup(raw: unknown): Lineup {
     canvas,
   };
 }
+export function kitRecordFits(record: KitRecord) {
+  return (
+    new TextEncoder().encode(JSON.stringify(record)).length <= KIT_RECORD_BYTES
+  );
+}
+export const meCapacityMessage =
+  "Me storage is full. Move a conversation from Me to Messages, then try again.";
+
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
     v = object(r.value);
@@ -130,7 +158,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       description: text(v.description, 1000),
       ...parseLineup(v),
     };
-  else if (v.type === "groups" && v.id === "personal") {
+  else if (v.type === "groups" && (v.id === "personal" || v.id === "me")) {
     if (!Array.isArray(v.groups) || v.groups.length > 100)
       throw new Error("Too many personal groups");
     const groups = v.groups.map((raw) => {
@@ -154,11 +182,22 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       )
     )
       throw new Error("Invalid personal group placement");
+    if (v.id === "personal" && v.channels !== undefined)
+      throw new Error("Messages groups cannot contain Me placement");
     value = {
       type: "groups",
-      id: "personal",
+      id: v.id,
       groups,
       assignments: Object.fromEntries(assignments) as Record<string, string>,
+      ...(v.id === "me"
+        ? {
+            channels: keys(
+              v.channels ?? [],
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+              1000,
+            ),
+          }
+        : {}),
     };
   } else throw new Error("Unsupported channel recipe type");
   if (
@@ -174,15 +213,21 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
     deleted: r.deleted,
     value,
   };
-  if (
-    new TextEncoder().encode(JSON.stringify(result)).length > KIT_RECORD_BYTES
-  )
+  if (!kitRecordFits(result))
     throw new Error(
-      "This saved recipe exceeds 16 KiB; shorten its Canvas or selections",
+      value.type === "groups" && value.id === "me"
+        ? meCapacityMessage
+        : "This saved recipe exceeds 16 KiB; shorten its Canvas or selections",
     );
   return result;
 }
 export function kitTag(record: KitRecord) {
+  if (
+    (record.value.type === "groups" && record.value.id === "me") ||
+    (record.value.type === "template" &&
+      record.value.id.startsWith("me-section-"))
+  )
+    return ME_KIT_TAG;
   return record.version === 2 ? TEAM_MANIFEST_TAG : KIT_TAG;
 }
 export function coordinate(record: KitRecord) {
@@ -242,21 +287,73 @@ export function parsePayloadRecord(
     value: { ...payload, type: "team-payload", id: value.id as string },
   };
 }
+export function parseTextRecord(raw: unknown, community: string): TextRecord {
+  const r = object(raw),
+    value = object(r.value);
+  if (
+    Object.keys(r).some(
+      (key) => !["version", "community", "deleted", "value"].includes(key),
+    ) ||
+    Object.keys(value).some(
+      (key) => !["type", "id", "owner", "manifest"].includes(key),
+    ) ||
+    r.version !== 1 ||
+    r.community !== community ||
+    typeof r.deleted !== "boolean" ||
+    value.type !== "team-text" ||
+    typeof value.owner !== "string" ||
+    !keyPattern.test(value.owner)
+  )
+    throw new Error("Invalid team instructions record");
+  const manifest = r.deleted ? null : parseTextManifest(value.manifest);
+  if (r.deleted ? value.manifest !== null : manifest?.owner !== value.owner)
+    throw new Error("Invalid team instructions record");
+  const result: TextRecord = {
+    version: 1,
+    community,
+    deleted: r.deleted,
+    value: {
+      type: "team-text",
+      id: id(value.id),
+      owner: value.owner,
+      manifest,
+    },
+  };
+  if (
+    new TextEncoder().encode(JSON.stringify(result)).length > KIT_RECORD_BYTES
+  )
+    throw new Error("Invalid team instructions record");
+  return result;
+}
+export function textCoordinate(
+  community: string,
+  owner: string,
+  teamId: string,
+) {
+  return `${TEAM_TEXT_TAG}:${encodeURIComponent(community)}:${owner}:${teamId}`;
+}
 export function parsePrivateRecord(
   raw: unknown,
   community: string,
-): KitRecord | PayloadRecord {
-  return object(object(raw).value).type === "team-payload"
+): PrivateRecord {
+  const type = object(object(raw).value).type;
+  return type === "team-payload"
     ? parsePayloadRecord(raw, community)
-    : parseKitRecord(raw, community);
+    : type === "team-text"
+      ? parseTextRecord(raw, community)
+      : parseKitRecord(raw, community);
 }
-export function privateCoordinate(record: KitRecord | PayloadRecord) {
+export function privateCoordinate(record: PrivateRecord) {
   return record.value.type === "team-payload"
     ? payloadCoordinate(record.value)
-    : coordinate(record as KitRecord);
+    : record.value.type === "team-text"
+      ? textCoordinate(record.community, record.value.owner, record.value.id)
+      : coordinate(record as KitRecord);
 }
-export function privateTag(record: KitRecord | PayloadRecord) {
+export function privateTag(record: PrivateRecord) {
   return record.value.type === "team-payload"
     ? TEAM_PAYLOAD_TAG
-    : kitTag(record as KitRecord);
+    : record.value.type === "team-text"
+      ? TEAM_TEXT_TAG
+      : kitTag(record as KitRecord);
 }

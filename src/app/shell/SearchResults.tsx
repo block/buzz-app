@@ -24,7 +24,7 @@ import {
   recordChoice,
   searchOrder,
 } from "../../features/search/usage";
-import { usePublicChannelSearch } from "./usePublicChannelSearch";
+import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
 import {
@@ -91,7 +91,8 @@ export function SearchResults({
           (!channel.archived ||
             (!channel.readOnly &&
               (channel.channelType === "stream" ||
-                channel.channelType === "forum"))) &&
+                channel.channelType === "forum" ||
+                channel.channelType === "session"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),

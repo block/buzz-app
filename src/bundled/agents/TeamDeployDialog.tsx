@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { ChannelKit } from "../../features/channel-templates/capability";
 import type { AgentControl } from "../../features/agents/control";
 import type { Team } from "../../features/channel-templates/model";
 import {
@@ -15,13 +14,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 
 export function TeamDeployDialog({
   team,
-  kit,
   control,
   session,
   close,
 }: {
   team: Team;
-  kit: ChannelKit;
   control?: AgentControl | undefined;
   session: RelaySession;
   close(): void;
@@ -53,12 +50,7 @@ export function TeamDeployDialog({
     try {
       const operation = attempt ?? teamDeployment(team, channelId);
       setAttempt(operation);
-      const snapshot = team.portable
-        ? await control?.previewTeam?.(JSON.stringify(await kit.loadTeam(team)))
-        : undefined;
-      if (team.portable && !snapshot)
-        throw new Error("Team preview is unavailable");
-      await deployTeam(control, session, operation, abort.signal, snapshot);
+      await deployTeam(control, session, operation, abort.signal);
       if (!abort.signal.aborted) close();
     } catch (failure) {
       if (!abort.signal.aborted)

@@ -526,6 +526,19 @@ test("unselected row menu and combined-view Archive leave the open editor alone"
   const next = rows.filter({ hasText: "Unread neighbor" });
   await expect(rows).toHaveCount(2);
   await thread.getByRole("button", { name: /^Open / }).click();
+  const target = inbox
+    .getByRole("region", { name: "Inbox detail" })
+    .locator(`[data-message-id="${app.inboxWindow.replies[0].id}"]`);
+  await expect(target).toBeInViewport();
+  await expect(target).toBeFocused();
+  // Finish entry reveal and its next-frame acknowledgement before taking the
+  // editor/row-focus baseline; list aria-busy does not cover reader positioning.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   const editor = inbox.getByRole("textbox");
   await editor.fill("Keep the unselected archive draft");
   await editor.evaluate((el) => {

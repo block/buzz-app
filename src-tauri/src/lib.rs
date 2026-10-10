@@ -40,6 +40,7 @@ mod window_controls;
 mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
+mod relay_admin;
 mod sign_out;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
@@ -455,6 +456,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_publish_read_state,
         relay_http,
         relay_workflow_runs,
+        relay_admin::relay_admin_discover,
+        relay_admin::relay_admin_request,
+        relay_admin::attachment::relay_admin_attachment,
+        relay_admin::attachment::relay_admin_save_attachment,
         relay_project_git,
         relay_project_git_cancel,
         relay_git_authorization,

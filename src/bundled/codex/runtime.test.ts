@@ -8,6 +8,9 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
+// The plugin registers only in the Mac/Linux desktop app.
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
@@ -128,6 +131,10 @@ function fixture(
   let closed = false;
   const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
+    if (_id === "workspace") {
+      value?.onStdout?.("/home/test/.buzz\n");
+      return { ...process, exited: Promise.resolve(0) };
+    }
     if (_id === "read") {
       fileReads.push({
         ...(value?.cwd ? { cwd: value.cwd } : {}),
@@ -258,6 +265,7 @@ function fixture(
   let pluginDispose = () => {};
   if (plugin) {
     vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       react: React,
       host: { spawn },
@@ -399,7 +407,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     ?.params as Record<string, unknown>;
   expect(started).toMatchObject({
     model: "test-model",
-    sandbox: "workspace-write",
+    sandbox: "danger-full-access",
     approvalPolicy: "never",
   });
   expect(started.baseInstructions).toBeUndefined();
@@ -748,11 +756,81 @@ it("waits for terminal termination after asynchronous clean acknowledgement befo
 
 it("publishes workspace errors without starting work", async () => {
   const f = fixture();
-  await f.runtime.run({ ...f.delivery("hello"), config: {} });
+  await f.runtime.run({
+    ...f.delivery("hello"),
+    config: { workspace: "relative" },
+  });
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("absolute workspace"),
   });
   expect(f.spawn).not.toHaveBeenCalled();
+});
+
+it.each([{}, { workspace: "" }, { workspace: "  " }])(
+  "runs blank workspace settings in the resolved default: %j",
+  async (config) => {
+    const f = fixture();
+    await f.runtime.run({ ...f.delivery("hello"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.spawn).toHaveBeenCalledWith(
+      "app-server",
+      expect.objectContaining({ cwd: "~/.buzz" }),
+    );
+    expect(f.spawn).toHaveBeenCalledWith(
+      "workspace",
+      expect.objectContaining({ cwd: "~/.buzz" }),
+    );
+    for (const method of ["config/read", "thread/start"])
+      expect(
+        f.sent.find((wire) => wire.method === method)?.params,
+      ).toMatchObject({ cwd: "/home/test/.buzz" });
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await f.runtime.run({ ...f.delivery("again"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ cwd: "/home/test/.buzz" });
+    f.complete(1, "DONE AGAIN");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+    f.runtime.dispose();
+  },
+);
+
+it("reports a default workspace resolution failure without starting a turn", async () => {
+  const f = fixture();
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing spawn fixture");
+  f.spawn.mockImplementation(async (id, options) =>
+    id === "workspace"
+      ? { ...f.process, exited: Promise.resolve(1) }
+      : spawn(id, options),
+  );
+  await f.runtime.run({ ...f.delivery("hello"), config: {} });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining(
+      "Could not resolve the default Codex workspace",
+    ),
+  });
+  expect(f.starts()).toHaveLength(0);
+});
+
+it("uses the default after changing away from a custom workspace on an existing server", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("custom"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete(0, "CUSTOM");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run({ ...f.delivery("default"), config: {} });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const threads = f.sent.filter((wire) => wire.method === "thread/start");
+  expect(threads.map((wire) => (wire.params as { cwd: string }).cwd)).toEqual([
+    "/tmp/codex-test",
+    "/home/test/.buzz",
+  ]);
+  f.complete(1, "DEFAULT");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
 });
 
 it("posts tool-sent parts and never duplicates native assistant text", async () => {

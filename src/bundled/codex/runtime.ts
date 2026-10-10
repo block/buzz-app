@@ -7,7 +7,12 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
-import { config, absoluteWorkspace, type Config } from "./config";
+import {
+  config,
+  absoluteWorkspace,
+  validWorkspace,
+  type Config,
+} from "./config";
 import { conversationHistory } from "./history";
 import {
   developerInstructions,
@@ -217,10 +222,10 @@ export class CodexRuntime {
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
     };
-    if (!absoluteWorkspace(settings.workspace)) {
+    if (!validWorkspace(settings.workspace)) {
       await this.publish(
         request,
-        "Choose an absolute workspace path in Codex settings first.",
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       );
       return;
     }
@@ -515,13 +520,31 @@ export class CodexRuntime {
     try {
       const rpc = await entry.opening;
       signal.throwIfAborted();
+      // The process host expands ~/.buzz and creates it; Codex's RPC needs
+      // an absolute path rather than shell-style home notation.
+      let workspace = settings.workspace;
+      if (!absoluteWorkspace(workspace)) {
+        let directory = "";
+        const process = await this.spawn("workspace", {
+          cwd: workspace,
+          onStdout: (data) => {
+            directory += data;
+          },
+        });
+        const code = await process.exited;
+        workspace = directory.trim();
+        if (code !== 0 || !absoluteWorkspace(workspace))
+          throw new Error("Could not resolve the default Codex workspace.");
+        signal.throwIfAborted();
+      }
+      active.workspace = workspace;
       const existing = entry.saved[key];
       const normalized = await rpc.request<{
         config: {
           model?: string | null;
           mcp_servers?: Record<string, Record<string, unknown>>;
         };
-      }>("config/read", { cwd: settings.workspace });
+      }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
       const model =
         settings.model ||
@@ -533,7 +556,6 @@ export class CodexRuntime {
           "The selected Codex model is unavailable. Choose an available model in Settings.",
         );
       const effort = settings.effort || selected.defaultReasoningEffort;
-      const workspace = settings.workspace;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
@@ -553,9 +575,9 @@ export class CodexRuntime {
         cwd: workspace,
         developerInstructions: developerInstructions(agent),
         approvalPolicy: "never",
-        sandbox: "workspace-write",
+        // Matches Claude Code's bypassPermissions; only the owner can start work.
+        sandbox: "danger-full-access",
         config: {
-          "sandbox_workspace_write.network_access": false,
           web_search: "disabled",
           mcp_servers: mcp,
           "features.plugins": false,

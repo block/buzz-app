@@ -4,7 +4,7 @@ import type { AgentViewProps } from "../../features/agents2/service";
 import {
   config,
   effortName,
-  absoluteWorkspace,
+  validWorkspace,
   type Config,
   type Model,
 } from "./config";
@@ -218,9 +218,10 @@ export function createTabs(
       setSaving(true);
       setError("");
       try {
-        if (!absoluteWorkspace(draft.workspace))
-          throw new Error("Enter an absolute workspace path.");
-        await save({ ...draft, workspace: draft.workspace.trim() });
+        const settings = config(draft);
+        if (!validWorkspace(settings.workspace))
+          throw new Error("Enter an absolute workspace path or ~/.buzz.");
+        await save(settings);
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : String(reason));
       } finally {
@@ -329,12 +330,12 @@ export function createTabs(
           ...control,
           id: "codex-workspace",
           value: draft.workspace,
-          placeholder: "/absolute/path/to/project",
+          placeholder: "~/.buzz",
           disabled: saving,
           onChange: (event: { target: { value: string } }) =>
             set({ workspace: event.target.value }),
         }),
-        "Codex can edit files here. Buzz tools run inside the app. Network access and inherited MCP/Apps/plugin tools are disabled.",
+        "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled.",
       ),
       field(
         "codex-scope",

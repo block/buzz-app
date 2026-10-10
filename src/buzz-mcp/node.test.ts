@@ -65,3 +65,34 @@ it("reads back its memory and rejects a tampered entry", async () => {
   stored.push({ ...entry, created_at: entry.created_at + 1 });
   await expect(buzz.memories()).rejects.toThrow(/invalidly signed/);
 });
+
+it("fetches only its community's media, signed for a get", async () => {
+  const sha = "a".repeat(64);
+  const fetch = vi.mocked(globalThis.fetch);
+  fetch.mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3])));
+  await expect(
+    client().media(`https://relay.test/media/${sha}.png`),
+  ).resolves.toBe(btoa("\x01\x02\x03"));
+  const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+  expect(url).toBe(`https://relay.test/media/${sha}.png`);
+  const header = (init.headers as Record<string, string>).authorization ?? "";
+  const auth = JSON.parse(
+    Buffer.from(header.replace("Nostr ", ""), "base64url").toString(),
+  );
+  expect(auth).toMatchObject({ kind: 24242, pubkey: agent.pubkey });
+  expect(auth.tags).toContainEqual(["t", "get"]);
+  expect(auth.tags).toContainEqual(["server", "relay.test"]);
+  for (const input of [
+    `https://elsewhere.test/media/${sha}.png`,
+    `${sha}/../x`,
+    "not-a-hash",
+  ])
+    await expect(client().media(input)).rejects.toThrow(
+      "only their community's media",
+    );
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fetch.mockResolvedValueOnce(
+    new Response(new Uint8Array(5 * 1024 * 1024 + 1)),
+  );
+  await expect(client().media(sha)).rejects.toThrow("over 5 MB");
+});

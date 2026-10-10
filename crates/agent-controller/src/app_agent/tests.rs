@@ -275,6 +275,29 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
         ["server", agent.relay.trim_start_matches("wss://")]
     );
     assert!(agent.upload_auth(&key, "not-a-hash").is_err());
+    let get = agent.media_auth(&key).unwrap();
+    assert_eq!(get["kind"], 24242);
+    let tags: Vec<Vec<String>> = serde_json::from_value(get["tags"].clone()).unwrap();
+    assert_eq!(tags[0], ["t", "get"]);
+    assert_eq!(
+        tags[2],
+        ["server", agent.relay.trim_start_matches("wss://")]
+    );
+    let media = format!(
+        "{}/media/{sha}.png",
+        agent.relay.replacen("wss", "https", 1)
+    );
+    assert_eq!(agent.media_url(&media).unwrap(), media);
+    assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
+    for input in [
+        format!("https://elsewhere.test/media/{sha}.png"),
+        format!("{media}?x=1"),
+        format!("{sha}/../x"),
+        format!("{sha}.PNG"),
+        "not-a-hash".into(),
+    ] {
+        assert!(agent.media_url(&input).is_err(), "{input}");
+    }
     let future = u64::MAX / 2;
     let memory = agent.memory(&key, "mem/notes", "hi", future).unwrap();
     assert_eq!(memory["kind"], 30174);
@@ -283,6 +306,7 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     assert!(agent.memory(&key, "../notes", "hi", 0).is_err());
     let other = Secret::generate().unwrap();
     assert!(agent.upload_auth(&other, &sha).is_err());
+    assert!(agent.media_auth(&other).is_err());
     assert!(agent.memory(&other, "core", "hi", 0).is_err());
 }
 

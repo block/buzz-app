@@ -217,6 +217,7 @@ function fixture(
     size: 12,
     type: mime,
   }));
+  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
   const agent = {
     pubkey,
     owner,
@@ -224,6 +225,7 @@ function fixture(
     publish,
     query,
     upload,
+    media,
     remember,
   };
   runtime.sync([{ pubkey } as Agent], scope);
@@ -370,6 +372,7 @@ function fixture(
     memoryView,
     remember,
     upload,
+    media,
     selection,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
@@ -1105,6 +1108,18 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
     { success: true, contentItems: [{ text: "remembered" }] },
   );
+  expect(
+    (await f.tool("media_get", { url: "shot.png" }))?.result,
+  ).toMatchObject({
+    success: true,
+    contentItems: [
+      {
+        type: "inputImage",
+        imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+    ],
+  });
+  expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
   expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);

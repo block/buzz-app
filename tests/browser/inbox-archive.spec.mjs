@@ -17,11 +17,52 @@ test.use({
 });
 
 async function choose(page, inbox, control, option) {
-  await inbox.getByRole("combobox", { name: control }).click();
-  await page.getByRole("option", { name: option, exact: true }).click();
-  await expect(inbox.getByRole("combobox", { name: control })).toContainText(
-    option,
-  );
+  if (control === "Show") {
+    await inbox.getByRole("combobox", { name: control }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+    await expect(inbox.getByRole("combobox", { name: control })).toContainText(
+      option,
+    );
+    return;
+  }
+  await inbox
+    .getByRole("button", { name: "Inbox filters", exact: true })
+    .click();
+  const menu = page.getByRole("menu", { name: "Inbox filters" });
+  await expect(menu).toBeVisible();
+  if (control === "Sender") {
+    const people = menu.getByRole("menuitemcheckbox", { name: "People" });
+    const agents = menu.getByRole("menuitemcheckbox", { name: "Agents" });
+    if (
+      option !== "Agents" &&
+      (await people.getAttribute("aria-checked")) !== "true"
+    )
+      await people.click();
+    if (
+      option !== "Humans" &&
+      (await agents.getAttribute("aria-checked")) !== "true"
+    )
+      await agents.click();
+    if (
+      option === "Agents" &&
+      (await people.getAttribute("aria-checked")) === "true"
+    )
+      await people.click();
+    if (
+      option === "Humans" &&
+      (await agents.getAttribute("aria-checked")) === "true"
+    )
+      await agents.click();
+    await page.keyboard.press("Escape");
+  } else {
+    await menu
+      .getByRole("menuitemradio", {
+        name: option === "All activity" ? "All" : option,
+        exact: true,
+      })
+      .click();
+  }
+  await expect(menu).toHaveCount(0);
 }
 
 test("Inbox Show filter is separate from attention filters and preserves them", async ({
@@ -51,7 +92,7 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
 
   await choose(page, inbox, "Activity type", "Mentions");
   await choose(page, inbox, "Sender", "Agents");
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await inbox.getByRole("button", { name: "Unread only" }).click();
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Archive conversation" }).click();
@@ -59,12 +100,12 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
 
   await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
-  await expect(inbox.getByRole("combobox", { name: "Sender" })).toContainText(
-    "Agents",
-  );
   await expect(
-    inbox.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeChecked();
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("Agents");
+  await expect(
+    inbox.getByRole("button", { name: "Unread only" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.reload();
   await openPage(page, "Inbox");
   await expect(rows).toHaveCount(1);
@@ -72,14 +113,14 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
     "Archived",
   );
   await expect(
-    inbox.getByRole("combobox", { name: "Activity type" }),
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
   ).toContainText("Mentions");
-  await expect(inbox.getByRole("combobox", { name: "Sender" })).toContainText(
-    "Agents",
-  );
   await expect(
-    inbox.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeChecked();
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("Agents");
+  await expect(
+    inbox.getByRole("button", { name: "Unread only" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
     0,
   );
@@ -89,14 +130,14 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   await expect(
-    inbox.getByRole("combobox", { name: "Activity type" }),
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
   ).toContainText("Mentions");
-  await expect(inbox.getByRole("combobox", { name: "Sender" })).toContainText(
-    "Agents",
-  );
   await expect(
-    inbox.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeChecked();
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("Agents");
+  await expect(
+    inbox.getByRole("button", { name: "Unread only" }),
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("Inbox archive survives reload and reopens Threads before fresh Mentions", async ({
@@ -635,16 +676,16 @@ test("same-account windows reconcile filters and archive intent without reload",
     await expect(siblingRows).toHaveCount(1);
     await choose(page, inbox, "Activity type", "Mentions");
     await choose(page, inbox, "Sender", "Agents");
-    await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+    await inbox.getByRole("button", { name: "Unread only" }).click();
     await expect(
-      sibling.getByRole("combobox", { name: "Activity type" }),
+      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
     ).toContainText("Mentions");
     await expect(
-      sibling.getByRole("combobox", { name: "Sender" }),
+      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
     ).toContainText("Agents");
     await expect(
-      sibling.getByRole("checkbox", { name: "Unread only" }),
-    ).toBeChecked();
+      sibling.getByRole("button", { name: "Unread only" }),
+    ).toHaveAttribute("aria-pressed", "true");
     await rows.getByRole("button", { name: /^Archive / }).click();
     await expect(rows).toHaveCount(0);
     await expect(siblingRows).toHaveCount(0);

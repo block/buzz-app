@@ -1228,58 +1228,73 @@ it("retries ownership admission and failed owner names through the shared refres
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("pages combined local and relay invitations without losing matches, and resets on query or refresh", async ({
+/** Searches "Helper" over 30 relay matches plus a second relay page and `localCount` local agents. */
+async function pagedInvitations(
+  step: <T>(action: () => Promise<T>) => Promise<T>,
+  localCount: number,
+) {
+  const t = await step(() => setup());
+  const remote = Array.from({ length: 30 }, (_, index) =>
+    profile(keypair(), { name: `Helper remote ${index}` }),
+  );
+  const lastRemote = profile(keypair(), { name: "Helper final" });
+  const local = Array.from({ length: localCount }, (_, index) => ({
+    pubkey: keypair().pubkey,
+    name: `Helper local ${index}`,
+  }));
+  const firstRemote = remote[0];
+  if (!firstRemote) throw new Error("Missing first remote fixture");
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [
+      ...local,
+      { pubkey: firstRemote.pubkey, name: "Helper remote 0" },
+    ],
+  });
+  await step(() =>
+    act(async () => {
+      await t.session.agentChoices.refresh();
+    }),
+  );
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) => {
+    const search = filters.find((filter) => filter.search);
+    return search
+      ? search.page === 2
+        ? [lastRemote]
+        : remote
+      : query(filters);
+  });
+  const input = screen.getByRole("searchbox");
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  const idle = () =>
+    step(() =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+    );
+  const more = () =>
+    step(() =>
+      t.user.click(screen.getByRole("button", { name: "Show more results" })),
+    );
+  const rows = () =>
+    within(
+      screen.getByRole("region", { name: "Not in this channel" }),
+    ).getAllByRole("button", { name: /^Add / });
+  const pages = () =>
+    t.query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.search)
+      .map((filter) => filter.page);
+  await step(() => t.user.type(input, "Helper"));
+  await idle();
+  return { t, input, refresh, idle, more, rows, pages };
+}
+
+it("pages combined local and relay invitations without losing matches", async ({
   signal,
 }) => {
   return ownedTask(signal, async (step) => {
-    const t = await step(() => setup());
-    const remote = Array.from({ length: 30 }, (_, index) =>
-      profile(keypair(), { name: `Helper remote ${index}` }),
-    );
-    const lastRemote = profile(keypair(), { name: "Helper final" });
-    const local = Array.from({ length: 65 }, (_, index) => ({
-      pubkey: keypair().pubkey,
-      name: `Helper local ${index}`,
-    }));
-    const firstRemote = remote[0];
-    if (!firstRemote) throw new Error("Missing first remote fixture");
-    t.readAgentLibrary.mockResolvedValue({
-      definitions: [],
-      identities: [
-        ...local,
-        { pubkey: firstRemote.pubkey, name: "Helper remote 0" },
-      ],
-    });
-    await step(() =>
-      act(async () => {
-        await t.session.agentChoices.refresh();
-      }),
-    );
-    const query = t.query.getMockImplementation();
-    if (!query) throw new Error("Missing query fixture");
-    t.query.mockImplementation(async (filters) => {
-      const search = filters.find((filter) => filter.search);
-      return search
-        ? search.page === 2
-          ? [lastRemote]
-          : remote
-        : query(filters);
-    });
-    const input = screen.getByRole("searchbox");
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
-    const rows = () =>
-      within(
-        screen.getByRole("region", { name: "Not in this channel" }),
-      ).getAllByRole("button", { name: /^Add / });
-    const pages = () =>
-      t.query.mock.calls
-        .flatMap(([filters]) => filters)
-        .filter((filter) => filter.search)
-        .map((filter) => filter.page);
-    await step(() => t.user.type(input, "Helper"));
-    await step(() =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
-    );
+    const { t, more, rows, pages } = await pagedInvitations(step, 65);
     expect(rows()).toHaveLength(30);
     expect(
       rows().every((row) =>
@@ -1288,15 +1303,11 @@ it("pages combined local and relay invitations without losing matches, and reset
     ).toBe(true);
     expect(pages()).toEqual([1]);
     for (const count of [60, 90, 95]) {
-      await step(() =>
-        t.user.click(screen.getByRole("button", { name: "Show more results" })),
-      );
+      await more();
       expect(rows()).toHaveLength(count);
       expect(pages()).toEqual([1]);
     }
-    await step(() =>
-      t.user.click(screen.getByRole("button", { name: "Show more results" })),
-    );
+    await more();
     await step(() =>
       screen.findByRole("button", { name: /^Add Helper final/ }),
     );
@@ -1305,23 +1316,31 @@ it("pages combined local and relay invitations without losing matches, and reset
     expect(
       screen.queryByRole("button", { name: "Show more results" }),
     ).toBeNull();
+    expect(t.publish).not.toHaveBeenCalled();
+  });
+});
+
+it("resets combined invitation paging on refresh or query change", async ({
+  signal,
+}) => {
+  return ownedTask(signal, async (step) => {
+    // 31 local agents: past one page locally, so a reset is observable.
+    const { t, input, refresh, idle, more, rows, pages } =
+      await pagedInvitations(step, 31);
+    for (let i = 0; i < 3; i++) await more();
     await step(() =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+      screen.findByRole("button", { name: /^Add Helper final/ }),
     );
+    expect(rows()).toHaveLength(62);
+    expect(pages()).toEqual([1, 2]);
     await step(() => t.user.click(refresh));
-    await step(() =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
-    );
+    await idle();
     expect(rows()).toHaveLength(30);
     expect(pages()).toEqual([1, 2, 1]);
-    await step(() =>
-      t.user.click(screen.getByRole("button", { name: "Show more results" })),
-    );
+    await more();
     expect(rows()).toHaveLength(60);
     await step(() => t.user.type(input, " local"));
-    await step(() =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
-    );
+    await idle();
     expect(rows()).toHaveLength(30);
     await step(() => t.user.clear(input));
     expect(

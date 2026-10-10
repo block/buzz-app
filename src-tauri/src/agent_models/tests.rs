@@ -824,6 +824,51 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
     assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "SYNTHETIC");
 }
 
+#[cfg(unix)]
+#[test]
+fn codex_effort_wire_omits_unknown_current_and_keeps_known_empty_options() {
+    let catalog = codex_catalog(crate::codex_models::Discovery {
+        models: Vec::new(),
+        effort: Some(crate::codex_models::Effort {
+            model: "alpha".into(),
+            current: None,
+            options: Vec::new(),
+        }),
+    });
+    let value = serde_json::to_value(catalog).unwrap();
+    assert_eq!(value["codex"]["modelsKnown"], true);
+    assert_eq!(value["models"], json!([]));
+    assert_eq!(value["codex"]["effort"]["options"], json!([]));
+    assert!(value["codex"]["effort"].get("current").is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires an installed Codex adapter and CLI; runs `codex debug models`, no prompt"]
+async fn selected_production_codex_catalog_refresh_and_selection() {
+    use buzz_agent_controller::codex::CodexContext;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let context = CodexContext::installed(workspace.path(), None).unwrap();
+    let initial = codex_catalog(crate::codex_models::discover(&context, None).await.unwrap());
+    assert!(initial.codex.as_ref().unwrap().models_known);
+    assert!(!initial.models.is_empty());
+    for model in &initial.models {
+        let selected = crate::codex_models::discover(&context, Some(&model.id))
+            .await
+            .unwrap();
+        let effort = selected.effort.unwrap();
+        eprintln!(
+            "{} ({}): {:?} default {:?}",
+            model.id,
+            model.name,
+            effort.options.iter().map(|o| &o.id).collect::<Vec<_>>(),
+            effort.current
+        );
+        assert_eq!(effort.model, model.id);
+    }
+}
+
 #[tokio::test]
 async fn unstarted_ticket_expires_and_old_run_cannot_claim_its_replacement() {
     let dir = tempfile::tempdir().unwrap();

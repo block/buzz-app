@@ -1,6 +1,6 @@
 //! Integration policy, shared by native validation and the editor snapshot.
 use crate::{agent_defaults::harness_kind, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Static integration rules, not authentication or model capability evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -21,6 +21,23 @@ pub struct HarnessConfigurationPolicy {
     /// Native launch policy; not an editable setting or an IPC capability.
     #[serde(skip)]
     pub(crate) include_buzz_dev_mcp: bool,
+}
+
+/// Stable native integration identity. Editable executable names never grant
+/// managed policy or access semantics.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HarnessIntegration {
+    /// Bundled Buzz Agent integration.
+    BuzzAgent,
+    /// Bundled Goose integration.
+    Goose,
+    /// Installed Pi adapter integration.
+    Pi,
+    /// Installed Codex CLI and ACP adapter integration.
+    Codex,
+    /// Arbitrary executable without managed semantics.
+    External,
 }
 
 /// Authentication ownership does not imply an API key is required.
@@ -73,6 +90,8 @@ pub enum ModelRequirement {
 pub enum EffortDiscovery {
     /// This integration does not yet report model-specific effort metadata.
     Unknown,
+    /// This integration reports effort choices for the selected model.
+    ModelSpecific,
 }
 
 /// Environment keys used by the worker's provider/model selectors.
@@ -85,8 +104,8 @@ pub struct SelectorEnvironment {
 }
 
 impl HarnessConfigurationPolicy {
-    /// Existing harness classification only; this grants no executable trust.
-    pub fn for_command(command: &str) -> Self {
+    /// Policy selected by a native-owned integration identity.
+    pub fn for_integration(integration: HarnessIntegration) -> Self {
         let mut policy = Self {
             authentication: AuthenticationPolicy::External,
             provider: ProviderPolicy::External,
@@ -94,22 +113,10 @@ impl HarnessConfigurationPolicy {
             model: ModelRequirement::Optional,
             effort_discovery: EffortDiscovery::Unknown,
             selector_environment: None,
-            include_buzz_dev_mcp: match std::path::Path::new(command)
-                .file_name()
-                .and_then(|name| name.to_str())
-            {
-                Some("buzz-agent" | "buzz-agent.exe") => true,
-                Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => false,
-                Some("buzz-pi-acp") => false,
-                Some("codex-acp" | "codex-acp.exe" | "codex-acp.cmd" | "codex-acp.bat") => false,
-                _ => match crate::harness_preset(command) {
-                    Some(preset) => preset.include_buzz_dev_mcp,
-                    None => false,
-                },
-            },
+            include_buzz_dev_mcp: false,
         };
-        match harness_kind(command) {
-            Some("buzz-agent") => {
+        match integration {
+            HarnessIntegration::BuzzAgent => {
                 policy.authentication = AuthenticationPolicy::Provider;
                 policy.provider = ProviderPolicy::Selector;
                 policy.selector_environment = Some(SelectorEnvironment {
@@ -117,7 +124,7 @@ impl HarnessConfigurationPolicy {
                     provider: "BUZZ_AGENT_PROVIDER",
                 });
             }
-            Some("goose") => {
+            HarnessIntegration::Goose => {
                 policy.authentication = AuthenticationPolicy::HarnessWithOverrides;
                 policy.provider = ProviderPolicy::Selector;
                 policy.selector_environment = Some(SelectorEnvironment {
@@ -125,13 +132,43 @@ impl HarnessConfigurationPolicy {
                     provider: "GOOSE_PROVIDER",
                 });
             }
-            Some("pi") => {
+            HarnessIntegration::Pi => {
                 policy.authentication = AuthenticationPolicy::HarnessWithOverrides;
                 policy.provider = ProviderPolicy::Discovered;
                 policy.model = ModelRequirement::WithProvider;
             }
-            _ => {}
+            HarnessIntegration::Codex => {
+                policy.authentication = AuthenticationPolicy::External;
+                policy.provider = ProviderPolicy::External;
+                policy.supported_modes = &[ConfigurationMode::Default, ConfigurationMode::Advanced];
+                policy.effort_discovery = EffortDiscovery::ModelSpecific;
+            }
+            HarnessIntegration::External => {}
         }
+        policy
+    }
+
+    /// Existing harness classification only; this grants no executable trust.
+    pub fn for_command(command: &str) -> Self {
+        let mut policy = Self::for_integration(match harness_kind(command) {
+            Some("buzz-agent") => HarnessIntegration::BuzzAgent,
+            Some("goose") => HarnessIntegration::Goose,
+            Some("pi") => HarnessIntegration::Pi,
+            _ => HarnessIntegration::External,
+        });
+        policy.include_buzz_dev_mcp = match std::path::Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            Some("buzz-agent" | "buzz-agent.exe") => true,
+            Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => false,
+            Some("buzz-pi-acp") => false,
+            Some("codex-acp" | "codex-acp.exe" | "codex-acp.cmd" | "codex-acp.bat") => false,
+            _ => match crate::harness_preset(command) {
+                Some(preset) => preset.include_buzz_dev_mcp,
+                None => false,
+            },
+        };
         policy
     }
 

@@ -36,10 +36,12 @@ fn agent(workspace: &Path) -> Agent {
         session_policy_inherit: false,
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            integration: None,
             databricks: None,
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),
+            configuration: None,
             provider: "test-provider".into(),
         },
         environment: BTreeMap::from([("PROVIDER_TEST_SETTING".into(), "explicit-value".into())]),
@@ -78,6 +80,7 @@ fn rename_publication_applies_saved_picture_only_when_avatar_intent_is_pending()
                 workspace: saved.workspace.clone(),
                 harness: saved.harness.clone(),
                 environment: BTreeMap::new(),
+                effort: None,
             };
             controller.save(&saved.id, saved.revision, edit).unwrap();
             let publication = controller.creation_profile(&saved.id).unwrap();
@@ -538,6 +541,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
+        effort: None,
         picture: None,
         name: "Edited".into(),
         system_prompt: "changed prompt".into(),
@@ -623,6 +627,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
         dir.path().join("ownership"),
     );
     let edit = AgentEdit {
+        effort: None,
         name: a.name.clone(),
         picture: None,
         system_prompt: a.system_prompt.clone(),
@@ -646,6 +651,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
     controller.action(&a.id, Action::Stop).unwrap();
     assert_eq!(controller.launch_ids().unwrap(), vec![a.id.clone()]);
 }
+
 #[test]
 #[cfg(unix)]
 fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
@@ -868,6 +874,242 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     assert!(controller.running.is_empty());
     let stopped = controller.action(&a.id, Action::Stop).unwrap();
     assert!(!stopped.agents[0].enabled);
+}
+
+#[cfg(unix)]
+fn codex_fixture(workspace: &Path) -> (Agent, crate::codex::CodexContext) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tools = workspace.join("codex-tools");
+    fs::create_dir_all(&tools).unwrap();
+    let adapter = tools.join("codex-acp-script");
+    let cli = tools.join("codex-cli-script");
+    fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(&cli, "#!/usr/bin/python3\n").unwrap();
+    fs::set_permissions(&adapter, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+    let context =
+        crate::codex::CodexContext::new(&adapter, &cli, workspace, &BTreeMap::new()).unwrap();
+    let mut saved = agent(workspace);
+    saved.harness = HarnessEdit {
+        integration: Some(crate::HarnessIntegration::Codex),
+        command: context.adapter.to_string_lossy().into_owned(),
+        args: vec![],
+        model: String::new(),
+        configuration: Some(crate::AiConfiguration::Default),
+        provider: String::new(),
+        databricks: None,
+    };
+    saved.environment = BTreeMap::from([("BUZZ_ACP_AGENTS".into(), "3".into())]);
+    (saved, context)
+}
+
+/// Launch resolves the Codex CLI from the user's tools, so Codex launch tests
+/// rerun themselves with a private HOME whose `~/.local/bin/codex` is the
+/// fixture CLI. Returns true in that child.
+#[cfg(unix)]
+fn codex_launch_child(test: &str) -> bool {
+    const CHILD: &str = "BUZZ_TEST_CODEX_LAUNCH";
+    if std::env::var_os(CHILD).is_some() {
+        return true;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "/usr/bin:/bin")
+        .env(CHILD, "1")
+        .env("SSH_AUTH_SOCK", "/tmp/buzz-test-ssh.sock")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
+#[cfg(unix)]
+fn select_codex_cli(context: &crate::codex::CodexContext) {
+    let user = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin");
+    fs::create_dir_all(&user).unwrap();
+    std::os::unix::fs::symlink(&context.cli, user.join("codex")).unwrap();
+}
+
+fn command_environment(command: &Command) -> BTreeMap<String, String> {
+    command
+        .get_envs()
+        .filter_map(|(key, value)| {
+            value.map(|value| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_command_binds_exact_interpreters_and_default_selection() {
+    if !codex_launch_child(
+        "runtime::tests::codex_command_binds_exact_interpreters_and_default_selection",
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = bundle(dir.path());
+    let (saved, context) = codex_fixture(dir.path());
+    assert_ne!(context.interpreter, context.cli_interpreter);
+    select_codex_cli(&context);
+    let command = runtime
+        .command_checked(
+            &saved,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults {
+                model: "unrelated-default-model".into(),
+                provider: "unrelated-default-provider".into(),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let environment = command_environment(&command);
+    assert_eq!(
+        environment["BUZZ_ACP_AGENT_COMMAND"],
+        context.interpreter.as_ref().unwrap().to_string_lossy()
+    );
+    assert_eq!(
+        environment["BUZZ_ACP_AGENT_ARGS"],
+        context.adapter.to_string_lossy()
+    );
+    assert_eq!(environment["CODEX_PATH"], context.cli.to_string_lossy());
+    assert_eq!(environment["INITIAL_AGENT_MODE"], "agent-full-access");
+    assert_eq!(environment["BUZZ_ACP_AGENTS"], "3");
+    assert_eq!(environment["BUZZ_ACP_MCP_COMMAND"], "");
+    assert!(!environment.contains_key("BUZZ_ACP_MODEL"));
+    assert!(!environment.contains_key("BUZZ_ACP_EFFORT_LEVEL"));
+    assert!(!environment.contains_key("BUZZ_AGENT_MODEL"));
+    assert!(!environment.contains_key("BUZZ_AGENT_PROVIDER"));
+    assert_eq!(environment["SSH_AUTH_SOCK"], "/tmp/buzz-test-ssh.sock");
+    let path: Vec<_> = std::env::split_paths(&environment["PATH"]).collect();
+    assert_eq!(path.first(), Some(&dir.path().to_path_buf()));
+    assert!(path[0].join("buzz").is_file());
+    assert!(path.contains(
+        &context
+            .interpreter
+            .as_ref()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    ));
+    assert!(path.contains(
+        &context
+            .cli_interpreter
+            .as_ref()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    ));
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_saved_default_agent_discovers_models_before_advanced_choice() {
+    if !codex_launch_child(
+        "runtime::tests::codex_saved_default_agent_discovers_models_before_advanced_choice",
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (saved, context) = codex_fixture(dir.path());
+    select_codex_cli(&context);
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        dir.path().join("ownership"),
+    );
+    // Default -> Advanced before a model or effort has been chosen.
+    let mut harness = saved.harness.clone();
+    harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: String::new(),
+        },
+    });
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name": saved.name, "systemPrompt": saved.system_prompt, "workspace": saved.workspace,
+        "harness": harness, "environment": {}
+    }))
+    .unwrap();
+    assert!(
+        controller
+            .codex_model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap()
+            == context
+    );
+    assert!(controller
+        .codex_model_context(&saved.id, saved.revision + 1, edit.clone())
+        .is_err());
+    assert_eq!(
+        controller
+            .save(&saved.id, saved.revision, edit)
+            .err()
+            .as_deref(),
+        Some("Choose a model for Advanced Codex configuration")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_command_applies_advanced_selection_and_never_falls_back() {
+    use std::os::unix::fs::PermissionsExt;
+    if !codex_launch_child(
+        "runtime::tests::codex_command_applies_advanced_selection_and_never_falls_back",
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = bundle(dir.path());
+    let (mut saved, context) = codex_fixture(dir.path());
+    select_codex_cli(&context);
+    saved.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: "xhigh".into(),
+        },
+    });
+    saved.harness.model = "gpt-test".into();
+    let launch = |saved: &Agent| {
+        runtime.command_checked(
+            saved,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+            None,
+        )
+    };
+    let environment = command_environment(&launch(&saved).unwrap());
+    assert_eq!(environment["BUZZ_ACP_MODEL"], "gpt-test");
+    assert_eq!(environment["BUZZ_ACP_EFFORT_LEVEL"], "xhigh");
+
+    // A removed saved adapter fails Start even when another adapter is
+    // installed; launch never substitutes a newly discovered one.
+    let global = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin/codex-acp");
+    fs::write(&global, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&global, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(crate::codex::installed_adapter(None), Some(global));
+    fs::remove_file(&saved.harness.command).unwrap();
+    assert_eq!(
+        launch(&saved).unwrap_err(),
+        "Codex ACP adapter is missing or not executable"
+    );
 }
 /// Windows listener stand-in: `bundle` installs this test binary as
 /// buzz-acp.exe, and the guardian runs only this test from that copy.
@@ -1576,6 +1818,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     let cache = config.join("buzz-agent/oauth/databricks");
     assert!(cache.is_dir());
     let edit = AgentEdit {
+        effort: None,
         picture: None,
         name: a.name.clone(),
         system_prompt: a.system_prompt.clone(),
@@ -2063,15 +2306,18 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
         dir.path().join("ownership"),
     );
     let edit = |override_provider: Option<&str>| AgentEdit {
+        effort: None,
         picture: None,
         name: "Goose".into(),
         system_prompt: String::new(),
         session_policy: Some(None),
         workspace: dir.path().display().to_string(),
         harness: HarnessEdit {
+            integration: None,
             command: goose.display().to_string(),
             args: vec!["acp".into()],
             model: "short-name".into(),
+            configuration: None,
             provider: "databricks_v2".into(),
             databricks: None,
         },
@@ -2164,6 +2410,7 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
         assert_eq!(env["GOOSE_MODEL"], "fixture-model");
     }
     let edit = || AgentEdit {
+        effort: None,
         name: saved.name.clone(),
         picture: None,
         system_prompt: saved.system_prompt.clone(),
@@ -2512,6 +2759,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
                 &a.id,
                 a.revision,
                 AgentEdit {
+                    effort: None,
                     name: a.name.clone(),
                     picture: None,
                     system_prompt: a.system_prompt.clone(),
@@ -2640,6 +2888,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         dir.path().join("ownership"),
     );
     let edit = AgentEdit {
+        effort: None,
         name: a.name.clone(),
         picture: None,
         system_prompt: a.system_prompt.clone(),
@@ -3921,4 +4170,93 @@ fn pi_saved_tool_path_is_shared_by_context_and_launch() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&result.stdout), "0.99.1\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_saved_adapter_survives_global_install_without_silent_fallback() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "BUZZ_TEST_SAVED_CODEX_ADAPTER";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::tests::codex_saved_adapter_survives_global_install_without_silent_fallback", "--nocapture"])
+            .env_clear()
+            .env("HOME", home.path())
+            .env("PATH", "/usr/bin:/bin")
+            .env(CHILD, "1")
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let user = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin");
+    let app_data = dir.path().join("app-data");
+    let adapter = app_data.join("codex-tools/bin/codex-acp");
+    let tool = |path: &Path, body: &str| {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    tool(&adapter, "#!/usr/bin/env node\n");
+    tool(&user.join("codex"), "#!/bin/sh\nexit 0\n");
+    for platform in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] {
+        tool(
+            &app_data
+                .join("runtimes/node/v24.18.0")
+                .join(platform)
+                .join("bin/node"),
+            "#!/bin/sh\nexit 0\n",
+        );
+    }
+    let (mut saved, _) = codex_fixture(dir.path());
+    saved.harness.command = adapter.to_string_lossy().into_owned();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        dir.path().join("ownership"),
+    );
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name": saved.name, "systemPrompt": saved.system_prompt, "workspace": saved.workspace,
+        "harness": saved.harness, "environment": {}
+    }))
+    .unwrap();
+    let before = controller
+        .codex_model_context(&saved.id, saved.revision, edit.clone())
+        .unwrap();
+    assert_eq!(before.adapter, adapter.canonicalize().unwrap());
+    assert_eq!(
+        before.interpreter,
+        Some(
+            managed_tool(&app_data, "node")
+                .unwrap()
+                .canonicalize()
+                .unwrap()
+        )
+    );
+
+    let global = user.join("codex-acp");
+    tool(&global, "#!/bin/sh\nexit 0\n");
+    assert_eq!(
+        crate::codex::installed_adapter(Some(&app_data)),
+        Some(global)
+    );
+    assert!(
+        controller
+            .codex_model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap()
+            == before
+    );
+    fs::remove_file(&adapter).unwrap();
+    assert!(controller
+        .codex_model_context(&saved.id, saved.revision, edit)
+        .is_err());
 }

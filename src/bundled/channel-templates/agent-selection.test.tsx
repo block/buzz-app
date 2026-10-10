@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/sonner-dom";
 import "@testing-library/jest-dom/vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -2043,6 +2044,8 @@ it.each(["save", "delete"] as const)(
         expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
           "Remote team",
         );
+        // An unchanged team isn't rewritten, so make a real edit.
+        await user.type(screen.getByRole("textbox", { name: "Name" }), "!");
         await user.click(screen.getByRole("button", { name: "Save team" }));
       } else {
         await user.click(
@@ -2058,7 +2061,11 @@ it.each(["save", "delete"] as const)(
       expect(writes).toHaveLength(1);
       const saved = test.stored.get(writes[0]?.content ?? "");
       expect(saved?.deleted).toBe(action === "delete");
-      expect(saved?.value).toEqual(updated.value);
+      expect(saved?.value).toEqual(
+        action === "save"
+          ? { ...updated.value, name: "Remote team!" }
+          : updated.value,
+      );
     } finally {
       test.dispose();
     }

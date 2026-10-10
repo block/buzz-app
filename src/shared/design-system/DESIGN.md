@@ -640,6 +640,11 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+IconButton's `bare` variant is for toggles whose glyph supplies the state:
+no resting, hover, pressed or selected background. The small control keeps its
+32px hit area with 20px artwork. The caller supplies outline/filled artwork,
+aria-pressed and the accessible name; focus behavior remains unchanged.
+
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
@@ -737,8 +742,12 @@ short forms, and Select/Combobox for form values. Both anchored surfaces reuse
 Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
 keyboard navigation, positioning and dismissal.
 
-Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
-edge; the pointer/keyboard highlight is independent of that persistent selection.
+Menu group labels belong inside MenuGroup. `emphasis="quiet"` uses metadata
+color for lower-emphasis group labels. Radio items may use `selection="highlight"`
+for a single-choice view: the checked item has a persistent selection fill and no
+check icon. Default radio and checkbox items retain their trailing checks.
+Trailing selection checks and persistent selection fills remain independent
+of the pointer/keyboard highlight.
 Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
 for destructive actions and MenuNote for explanatory or status copy outside the
 keyboard item list. Long lists scroll inside the popup.
@@ -961,11 +970,34 @@ duration (120ms). This designer-requested blur is a tooltip-specific exception.
 Base UI instant states and keyboard navigation skip transitions; reduced motion
 keeps only the fade.
 
-ToastProvider mounts once in the host. ToastNotice belongs to the source that
+ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
+in the host, portaled outside the app layout to the bottom right. Features and
+plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
+Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+scrollable viewport leaves room for the shadow and keyboard focus.
+Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
+headless content inherits the host theme and text size without an OS-theme override.
+Group title and description with `space-1` (4px), then separate actions with
+`space-3` (12px). Use `space-3` padding on every card edge. The dismiss slot is
+independent of the text group so its 32px hit target cannot open a gap between
+title and description. It extends 8px toward the trailing edge and 4px vertically
+into the padding; title-only confirmations stay centered beside it. Descriptions
+use secondary text, and actions align with the message's leading edge.
+The pinned Sonner patch preserves intentional focus destinations when leaving a
+toast; fallback restoration still applies when focus is otherwise lost. Expiry
+pauses while the stack is hovered, focused or being dragged, independently of
+visual expansion, and resumes on exit. Escape dismisses the focused dismissible
+notice; persistent recovery remains. Cards allow vertical touch scrolling through
+the bounded stack and reserve swipe dismissal for horizontal gestures.
+
+Sonner is the toast behavior owner; other matching controls use Base UI. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline.
+blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
+keep it in the conversation flow immediately above the composer, with bounded
+overflow, so Send and companion-panel controls remain usable. Its retry policy
+and diagnostics belong to Channels; it does not enter the floating toast stack.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite
@@ -973,8 +1005,9 @@ expiry. Keep source-owned recovery on ToastNotice.
 
 Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
-The bounded, scrollable stack keeps older actions available without covering the
-shell header or composer. F6 enters notifications, Tab reaches actions. Modals
+The expanded, bounded, scrollable stack keeps every recovery action available.
+It sits at the bottom right with safe-area insets, including narrow windows; do
+not add feature-specific top offsets. F6 enters notifications, Tab reaches actions. Modals
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
@@ -1159,7 +1192,7 @@ because the lighter amber steps cannot identify a control against a light panel.
 
 Palette values are based on Radix Colors (MIT), with authored neutral ramps and
 documented adjustments in `tokens.css`. These are values, not a component or
-behavior dependency. Base UI remains the component behavior layer.
+behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
 
 ### Naming and usage
 
@@ -1297,7 +1330,7 @@ person’s size preference. Allow content to reflow before it clips.
 
 Reuse and compose existing components before adding another.
 
-- **Behavior:** inspect Base UI before building an interactive shared component. Use its matching primitive for focus, keyboard behavior, positioning, portals, and dismissal. Buzz owns appearance and product semantics. Use native elements where Base UI has no matching primitive or the component is static.
+- **Behavior:** inspect Base UI before building an interactive shared component. Use its matching primitive for focus, keyboard behavior, positioning, portals, and dismissal. Buzz owns appearance and product semantics. Toast uses Sonner as documented above. Use native elements where Base UI has no matching primitive or the component is static.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.

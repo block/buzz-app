@@ -9,7 +9,7 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-// Browser-only contract: real hit-testing between centered modal layers,
+// Browser-only contract: confirmation hit-testing over a retained Canvas tab,
 // inside-origin drags, backdrop pointer focus return and Settings survival.
 // Cancellation matrices and writes stay in mounted component/domain tests.
 test("Canvas confirmation backdrop dismisses only the top layer and retains the draft", async ({
@@ -37,25 +37,21 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     name: "Channel settings",
     exact: true,
   });
-  const trigger = page.getByRole("button", {
-    name: "Channel actions",
+  const workspace = page.locator("[data-panel-workspace]");
+  const settingsTab = workspace.getByRole("tab", {
+    name: "Channel settings",
     exact: true,
   });
-  const openCanvas = async () => {
-    await trigger.click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
-  };
-  await openCanvas();
-  const editor = page.getByRole("dialog", {
-    name: "Channel Canvas",
+  const trigger = page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .getByRole("button", { name: "Toggle channel canvas", exact: true });
+  await trigger.click();
+  const editor = workspace.getByRole("tabpanel", {
+    name: "Canvas",
     exact: true,
   });
   const text = editor.getByRole("textbox", { name: "Canvas Markdown" });
   await expect(text).toHaveValue("Local draft");
-  await expect(editor).toHaveCSS("backdrop-filter", "blur(8px)");
-  await expect(editor).toHaveCSS("background-color", "rgba(40, 40, 40, 0.9)");
   const reload = editor.getByRole("button", { name: "Reload saved Canvas" });
   await reload.click();
   const confirmation = page.getByRole("dialog", {
@@ -65,6 +61,11 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(
     confirmation.getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
+  await expect(confirmation).toHaveCSS("backdrop-filter", "blur(8px)");
+  await expect(confirmation).toHaveCSS(
+    "background-color",
+    "rgba(40, 40, 40, 0.9)",
+  );
   await confirmation.getByRole("heading").click();
   await expect(confirmation).toBeVisible();
   const bounds = await confirmation.boundingBox();
@@ -83,10 +84,16 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(reload).toBeFocused();
   await expect(text).toHaveValue("Local draft");
   await page.mouse.click(8, 8);
+  await expect(editor).toBeVisible();
+  await expect(text).toHaveValue("Local draft");
+  await workspace
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
   await expect(editor).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+  await expect(settingsTab).toHaveAttribute("aria-selected", "true");
+  await expect(settingsTab).toBeFocused();
   await expect(settings).toBeVisible();
-  await openCanvas();
+  await trigger.click();
   await expect(text).toHaveValue("Local draft");
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
 });

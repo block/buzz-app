@@ -22,6 +22,7 @@ import {
   TerminalWindowIcon,
   InfoIcon,
   ListChecksIcon,
+  FileTextIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -35,6 +36,8 @@ export function channelToolIcon(panel: RegisteredPanel) {
     <InfoIcon size="1rem" />
   ) : panel.pluginId === "buzz.terminal" ? (
     <TerminalWindowIcon size="1rem" />
+  ) : panel.pluginId === "buzz.canvas" ? (
+    <FileTextIcon size="1rem" />
   ) : (
     <ListChecksIcon size="1rem" />
   );
@@ -43,7 +46,8 @@ export function isChannelTabTool(panel: RegisteredPanel) {
   return (
     !!panel.channelLauncher &&
     ((panel.pluginId === "buzz.terminal" && panel.id === "terminal") ||
-      (panel.pluginId === "buzz.todos" && panel.id === "todos"))
+      (panel.pluginId === "buzz.todos" && panel.id === "todos") ||
+      (panel.pluginId === "buzz.canvas" && panel.id === "canvas"))
   );
 }
 const categories = [

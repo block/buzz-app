@@ -1,3 +1,5 @@
+import canvasManifest from "./canvas/manifest.json";
+import * as canvas from "./canvas";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
@@ -61,6 +63,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...canvasManifest, apiVersion: 1 },
+    module: canvas,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,

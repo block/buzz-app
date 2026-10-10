@@ -50,7 +50,7 @@ export function ChannelHeaderMenu({
   templateProvider: Contribution<TemplateProvider> | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
-  openCanvas(trigger: HTMLButtonElement): void;
+  openCanvas?: ((trigger: HTMLButtonElement) => void) | undefined;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
@@ -95,7 +95,7 @@ export function ChannelHeaderMenu({
         </MenuIcon>
         View channel details
       </MenuItem>
-      {channel && !channel.readOnly && (
+      {channel && !channel.readOnly && openCanvas && (
         <MenuItem
           onClick={() => {
             if (trigger.current) openCanvas(trigger.current);

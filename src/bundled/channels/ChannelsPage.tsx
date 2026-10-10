@@ -14,7 +14,6 @@ import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
-import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -214,15 +213,10 @@ function ChannelWorkspace({
     groupEntry?.record.value.type === "groups"
       ? groupEntry.record.value
       : undefined;
-  const [canvasOrigin, setCanvasOrigin] = useState<{
-    channelId: string;
-    navigation: PageNavigation | undefined;
-  }>();
   const [composerFocus, setComposerFocus] = useState(0);
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
-  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
@@ -470,14 +464,6 @@ function ChannelWorkspace({
     requestedMessage,
     requestedThread,
   ]);
-  const canvasOpen =
-    !!canvasOrigin &&
-    canvasOrigin.channelId === currentId &&
-    canvasOrigin.navigation === navigation &&
-    !navigation?.signal.aborted;
-  useEffect(() => {
-    if (!canvasOpen) setCanvasOrigin(undefined);
-  }, [canvasOpen]);
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -713,6 +699,7 @@ function ChannelWorkspace({
     addTab,
     panelTrigger,
     splitTrigger,
+    openCanvas,
   } = secondary;
   const previousThreadRoute = useRef({ currentId, requestedMessage });
   useLayoutEffect(() => {
@@ -1079,11 +1066,6 @@ function ChannelWorkspace({
         )
         ?.focus({ preventScroll: true });
   }, [settingsFocus, split.ref]);
-  const openCanvas = (trigger: HTMLButtonElement) => {
-    canvasTrigger.current = trigger;
-    if (currentId && !navigation?.signal.aborted)
-      setCanvasOrigin({ channelId: currentId, navigation });
-  };
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
@@ -1221,20 +1203,6 @@ function ChannelWorkspace({
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
               : undefined
           }
-        />
-      )}
-      {current && !current.readOnly && canvasOpen && (
-        <ChannelCanvasDialog
-          key={`${scope}:${current.id}`}
-          canvas={queries.canvas}
-          profiles={queries.profiles}
-          scope={scope}
-          channelId={current.id}
-          open={canvasOpen}
-          onOpenChange={(open) => {
-            if (!open) setCanvasOrigin(undefined);
-          }}
-          finalFocus={canvasTrigger}
         />
       )}
       <Panel as="article" aria-label="Conversation">

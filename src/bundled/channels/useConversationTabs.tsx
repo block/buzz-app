@@ -228,6 +228,9 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
+  const canvasPanel = available.find(
+    (panel) => panel.pluginId === "buzz.canvas" && panel.id === "canvas",
+  );
   const drawer = useChannelPanels(
     panels,
     drawerContext,
@@ -239,18 +242,28 @@ export function useConversationTabs({
       const entry = panelTabs.find(
         (entry) => entry.panel === panel && entry.channelContext,
       );
+      if (panel === canvasPanel) {
+        openTool(
+          panel,
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null,
+        );
+        return true;
+      }
       if (!entry) return false;
       if (tabState.paneOpen && tabState.selected === panelTabId(entry))
         tabState.setPaneOpen(false);
       else selectOpening(entry);
       return true;
     },
+    tabState.paneOpen ? panel : undefined,
   );
   const tabTools =
     drawerContext && !current?.archived
       ? available.filter(isChannelTabTool)
       : [];
-  const chooseTool = (id: string, panel: RegisteredPanel) => {
+  const openTool = (panel: RegisteredPanel, trigger: HTMLElement | null) => {
     const connection = relay.snapshot();
     if (
       connection.status !== "ready" ||
@@ -260,11 +273,10 @@ export function useConversationTabs({
       !tabTools.includes(panel) ||
       !panels.snapshot().includes(panel)
     )
-      return;
+      return false;
     // A terminal's screen/session has one presentation owner at a time.
     drawer.close();
-    panelTrigger.current = splitTrigger.current;
-    tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
+    panelTrigger.current = trigger;
     open(
       {
         panel,
@@ -274,6 +286,11 @@ export function useConversationTabs({
       },
       true,
     );
+    return true;
+  };
+  const chooseTool = (id: string, panel: RegisteredPanel) => {
+    if (openTool(panel, splitTrigger.current))
+      tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
   };
   const tabDestinations = channels.filter(
     (item) =>
@@ -425,6 +442,8 @@ export function useConversationTabs({
     drawerContext,
     splitTrigger,
     panelTrigger,
+    openCanvas:
+      canvasPanel && ((trigger: HTMLElement) => openTool(canvasPanel, trigger)),
     openConversationLink,
     openConversationThread,
     items: [

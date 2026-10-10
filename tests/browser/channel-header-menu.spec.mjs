@@ -350,19 +350,21 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await menu
     .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
-  const canvas = page.getByRole("dialog", {
+  const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
   });
   await expect(canvas).toBeVisible();
   await expect(
-    canvas.getByRole("button", { name: "Close Canvas", exact: true }),
+    page.getByRole("button", { name: "Close Canvas tab", exact: true }),
   ).toBeEnabled();
   await expect(
     canvas.getByRole("textbox", { name: "Canvas Markdown", exact: true }),
   ).toBeEnabled();
   await expect(menu).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
   await expect(canvas).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await trigger.click();
@@ -513,7 +515,7 @@ test.describe("dialog origin retirement", () => {
       ),
     ).toHaveText("Beta");
   }
-  test("Canvas retires without reading the next channel or losing its original draft", async ({
+  test("Canvas stays scoped across browser navigation and restores its original draft", async ({
     page,
     app,
   }) => {
@@ -524,7 +526,7 @@ test.describe("dialog origin retirement", () => {
     await page
       .getByRole("menuitem", { name: "View canvas", exact: true })
       .click();
-    const canvas = page.getByRole("dialog", {
+    const canvas = page.getByRole("region", {
       name: "Channel Canvas",
       exact: true,
     });
@@ -539,22 +541,16 @@ test.describe("dialog origin retirement", () => {
     const before = canvasReads();
     expect(before.length).toBeGreaterThan(0);
     await back(page);
-    await expect(canvas).toHaveCount(0);
+    await expect(canvas).toBeHidden();
     expect(canvasReads()).toEqual(before);
     await page.goForward();
     await expect(
       page.getByRole("tab", { name: channelName, exact: true }),
     ).toBeVisible();
-    await expect(canvas).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
-    await canvas
-      .getByRole("button", { name: "Close Canvas", exact: true })
+    await expect(editor).toBeFocused();
+    await page
+      .getByRole("button", { name: "Close Canvas tab", exact: true })
       .click();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });

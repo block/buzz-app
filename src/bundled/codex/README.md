@@ -22,7 +22,10 @@ BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
    **Install Codex** runs the official installer into `~/.local/bin`; if it is
    signed out, **Sign in** runs `codex login`. Each checks again when it ends.
    On Linux, run `codex login` in a terminal instead: it can start the browser
-   inside the login's process group, which Buzz kills when the step ends.
+   inside the login's process group, which Buzz kills when the step ends. After
+   an in-app install the terminal may not find `codex` (the installer sees
+   `~/.local/bin` on Buzz's PATH and leaves the shell profile alone); run
+   `~/.local/bin/codex login` then.
 3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,

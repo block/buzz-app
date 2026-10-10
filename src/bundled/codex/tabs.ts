@@ -227,7 +227,13 @@ export function createTabs(
               { className: "buzz-field-description" },
               "Run ",
               h("code", null, "codex login"),
-              " in a terminal, then check again.",
+              " in a terminal, then check again. If the terminal cannot find ",
+              h("code", null, "codex"),
+              ", run ",
+              // The installer leaves the shell profile alone when it sees
+              // ~/.local/bin on the PATH Buzz gives it.
+              h("code", null, "~/.local/bin/codex login"),
+              ".",
             )
           : null,
       output

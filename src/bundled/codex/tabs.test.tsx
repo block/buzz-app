@@ -185,8 +185,9 @@ it("leaves Linux sign-in to a terminal, where the browser it opens is safe", asy
     const f = fixture({ installed: true, signedIn: false });
     render(<f.tabs.CodexTab {...f.props()} />);
     await screen.findByText("Codex needs you to sign in.");
+    // A terminal without ~/.local/bin on its PATH still has a command to run.
     expect(screen.getByText("codex login").closest("p")).toHaveTextContent(
-      "Run codex login in a terminal, then check again.",
+      "Run codex login in a terminal, then check again. If the terminal cannot find codex, run ~/.local/bin/codex login.",
     );
     expect(
       screen.queryByRole("button", { name: "Sign in" }),

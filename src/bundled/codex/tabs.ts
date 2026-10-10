@@ -19,8 +19,11 @@ class SignedOut extends Error {}
 const needed = (reason: unknown): Step | undefined =>
   reason instanceof SignedOut
     ? "login"
-    : // Native reports a program it cannot find as a failure to start it.
-      reason instanceof Error && /could not start/i.test(reason.message)
+    : // Native rejects with a string, reporting a program it cannot find as a
+      // failure to start it.
+      /could not start/i.test(
+          reason instanceof Error ? reason.message : String(reason),
+        )
       ? "install"
       : undefined;
 /** Read-only setup/catalog discovery uses the same declared native transport. */

@@ -35,8 +35,9 @@ function fixture(machine = { installed: true, signedIn: true }) {
     finish(code: number): void;
   }[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
+    // Like the native host, reject with the error string, not an Error.
     if (id === "codex-app-server" && !machine.installed)
-      throw new Error("Could not start codex: No such file or directory");
+      return Promise.reject("Could not start codex: No such file or directory");
     const exit = deferred<number | null>();
     const process = {
       id,

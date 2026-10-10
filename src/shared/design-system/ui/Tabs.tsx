@@ -34,6 +34,7 @@ export function Tabs<Value extends string>({
   items,
   label,
   onValueChange,
+  onReselect,
   trailingAction,
   variant = "chrome",
   showSelection = true,
@@ -47,6 +48,8 @@ export function Tabs<Value extends string>({
   items: readonly TabItem<Value>[];
   label: string;
   onValueChange: (value: Value) => void;
+  /** Opt in when activating the selected tab returns from a nested view. */
+  onReselect?: (value: Value) => void;
   trailingAction?: ReactNode;
   variant?: TabsVariant;
   /** Hide the visual selection for a single-view header; tab semantics remain. */
@@ -91,6 +94,9 @@ export function Tabs<Value extends string>({
               {...(item.panelId
                 ? { id: `${item.panelId}-tab`, "aria-controls": item.panelId }
                 : {})}
+              onClick={() => {
+                if (item.value === value) onReselect?.(item.value);
+              }}
               onKeyDown={(event) => {
                 if (item.onClose && event.key === "Delete") {
                   event.preventDefault();

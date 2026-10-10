@@ -1525,7 +1525,12 @@ function ChannelWorkspace({
                     channelId={current.id}
                     channelName={current.name}
                     autoFocus={
-                      !current.readOnly && !requestedMessage && !requestedThread
+                      // The bound request arrives after the composer's first render.
+                      (navigation?.focus ??
+                        navigator?.snapshot().attempt.focus) !== "preserve" &&
+                      !current.readOnly &&
+                      !requestedMessage &&
+                      !requestedThread
                     }
                     onOpenLink={openLink}
                     canOpenLink={canOpenLink}

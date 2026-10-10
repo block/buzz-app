@@ -446,3 +446,119 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
     error.mockRestore();
   }
 });
+
+it.each([false, true])(
+  "keeps Messages selected for a child without losing exact navigation (compact: %s)",
+  async (compact) => {
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      media,
+      matches: compact,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const current = createServices();
+    services = current;
+    const onSelect = vi.fn();
+    const entries: RegisteredPage[] = [
+      { key: "buzz.me/me", title: "Me", placement: "topbar" },
+      { key: "buzz.channels/channels", title: "Channels", placement: "topbar" },
+      { key: "buzz.inbox/inbox", title: "Inbox", placement: "sidebar" },
+      { key: "example/top", title: "Top", placement: "topbar" },
+      { key: "example/tool", title: "Tool", placement: "toolbar" },
+    ].map((entry) => ({
+      ...entry,
+      placement: entry.placement as "topbar" | "sidebar" | "toolbar",
+      id: entry.key.slice(entry.key.indexOf("/") + 1),
+      pluginId: entry.key.slice(0, entry.key.indexOf("/")),
+      revision: "one",
+      primary: true,
+      component: () => null,
+    }));
+    const shell = (selected: string, pages = entries) => (
+      <ToastProvider>
+        <AppShell
+          pages={pages}
+          selected={selected}
+          navigationAttempt=""
+          onSelect={onSelect}
+          tone="default"
+          communities={current.communities}
+          accountActions={current.accountActions}
+        >
+          <p>Child content</p>
+        </AppShell>
+      </ToastProvider>
+    );
+    const { rerender } = render(shell("buzz.inbox/inbox"));
+    if (compact)
+      await userEvent.click(
+        screen.getByRole("button", { name: "Show navigation" }),
+      );
+    const inbox = within(
+      screen.getByRole("navigation", { name: "Pages" }),
+    ).getByRole("button", { name: "Inbox" });
+    expect(inbox).toHaveAttribute("aria-current", "page");
+    if (compact)
+      await userEvent.click(screen.getByRole("button", { name: "More pages" }));
+    const nav = screen.getByRole("navigation", {
+      name: compact ? "Header pages" : "Topbar pages",
+    });
+    const role = compact ? "button" : "tab";
+    const messages = within(nav).getByRole(role, { name: "Messages" });
+    if (compact) {
+      expect(messages).toHaveAttribute("aria-current", "true");
+      expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+      await userEvent.click(messages);
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith(
+        "buzz.channels/channels",
+      );
+      expect(document.getElementById("main-content")).toHaveFocus();
+      return;
+    }
+    expect(messages).toHaveAttribute("aria-selected", "true");
+    const panel = screen.getByRole("tabpanel", { name: "Messages" });
+    expect(panel).toHaveAttribute("id", messages.getAttribute("aria-controls"));
+    expect(panel).toHaveAttribute("aria-labelledby", messages.id);
+    expect(panel).toHaveTextContent("Child content");
+    await userEvent.click(messages);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith("buzz.channels/channels", {
+      focus: "preserve",
+    });
+    expect(messages).toHaveFocus();
+    onSelect.mockClear();
+    rerender(shell("buzz.channels/channels"));
+    await userEvent.click(messages);
+    expect(onSelect).not.toHaveBeenCalled();
+    rerender(shell("example/top"));
+    expect(within(nav).getByRole("tab", { name: "Top" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    rerender(shell("example/tool"));
+    expect(
+      within(nav).queryByRole("tab", { selected: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tool" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    rerender(shell("buzz.me/me"));
+    expect(within(nav).getByRole("tab", { name: "Me" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    rerender(shell("settings"));
+    expect(
+      within(nav).queryByRole("tab", { selected: true }),
+    ).not.toBeInTheDocument();
+    rerender(
+      shell(
+        "buzz.inbox/inbox",
+        entries.filter((entry) => entry.key !== "buzz.inbox/inbox"),
+      ),
+    );
+    expect(
+      within(nav).queryByRole("tab", { selected: true }),
+    ).not.toBeInTheDocument();
+  },
+);

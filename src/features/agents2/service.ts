@@ -226,6 +226,8 @@ export type Agents2 = {
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. */
   remove(pubkey: string): Promise<void>;
+  /** Whether a watch's classifier can run on this device now. */
+  classifier(): ClassifierAvailability;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -411,7 +413,9 @@ export class Agents2Service extends Service implements Agents2 {
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
   /** Whether watch classifiers can run on this device. */
-  private classifier = (): ClassifierAvailability => "unavailable";
+  classifier(): ClassifierAvailability {
+    return "unavailable";
+  }
 
   async create({ type, name }: Readonly<{ type: string; name: string }>) {
     const native = this.native;

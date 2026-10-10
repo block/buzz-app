@@ -2702,7 +2702,13 @@ it("keeps Show's open keyboard selection through incoming row updates", async ()
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
   const show = screen.getByRole("combobox", { name: "Show" });
-  await user.click(show);
+  act(() => show.focus());
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: "Inbox", exact: true }),
+    ).toHaveFocus(),
+  );
   await user.keyboard("{End}");
   const combined = screen.getByRole("option", { name: "Inbox + archived" });
   expect(combined).toHaveAttribute("data-highlighted");

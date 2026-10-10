@@ -125,6 +125,7 @@ export function AvatarEditor(props: Props) {
             render={
               <IconButton
                 variant="solid"
+                size="md"
                 shape="round"
                 style={{
                   width: "100%",

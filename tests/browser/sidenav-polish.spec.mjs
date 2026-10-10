@@ -308,6 +308,27 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
       await expect(overflow).toBeHidden();
       await expect(topbarPages).toBeVisible();
     }
+    // The icon default is compact, but community identities keep their larger
+    // targets. Host CSS must not accidentally erase those explicit exceptions.
+    const rail = page.getByRole("navigation", {
+      name: "Communities",
+      exact: true,
+    });
+    for (const control of await rail.getByRole("button").all()) {
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([40, 40]);
+    }
+    await header
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    const profileAvatar = page.getByRole("menuitem", {
+      name: "View your profile",
+    });
+    await expect(profileAvatar).toBeVisible();
+    const avatarBox = await profileAvatar.boundingBox();
+    expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
+    await page.keyboard.press("Escape");
+    await expect(profileAvatar).toHaveCount(0);
     expect(await controls.count()).toBeGreaterThanOrEqual(5);
     for (const control of await controls.all()) {
       const box = await control.boundingBox();

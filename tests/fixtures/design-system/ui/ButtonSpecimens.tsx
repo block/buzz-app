@@ -277,6 +277,10 @@ export function IconButtonSpecimen() {
   const [unread, setUnread] = useState(false);
   return (
     <div className="component-specimen-stack">
+      <p className="text-body-sm text-subtle">
+        Icon actions default to small: a 32px control with 16px artwork.
+        Labelled buttons stay medium; choose a larger icon size explicitly.
+      </p>
       <ExamplePreview
         className="justify-center"
         code={`<IconButton

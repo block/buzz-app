@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -1285,7 +1292,11 @@ async function pagedInvitations(
       .flatMap(([filters]) => filters)
       .filter((filter) => filter.search)
       .map((filter) => filter.page);
-  await step(() => t.user.type(input, "Helper"));
+  // Paging is the contract here, not individual keystrokes.
+  // Keep the actual search debounce and session; bulk changes avoid unrelated work.
+  await step(async () =>
+    fireEvent.change(input, { target: { value: "Helper" } }),
+  );
   await idle();
   return { t, input, refresh, idle, more, rows, pages };
 }
@@ -1294,10 +1305,11 @@ it("pages combined local and relay invitations without losing matches", async ({
   signal,
 }) => {
   return ownedTask(signal, async (step) => {
-    const { t, more, rows, pages } = await pagedInvitations(step, 65);
-    expect(rows()).toHaveLength(30);
+    const { t, idle, more, rows, pages } = await pagedInvitations(step, 65);
+    const firstPage = rows();
+    expect(firstPage).toHaveLength(30);
     expect(
-      rows().every((row) =>
+      firstPage.every((row) =>
         row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
       ),
     ).toBe(true);
@@ -1308,9 +1320,12 @@ it("pages combined local and relay invitations without losing matches", async ({
       expect(pages()).toEqual([1]);
     }
     await more();
-    await step(() =>
-      screen.findByRole("button", { name: /^Add Helper final/ }),
-    );
+    // Settle the page before querying all its accessible names; retrying a
+    // missing-row query repeatedly walks and formats the large existing list.
+    await idle();
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(96);
     expect(pages()).toEqual([1, 2]);
     expect(
@@ -1328,9 +1343,10 @@ it("resets combined invitation paging on refresh or query change", async ({
     const { t, input, refresh, idle, more, rows, pages } =
       await pagedInvitations(step, 31);
     for (let i = 0; i < 3; i++) await more();
-    await step(() =>
-      screen.findByRole("button", { name: /^Add Helper final/ }),
-    );
+    await idle();
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(62);
     expect(pages()).toEqual([1, 2]);
     await step(() => t.user.click(refresh));
@@ -1339,10 +1355,12 @@ it("resets combined invitation paging on refresh or query change", async ({
     expect(pages()).toEqual([1, 2, 1]);
     await more();
     expect(rows()).toHaveLength(60);
-    await step(() => t.user.type(input, " local"));
+    await step(async () =>
+      fireEvent.change(input, { target: { value: "Helper local" } }),
+    );
     await idle();
     expect(rows()).toHaveLength(30);
-    await step(() => t.user.clear(input));
+    await step(async () => fireEvent.change(input, { target: { value: "" } }));
     expect(
       screen.queryByRole("region", { name: "Not in this channel" }),
     ).toBeNull();

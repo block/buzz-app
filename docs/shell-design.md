@@ -69,7 +69,11 @@ semantic tokens, UI authoring rules and the local component reference.
   those entries move into a labelled More pages popover (always at <=650px).
   Wide topbar pages use design-system chrome tabs with manual activation: arrow
   keys move focus, and Enter or Space selects the page while focus stays on its
-  tab. The selected page is a separately focusable, labelled tabpanel. Toolbar
+  tab. Each opening carries focus intent: topbar activation suppresses destination
+  autofocus, while explicit New conversation, sidebar and deep-link openings keep
+  their content focus. This intent is not saved in addresses or history; retry
+  preserves it for the same opening. The selected page is a separately focusable,
+  labelled tabpanel. Toolbar
   and overflow destinations remain native buttons using `aria-current` and
   focus main content on selection. Header pages never become companion launchers,
   and only the exact current page is selected.

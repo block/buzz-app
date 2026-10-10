@@ -411,7 +411,7 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
   expect(me).toHaveFocus();
   expect(onSelect).not.toHaveBeenCalled();
   await userEvent.keyboard("{Enter}");
-  expect(onSelect).toHaveBeenCalledWith("example/Me");
+  expect(onSelect).toHaveBeenCalledWith("example/Me", { focus: "preserve" });
   rerender(shell("example/Me"));
   expect(me).toHaveFocus();
   expect(me).toHaveAttribute("aria-selected", "true");

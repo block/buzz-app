@@ -61,6 +61,50 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   // Enter the page through normal keyboard traversal, not programmatic panel focus.
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
+    for (const activation of ["Enter", "Space"]) {
+      await messages.focus();
+      await messages.press("ArrowLeft");
+      await expect(me).toBeFocused();
+      await me.press(activation);
+      const newComposer = page.getByRole("textbox", {
+        name: "Message your agents",
+        exact: true,
+      });
+      await expect(newComposer).toBeVisible();
+      // The real destination and its mount effects must settle before checking focus.
+      await newComposer.evaluate(
+        (element) =>
+          new Promise((resolve) => {
+            requestAnimationFrame(() => resolve(element.isConnected));
+          }),
+      );
+      await expect(me).toHaveAttribute("aria-selected", "true");
+      await expect(me).toBeFocused();
+      await page.keyboard.press("ArrowRight");
+      await expect(messages).toBeFocused();
+      await expect(me).toHaveAttribute("aria-selected", "true");
+      await page.keyboard.press(activation);
+      await expect(messages).toHaveAttribute("aria-selected", "true");
+      await expect(composer).toHaveText("Keep this draft");
+    }
+    await me.click();
+    const newComposer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    await expect(newComposer).toBeVisible();
+    await newComposer.evaluate(
+      (element) =>
+        new Promise((resolve) => {
+          requestAnimationFrame(() => resolve(element.isConnected));
+        }),
+    );
+    await expect(me).toBeFocused();
+    await page
+      .getByRole("complementary", { name: "Me sidebar" })
+      .getByRole("button", { name: "New conversation", exact: true })
+      .click();
+    await expect(newComposer).toBeFocused();
     for (const name of ["Me", "Messages"]) {
       await topbar.getByRole("tab", { name, exact: true }).click();
       const panel = page.getByRole("tabpanel", { name, exact: true });

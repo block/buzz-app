@@ -21,6 +21,7 @@ import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
+import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -58,7 +59,10 @@ export function AppShell({
   pages: readonly RegisteredPage[];
   selected: string;
   navigationAttempt: string;
-  onSelect: (key: string) => void;
+  onSelect: (
+    key: string,
+    options?: Pick<NavigationOpenOptions, "focus">,
+  ) => void;
   tone: string;
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;

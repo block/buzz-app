@@ -1,4 +1,5 @@
 import type { RegisteredPage } from "../../features/pages/service";
+import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   ContributionBoundary,
   contributionKey,
@@ -17,7 +18,7 @@ export function PageNavigation({
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
-  onSelect(key: string): void;
+  onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
   if (placement === "topbar") {
@@ -26,7 +27,7 @@ export function PageNavigation({
         label="Topbar pages"
         variant="chrome"
         value={pages.some((page) => page.key === selected) ? selected : null}
-        onValueChange={onSelect}
+        onValueChange={(key) => onSelect(key, { focus: "preserve" })}
         items={pages.map((page) => {
           const Badge = page.badge;
           return {

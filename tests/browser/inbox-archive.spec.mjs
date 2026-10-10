@@ -313,7 +313,7 @@ test.describe("DM archive delivery", () => {
     await expect(rows).toHaveCount(0);
     await choose(page, inbox, "Activity type", "Mentions");
     const dmRows = inbox.locator('[data-inbox-row="dm-peer:dm-peer"]');
-    await expect(dmRows).toHaveCount(1);
+    await expect(dmRows).toHaveCount(0);
     await choose(page, inbox, "Show", "Inbox");
     await expect(dmRows).toHaveCount(0);
     app.append(
@@ -326,10 +326,14 @@ test.describe("DM archive delivery", () => {
       undefined,
       [["p", app.viewer]],
     );
+    await choose(page, inbox, "Activity type", "DMs");
     await expect(dmRows).toHaveCount(1);
+    await expect(dmRows).toContainText("New ordinary DM message");
     await page.reload();
     await openPage(page, "Inbox");
     await expect(dmRows).toHaveCount(1);
+    await choose(page, inbox, "Activity type", "Mentions");
+    await expect(dmRows).toHaveCount(0);
   });
 });
 

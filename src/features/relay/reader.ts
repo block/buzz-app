@@ -1,4 +1,5 @@
 import { isWorkflowDefinitionBatch } from "../workflows/queries";
+import type { IfcContext } from "../ifc/context";
 import { verifyThreadWindows } from "./thread-window";
 import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -8,18 +9,13 @@ import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 
 export type Priority = "foreground" | "background";
-/** Context for a native, log-only IFC audit of an agent's history read. */
-export type IfcReadContext = Readonly<{
-  agent: string;
-  trigger: RelayEvent;
-}>;
 export type ReadOptions = {
   signal?: AbortSignal;
   priority?: Priority;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
   /** Observational only; IFC failures never reject the read. */
-  ifc?: IfcReadContext;
+  ifc?: IfcContext;
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
@@ -45,7 +41,7 @@ type Job = {
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
   snapshot: boolean;
-  ifc?: IfcReadContext;
+  ifc?: IfcContext;
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 

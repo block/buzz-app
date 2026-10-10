@@ -24,9 +24,9 @@ model and its assumptions. Adding these crates alone does not mediate Agents2.
 ## Observational history read
 
 Claude Code Agents2 continues to use the existing `session.read()` for recent
-DM history. Its read options carry the agent and signed triggering event through
-the existing scheduler, transport and `relay_http` command. There is no opt-in
-flag, alternate history command, or change to the history result.
+DM history. The shared `IfcContext` carries the agent and signed triggering event
+through the existing scheduler, transport and `relay_http` command. There is no
+opt-in flag, alternate history command, or change to the history result.
 
 After a successful history response, Rust starts a bounded background audit.
 It looks up the saved agent and owner, resolves community identity and relay

@@ -1,4 +1,4 @@
-import type { IfcReadContext } from "./reader";
+import type { IfcContext } from "../ifc/context";
 import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
@@ -171,7 +171,7 @@ export interface ReadTransport {
     signal?: AbortSignal,
     requestId?: string,
     priority?: "foreground" | "background",
-    ifc?: IfcReadContext,
+    ifc?: IfcContext,
   ): Promise<RelayEvent[]>;
   /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
   media(url: string, size?: "small"): string | undefined;
@@ -201,7 +201,7 @@ export interface Signer {
     url: string,
     body: string,
     signal?: AbortSignal,
-    ifc?: IfcReadContext,
+    ifc?: IfcContext,
   ): Promise<Response>;
   /** Native hosts sign and send `PUT /upload` for these exact bytes. */
   upload?(file: File, signal: AbortSignal): Promise<Response>;
@@ -1282,7 +1282,7 @@ async function signedPost(
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
   optionalPresence = false,
-  ifc?: IfcReadContext,
+  ifc?: IfcContext,
 ) {
   const dispatch = (request: () => Promise<Response>) =>
     optionalPresence

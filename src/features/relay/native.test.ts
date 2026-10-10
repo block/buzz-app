@@ -19,7 +19,8 @@ import {
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
-import { createRelayReader, type IfcReadContext } from "./reader";
+import { createRelayReader } from "./reader";
+import type { IfcContext } from "../ifc/context";
 import { createRelaySession } from "./session";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
@@ -46,7 +47,7 @@ type Request = {
   path: string;
   method: string;
   body: string | null;
-  ifc?: IfcReadContext;
+  ifc?: IfcContext;
 };
 let discovery: Record<string, unknown> = {};
 let respond: (

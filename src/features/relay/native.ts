@@ -1,4 +1,4 @@
-import type { IfcReadContext } from "./reader";
+import type { IfcContext } from "../ifc/context";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -101,7 +101,7 @@ export async function nativeRelayRequest(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
-  ifc?: IfcReadContext,
+  ifc?: IfcContext,
 ): Promise<Response> {
   const bounded = AbortSignal.any([
     ...(signal ? [signal] : []),

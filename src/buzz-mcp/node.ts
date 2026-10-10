@@ -159,10 +159,7 @@ export function nodeClient(
         },
         redirect: "error",
       });
-      if (!response.ok)
-        throw new Error(
-          `Media failed: ${response.status} ${(await response.text()).slice(0, 300)}`,
-        );
+      // Read within the limit before the status, so no body is unbounded.
       const chunks: Uint8Array[] = [];
       let size = 0;
       for await (const chunk of response.body ?? []) {
@@ -172,6 +169,10 @@ export function nodeClient(
         chunks.push(chunk);
       }
       const bytes = Buffer.concat(chunks);
+      if (!response.ok)
+        throw new Error(
+          `Media failed: ${response.status} ${bytes.subarray(0, 300).toString()}`,
+        );
       if (!name.endsWith(".thumb.jpg") && sha256(bytes) !== name.slice(0, 64))
         throw new Error("Media did not match its SHA-256");
       return bytes.toString("base64");

@@ -171,8 +171,9 @@ export class CodexRuntime {
     return entry;
   }
   private storageKey(pubkey: string) {
-    // Resume restores the persisted tool schema; pre-tools bindings start fresh.
-    return `buzz.codex.sessions.v3:${this.scope}:${pubkey}`;
+    // Resume restores the persisted tool schema, so a binding from before a
+    // tool change starts fresh. v4 added media_get.
+    return `buzz.codex.sessions.v4:${this.scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     entry.saved[key] = saved;

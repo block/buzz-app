@@ -958,25 +958,33 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
-  const f = fixture();
-  f.storage.set(
-    `buzz.codex.sessions.v2:${scope}:${pubkey}`,
-    JSON.stringify({
-      [JSON.stringify(["channel", root])]: {
-        threadId: "legacy-thread",
-        workspace: "/tmp/codex-test",
-      },
-    }),
-  );
-  await f.runtime.run(f.delivery("new work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
-    0,
-  );
-  f.complete();
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-});
+it.each(["v2", "v3"])(
+  "starts fresh instead of restoring a %s binding, whose tools are out of date",
+  async (version) => {
+    const f = fixture();
+    f.storage.set(
+      `buzz.codex.sessions.${version}:${scope}:${pubkey}`,
+      JSON.stringify({
+        [JSON.stringify(["channel", root])]: {
+          threadId: "legacy-thread",
+          workspace: "/tmp/codex-test",
+        },
+      }),
+    );
+    await f.runtime.run(f.delivery("new work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+      "media_get",
+    );
+    f.complete();
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  },
+);
 
 it("leaves a failed first startup unbound so the next mention can start fresh", async () => {
   const f = fixture();

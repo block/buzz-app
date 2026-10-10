@@ -1093,6 +1093,12 @@ liveTest(
     await expect(region).toHaveAttribute("tabindex", "0");
     await page.getByRole("button", { name: "Add tab", exact: true }).focus();
     await page.keyboard.press("Tab");
+    await expect(
+      page
+        .locator("[data-panel-workspace]")
+        .getByRole("button", { name: "Toggle tab pane", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
     await expect(
       region.getByText("Selected message unavailable."),

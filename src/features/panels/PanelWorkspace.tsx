@@ -14,6 +14,7 @@ import {
   BrowserIcon,
   TerminalWindowIcon,
   PlusIcon,
+  SidebarRightIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -59,12 +60,14 @@ export function PanelWorkspace({
   value,
   select,
   add,
+  closePane,
   focusOnMount = true,
 }: {
   items: Item[];
   value: string;
   select(id: string): void;
   add?: (() => void) | undefined;
+  closePane?: (() => void) | undefined;
   /** Restoring a channel visit leaves focus with its main conversation. */
   focusOnMount?: boolean;
 }) {
@@ -204,22 +207,37 @@ export function PanelWorkspace({
     >
       <PanelHeader
         actions={
-          add && (
-            <span className={styles.addTab}>
-              <IconButton
-                size="toolbar"
-                aria-label="Add tab"
-                title="Add tab"
-                icon={<PlusIcon size="1rem" />}
-                onClick={add}
-              />
-            </span>
+          closePane && (
+            <IconButton
+              data-tab-pane-toggle=""
+              data-highlight-expanded="false"
+              variant="subtle"
+              size="toolbar"
+              aria-label="Toggle tab pane"
+              title="Close tab pane"
+              aria-expanded={true}
+              onClick={closePane}
+              icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
+            />
           )
         }
         title={
           <Tabs
             label="Panel tabs"
             variant="navigation"
+            trailingAction={
+              add && (
+                <span className={styles.addTab}>
+                  <IconButton
+                    size="toolbar"
+                    aria-label="Add tab"
+                    title="Add tab"
+                    icon={<PlusIcon size="1rem" />}
+                    onClick={add}
+                  />
+                </span>
+              )
+            }
             value={selected}
             items={tabs.map((tab) => ({
               value: tab.id,

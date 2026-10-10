@@ -80,6 +80,14 @@ export function useConversationTabs({
   );
   const canOpenLink = (target: string) => !!panels.resolve(target);
   const splitTrigger = useRef<HTMLButtonElement>(null);
+  const focusSplit = useRef(false);
+  // The opening control remounts in the main header when the pane closes.
+  useLayoutEffect(() => {
+    if (focusSplit.current && splitTrigger.current) {
+      splitTrigger.current.focus({ preventScroll: true });
+      focusSplit.current = false;
+    }
+  });
   const panelTrigger = useRef<HTMLElement | null>(null);
   const mounted = useRef(false);
   const visit = useMemo(() => ({ queries, currentId }), [queries, currentId]);
@@ -299,13 +307,11 @@ export function useConversationTabs({
     const index = rootTabIds.indexOf(id);
     const remaining = rootTabIds.filter((tab) => tab !== id);
     selectPanelTab(remaining[Math.min(index, remaining.length - 1)] ?? "");
-    if (!remaining.length)
-      (trigger?.isConnected
-        ? trigger
-        : (fallbackFocus?.current ?? splitTrigger.current)
-      )?.focus({
-        preventScroll: true,
-      });
+    if (!remaining.length) {
+      const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
+      if (target) target.focus({ preventScroll: true });
+      else focusSplit.current = true;
+    }
   };
   const addTab = () => {
     if (!currentVisit()) return;
@@ -316,8 +322,7 @@ export function useConversationTabs({
   const closeConversationTab = (id: string) => {
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     afterClose(id);
-    if (rootTabIds.length === 1)
-      splitTrigger.current?.focus({ preventScroll: true });
+    if (rootTabIds.length === 1) focusSplit.current = true;
   };
   const chooseConversation = (id: string, channelId: string) => {
     // Recheck current membership at activation, not just the rendered search result.
@@ -418,6 +423,11 @@ export function useConversationTabs({
     selectPanelTab,
     afterClose,
     addTab,
+    closePane: () => {
+      if (!currentVisit()) return;
+      focusSplit.current = true;
+      tabState.setPaneOpen(false);
+    },
     closeTab,
     rootTabIds,
     selectedTab,

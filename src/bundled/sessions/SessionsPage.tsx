@@ -3,6 +3,7 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -436,19 +437,23 @@ function SessionWork({
                 </MenuItem>
               </MenuPopup>
             </MenuRoot>
-            <IconButton
-              ref={splitTrigger}
-              data-tab-pane-toggle=""
-              size="toolbar"
-              aria-label="Toggle tab pane"
-              title={showingPanel ? "Close tab pane" : "Open tab pane"}
-              aria-expanded={!!showingPanel}
-              icon={<SidebarRightIcon size="1rem" />}
-              onClick={() => {
-                tabState.setPaneOpen(!showingPanel);
-                if (!showingPanel && !hasTabs) secondary.addTab();
-              }}
-            />
+            {!showingPanel && (
+              <span className={panelStyles.paneToggle}>
+                <IconButton
+                  ref={splitTrigger}
+                  data-tab-pane-toggle=""
+                  size="toolbar"
+                  aria-label="Toggle tab pane"
+                  title="Open tab pane"
+                  aria-expanded={false}
+                  icon={<SidebarRightIcon size="1rem" />}
+                  onClick={() => {
+                    tabState.setPaneOpen(true);
+                    if (!hasTabs) secondary.addTab();
+                  }}
+                />
+              </span>
+            )}
           </SessionHeading>
           {renameOpen && (
             <RenameSession
@@ -557,6 +562,7 @@ function SessionWork({
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}
                 add={secondary.addTab}
+                closePane={secondary.closePane}
                 items={secondary.items}
                 focusOnMount={continuing.current}
               />

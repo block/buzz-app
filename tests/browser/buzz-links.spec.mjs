@@ -49,8 +49,42 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "none");
   await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
-  await link.hover();
+  // Resolve the profile while this focused row is pending, before the longer
+  // navigation journey can consume the reader's real request deadline.
+  await expect
+    .poll(() => app.report.profileHolds.some((held) => held.pending))
+    .toBe(true);
+  await page.mouse.move(1400, 10);
+  await row.getByRole("link", { name: "#Beta", exact: true }).focus();
+  await page.keyboard.press("Shift+Tab");
+  // WebKit follows macOS's tab-to-links preference; retain keyboard modality
+  // while focusing the specific trigger under test.
+  await link.focus();
+  await expect(link).toBeFocused();
+  expect(
+    await link.evaluate((element) => element.matches(":focus-visible")),
+  ).toBe(true);
+  const focusedTrigger = await link.elementHandle();
+  app.relay.releaseProfiles();
+  await expect(
+    row.getByRole("button", {
+      name: "View Fixture Reader profile",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(await focusedTrigger.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(link).toBeFocused();
   const preview = page.getByLabel("Message preview", { exact: true });
+  await expect(preview).toHaveAttribute("data-open", "");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  // Finish the keyboard preview's blur/exit lifecycle before testing hover.
+  // Entering the trigger while that card is closing can consume the hover.
+  await expect(preview).toHaveCount(0);
+  await link.hover();
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
   ).toBeVisible();
@@ -92,24 +126,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await page.mouse.move(1400, 10);
   await row.getByRole("link", { name: "#Beta", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
-  // WebKit follows macOS's tab-to-links preference; retain keyboard modality
-  // while focusing the specific trigger under test.
   await link.focus();
-  await expect(link).toBeFocused();
-  expect(
-    await link.evaluate((element) => element.matches(":focus-visible")),
-  ).toBe(true);
-  const focusedTrigger = await link.elementHandle();
-  app.relay.releaseProfiles();
-  await expect(
-    row.getByRole("button", {
-      name: "View Fixture Reader profile",
-      exact: true,
-    }),
-  ).toBeVisible();
-  expect(await focusedTrigger.evaluate((element) => element.isConnected)).toBe(
-    true,
-  );
   await expect(link).toBeFocused();
   await expect(preview).toBeVisible();
   expect(libraryReads()).toBe(1);

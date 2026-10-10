@@ -171,7 +171,10 @@ export function nodeClient(
           throw new Error("Media over 5 MB cannot be shown");
         chunks.push(chunk);
       }
-      return Buffer.concat(chunks).toString("base64");
+      const bytes = Buffer.concat(chunks);
+      if (!name.endsWith(".thumb.jpg") && sha256(bytes) !== name.slice(0, 64))
+        throw new Error("Media did not match its SHA-256");
+      return bytes.toString("base64");
     },
     async read(path) {
       const full = await realpath(resolve(options.root, path));

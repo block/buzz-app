@@ -217,6 +217,7 @@ function fixture(
     size: 12,
     type: mime,
   }));
+  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
   const agent = {
     pubkey,
     owner,
@@ -224,6 +225,7 @@ function fixture(
     publish,
     query,
     upload,
+    media,
     remember,
   };
   runtime.sync([{ pubkey } as Agent], scope);
@@ -370,6 +372,7 @@ function fixture(
     memoryView,
     remember,
     upload,
+    media,
     selection,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
@@ -955,25 +958,33 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
-  const f = fixture();
-  f.storage.set(
-    `buzz.codex.sessions.v2:${scope}:${pubkey}`,
-    JSON.stringify({
-      [JSON.stringify(["channel", root])]: {
-        threadId: "legacy-thread",
-        workspace: "/tmp/codex-test",
-      },
-    }),
-  );
-  await f.runtime.run(f.delivery("new work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
-    0,
-  );
-  f.complete();
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-});
+it.each(["v2", "v3"])(
+  "starts fresh instead of restoring a %s binding, whose tools are out of date",
+  async (version) => {
+    const f = fixture();
+    f.storage.set(
+      `buzz.codex.sessions.${version}:${scope}:${pubkey}`,
+      JSON.stringify({
+        [JSON.stringify(["channel", root])]: {
+          threadId: "legacy-thread",
+          workspace: "/tmp/codex-test",
+        },
+      }),
+    );
+    await f.runtime.run(f.delivery("new work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+      "media_get",
+    );
+    f.complete();
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  },
+);
 
 it("leaves a failed first startup unbound so the next mention can start fresh", async () => {
   const f = fixture();
@@ -1105,6 +1116,18 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
     { success: true, contentItems: [{ text: "remembered" }] },
   );
+  expect(
+    (await f.tool("media_get", { url: "shot.png" }))?.result,
+  ).toMatchObject({
+    success: true,
+    contentItems: [
+      {
+        type: "inputImage",
+        imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+    ],
+  });
+  expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
   expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);

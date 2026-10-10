@@ -53,7 +53,7 @@ To inspect a saved session, see [View a Codex session](../../../docs/view-codex-
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
-`mem_set`, and `canvas`. These run inside Buzz through the agent's native-backed
+`mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
 reads use the owner's encrypted-memory view; writes use the agent handle.

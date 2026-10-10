@@ -75,6 +75,7 @@ function setup(thread: readonly EventData[] = []) {
     publish,
     query,
     upload: vi.fn(),
+    media: vi.fn(),
     remember: vi.fn(),
   };
   const deliver = (trigger: Delivery["trigger"]) =>

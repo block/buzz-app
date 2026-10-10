@@ -539,7 +539,7 @@ export class CodexRuntime {
         }
       },
     });
-    const text = await callTool(
+    const reply = await callTool(
       client,
       {
         channel: request.conversation.channelId,
@@ -553,7 +553,17 @@ export class CodexRuntime {
       active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
-    return { success: true, contentItems: [{ type: "inputText", text }] };
+    return {
+      success: true,
+      contentItems: [
+        typeof reply === "string"
+          ? { type: "inputText", text: reply }
+          : {
+              type: "inputImage",
+              imageUrl: `data:${reply.type};base64,${reply.data}`,
+            },
+      ],
+    };
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.

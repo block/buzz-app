@@ -113,6 +113,9 @@ export type AgentHandle = Readonly<{
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   /** Uploads base64 `data`, an image or MP4 video, as the agent. */
   upload(data: string, mime: string): Promise<AgentUpload>;
+  /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,
+   * as base64. */
+  media(url: string): Promise<string>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
@@ -1271,6 +1274,7 @@ export class AgentsService extends Service implements Agents {
           this.require().query(agent.pubkey, filters),
         upload: (data: string, mime: string) =>
           this.require().upload(agent.pubkey, data, mime),
+        media: (url: string) => this.require().media(agent.pubkey, url),
         remember: (slug: string, body: string, after: number) =>
           this.require().remember(agent.pubkey, slug, body, after),
       });

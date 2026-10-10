@@ -63,8 +63,8 @@ semantic tokens, UI authoring rules and the local component reference.
   Me, Messages, Agents, desktop Settings, and any selected primary page share an
   animated header toggle; hiding the sidebar preserves its mounted state and saved
   width. Pages without a Channel or Me-specific label use generic "Hide sidebar" /
-  "Show sidebar" labels. Reduced motion disables the transition. Other desktop
-  pages retain the visible sidebar.
+  "Show sidebar" labels. Reduced motion disables the transition. Non-primary
+  desktop destinations retain the visible sidebar.
   The same header keeps history and account/search actions, plus a centered
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise

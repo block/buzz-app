@@ -112,7 +112,6 @@ export function AgentInstructions({
     },
     done() {
       if (busy) return;
-      if (mode === "voice" && suggestion.trim()) onChange(suggestion);
       setMode(null);
       setExpanded(false);
     },

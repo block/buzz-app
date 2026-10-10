@@ -10,6 +10,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { createRef } from "react";
+import type { InstructionEditingActions } from "./AgentInstructions";
 import { AgentInstructions } from "./AgentInstructions";
 const recorder = vi.hoisted(() => ({
   status: "recording",
@@ -129,4 +131,43 @@ it("offers choices and retains text when returning to them", () => {
   fireEvent.click(screen.getByRole("button", { name: "Voice" }));
   expect(recorder.start).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
+});
+
+it("closing embedded editing preserves existing instructions until explicit apply", async () => {
+  recorder.status = "recording";
+  recorder.stop.mockImplementation(async () => {
+    recorder.status = "idle";
+    return { file: { arrayBuffer: async () => new Uint8Array([1]).buffer } };
+  });
+  vi.mocked(invoke)
+    .mockResolvedValueOnce("New description")
+    .mockResolvedValueOnce("New generated instructions");
+  const editingRef = createRef<InstructionEditingActions>();
+  const onChange = vi.fn();
+  render(
+    <AgentInstructions
+      embedded
+      editingRef={editingRef}
+      value="Existing cloned instructions"
+      disabled={false}
+      onChange={onChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Agent instructions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+  fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Instruction draft")).toHaveValue(
+      "New generated instructions",
+    ),
+  );
+  act(() => editingRef.current?.done());
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByText("Existing cloned instructions")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Agent instructions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use instructions" }));
+  expect(onChange).toHaveBeenCalledExactlyOnceWith(
+    "New generated instructions",
+  );
 });

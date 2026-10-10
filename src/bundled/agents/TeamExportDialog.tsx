@@ -4,6 +4,7 @@ import type { AgentControl } from "../../features/agents/control";
 import type { Team } from "../../features/channel-templates/model";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import { encodeTeam } from "../../features/agents/team-encoding";
+import { teamExportMeta } from "../../features/agents/team-instructions";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -39,13 +40,10 @@ export function TeamExportDialog({
     setBusy(true);
     setError("");
     try {
-      const loaded = await kit.loadTeam(team);
-      if (!control.previewTeam) throw new Error("Team preview is unavailable");
-      if (!active.current) return;
-      const portable = await control.previewTeam(JSON.stringify(loaded));
+      const meta = await teamExportMeta(kit, control, team);
       if (!active.current) return;
       const snapshot = await control.exportTeam(
-        portable,
+        meta,
         team.agents,
         community,
         memory,

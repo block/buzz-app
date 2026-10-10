@@ -38,6 +38,7 @@ import {
   type AgentEventTemplate,
   type AgentIdentity,
   type AgentsNative,
+  type AgentUpload,
 } from "./native";
 import {
   readRecords,
@@ -83,12 +84,19 @@ export type AgentTab<Config = unknown> = Readonly<{
   title: string;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
-/** The agent as `run` holds it. Publishing works for as long as the agent exists. */
+/** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
   owner: string;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
+  /** Reads the community as the agent, seeing only what it may see. */
+  query(filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Uploads base64 `data`, an image or MP4 video, as the agent. */
+  upload(data: string, mime: string): Promise<AgentUpload>;
+  /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
+   * that entry's `createdAt`, or 0). The owner reads it back. */
+  remember(slug: string, body: string, after: number): Promise<RelayEvent>;
 }>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent or replies to
@@ -228,6 +236,9 @@ type Runner = {
   /** Events seen, and events it wrote (so replies to it are addressed). */
   readonly seen: Set<string>;
   readonly wrote: Set<string>;
+  /** Whether native may hold the agent for this copy; true at first, since
+   * native outlives a page reload. */
+  mayHold: boolean;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -594,6 +605,7 @@ export class Agents2Service extends Service implements Agents2 {
   // agent's type is replaced.
   private update() {
     const binding = this.binding;
+    const wasShown = new Set(this.state.agents.map((agent) => agent.pubkey));
     const identities = this.identities.filter((identity) => !identity.deleted);
     const agents: Agent[] = [];
     for (const identity of identities) {
@@ -641,9 +653,16 @@ export class Agents2Service extends Service implements Agents2 {
       });
       this.notify();
     }
-    // Resume runners whose queue paused while their agent was out of view.
+    // Resume runners whose queue paused while their agent was out of view, and
+    // claim or release each agent as it comes into or leaves view, so a copy of
+    // the app takes over without waiting for an event or tick.
+    const shown = new Set(agents.map((agent) => agent.pubkey));
     for (const runner of this.runners.values())
-      if (runner.queue.length) void this.drain(runner);
+      if (
+        runner.queue.length ||
+        shown.has(runner.pubkey) !== wasShown.has(runner.pubkey)
+      )
+        void this.drain(runner);
   }
   private notify() {
     for (const listener of this.listeners) listener();
@@ -663,6 +682,7 @@ export class Agents2Service extends Service implements Agents2 {
       admitted: 0,
       seen: new Set(),
       wrote: new Set(),
+      mayHold: true,
     };
   }
   private retire(runner: Runner) {
@@ -817,13 +837,26 @@ export class Agents2Service extends Service implements Agents2 {
     runner.running = true;
     while (this.runners.get(runner.pubkey) === runner) {
       const agent = this.find(runner.pubkey);
-      if (!agent) break;
       const type = runner.type;
       const run = type?.run;
-      if (!type || !run) {
+      // An agent this copy cannot run is left to another copy of the app.
+      if (!agent || !type || !run) {
+        if (agent) runner.queue.length = 0;
+        await this.release(runner);
+        // It may have come back into view, or gained its type, meanwhile.
+        if (this.find(runner.pubkey) !== agent || runner.type !== type)
+          continue;
+        break;
+      }
+      // Every copy of the app on this machine hears the same events; only the
+      // one holding the agent runs them. Asked on every wake too, so a copy
+      // takes over within a tick of the holder quitting or letting go.
+      if (!(await this.claim(runner))) {
         runner.queue.length = 0;
         break;
       }
+      // The agent or its type may have changed meanwhile.
+      if (this.find(runner.pubkey) !== agent || runner.type !== type) continue;
       const job = runner.queue.shift() ?? this.dueTimer(agent);
       if (!job) break;
       const lifetime = runner.controller.signal;
@@ -836,6 +869,12 @@ export class Agents2Service extends Service implements Agents2 {
         name: agent.name,
         owner: agent.owner,
         publish: (event: AgentEventTemplate) => this.publish(runner, event),
+        query: (filters: readonly object[]) =>
+          this.require().query(agent.pubkey, filters),
+        upload: (data: string, mime: string) =>
+          this.require().upload(agent.pubkey, data, mime),
+        remember: (slug: string, body: string, after: number) =>
+          this.require().remember(agent.pubkey, slug, body, after),
       });
       try {
         await Promise.race([
@@ -865,9 +904,35 @@ export class Agents2Service extends Service implements Agents2 {
     runner.running = false;
   }
 
-  private async publish(runner: Runner, event: AgentEventTemplate) {
+  private async claim(runner: Runner) {
+    try {
+      runner.mayHold = (await this.native?.claim(runner.pubkey)) ?? false;
+      return runner.mayHold;
+    } catch (error) {
+      runner.mayHold = true;
+      // Answering twice beats not answering at all.
+      console.warn(
+        `Agent ${this.find(runner.pubkey)?.name} was not claimed`,
+        error,
+      );
+      return true;
+    }
+  }
+  private async release(runner: Runner) {
+    if (!runner.mayHold) return;
+    runner.mayHold = false;
+    await this.native
+      ?.release(runner.pubkey)
+      .catch((error) =>
+        console.warn(`Agent ${runner.pubkey} was not released`, error),
+      );
+  }
+  private require() {
     if (!this.native) throw new Error("Agents run only in the desktop app");
-    const signed = await this.native.publish(runner.pubkey, event);
+    return this.native;
+  }
+  private async publish(runner: Runner, event: AgentEventTemplate) {
+    const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;
   }

@@ -479,6 +479,7 @@ test.describe("sidebar actions in the header", () => {
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
+    await expect(menu).toBeFocused();
     await expect(
       menu.getByRole("menuitem", { name: "New session", exact: true }),
     ).toHaveCount(0);

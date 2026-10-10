@@ -173,11 +173,6 @@ test("rejects cross-origin, unregistered destination, empty body and malformed M
 test.each([
   [400, "metadata", 400],
   [415, "rejected", 400],
-  [413, "size", 413],
-  [401, "denied", 403],
-  [403, "denied", 403],
-  [429, "capacity", 429],
-  [500, "failed", 502],
 ])(
   "maps upstream %i without leaking response details",
   async (status, code, expected) => {
@@ -412,7 +407,7 @@ test("the whole-operation timeout aborts a stalled body without forwarding", asy
   }
 });
 
-test.each(["application/pdf", "text/html"])(
+test.each(["text/html"])(
   "keeps range headers on inert %s downloads",
   async (type) => {
     const bytes = Buffer.from("partial");

@@ -1,5 +1,4 @@
 import { sameCommunityAgents } from "./choices";
-import type { TeamSnapshot } from "./team-bundles";
 import type { AgentControl } from "./control";
 import type { Team } from "../channel-templates/model";
 import type { RelaySession } from "../relay/session";
@@ -20,13 +19,13 @@ export function teamDeployment(team: Team, channelId: string): TeamDeployment {
     additions: team.agents.map(() => ({})),
   };
 }
-/** Deploy reuses exact saved copies. Only explicit import creates new identities. */
+/** Deploy only adds the saved members to a channel and starts stopped ones.
+ * Team text is delivered by team Save, never here. */
 export async function deployTeam(
   control: AgentControl | undefined,
   session: RelaySession,
   attempt: TeamDeployment,
   signal: AbortSignal,
-  snapshot?: TeamSnapshot,
 ) {
   const failures: string[] = [];
   for (const [index, pubkey] of attempt.team.agents.entries()) {
@@ -34,39 +33,10 @@ export async function deployTeam(
     try {
       await control?.refresh();
       signal.throwIfAborted();
-      let agent = sameCommunityAgents(
+      const agent = sameCommunityAgents(
         control?.snapshot().data?.agents ?? [],
         session.scope,
       ).find((agent) => agent.pubkey === pubkey);
-      if (snapshot) {
-        if (!session.viewer || !agent || !control?.applyTeamInstructions)
-          throw new Error("A portable team member is unavailable locally");
-        const result = await control.applyTeamInstructions(
-          agent.id,
-          agent.revision,
-          snapshot.team.instructions ?? "",
-          attempt.team.id,
-          session.scope.slice(0, -(session.viewer.length + 1)),
-        );
-        signal.throwIfAborted();
-        agent = result.agents.find((item) => item.id === agent?.id);
-        if (!agent)
-          throw new Error("A portable team member is unavailable locally");
-        if (
-          agent.status === "running" &&
-          agent.runningRevision !== agent.revision
-        ) {
-          const restarted = await control.action(agent.id, "restart");
-          const current = restarted.agents.find(
-            (item) => item.id === agent?.id,
-          );
-          if (
-            !current ||
-            !["running", "waiting", "starting"].includes(current.status)
-          )
-            throw new Error(current?.error ?? "Team member did not restart");
-        }
-      }
       signal.throwIfAborted();
       if (agent?.profilePending) {
         if (!control?.publishProfile)

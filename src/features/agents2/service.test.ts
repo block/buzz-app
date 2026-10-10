@@ -149,6 +149,13 @@ function fakeNative(identities: AgentIdentity[] = []) {
       event(`p${++published}`, { pubkey, kind: template.kind }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
+    query: vi.fn(async () => []),
+    upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
+    remember: vi.fn(async (pubkey: string) =>
+      event(`m${++published}`, { pubkey }),
+    ),
+    claim: vi.fn(async (_: string) => true),
+    release: vi.fn(async (_: string) => {}),
   } satisfies AgentsNative;
   return native;
 }
@@ -364,6 +371,57 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   expect(held?.signal.aborted).toBe(true);
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  native.claim.mockResolvedValue(false);
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  native.claim.mockResolvedValue(true);
+  const second = event("2", { tags: [["p", bot]] });
+  emit({ events: [second] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toEqual({
+    type: "mention",
+    event: second,
+  });
+  // When the claim itself fails, it answers rather than stay silent.
+  native.claim.mockRejectedValue(new Error("unreadable"));
+  emit({ events: [event("3", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
+
+it("lets another copy of the app run an agent it cannot run", async () => {
+  vi.useFakeTimers();
+  const { service, run, emit, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(native.release).not.toHaveBeenCalled();
+  connect(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(native.release).toHaveBeenCalledTimes(1);
+  expect(native.release).toHaveBeenCalledWith(bot);
+  connect(true);
+  native.claim.mockClear();
+  emit({ events: [event("2", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(native.claim).toHaveBeenCalledWith(bot);
+});
+
+it("claims an agent as it comes into view, and releases it as it leaves, without waiting for a tick", async () => {
+  const { service, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  connect(false);
+  await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+  native.claim.mockClear();
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
 });
 
 it("is not woken by reactions, deletions or DMs", async () => {

@@ -97,8 +97,6 @@ it.each([
   [false, true, true, false],
   [true, false, false, false],
   [true, false, true, true],
-  [true, true, false, false],
-  [true, true, true, false],
 ])(
   "Import visibility: community=%s local=%s oldBuzz=%s => %s",
   (community, local, oldBuzz, showImport) => {

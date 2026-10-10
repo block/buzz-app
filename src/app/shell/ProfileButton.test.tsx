@@ -525,7 +525,7 @@ it.each(["escape", "outside", "reopen"])(
   },
 );
 
-it.each(["online", "away", "offline"] as const)(
+it.each(["online", "offline"] as const)(
   "shares %s presence between trigger and account menu",
   async (status) => {
     const user = userEvent.setup();

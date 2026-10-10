@@ -4,10 +4,12 @@ import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { ReadError, readErrorKind } from "./errors";
 import type {
+  ChannelReference,
   ChannelList,
   ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
+  ChannelSummary,
   PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
@@ -25,6 +27,7 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
+import { matchRank } from "../search/match";
 
 type Listener = () => void;
 type WindowState = {
@@ -77,6 +80,13 @@ const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 const DISCOVERY_LIMIT = 500;
 // One page of public channel metadata for name search; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** How long name search reuses one page of public channel metadata. Typing
+ * reads it once; a channel created meanwhile shows up after this. */
+const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
+/** How long a channel link keeps a `withheld` answer before rechecking it. */
+const REFERENCE_TTL = 5 * 60_000;
+/** The least wait before a failed channel-link lookup is tried again. */
+const REFERENCE_RETRY = 30_000;
 /** Exact omission confirmations use the relay's explicit channel-ID cap. */
 const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
@@ -1405,9 +1415,13 @@ export function createChannelStore(
   }
   /** Find active public channels the viewer has not joined, by name.
    * The relay has no metadata text search, so this reads one bounded page of
-   * relay-signed 39000 metadata without applying it, matches names locally,
-   * and admits only the matches through `resolve`. Matches become readable
+   * relay-signed 39000 metadata without applying it (reused for typing, see
+   * PUBLIC_CHANNEL_PAGE_TTL), ranks name matches locally, and admits only
+   * the best matches through `resolve`. Matches become readable
    * previews through `get`; they never enter `list()`. */
+  let publicPage:
+    | { generation: number; at: number; events: readonly RelayEvent[] }
+    | undefined;
   async function searchPublic(
     query: string,
     settings?: ReadOptions & { limit?: number; exact?: boolean },
@@ -1419,22 +1433,33 @@ export function createChannelStore(
     if (list.status !== "ready")
       throw new Error("Channel list is not ready for channel search");
     const generation = epoch;
-    const events = await transport.read(
-      [
-        {
-          kinds: [39000],
-          authors: [transport.relayAuthor],
-          limit: PUBLIC_CHANNEL_PAGE,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
-    settings?.signal?.throwIfAborted();
-    if (disposed || generation !== epoch)
-      throw new DOMException("Stale channel search", "AbortError");
-    const metadata = events.filter(
-      (event) => event.kind === 39000 && event.pubkey === transport.relayAuthor,
-    );
+    // Candidates only: `resolve` below re-reads each match, so a reused page
+    // never grants access by itself.
+    let metadata =
+      publicPage?.generation === generation &&
+      now() - publicPage.at < PUBLIC_CHANNEL_PAGE_TTL
+        ? publicPage.events
+        : undefined;
+    if (!metadata) {
+      const events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            authors: [transport.relayAuthor],
+            limit: PUBLIC_CHANNEL_PAGE,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+      settings?.signal?.throwIfAborted();
+      if (disposed || generation !== epoch)
+        throw new DOMException("Stale channel search", "AbortError");
+      metadata = events.filter(
+        (event) =>
+          event.kind === 39000 && event.pubkey === transport.relayAuthor,
+      );
+      publicPage = { generation, at: now(), events: metadata };
+    }
     const latest = new Map<string, RelayEvent>();
     for (const event of metadata) {
       const id = tag(event, "d");
@@ -1452,10 +1477,16 @@ export function createChannelStore(
           (settings?.exact
             ? name.toLowerCase() === needle
             : name.toLowerCase().includes(needle))
-          ? [{ id, name }]
+          ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
           : [];
       })
-      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      // Best match first before the cut, so an exact name is never dropped.
+      .sort(
+        (a, b) =>
+          a.rank - b.rank ||
+          a.name.localeCompare(b.name) ||
+          a.id.localeCompare(b.id),
+      )
       .slice(0, settings?.limit ?? 8);
     // Exact resolution, not this page, owns access: it re-reads the signed
     // metadata and the viewer roster for each match before granting a preview.
@@ -1464,15 +1495,43 @@ export function createChannelStore(
         candidates.map(({ id }) => id),
         settings,
       );
-    return {
-      channels: candidates.flatMap(({ id }) => {
-        const channel = discovery.get(id);
-        return channel?.readOnly && !channel.archived && !channel.cached
-          ? [channel]
+    const channels = candidates.flatMap(({ id }) => {
+      const channel = previewable(id);
+      return channel ? [channel] : [];
+    });
+    if (generation === epoch)
+      recentPublic = { generation, ids: channels.map(({ id }) => id) };
+    return { channels, partial: metadata.length >= PUBLIC_CHANNEL_PAGE };
+  }
+  /** An open channel's current read-only preview, as name search admits it. */
+  function previewable(id: string) {
+    const channel = discovery?.get(id);
+    return channel?.readOnly && !channel.archived && !channel.cached
+      ? channel
+      : undefined;
+  }
+  /** The last search's channels that still match `query`, in search order.
+   * Callers remount per keystroke, so the store, not a component, keeps the
+   * previous answer while the next `searchPublic` runs. */
+  let recentPublic: { generation: number; ids: readonly string[] } | undefined;
+  function matchPublic(
+    query: string,
+    settings?: { exact?: boolean },
+  ): readonly ChannelSummary[] {
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle || disposed || recentPublic?.generation !== epoch) return [];
+    return recentPublic.ids
+      .flatMap((id) => {
+        const channel = previewable(id);
+        const name = channel?.name.toLowerCase();
+        return channel &&
+          name &&
+          (settings?.exact ? name === needle : name.includes(needle))
+          ? [{ channel, rank: matchRank(channel.name, needle) ?? 3 }]
           : [];
-      }),
-      partial: metadata.length >= PUBLIC_CHANNEL_PAGE,
-    };
+      })
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ channel }) => channel);
   }
   /** Re-read one authorized channel's relay-signed roster and merge it into the
    * ready list: one exact `#d` read of a single 39002, instead of the full
@@ -1595,6 +1654,7 @@ export function createChannelStore(
     heads.clear();
     tails.clear();
     if (discovery) setList({ ...list, channels: discovery.channels() });
+    resetReferences();
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -1642,6 +1702,183 @@ export function createChannelStore(
       warming = false;
     }
   }
+  /** Channel-link lookups. `withheld` answers are kept for a while (and
+   * shown while rechecked); failures back off. Both reset with the epoch.
+   * `demand` counts mounted links per channel; a timer rechecks them when
+   * their answer expires or their backoff ends. */
+  const references = {
+    generation: -1,
+    withheld: new Map<string, number>(),
+    retryAt: new Map<string, number>(),
+    queue: new Set<string>(),
+    pending: new Set<string>(),
+    scheduled: false,
+  };
+  const demand = new Map<string, number>();
+  let referenceWake:
+    | { at: number; timer: ReturnType<typeof setTimeout> }
+    | undefined;
+  function currentReferences() {
+    if (references.generation !== epoch) {
+      references.generation = epoch;
+      references.withheld.clear();
+      references.retryAt.clear();
+      references.queue.clear();
+      references.pending.clear();
+      // A queued microtask from the old epoch drops its batch.
+      references.scheduled = false;
+    }
+    return references;
+  }
+  /** Cache and access resets drop every answer. Mounted links still show the
+   * old one until notified, and an in-flight lookup's reply is dropped, so
+   * notify them and look their channels up again. */
+  function resetReferences() {
+    currentReferences();
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
+    setList(list, true);
+    for (const id of demand.keys()) lookUpReference(id);
+    wakeReferences();
+  }
+  function describeReference(id: string): ChannelReference {
+    const channel = discovery?.get(id);
+    if (channel) {
+      const joined = !!discovery && channel.members?.includes(discovery.viewer);
+      return {
+        state: "found",
+        name: channel.name,
+        ...(channel.description ? { description: channel.description } : {}),
+        ...(channel.channelType ? { channelType: channel.channelType } : {}),
+        private: !!channel.private,
+        hidden: !!channel.hidden,
+        archived: !!channel.archived,
+        joined: !!joined,
+        ...(channel.members?.length ? { members: channel.members.length } : {}),
+      };
+    }
+    // A public channel the viewer has left: its signed open metadata stays
+    // public even while discovery denies reading it as a member.
+    const event = discovery?.metadataVersion(id);
+    const name = event && openMetadata(event) && metadataName(event);
+    if (event && name) {
+      const type = tag(event, "t");
+      const about = tag(event, "about");
+      return {
+        state: "found",
+        name,
+        ...(about ? { description: about } : {}),
+        ...(type === "stream" || type === "forum" ? { channelType: type } : {}),
+        private: false,
+        hidden: false,
+        archived: hasTag(event, "archived", "true"),
+        joined: false,
+      };
+    }
+    return currentReferences().withheld.has(id)
+      ? { state: "withheld" }
+      : { state: "unknown" };
+  }
+  /** When a demanded reference may be looked up again: its withheld answer
+   * expires, or its backoff ends. */
+  function referenceDue(id: string) {
+    const state = currentReferences();
+    const checked = state.withheld.get(id);
+    return Math.max(
+      checked === undefined ? 0 : checked + REFERENCE_TTL,
+      state.retryAt.get(id) ?? 0,
+    );
+  }
+  /** One timer for the earliest demanded recheck. */
+  function wakeReferences() {
+    if (disposed) return;
+    let at = Number.POSITIVE_INFINITY;
+    for (const id of demand.keys()) {
+      const due = referenceDue(id);
+      if (due > now()) at = Math.min(at, due);
+    }
+    if (referenceWake && referenceWake.at <= at) return;
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
+    if (at === Number.POSITIVE_INFINITY) return;
+    referenceWake = {
+      at,
+      timer: setTimeout(() => {
+        referenceWake = undefined;
+        for (const id of demand.keys()) lookUpReference(id);
+        wakeReferences();
+      }, at - now()),
+    };
+  }
+  function lookUpReference(id: string) {
+    if (disposed || !transport || !discovery || options.cachedOnly) return;
+    if (list.status !== "ready" || describeReference(id).state === "found")
+      return;
+    const state = currentReferences();
+    if (
+      state.queue.has(id) ||
+      state.pending.has(id) ||
+      now() < referenceDue(id)
+    )
+      return;
+    state.queue.add(id);
+    if (state.scheduled) return;
+    state.scheduled = true;
+    // `state` is shared across epochs; this batch belongs to this one.
+    const generation = epoch;
+    queueMicrotask(() => {
+      if (generation !== epoch) return;
+      state.scheduled = false;
+      const ids = [...state.queue];
+      state.queue.clear();
+      // `resolve` bounds one exact read to 128 channels.
+      for (let start = 0; start < ids.length; start += 128) {
+        const batch = ids.slice(start, start + 128);
+        for (const id of batch) state.pending.add(id);
+        resolve(batch, { priority: "background" }).then(
+          () => {
+            if (generation !== epoch) return;
+            for (const id of batch) {
+              state.pending.delete(id);
+              state.retryAt.delete(id);
+              if (describeReference(id).state === "found")
+                state.withheld.delete(id);
+              else state.withheld.set(id, now());
+            }
+            setList(list, true);
+            wakeReferences();
+          },
+          (error: unknown) => {
+            if (generation !== epoch) return;
+            const wait = Math.max(
+              REFERENCE_RETRY,
+              error instanceof ReadError ? (error.retryAfterMs ?? 0) : 0,
+            );
+            for (const id of batch) {
+              state.pending.delete(id);
+              state.retryAt.set(id, now() + wait);
+            }
+            wakeReferences();
+          },
+        );
+      }
+    });
+  }
+  function referChannel(id: string) {
+    demand.set(id, (demand.get(id) ?? 0) + 1);
+    lookUpReference(id);
+    // A link remounted during a backoff or a withheld answer's lifetime is
+    // suppressed above; it still needs the wake-up at that deadline.
+    wakeReferences();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = (demand.get(id) ?? 1) - 1;
+      if (count) demand.set(id, count);
+      else demand.delete(id);
+    };
+  }
   function restore() {
     if (!prepared || !persistence?.readStartup) return Promise.resolve();
     startup ??= restoreStartup();
@@ -1652,6 +1889,9 @@ export function createChannelStore(
     get: (id: string) => discovery?.get(id),
     resolve,
     searchPublic,
+    matchPublic,
+    describe: describeReference,
+    refer: referChannel,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
@@ -2091,9 +2331,12 @@ export function createChannelStore(
     // this disposable cache conservatively; pending writes use separate storage.
     if (hadHydration) void persistence?.retain([]).catch(() => {});
     setList(list);
+    resetReferences();
   }
   function dispose() {
     disposed = true;
+    if (referenceWake) clearTimeout(referenceWake.timer);
+    referenceWake = undefined;
     unsubscribeLocal?.();
     unsubscribeProfiles();
     epoch++;

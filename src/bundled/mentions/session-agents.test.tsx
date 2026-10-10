@@ -428,8 +428,10 @@ it("does not keyboard-select disabled members", async () => {
     />,
   );
   await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const search = screen.getByRole("searchbox");
+  await waitFor(() => expect(search).toHaveFocus());
   await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
-  expect(screen.getByRole("searchbox")).toHaveFocus();
+  expect(search).toHaveFocus();
   expect(select).not.toHaveBeenCalled();
   test.library.dispose();
 });
@@ -2316,6 +2318,14 @@ function teamFixture(
     }),
     savePortable: vi.fn(async () => {
       throw new Error("No portable fixture save");
+    }),
+    readText: vi.fn(async () => undefined),
+    readTextHead: vi.fn(async () => undefined),
+    prepareText: vi.fn(async () => {
+      throw new Error("No text fixture prepare");
+    }),
+    publishText: vi.fn(async () => {
+      throw new Error("No text fixture publish");
     }),
     snapshot: () => state,
     subscribe(listener) {

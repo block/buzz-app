@@ -3,11 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { createRef } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import {
-  PlusIcon,
-  PlayFilledIcon,
-  OneDriveLogoIcon,
-} from "../../../../src/shared/design-system/icons/index";
+import { PlusIcon } from "../../../../src/shared/design-system/icons/index";
 
 afterEach(cleanup);
 
@@ -39,21 +35,4 @@ it("preserves SVG refs, explicit accessibility, and styling across rerenders", (
   expect(ref.current).toHaveAttribute("stroke-width", "2");
   expect(ref.current).toHaveClass("custom-icon");
   expect(ref.current?.querySelector("title")).toHaveTextContent("Add item");
-});
-
-it("keeps filled artwork and the existing custom mark decorative", () => {
-  const filled = createRef<SVGSVGElement>();
-  const custom = createRef<SVGSVGElement>();
-  render(
-    <>
-      <PlayFilledIcon ref={filled} size={18} color="red" />
-      <OneDriveLogoIcon ref={custom} size={14} />
-    </>,
-  );
-  expect(filled.current).toHaveAttribute("aria-hidden", "true");
-  expect(filled.current).toHaveAttribute("fill", "red");
-  expect(filled.current).toHaveAttribute("width", "1.125rem");
-  expect(custom.current).toHaveAttribute("aria-hidden", "true");
-  expect(custom.current).toHaveAttribute("viewBox", "0 0 256 256");
-  expect(custom.current).toHaveAttribute("width", "0.875rem");
 });

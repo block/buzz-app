@@ -103,7 +103,14 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, built, port: portForPath(root) };
+    const manifest = path.join(
+      directory,
+      "src-tauri/resources/agent-runtime/manifest.json",
+    );
+    const gooseProfile = existsSync(manifest)
+      ? JSON.parse(readFileSync(manifest, "utf8")).goose.profile
+      : undefined;
+    return { ...result, calls, built, gooseProfile, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -155,7 +162,9 @@ test("web preserves the no-argument command", () => {
 });
 
 test("desktop derives a port from the worktree path and leaves the OS scheme alone", () => {
-  const { call, port, stdout } = launched("desktop");
+  const { call, port, stdout, gooseProfile } = launched("desktop");
+  // Local desktop dev skips Goose's size optimizations.
+  assert.equal(gooseProfile, "dev");
   assert.ok(port >= 10010 && port <= 65009, String(port));
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
   assert.equal(call.length, 4);

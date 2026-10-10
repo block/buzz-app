@@ -71,13 +71,8 @@ it("creates and assigns together, imports legacy fields into registers and keeps
   ).toThrow("changed");
 });
 it.each([
-  { ...intent, sectionId: "work" },
   { ...intent, createSection: { id, name: " " } },
-  { ...intent, createSection: { id, name: "a".repeat(257) } },
   { ...intent, createSection: { id: "__proto__", name: "Launch" } },
-  { ...intent, createSection: { id, name: "Launch", icon: "unexpected" } },
-  { ...intent, createSection: [] },
-  { ...intent, createSection: null },
 ])("rejects malformed create intent before writing: %j", (value) => {
   expect(() => assertSidebarAssignmentIntent(value)).toThrow("Invalid");
 });

@@ -6,6 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.8.0': 7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f
+  sonner@2.0.8: 5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28
   virtua@0.51.0: a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b
 
 importers:
@@ -33,6 +34,9 @@ importers:
       '@jsquash/webp':
         specifier: 1.5.0
         version: 1.5.0
+      '@modelcontextprotocol/server':
+        specifier: 2.3.1
+        version: 2.3.1
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
@@ -135,6 +139,9 @@ importers:
       remark-gfm:
         specifier: 4.0.1
         version: 4.0.1
+      sonner:
+        specifier: 2.0.8
+        version: 2.0.8(patch_hash=5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       virtua:
         specifier: 0.51.0
         version: 0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -296,6 +303,7 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-x64@2.5.14':
     resolution: {integrity: sha512-VHZRa7CCQBUWKxNwUvHJeuW03WFRgN5NWO//SDGOitc9QIeNyfA42V9zlKm+x82xFSG9Bzi5fi+hbhm9anO8yA==}
@@ -440,6 +448,14 @@ packages:
 
   '@jsquash/webp@1.5.0':
     resolution: {integrity: sha512-KggLoj2MnRSfIqTeKe1EmbljTX2vuV7mh79k89PCL1pyqiDULcPM1L47twxXt0hkb68F70bXiL31MxsuoZtKFw==}
+
+  '@modelcontextprotocol/core@2.3.1':
+    resolution: {integrity: sha512-laVmIhPGpWi7rG9q+0UigblRN0Hws/Yjlb6qLFtVqryXVLkc4h+yN8z731POD2LnAGQlFe7/tXhUm7Bi0YB91g==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/server@2.3.1':
+    resolution: {integrity: sha512-e59MfWuSssj6DoQ96JCTqdW1AXT5/XtnTl0WWd6MU1Ka434fFUGGosCLJbGNySDhHGvxQWoRWK137FXYFkYNWw==}
+    engines: {node: '>=20'}
 
   '@noble/ciphers@2.1.1':
     resolution: {integrity: sha512-bysYuiVfhxNJuldNXlFEitTVdNnYUc+XNJZd7Qm2a5j1vZHgY+fazadNFWFaMK/2vye0JVlxV3gHmC0WDfAOQw==}
@@ -1796,6 +1812,16 @@ packages:
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
+  sonner@2.0.8:
+    resolution: {integrity: sha512-UM/ByIoFra8yzV75n1o0Puu0bw5U/9UNnDacrJNspekBewIfsQ3D6ez1nvlWpt7aTsO6rujQtifBpycwIivqlg==}
+    peerDependencies:
+      '@types/react': ^18.0.0 || ^19.0.0
+      react: ^18.0.0 || ^19.0.0 || ^19.0.0-rc
+      react-dom: ^18.0.0 || ^19.0.0 || ^19.0.0-rc
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -2066,6 +2092,9 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
@@ -2264,6 +2293,15 @@ snapshots:
   '@jsquash/webp@1.5.0':
     dependencies:
       wasm-feature-detect: 1.9.0
+
+  '@modelcontextprotocol/core@2.3.1':
+    dependencies:
+      zod: 4.6.5
+
+  '@modelcontextprotocol/server@2.3.1':
+    dependencies:
+      '@modelcontextprotocol/core': 2.3.1
+      zod: 4.6.5
 
   '@noble/ciphers@2.1.1': {}
 
@@ -3638,6 +3676,13 @@ snapshots:
 
   siginfo@2.0.0: {}
 
+  sonner@2.0.8(patch_hash=5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+    optionalDependencies:
+      '@types/react': 19.2.18
+
   source-map-js@1.2.1: {}
 
   space-separated-tokens@2.0.2: {}
@@ -3860,5 +3905,7 @@ snapshots:
   xmlchars@2.2.0: {}
 
   yaml@2.9.1: {}
+
+  zod@4.6.5: {}
 
   zwitch@2.0.4: {}

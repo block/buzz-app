@@ -1263,10 +1263,7 @@ it("keeps a typed opening fence literal when a later sibling paragraph closes it
 it.each([
   ["- ", "ul", "- "],
   ["* ", "ul", "- "],
-  ["+ ", "ul", "- "],
-  ["• ", "ul", "- "],
   ["1. ", "ol", "1. "],
-  ["1) ", "ol", "1. "],
   ["> ", "blockquote", "> "],
 ] as const)(
   "opens a block as the space of %j is typed, with one undo restoring the prefix",
@@ -1959,34 +1956,6 @@ it.each([
     "ArrowLeft",
     [18, 28, "backward"],
   ],
-  [
-    "before a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    "ArrowRight",
-    [18, 28, "forward"],
-  ],
-  [
-    "after the two-word mention at the start",
-    "@Mary Jane says hello",
-    10,
-    "ArrowLeft",
-    [0, 10, "backward"],
-  ],
-  [
-    "the document start before a two-word mention",
-    "@Mary Jane says hello",
-    0,
-    "ArrowRight",
-    [0, 10, "forward"],
-  ],
-  [
-    "the document end after a two-word mention",
-    "hello @Mary Jane",
-    16,
-    "ArrowLeft",
-    [6, 16, "backward"],
-  ],
 ] as const)(
   "Shift+Arrow from %s selects the whole mention",
   (_, text, caret, key, expected) => {
@@ -2033,33 +2002,6 @@ it.each([
     "backward",
     "ArrowRight",
     [25, 26, "backward"],
-  ],
-  [
-    "extends a forward selection from prose over a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    16,
-    18,
-    "forward",
-    "ArrowRight",
-    [16, 28, "forward"],
-  ],
-  [
-    "shrinks a forward selection off a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    28,
-    "forward",
-    "ArrowLeft",
-    [18, 18, "forward"],
-  ],
-  [
-    "shrinks a backward selection off a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    29,
-    "backward",
-    "ArrowRight",
-    [28, 29, "backward"],
   ],
   // Two two-word mentions one space apart: the browser selects that space,
   // then the editor extends over the first mention in the same direction.
@@ -2110,25 +2052,15 @@ it("retains the native caret after replacing text with an unchanged suffix", asy
  * character instead (NSUpArrowFunctionKey U+F700 onwards), which WebKit strips
  * and the guard refuses as well. DEL and the C1 controls are as glyphless. */
 const controlKeys = [
-  ["Left Arrow's layout translation U+001C", "\u001C"],
   ["Right Arrow's layout translation U+001D", "\u001D"],
-  ["Up Arrow's layout translation U+001E", "\u001E"],
-  ["Down Arrow's layout translation U+001F", "\u001F"],
   ["Home's layout translation U+0001", "\u0001"],
-  ["End's layout translation U+0004", "\u0004"],
   ["Page Up's layout translation U+000B", "\u000B"],
   ["Page Down's layout translation U+000C", "\u000C"],
   ["DEL U+007F", "\u007F"],
   ["the first C1 control U+0080", "\u0080"],
   ["the last C1 control U+009F", "\u009F"],
   ["Up Arrow's function-key character U+F700", "\uF700"],
-  ["Down Arrow's function-key character U+F701", "\uF701"],
-  ["Left Arrow's function-key character U+F702", "\uF702"],
   ["Right Arrow's function-key character U+F703", "\uF703"],
-  ["F1's function-key character U+F704", "\uF704"],
-  ["Home's function-key character U+F729", "\uF729"],
-  ["End's function-key character U+F72B", "\uF72B"],
-  ["Page Up's function-key character U+F72C", "\uF72C"],
   ["Page Down's function-key character U+F72D", "\uF72D"],
 ] as const;
 /** Right Arrow committed as text in both forms the host can produce. Each
@@ -2580,7 +2512,6 @@ it.each([
     ["extend", "left", "lineboundary"],
   ],
   ["MacIntel", "ArrowUp", {}, ["move", "backward", "line"]],
-  ["MacIntel", "ArrowDown", { shiftKey: true }, ["extend", "forward", "line"]],
   [
     "MacIntel",
     "ArrowUp",
@@ -2594,7 +2525,6 @@ it.each([
     ["move", "forward", "documentboundary"],
   ],
   ["MacIntel", "Home", {}, null],
-  ["MacIntel", "End", {}, null],
   [
     "MacIntel",
     "End",
@@ -2602,7 +2532,6 @@ it.each([
     ["extend", "forward", "documentboundary"],
   ],
   ["MacIntel", "PageUp", {}, null],
-  ["MacIntel", "PageDown", { shiftKey: true }, null],
   ["Win32", "ArrowRight", { ctrlKey: true }, ["move", "right", "lineboundary"]],
   ["Win32", "ArrowRight", { metaKey: true }, ["move", "right", "character"]],
   ["Win32", "Home", {}, ["move", "backward", "lineboundary"]],

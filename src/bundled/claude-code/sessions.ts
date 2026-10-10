@@ -170,14 +170,18 @@ export class AgentSessions {
     return delivered;
   }
 
-  /** Runs `text` as one turn in a new session, then stops its process. The
-   * session is not saved, so it never displaces a conversation's saved
-   * session and is never resumed. `label` names it in the snapshot. When every
-   * process is busy it waits for one, as Janet retries a busy wake; it gives
-   * up, and stops the turn, after `deadline` ms of waiting or of running. */
+  /** Runs one turn in a new session, then stops its process. The session is
+   * not saved, so it never displaces a conversation's saved session and is
+   * never resumed. `label` names it in the snapshot. When every process is
+   * busy it waits for one, as Janet retries a busy wake; it gives up, and
+   * stops the turn, after `deadline` ms of waiting or of running. `prompt` is
+   * asked for the turn's text once a process is ready, so a turn that should
+   * no longer run after the wait returns undefined and sends nothing. It
+   * settles only when its process has exited, so its room is not given to
+   * another turn while it may still be working. */
   async runOnce(
     label: string,
-    text: string,
+    prompt: () => string | undefined | Promise<string | undefined>,
     deadline = ONCE_DEADLINE_MS,
   ): Promise<Settled> {
     const until = Date.now() + deadline;
@@ -205,6 +209,8 @@ export class AgentSessions {
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
       this.once.set(key, live);
+      const text = await prompt();
+      if (text === undefined || this.disposed) return { ok: true };
       return await Promise.race([
         live.process.send(text),
         new Promise<Settled>((resolve) => {
@@ -223,8 +229,12 @@ export class AgentSessions {
       return { ok: false, error: "Claude Code could not start" };
     } finally {
       clearTimeout(timer);
+      if (live) {
+        // Killing only asks it to stop; the host may let it run a few seconds.
+        void live.process.kill();
+        await live.process.exited.catch(() => undefined);
+      }
       this.once.delete(key);
-      void live?.process.kill();
       this.options.onChange?.();
       this.warm();
     }

@@ -160,7 +160,7 @@ export class ClaudeRuntime {
     this.agents.clear();
   }
 
-  async run({ trigger, agent, config: raw, channelId }: Delivery) {
+  async run({ trigger, agent, config: raw, channelId, current }: Delivery) {
     const settings = config(raw);
     // `respondTo` is whose requests it acts on. A watch is the agent's own
     // attention: its event is observed data, framed as such, from anyone.
@@ -173,7 +173,7 @@ export class ClaudeRuntime {
     const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
     entry.handle = agent;
     if (trigger.type !== "mention") {
-      this.wake(entry, agent, trigger);
+      this.wake(entry, agent, trigger, current);
       return;
     }
     const { event } = trigger;
@@ -208,23 +208,27 @@ export class ClaudeRuntime {
   }
 
   /** A watch or timer wake: a one-off turn in its Interest's lane, as in
-   * Janet. It joins no conversation, and nothing about it is saved. Its prompt
-   * is built when the turn starts, from the attention as it is then: a turn
-   * whose watch was disabled or removed, or whose agent's attention went off,
-   * while it waited does not run. */
+   * Janet. It joins no conversation, and nothing about it is saved. The host
+   * says whether it is still `current`, asked when its lane starts it and
+   * again once it has a process: a wake whose watch or timer was disabled or
+   * removed, whose watch changed or no longer matches, or whose agent's
+   * attention went off, while it waited does not run. Its prompt is built
+   * then, from the attention as it is. */
   private wake(
     entry: Entry,
     agent: AgentHandle,
     trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
+    current: () => boolean,
   ) {
     const { slug } = trigger;
     const id = slug.replace(/^watch\//, "");
     const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
       .interest_id;
     const queued = entry.lanes.add(lane, async () => {
-      const text = await this.wakePrompt(agent, trigger, id);
-      if (!text) return;
-      const done = entry.sessions.runOnce(`${trigger.type}/${id}`, text);
+      if (!current()) return;
+      const done = entry.sessions.runOnce(`${trigger.type}/${id}`, () =>
+        this.wakePrompt(agent, trigger, id, current),
+      );
       this.notify();
       const result = await done;
       this.notify();
@@ -248,12 +252,13 @@ export class ClaudeRuntime {
     agent: AgentHandle,
     trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
     id: string,
+    stillCurrent: () => boolean,
   ) {
     const { attention } = agent;
-    if (!attention.enabled()) return undefined;
+    if (!stillCurrent()) return undefined;
     const current = (await attention.show(trigger.slug)).object;
     const type = trigger.type === "watch" ? "event" : "timer";
-    if (!current || current.type !== type || !current.enabled) return undefined;
+    if (!current || current.type !== type) return undefined;
     const interest = (await attention.show(`interest/${current.interest_id}`))
       .object;
     const instructions =
@@ -276,8 +281,8 @@ export class ClaudeRuntime {
             ...instructions,
             spent: trigger.spent,
           });
-    // Read again: the switch can change while the attention is read.
-    return attention.enabled() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
+    // Asked again: the attention can change while it is read.
+    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
   }
 
   /** `text` with Janet's end-of-turn attention review, when attention is on. */

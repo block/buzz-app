@@ -5,6 +5,7 @@ import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
+import { MAX_LIVE } from "./sessions";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -102,6 +103,8 @@ function setup(
     },
   };
   const attention = { on: true };
+  // Slugs the host would no longer run, as when a watch was tightened.
+  const stale = new Set<string>();
   // What the host holds: a delivered watch or timer, and its Interest.
   const objects = new Map<string, Record<string, unknown>>();
   const deliver = (trigger: Delivery["trigger"]) => {
@@ -121,6 +124,12 @@ function setup(
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
+      // The host's answer, as it is when asked.
+      current: () =>
+        trigger.type === "mention" ||
+        (attention.on &&
+          objects.get(trigger.slug)?.enabled === true &&
+          !stale.has(trigger.slug)),
     } as unknown as Delivery);
   };
   const claudes = () =>
@@ -136,6 +145,7 @@ function setup(
     agent,
     attention,
     objects,
+    stale,
   };
 }
 
@@ -534,6 +544,55 @@ it("skips a waiting turn whose watch was disabled or removed, or whose agent's a
     ?.finish();
   await flush(20);
   expect(prompted()).toEqual(["a1"]);
+});
+
+it("asks again whether a wake should run once it has a process", async () => {
+  vi.useFakeTimers();
+  try {
+    const { deliver, claudes, attention } = setup([], { hold: true });
+    // Every process is taken by a conversation.
+    for (let index = 0; index < MAX_LIVE; index++)
+      await deliver({
+        type: "mention",
+        event: message(`m${index}`, "@Claude hi"),
+      });
+    await vi.advanceTimersByTimeAsync(10);
+    await deliver(timer("waits", "ops"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    attention.on = false;
+    claudes()
+      .find((process) => process.prompts.length)
+      ?.finish();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(
+      claudes().some((process) =>
+        process.prompts.some((prompt) => prompt.includes("Timer: waits")),
+      ),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("drops a waiting watch turn the host says no longer matches", async () => {
+  const { deliver, claudes, stale } = setup([], { hold: true });
+  const watch = (id: string) =>
+    ({
+      type: "watch",
+      event: message(id, `event ${id}`),
+      slug: `watch/${id}`,
+      watch: { type: "event", interest_id: "ops" },
+    }) as Delivery["trigger"];
+  await deliver(watch("first"));
+  await deliver(watch("second"));
+  await flush(10);
+  // An earlier turn tightened the second watch while the first held the lane.
+  stale.add("watch/second");
+  claudes()
+    .find((process) => process.prompts[0]?.includes('watch "first"'))
+    ?.finish();
+  await flush(20);
+  expect(claudes().filter((process) => process.prompts.length)).toHaveLength(1);
 });
 
 it("gives up a one-off turn that runs past its deadline", async () => {

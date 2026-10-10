@@ -12,6 +12,9 @@ declare module "@deepseek-ai/cordis" {
 }
 export type AgentAction = "start" | "stop" | "restart";
 export type ImportSource = "installed" | "development";
+/** How every picker names an old Buzz library. */
+export const oldBuzzLabel = (source: ImportSource) =>
+  source === "installed" ? "Old Buzz (Installed)" : "Old Buzz (Development)";
 /** Native-redacted saved-versus-running difference; raw values never cross IPC. */
 export type RestartChange =
   | { kind: "value"; before: unknown; after: unknown }

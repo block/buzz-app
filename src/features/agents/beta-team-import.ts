@@ -165,7 +165,7 @@ export async function setUpImportedTeam(
     );
     if (!team) return undefined;
     if (team.texts.length > 1)
-      return `Members of "${team.name}" had different team instructions in old Buzz. Choose one in Finish team setup.`;
+      return `Members of "${team.name}" had different team instructions in old Buzz. Choose one under From old Buzz on the Agents page.`;
     const { failed } = await runBetaTeamStep(kit, control, community, team, {
       text: team.texts[0] ?? "",
     });

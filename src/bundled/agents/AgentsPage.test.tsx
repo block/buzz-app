@@ -3178,7 +3178,7 @@ it("browses both local libraries without a community and requires a destination 
   expect(read).toHaveBeenCalledTimes(1);
   await userEvent.click(screen.getByLabelText("Source library"));
   await userEvent.click(
-    await screen.findByRole("option", { name: "Development Buzz" }),
+    await screen.findByRole("option", { name: "Old Buzz (Development)" }),
   );
   await waitFor(() =>
     expect(f.calls).toContainEqual({
@@ -3363,7 +3363,7 @@ it("unified card Import selects exact identity and development source, then move
     name: "Import agent",
   });
   await waitFor(() => expect(submit).toBeEnabled());
-  expect(within(form).getByText("Development Buzz")).toBeVisible();
+  expect(within(form).getByText("Old Buzz (Development)")).toBeVisible();
   expect(within(form).getByText("https://relay.example.test")).toBeVisible();
   expect(within(form).queryByLabelText("Source library")).toBeNull();
   expect(
@@ -3503,7 +3503,9 @@ it.each(["installed", "development"] as const)(
     });
     expect(
       within(form).getByText(
-        source === "installed" ? "Installed Buzz" : "Development Buzz",
+        source === "installed"
+          ? "Old Buzz (Installed)"
+          : "Old Buzz (Development)",
       ),
     ).toBeVisible();
     const submit = within(form).getByRole("button", { name: "Import agent" });
@@ -3573,7 +3575,7 @@ it("keeps the chosen source authoritative when an earlier preview finishes late"
     );
     await userEvent.click(within(form).getByLabelText("Source library"));
     await userEvent.click(
-      await screen.findByRole("option", { name: "Development Buzz" }),
+      await screen.findByRole("option", { name: "Old Buzz (Development)" }),
     );
     expect(
       within(form).queryByRole("button", { name: /Import .* settings/ }),

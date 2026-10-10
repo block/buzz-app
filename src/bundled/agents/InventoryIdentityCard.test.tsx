@@ -120,7 +120,7 @@ it("browses durable parked identities while disconnected without reading old fil
       within(card).getByLabelText(/^Details for /),
   );
   expect(within(card).getByText(npubEncode("cd".repeat(32)))).toBeVisible();
-  expect(within(card).getByText("Development Buzz")).toBeVisible();
+  expect(within(card).getByText("Old Buzz (Development)")).toBeVisible();
   expect(
     f.calls.some(
       (call) => call.action === "preview" || call.action === "import",

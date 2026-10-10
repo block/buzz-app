@@ -171,14 +171,18 @@ it("renders four exclusive sections with all setups on one exact-key card", asyn
     within(management).getAllByRole("button", { name: "Stop" }),
   ).toHaveLength(2);
   expect(
-    within(management).getByText("Installed Buzz · Development Buzz"),
+    within(management).getByText(
+      "Old Buzz (Installed) · Old Buzz (Development)",
+    ),
   ).not.toBeVisible();
   fireEvent.click(
     within(management).queryByText("Identity & sources") ??
       within(management).getByLabelText(/^Details for /),
   );
   expect(
-    within(management).getByText("Installed Buzz · Development Buzz"),
+    within(management).getByText(
+      "Old Buzz (Installed) · Old Buzz (Development)",
+    ),
   ).toBeVisible();
   fireEvent.click(within(management).getByRole("button", { name: "Close" }));
   expect(

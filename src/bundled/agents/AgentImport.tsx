@@ -10,6 +10,7 @@ import type {
   ImportSource,
   CloneSettings,
 } from "../../features/agents/control";
+import { oldBuzzLabel } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import {
@@ -249,9 +250,7 @@ export function AgentImport({
         )}
         <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-body-sm">
           <dt className="text-secondary">Source</dt>
-          <dd className="m-0">
-            {source === "installed" ? "Installed Buzz" : "Development Buzz"}
-          </dd>
+          <dd className="m-0">{oldBuzzLabel(source)}</dd>
           <dt className="text-secondary">Destination</dt>
           <dd className="m-0 break-all" title={destination}>
             {initialDestination ? (
@@ -323,8 +322,10 @@ export function AgentImport({
                   void load(next, destination);
                 }}
               >
-                <option value="installed">Installed Buzz</option>
-                <option value="development">Development Buzz</option>
+                <option value="installed">{oldBuzzLabel("installed")}</option>
+                <option value="development">
+                  {oldBuzzLabel("development")}
+                </option>
               </select>
             </label>
             {preview && (
@@ -500,8 +501,8 @@ export function AgentImport({
               {
                 label: "",
                 options: [
-                  { value: "installed", label: "Installed Buzz" },
-                  { value: "development", label: "Development Buzz" },
+                  { value: "installed", label: oldBuzzLabel("installed") },
+                  { value: "development", label: oldBuzzLabel("development") },
                 ],
               },
             ]}

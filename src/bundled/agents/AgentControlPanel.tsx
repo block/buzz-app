@@ -24,7 +24,6 @@ import { AgentEditor } from "./AgentEditor";
 import { LocalInventoryAction } from "./LocalInventoryAction";
 import { relayOrigin } from "../../features/communities/destination";
 import { AgentImport } from "./AgentImport";
-import { BetaTeamSetup } from "./BetaTeamSetup";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
 import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
@@ -383,14 +382,6 @@ export function AgentControlPanel({
         </div>
       )}
       {teamProblem && <p role="alert">{teamProblem}</p>}
-      {session?.viewer && control.betaTeams && (
-        <BetaTeamSetup
-          control={control}
-          state={state}
-          session={session}
-          viewer={session.viewer}
-        />
-      )}
       {state.data &&
         !importSelection &&
         (state.data.parked === undefined || needsRepair) && (

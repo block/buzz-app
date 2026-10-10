@@ -8,6 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   AgentControl,
@@ -48,11 +49,14 @@ const team = (texts: string[]): PendingBetaTeam => ({
   texts,
   members: [{ id: "a1", pubkey: "a1".padEnd(64, "0"), revision: 1 }],
 });
-const state = (agents: AgentView[]) =>
+const both = [
+  { pubkey: "p", name: "P", sources: ["installed", "development"] },
+];
+const state = (agents: AgentView[], parked: unknown[] = both) =>
   ({
     status: "ready",
     busy: false,
-    data: { agents },
+    data: { agents, parked },
   }) as unknown as AgentControlState;
 const control = (overrides: Partial<AgentControl>) =>
   ({
@@ -60,11 +64,11 @@ const control = (overrides: Partial<AgentControl>) =>
     betaTeams: vi.fn(async () => []),
     ...overrides,
   }) as unknown as AgentControl;
-const mount = (c: AgentControl, agents: AgentView[]) =>
+const mount = (c: AgentControl, agents: AgentView[], parked?: unknown[]) =>
   render(
     <BetaTeamSetup
       control={c}
-      state={state(agents)}
+      state={state(agents, parked)}
       session={session}
       viewer={viewer}
     />,
@@ -105,6 +109,11 @@ it("asks which text to keep when members disagreed and reports a failure", async
   ]);
   fireEvent.click(
     await screen.findByRole("button", {
+      name: "Choose instructions for Writers",
+    }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
       name: "Finish team setup for Writers with instructions 2",
     }),
   );
@@ -132,11 +141,9 @@ it("restores an earlier import's team, then finishes it", async () => {
     agent("a1", null),
     agent("done", { teamId: "beta-2", name: "X", status: "completed" }),
   ]);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
   expect(restoreBetaTeams).toHaveBeenCalledWith("installed", ["a1"]);
-  expect(await screen.findByText(/put together from/)).toBeVisible();
+  expect(await screen.findByText(/rebuilt from/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Restore team Writers" }));
   await waitFor(() =>
     expect(runner.runBetaTeamStep).toHaveBeenCalledWith(
@@ -155,13 +162,36 @@ it("restores an earlier import's team, then finishes it", async () => {
   );
 });
 
-it("shows nothing without pending teams or unrecorded imports", async () => {
+it("stays with a done line once every agent has its team", async () => {
   const betaTeams = vi.fn(async () => []);
-  const view = mount(control({ betaTeams }), [
-    agent("a1", { teamId: "beta-1", name: "W", status: "completed" }),
-  ]);
+  mount(
+    control({ betaTeams, restoreBetaTeam: vi.fn(), restoreBetaTeams: vi.fn() }),
+    [agent("a1", { teamId: "beta-1", name: "W", status: "completed" })],
+  );
   await waitFor(() => expect(betaTeams).toHaveBeenCalled());
-  expect(view.container).toBeEmptyDOMElement();
+  expect(screen.getByRole("heading", { name: "From old Buzz" })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "All teams from old Buzz are set up.",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Old Buzz library" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Find teams" })).toBeDisabled();
+});
+
+it("hides the library picker when only one old Buzz library exists", async () => {
+  const restoreBetaTeams = vi.fn(async () => ({ token: "t", groups: [] }));
+  mount(
+    control({ restoreBetaTeam: vi.fn(), restoreBetaTeams }),
+    [agent("a1", null)],
+    [{ pubkey: "p", name: "P", sources: ["development"] }],
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(restoreBetaTeams).toHaveBeenCalledWith("development", ["a1"]);
+  expect(
+    await screen.findByText(/Old Buzz \(Development\) has no teams/),
+  ).toBeVisible();
 });
 
 it("finds again after an empty result, in the other library", async () => {
@@ -175,17 +205,15 @@ it("finds again after an empty result, in the other library", async () => {
     });
   const c = control({ restoreBetaTeam: vi.fn(), restoreBetaTeams });
   mount(c, [agent("a1", null)]);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent(/No teams/);
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
+  expect(
+    await screen.findByText(/Old Buzz \(Installed\) has no teams/),
+  ).toBeVisible();
   const again = screen.getByRole("button", { name: "Find teams again" });
   fireEvent.click(again);
   await waitFor(() => expect(restoreBetaTeams).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(again).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Old Buzz library"), {
-    target: { value: "development" },
-  });
+  await choose("Old Buzz (Development)");
   fireEvent.click(again);
   expect(
     await screen.findByRole("button", { name: "Restore team Writers" }),
@@ -213,9 +241,7 @@ it("re-previews after a refused restore, then restores with the new token", asyn
     });
   const c = control({ restoreBetaTeam, restoreBetaTeams });
   mount(c, [agent("a1", null)]);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "Restore team Writers" }),
   );
@@ -239,6 +265,13 @@ it("re-previews after a refused restore, then restores with the new token", asyn
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
+const choose = async (name: string) => {
+  await userEvent.click(
+    screen.getByRole("combobox", { name: "Old Buzz library" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name }));
+};
+
 const previewed = (token: string, texts = ["BETA"]) => ({
   token,
   groups: [{ ...team(texts), inferred: false }],
@@ -249,13 +282,9 @@ it("drops a found preview when the library changes", async () => {
   mount(control({ restoreBetaTeam: vi.fn(), restoreBetaTeams }), [
     agent("a1", null),
   ]);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
   await screen.findByRole("button", { name: "Restore team Writers" });
-  fireEvent.change(screen.getByLabelText("Old Buzz library"), {
-    target: { value: "development" },
-  });
+  await choose("Old Buzz (Development)");
   expect(
     screen.queryByRole("button", { name: "Restore team Writers" }),
   ).toBeNull();
@@ -269,9 +298,7 @@ it("offers no old Restore after finding again fails", async () => {
   mount(control({ restoreBetaTeam: vi.fn(), restoreBetaTeams }), [
     agent("a1", null),
   ]);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
   await screen.findByRole("button", { name: "Restore team Writers" });
   fireEvent.click(screen.getByRole("button", { name: "Find teams again" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -315,9 +342,7 @@ it("recovers a refused restore through the real agent control", async () => {
     );
   }
   render(<Live />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: "Find teams" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "Restore team Writers" }),
   );

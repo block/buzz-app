@@ -5,6 +5,7 @@ import type {
   AgentView,
   ImportSource,
 } from "../../features/agents/control";
+import { oldBuzzLabel } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { communityMedia } from "../../features/profiles/avatar-upload";
@@ -282,9 +283,7 @@ export function InventoryIdentityCard({
                 </option>
                 {row.oldBuzzSources.map((value) => (
                   <option key={value} value={value}>
-                    {value === "installed"
-                      ? "Installed Buzz"
-                      : "Development Buzz"}
+                    {oldBuzzLabel(value)}
                   </option>
                 ))}
               </select>
@@ -373,11 +372,7 @@ export function InventoryIdentityCard({
             {row.oldBuzzSources.length > 0 && (
               <p className="m-0">
                 {row.oldBuzzSources
-                  .map((source) =>
-                    source === "installed"
-                      ? "Installed Buzz"
-                      : "Development Buzz",
-                  )
+                  .map((source) => oldBuzzLabel(source))
                   .join(" · ")}
               </p>
             )}

@@ -6,51 +6,145 @@ import type {
   ImportSource,
   PendingBetaTeam,
 } from "../../features/agents/control";
+import { oldBuzzLabel } from "../../features/agents/control";
 import { runBetaTeamStep } from "../../features/agents/beta-team-import";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import { sessionCommunity } from "../../features/agents/team-instructions";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Select } from "../../shared/design-system/ui/Select";
+import {
+  ArrowsClockwiseIcon,
+  CheckCircleIcon,
+  UsersIcon,
+  WarningCircleIcon,
+} from "../../shared/design-system/icons";
 
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 
-/** One team's text choice: a single text needs no choice, several need one. */
-function TextChoice({
+const count = (n: number) => (n === 1 ? "1 agent" : `${n} agents`);
+
+/** Picks one of several old Buzz texts for a team, away from the page. */
+function ChooseInstructions({
   team,
-  disabled,
   action,
+  disabled,
   onChoose,
 }: {
   team: PendingBetaTeam;
-  disabled: boolean;
   action: string;
+  disabled: boolean;
   onChoose: (text: string) => void;
 }) {
-  if (team.texts.length <= 1)
-    return (
-      <Button disabled={disabled} onClick={() => onChoose(team.texts[0] ?? "")}>
-        {action}
-      </Button>
-    );
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-2">
-      <p className="m-0 text-body-sm text-secondary">
-        Members had different team instructions in old Buzz. Choose the ones
-        this team keeps.
-      </p>
-      {team.texts.map((text, index) => (
-        <div key={text} className="flex flex-col gap-1">
-          <pre className="m-0 whitespace-pre-wrap text-body-sm">{text}</pre>
-          <Button
-            disabled={disabled}
-            aria-label={`${action} with instructions ${index + 1}`}
-            onClick={() => onChoose(text)}
-          >
-            Use these instructions
-          </Button>
+    <>
+      <Button
+        size="compact"
+        variant="primary"
+        disabled={disabled}
+        aria-label={`Choose instructions for ${team.name}`}
+        onClick={() => setOpen(true)}
+      >
+        Choose instructions…
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        size="wide"
+        title={`Choose instructions for ${team.name}`}
+        description="Members had different team instructions in old Buzz. The team keeps the ones you choose."
+      >
+        <div className="flex flex-col gap-4">
+          {team.texts.map((text, index) => (
+            <div key={text} className="flex flex-col items-start gap-2">
+              <pre className="m-0 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-primary p-3 text-body-sm">
+                {text}
+              </pre>
+              <Button
+                size="compact"
+                disabled={disabled}
+                aria-label={`${action} with instructions ${index + 1}`}
+                onClick={() => {
+                  setOpen(false);
+                  onChoose(text);
+                }}
+              >
+                Use these instructions
+              </Button>
+            </div>
+          ))}
         </div>
-      ))}
+      </Dialog>
+    </>
+  );
+}
+
+/** One team row: what it is, why it's here, and its one action. */
+function TeamRow({
+  team,
+  names,
+  note,
+  stalled,
+  label,
+  action,
+  disabled,
+  onChoose,
+}: {
+  team: PendingBetaTeam;
+  names: string;
+  note?: string | undefined;
+  stalled?: boolean;
+  label: string;
+  action: string;
+  disabled: boolean;
+  onChoose: (text: string) => void;
+}) {
+  const Icon = stalled ? WarningCircleIcon : UsersIcon;
+  return (
+    <div className="agent-inventory-row">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-secondary">
+          <Icon size={18} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <p className="m-0 text-label">{team.name}</p>
+          <p className="m-0 text-body-sm text-secondary">
+            {stalled
+              ? `Restored, but ${count(team.members.length)} still need to join it.`
+              : `${count(team.members.length)}${names && ` · ${names}`}`}
+          </p>
+          {note && <p className="m-0 text-body-sm text-secondary">{note}</p>}
+          {team.texts.length > 1 && (
+            <p className="m-0 text-body-sm text-secondary">
+              Members had different instructions in old Buzz.
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="agent-inventory-actions flex items-center gap-2">
+        {team.texts.length > 1 ? (
+          <ChooseInstructions
+            team={team}
+            action={action}
+            disabled={disabled}
+            onChoose={onChoose}
+          />
+        ) : (
+          <Button
+            size="compact"
+            variant="primary"
+            disabled={disabled}
+            aria-label={action}
+            onClick={() => onChoose(team.texts[0] ?? "")}
+          >
+            {label}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -159,98 +253,150 @@ export function BetaTeamSetup({
       );
       return failed[0];
     });
-  const canRestore =
-    unrecorded.length > 0 &&
-    !!control.restoreBetaTeams &&
-    !!control.restoreBetaTeam;
-  if (!pending.length && !canRestore) return null;
+  const canRestore = !!control.restoreBetaTeams && !!control.restoreBetaTeam;
+  // Which old Buzz libraries this machine has, from the agent inventory.
+  const libraries = (["installed", "development"] as const).filter((value) =>
+    state.data?.parked?.some((row) => row.sources.includes(value)),
+  );
+  const library =
+    libraries.length === 1 ? (libraries[0] as ImportSource) : source;
+  const names = (team: PendingBetaTeam) =>
+    team.members
+      .map((member) => agents.find((agent) => agent.id === member.id)?.name)
+      .filter(Boolean)
+      .join(", ");
+  const findTeams = () =>
+    act(async () => {
+      if (!control.restoreBetaTeams)
+        throw new Error("Teams from old Buzz are unavailable.");
+      // Finding again can expire the shown token, even on failure.
+      setPreview(null);
+      const next = await control.restoreBetaTeams(
+        library,
+        unrecorded.map((agent) => agent.id),
+      );
+      setPreview(next);
+      return undefined;
+    });
+  const done = !pending.length && !unrecorded.length;
+  const body = () => {
+    if (working && !preview) return "Reading teams from old Buzz…";
+    if (done) return null;
+    if (preview && !preview.groups.length)
+      return `${oldBuzzLabel(library)} has no teams for your imported agents.${
+        libraries.length > 1
+          ? " If your agents also lived in the other library, choose it above and find again."
+          : ""
+      }`;
+    if (!preview && !pending.length)
+      return "Find the teams your imported agents belonged to in old Buzz. Nothing changes until you restore a team.";
+    return null;
+  };
+  const line = body();
+  const rows = [
+    ...pending.map((team) => (
+      <TeamRow
+        key={`pending:${team.teamId}`}
+        team={team}
+        names={names(team)}
+        stalled
+        label="Finish setup"
+        action={`Finish team setup for ${team.name}`}
+        disabled={working}
+        onChoose={(text) => void finish(team, text)}
+      />
+    )),
+    ...(preview?.groups ?? []).map((group) => (
+      <TeamRow
+        key={`preview:${group.teamId}`}
+        team={group}
+        names={names(group)}
+        note={
+          group.inferred
+            ? "Old Buzz no longer lists this team. It was rebuilt from the agents' saved copies."
+            : undefined
+        }
+        label="Restore team"
+        action={`Restore team ${group.name}`}
+        disabled={working}
+        onChoose={(text) => preview && void restore(preview, group, text)}
+      />
+    )),
+  ];
   return (
     <section
-      aria-label="Teams from old Buzz"
+      aria-labelledby="old-buzz-teams"
       className="flex flex-col gap-3 text-body"
     >
-      {pending.map((team) => (
-        <div key={team.teamId} className="flex flex-col gap-2">
-          <p className="m-0">
-            Team “{team.name}” from old Buzz isn't set up yet for{" "}
-            {team.members.length === 1
-              ? "1 agent"
-              : `${team.members.length} agents`}
-            .
-          </p>
-          <TextChoice
-            team={team}
-            disabled={working}
-            action={`Finish team setup for ${team.name}`}
-            onChoose={(text) => void finish(team, text)}
-          />
-        </div>
-      ))}
-      {canRestore && (
-        <div className="flex items-center gap-2">
-          <label className="agent-control-field">
-            <span>Old Buzz library</span>
-            <select
-              value={source}
-              disabled={working}
-              onChange={(event) => {
-                // A preview belongs to the library it was found in.
-                setPreview(null);
-                setSource(event.target.value as ImportSource);
-              }}
-            >
-              <option value="installed">Installed Buzz</option>
-              <option value="development">Development Buzz</option>
-            </select>
-          </label>
-          <Button
-            ref={find}
-            disabled={working}
-            onClick={() =>
-              void act(async () => {
-                if (!control.restoreBetaTeams)
-                  throw new Error("Teams from old Buzz are unavailable.");
-                // Finding again can expire the shown token, even on failure.
-                setPreview(null);
-                const next = await control.restoreBetaTeams(
-                  source,
-                  unrecorded.map((agent) => agent.id),
-                );
-                setPreview(next);
-                return next.groups.length
-                  ? undefined
-                  : "No teams from old Buzz were found for these agents.";
-              })
-            }
-          >
-            {preview ? "Find teams again" : "Find teams from old Buzz"}
-          </Button>
+      <InlineHeader
+        id="old-buzz-teams"
+        title="From old Buzz"
+        subtitle="Restore teams for agents you already imported. Old Buzz isn't changed."
+        actions={
+          canRestore && (
+            <>
+              {libraries.length > 1 && (
+                <Select
+                  label="Old Buzz library"
+                  variant="compact"
+                  align="end"
+                  disabled={working}
+                  value={source}
+                  groups={[
+                    {
+                      label: "",
+                      options: libraries.map((value) => ({
+                        value,
+                        label: oldBuzzLabel(value),
+                      })),
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    // A preview belongs to the library it was found in.
+                    setPreview(null);
+                    setSource(value as ImportSource);
+                  }}
+                />
+              )}
+              <Button
+                ref={find}
+                variant="ghost"
+                size="sm"
+                loading={working}
+                disabled={working || !unrecorded.length}
+                onClick={() => void findTeams()}
+              >
+                <ArrowsClockwiseIcon size={16} />{" "}
+                {preview ? "Find teams again" : "Find teams"}
+              </Button>
+            </>
+          )
+        }
+      />
+      {problem && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {problem}
+        </p>
+      )}
+      {line && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          {line}
+        </p>
+      )}
+      {!!rows.length && (
+        <div className="overflow-hidden rounded-xl border border-primary">
+          {rows}
         </div>
       )}
-      {preview?.groups.map((group) => (
-        <div key={group.teamId} className="flex flex-col gap-2">
-          <p className="m-0">
-            Restore team “{group.name}” for{" "}
-            {group.members.length === 1
-              ? "1 agent"
-              : `${group.members.length} agents`}
-            .
-          </p>
-          {group.inferred && (
-            <p className="m-0 text-body-sm text-secondary">
-              Old Buzz no longer lists this team, so it was put together from
-              the agents' saved copies.
-            </p>
-          )}
-          <TextChoice
-            team={group}
-            disabled={working}
-            action={`Restore team ${group.name}`}
-            onChoose={(text) => void restore(preview, group, text)}
-          />
-        </div>
-      ))}
-      {problem && <p role="alert">{problem}</p>}
+      {done && (
+        <p
+          role="status"
+          className="m-0 flex items-center gap-2 text-body-sm text-secondary"
+        >
+          <CheckCircleIcon size={16} aria-hidden="true" />
+          All teams from old Buzz are set up.
+        </p>
+      )}
     </section>
   );
 }

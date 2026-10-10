@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -14,6 +15,9 @@ import type {
   AgentView,
   PendingBetaTeam,
 } from "../../features/agents/control";
+import { createAgentControl } from "../../features/agents/control";
+import { useAgentControl } from "../../features/agents/control-react";
+import { controlFixture } from "../../features/agents/control-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { BetaTeamSetup } from "./BetaTeamSetup";
 
@@ -233,4 +237,109 @@ it("re-previews after a refused restore, then restores with the new token", asyn
     ),
   );
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+const previewed = (token: string, texts = ["BETA"]) => ({
+  token,
+  groups: [{ ...team(texts), inferred: false }],
+});
+
+it("drops a found preview when the library changes", async () => {
+  const restoreBetaTeams = vi.fn(async () => previewed("installed-token"));
+  mount(control({ restoreBetaTeam: vi.fn(), restoreBetaTeams }), [
+    agent("a1", null),
+  ]);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
+  );
+  await screen.findByRole("button", { name: "Restore team Writers" });
+  fireEvent.change(screen.getByLabelText("Old Buzz library"), {
+    target: { value: "development" },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Restore team Writers" }),
+  ).toBeNull();
+});
+
+it("offers no old Restore after finding again fails", async () => {
+  const restoreBetaTeams = vi
+    .fn()
+    .mockResolvedValueOnce(previewed("old"))
+    .mockRejectedValueOnce(new Error("Old Buzz library is unreadable."));
+  mount(control({ restoreBetaTeam: vi.fn(), restoreBetaTeams }), [
+    agent("a1", null),
+  ]);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
+  );
+  await screen.findByRole("button", { name: "Restore team Writers" });
+  fireEvent.click(screen.getByRole("button", { name: "Find teams again" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Old Buzz library is unreadable.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Restore team Writers" }),
+  ).toBeNull();
+});
+
+it("recovers a refused restore through the real agent control", async () => {
+  runner.runBetaTeamStep
+    .mockReset()
+    .mockResolvedValue({ finished: ["fixture-agent"], failed: [] });
+  const fixture = controlFixture();
+  fixture.agent.betaTeam = null;
+  const restoreBetaTeam = vi
+    .fn()
+    .mockRejectedValueOnce("Agent settings changed; preview the restore again")
+    .mockImplementationOnce(async () => structuredClone(fixture.data));
+  const restoreBetaTeams = vi
+    .fn()
+    .mockResolvedValueOnce(previewed("old"))
+    .mockResolvedValueOnce(previewed("new"));
+  const real = createAgentControl({
+    ...fixture.host,
+    betaTeams: async () => [],
+    finishBetaTeam: vi.fn(),
+    restoreBetaTeams,
+    restoreBetaTeam,
+  });
+  await real.refresh();
+  function Live() {
+    return (
+      <BetaTeamSetup
+        control={real}
+        state={useAgentControl(real)}
+        session={session}
+        viewer={viewer}
+      />
+    );
+  }
+  render(<Live />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find teams from old Buzz" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Restore team Writers" }),
+  );
+  await waitFor(() => expect(real.snapshot().status).toBe("error"));
+  await act(() => real.refresh());
+  expect(real.snapshot().status).toBe("ready");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "preview the restore again",
+  );
+  const again = screen.getByRole("button", { name: "Find teams again" });
+  await waitFor(() => expect(again).toHaveFocus());
+  fireEvent.click(again);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Restore team Writers" }),
+  );
+  await waitFor(() =>
+    expect(restoreBetaTeam).toHaveBeenLastCalledWith(
+      "https://relay.example.test",
+      "new",
+      "beta-1",
+      "BETA",
+    ),
+  );
+  real.dispose();
 });

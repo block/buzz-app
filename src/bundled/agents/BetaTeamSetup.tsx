@@ -75,7 +75,6 @@ export function BetaTeamSetup({
   );
   useEffect(() => session.channelKit.ensure(), [session]);
   const community = sessionCommunity(session.scope, viewer);
-  const ready = kit.status === "ready" && state.status === "ready";
   const [pending, setPending] = useState<PendingBetaTeam[]>([]);
   const [preview, setPreview] = useState<BetaTeamRestorePreview | null>(null);
   const [source, setSource] = useState<ImportSource>("installed");
@@ -83,12 +82,14 @@ export function BetaTeamSetup({
   const [problem, setProblem] = useState<string | null>(null);
   const find = useRef<HTMLButtonElement>(null);
   const [refind, setRefind] = useState(false);
-  // A refused restore needs a fresh preview; offer it once the button is enabled.
+  const ready = kit.status === "ready" && state.status === "ready";
+  // A refused restore needs a fresh preview. The control hides this section
+  // until status is confirmed again, so wait for an enabled Find to exist.
   useEffect(() => {
-    if (!refind || working) return;
-    find.current?.focus();
+    if (!refind || working || !ready || !find.current) return;
+    find.current.focus();
     setRefind(false);
-  }, [refind, working]);
+  }, [refind, working, ready]);
   const agents = sameCommunityAgents(state.data?.agents ?? [], session.scope);
   const unrecorded = agents.filter((agent) => agent.betaTeam === null);
   // Re-read whenever an agent's team status or revision changes.
@@ -192,9 +193,11 @@ export function BetaTeamSetup({
             <select
               value={source}
               disabled={working}
-              onChange={(event) =>
-                setSource(event.target.value as ImportSource)
-              }
+              onChange={(event) => {
+                // A preview belongs to the library it was found in.
+                setPreview(null);
+                setSource(event.target.value as ImportSource);
+              }}
             >
               <option value="installed">Installed Buzz</option>
               <option value="development">Development Buzz</option>
@@ -207,6 +210,8 @@ export function BetaTeamSetup({
               void act(async () => {
                 if (!control.restoreBetaTeams)
                   throw new Error("Teams from old Buzz are unavailable.");
+                // Finding again can expire the shown token, even on failure.
+                setPreview(null);
                 const next = await control.restoreBetaTeams(
                   source,
                   unrecorded.map((agent) => agent.id),

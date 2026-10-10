@@ -249,6 +249,7 @@ function fixture(
         instructions: "TEST_INSTRUCTIONS",
       },
       signal: new AbortController().signal,
+      current: () => true,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);

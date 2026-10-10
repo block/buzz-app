@@ -182,6 +182,89 @@ it("says it is busy rather than start a process past its limit", async () => {
   );
 });
 
+it("holds a one-off turn until a process is free, and gives up at its deadline", async () => {
+  vi.useFakeTimers();
+  const { pool, live, claudes } = sessions({ hold: true });
+  for (let index = 0; index < MAX_LIVE; index++)
+    void pool.deliver(`c/${index}`, "hi", index);
+  await vi.advanceTimersByTimeAsync(10);
+  expect(live()).toHaveLength(MAX_LIVE);
+  let settled = false;
+  const waiting = pool
+    .runOnce("timer/a", () => "wake")
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(settled).toBe(false);
+  // One conversation finishes; the turn takes its room at once.
+  claudes()[0]?.finish();
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
+    true,
+  );
+  // A turn that never gets room is given up, not run late.
+  const late = pool.runOnce("timer/b", () => "late", 3_000);
+  await vi.advanceTimersByTimeAsync(4_000);
+  await expect(late).resolves.toMatchObject({ ok: false });
+  expect(claudes().some((process) => process.prompts.includes("late"))).toBe(
+    false,
+  );
+  void waiting;
+});
+
+it("asks a waiting one-off turn for its prompt only once a process is free", async () => {
+  vi.useFakeTimers();
+  const { pool, live, claudes } = sessions({ hold: true });
+  for (let index = 0; index < MAX_LIVE; index++)
+    void pool.deliver(`c/${index}`, "hi", index);
+  await vi.advanceTimersByTimeAsync(10);
+  expect(live()).toHaveLength(MAX_LIVE);
+  // It went stale while it waited, as a watch turned off would.
+  let stale = false;
+  const prompt = vi.fn(() => (stale ? undefined : "wake"));
+  const waiting = pool.runOnce("watch/a", prompt);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(prompt).not.toHaveBeenCalled();
+  stale = true;
+  claudes()[0]?.finish();
+  await vi.advanceTimersByTimeAsync(2_000);
+  await expect(waiting).resolves.toEqual({ ok: true });
+  expect(prompt).toHaveBeenCalledTimes(1);
+  expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
+    false,
+  );
+});
+
+it("keeps a one-off turn's room until its process has exited", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions({ hold: true });
+  let settled = false;
+  const done = pool
+    .runOnce("timer/slow", () => "work", 1_000)
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await vi.advanceTimersByTimeAsync(10);
+  const claude = claudes().find((process) => process.prompts.includes("work"));
+  // The host only signals it; it exits later, as after a grace period.
+  if (claude) claude.exitOnKill = false;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(claude?.killed).toBe(true);
+  expect(settled).toBe(false);
+  expect(pool.snapshot().map((session) => session.key)).toContain(
+    "timer/slow #1",
+  );
+  claude?.exit(null);
+  await vi.advanceTimersByTimeAsync(10);
+  await expect(done).resolves.toMatchObject({ ok: false });
+  expect(pool.snapshot().map((session) => session.key)).not.toContain(
+    "timer/slow #1",
+  );
+});
+
 it("counts conversations still starting toward its limit", async () => {
   let release!: () => void;
   const launched = new Promise<void>((resolve) => {

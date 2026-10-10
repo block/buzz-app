@@ -123,17 +123,19 @@ export function PackedAgentAvatar({
         aria-label={avatar.label}
         onError={() => setFailed(avatar.id)}
       >
-        {sources.map((source, index) => (
-          <source
-            key={source.type}
-            {...source}
-            onError={
-              index === sources.length - 1
-                ? () => setFailed(avatar.id)
-                : undefined
-            }
-          />
-        ))}
+        {sources
+          .filter((source) => source.src)
+          .map((source, index, available) => (
+            <source
+              key={source.type}
+              {...source}
+              onError={
+                index === available.length - 1
+                  ? () => setFailed(avatar.id)
+                  : undefined
+              }
+            />
+          ))}
       </video>
     </div>
   );

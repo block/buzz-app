@@ -11,11 +11,24 @@ import { afterEach, expect, it, vi } from "vitest";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 const motion = vi.hoisted(() => ({ reduced: false }));
+const codecs = vi.hoisted(() => ({ native: false }));
+vi.mock("../../features/agents/avatar-packs", async (original) => {
+  const actual =
+    await original<typeof import("../../features/agents/avatar-packs")>();
+  return {
+    ...actual,
+    avatarAnimation: (id: string) => ({
+      ...actual.avatarAnimation(id),
+      ...(codecs.native ? { webm: undefined } : {}),
+    }),
+  };
+});
 vi.mock("motion/react", () => ({ useReducedMotion: () => motion.reduced }));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   motion.reduced = false;
+  codecs.native = false;
 });
 it.each([
   ["AppleWebKit Safari", ".mp4"],
@@ -102,4 +115,21 @@ it("keeps animation available after autoplay is blocked and retries on hover", a
   expect(view.container.querySelector("video")).toBe(video);
   fireEvent.pointerEnter(video.parentElement as HTMLElement);
   expect(play).toHaveBeenCalledTimes(2);
+});
+
+it("omits the unbundled codec and falls back when the sole native source fails", () => {
+  codecs.native = true;
+  const avatar = agentAvatars[0];
+  if (!avatar) throw new Error("Missing avatar");
+  const view = render(<PackedAgentAvatar avatar={avatar} />);
+  const sources = view.container.querySelectorAll("source");
+  expect(sources).toHaveLength(1);
+  expect(sources[0]?.src).toContain(".mp4");
+  const source = sources[0];
+  if (!source) throw new Error("Missing native source");
+  fireEvent.error(source);
+  expect(screen.getByRole("img", { name: avatar.label })).toHaveAttribute(
+    "src",
+    avatar.preview,
+  );
 });

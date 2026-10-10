@@ -303,3 +303,36 @@ it("retains a rejected recovery Stop after creation settles and status refresh s
   expect(notice).toBeVisible();
   expect(f.close).not.toHaveBeenCalled();
 });
+
+it("finishes successful setup after recovery Stop without offering another profile retry", async () => {
+  const f = fixture();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.profile.mockImplementationOnce(async () => {
+    await gate;
+    const created = f.native.data.agents.find((agent) => agent.id === "copy");
+    if (created) created.profilePending = false;
+    return f.native.data;
+  });
+  f.native.agent.status = "running";
+  fireEvent.change(screen.getByLabelText("Name"), {
+    target: { value: "Helper" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(f.profile).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: /^Stop Fixture agent/ }));
+  await act(async () => {
+    release();
+    await gate;
+  });
+  expect(await screen.findByText("Helper: setup is complete.")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Finish profile" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Agent recovery" })).toBeVisible();
+  expect(f.close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(f.close).toHaveBeenCalledOnce();
+});

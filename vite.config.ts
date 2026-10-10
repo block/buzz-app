@@ -1,3 +1,4 @@
+import { avatarCodecs } from "./scripts/avatar-codecs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
@@ -30,7 +31,10 @@ export default defineConfig(async ({ command, mode }) => {
     throw new Error(
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
     );
-  const plugins: PluginOption[] = [react()];
+  const plugins: PluginOption[] = [
+    react(),
+    avatarCodecs(process.env.TAURI_ENV_PLATFORM),
+  ];
   if (command === "serve")
     plugins.push(
       (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(

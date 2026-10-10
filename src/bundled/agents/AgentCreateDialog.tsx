@@ -182,7 +182,9 @@ export function AgentCreateDialog({
   const cloned = !!initialSettings && !("origin" in initialSettings);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
-  const [nextStep, setNextStep] = useState<"start" | "profile">("start");
+  const [nextStep, setNextStep] = useState<"start" | "profile" | "complete">(
+    "start",
+  );
   const [error, setError] = useState<string>();
   useEffect(() => {
     if (source || !state.data?.avatarEditingAvailable) return;
@@ -227,6 +229,7 @@ export function AgentCreateDialog({
   const closeBlocked = busy || !!state.stopping;
   const create = async (publication?: AgentPublication) => {
     if (
+      nextStep === "complete" ||
       blocked ||
       runtimeBlocked ||
       (publication &&
@@ -309,7 +312,10 @@ export function AgentCreateDialog({
       }
       if (mounted.current) {
         if (startFailure) setError(startFailure);
-        else if (!recoveryUsed.current) onClose();
+        else {
+          setNextStep("complete");
+          if (!recoveryUsed.current) onClose();
+        }
       }
     } catch (problem) {
       if (mounted.current) setPhase("checking");
@@ -327,7 +333,10 @@ export function AgentCreateDialog({
         setError(undefined);
       } else if (step === "publishing" && current?.profilePending === false) {
         if (startFailure) setError(startFailure);
-        else if (!recoveryUsed.current) onClose();
+        else {
+          setNextStep("complete");
+          if (!recoveryUsed.current) onClose();
+        }
       } else if (step === "creating") {
         setError(
           `We couldn't confirm whether the agent was created.${reason} Check the agent list before trying again.`,
@@ -511,6 +520,9 @@ export function AgentCreateDialog({
                 )}
                 {error && <p role="alert">{error}</p>}
                 {busy && <p role="status">Adding agent…</p>}
+                {saved && nextStep === "complete" && !busy && (
+                  <p role="status">{saved.name}: setup is complete.</p>
+                )}
                 <Button
                   variant="primary"
                   disabled={
@@ -534,7 +546,7 @@ export function AgentCreateDialog({
                       Retry status
                     </Button>
                   )}
-                  {saved && (
+                  {saved && nextStep !== "complete" && (
                     <Button
                       variant="primary"
                       disabled={blocked || runtimeBlocked}
@@ -640,9 +652,11 @@ export function AgentCreateDialog({
                 )}
                 {saved && !busy && !error && (
                   <p role="status">
-                    {nextStep === "start"
-                      ? `${saved.name} was saved. Start it to finish setup.`
-                      : `${saved.name} was saved and started. Finish its profile setup.`}
+                    {nextStep === "complete"
+                      ? `${saved.name}: setup is complete.`
+                      : nextStep === "start"
+                        ? `${saved.name} was saved. Start it to finish setup.`
+                        : `${saved.name} was saved and started. Finish its profile setup.`}
                   </p>
                 )}
                 {error && error !== "Enter an agent name." && (
@@ -669,7 +683,7 @@ export function AgentCreateDialog({
                     </Button>
                   )}
                   <div ref={setAvatarActionTarget} hidden={!avatarActive} />
-                  {!avatarActive && (
+                  {!avatarActive && nextStep !== "complete" && (
                     <Button
                       type={
                         instructionActive || configurationOpen

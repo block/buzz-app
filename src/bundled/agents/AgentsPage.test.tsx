@@ -2050,6 +2050,16 @@ for (const stage of ["create", "profile"] as const) {
           name: "Create agent",
         });
         if (remaining) {
+          if (recoverStop && stage === "profile") {
+            expect(
+              within(remaining).getByText("New helper: setup is complete."),
+            ).toBeVisible();
+            expect(
+              within(remaining).queryByRole("button", {
+                name: "Finish profile",
+              }),
+            ).not.toBeInTheDocument();
+          }
           if (recoverStop)
             expect(
               within(remaining).getByRole("region", { name: "Agent recovery" }),

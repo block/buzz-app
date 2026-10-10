@@ -13,8 +13,10 @@ Bundled posters let the creation picker and New agent tile work without remote
 image requests. Saved profiles use the corresponding versioned HTTPS poster URL
 from the catalog, through Buzz's existing picture field and media path, so other
 clients can display them. No filesystem or app-local URL is published to a relay.
-The original WebM and HEVC variants are bundled and checksum-verified against
-the same upstream manifest. WebKit uses alpha HEVC and Chromium uses WebM.
+The original variants are checksum-verified against the same upstream manifest.
+Native builds use Tauri’s target platform to bundle only HEVC on macOS and WebM
+on Windows/Linux. Browser builds retain both formats for different engines.
+Posters and the selected native codec remain bundled for offline use.
 The creation preview, picker choices, and agent cards use animated variants. Reduced
 motion and playback failures use the poster. Saved profiles remain portable PNG
 URLs, so animation never changes the relay profile format.

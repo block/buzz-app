@@ -43,7 +43,8 @@ reporting that its process could not run. During Create, Start, or profile setup
 **Close** is disabled while setup is pending, and **Stop** remains available inside
 the setup dialog for each known agent, using the controller's recovery admission.
 After Stop is used, recovery feedback remains mounted when setup settles, until
-explicit dismissal. Escape and backdrop clicks retain a dirty draft even after
+explicit dismissal. Successful setup shows completion with the existing Close
+action instead of offering another profile retry. Escape and backdrop clicks retain a dirty draft even after
 validation or setup failure. Once setup settles into an error,
 **Close** is available even if status refresh still fails. Late completion after a
 host unmount never closes a subsequently opened dialog. If an operation

@@ -4298,6 +4298,7 @@ fn saved_shared_compute_discovery_validates_edit_without_mutating_saved_agent() 
     );
     let edit = AgentEdit {
         name: "Model discovery".into(),
+        effort: None,
         picture: None,
         system_prompt: String::new(),
         session_policy: Some(None),

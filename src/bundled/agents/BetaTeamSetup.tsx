@@ -105,7 +105,7 @@ function TeamRow({
 }) {
   const Icon = stalled ? WarningCircleIcon : UsersIcon;
   return (
-    <div className="agent-inventory-row">
+    <div className="agent-inventory-row" data-team-row={team.teamId}>
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-secondary">
           <Icon size={18} aria-hidden="true" />
@@ -179,7 +179,9 @@ export function BetaTeamSetup({
   const [refind, setRefind] = useState(false);
   const section = useRef<HTMLElement>(null);
   // A finished choice removes its row, and with it the focused control.
-  const settle = useRef(false);
+  // Holds the team whose removal should hand focus to the section, from the
+  // choice until that row goes, the choice fails, or focus moves elsewhere.
+  const settle = useRef<string | null>(null);
   const ready = kit.status === "ready" && state.status === "ready";
   // A refused restore needs a fresh preview. The control hides this section
   // until status is confirmed again, so wait for an enabled Find to exist.
@@ -189,11 +191,24 @@ export function BetaTeamSetup({
     setRefind(false);
   }, [refind, working, ready]);
   useEffect(() => {
-    if (!settle.current || working) return;
+    const moved = (event: FocusEvent) => {
+      const row = settle.current;
+      if (row === null || !(event.target instanceof Element)) return;
+      const at = event.target.closest<HTMLElement>("[data-team-row]");
+      if (at?.dataset.teamRow !== row) settle.current = null;
+    };
+    document.addEventListener("focusin", moved);
+    return () => document.removeEventListener("focusin", moved);
+  }, []);
+  useEffect(() => {
+    const row = settle.current;
+    if (row === null || working) return;
+    const rows =
+      section.current?.querySelectorAll<HTMLElement>("[data-team-row]");
+    if ([...(rows ?? [])].some((el) => el.dataset.teamRow === row)) return;
+    settle.current = null;
     const active = document.activeElement;
-    if (active !== null && active !== document.body) return;
-    settle.current = false;
-    section.current?.focus();
+    if (active === null || active === document.body) section.current?.focus();
   });
   const agents = sameCommunityAgents(state.data?.agents ?? [], session.scope);
   const unrecorded = agents.filter((agent) => agent.betaTeam === null);
@@ -229,9 +244,21 @@ export function BetaTeamSetup({
       setWorking(false);
     }
   };
-  const finish = (team: PendingBetaTeam, text: string) =>
+  // Arms the focus handoff for one choice; failure or refusal disarms it.
+  const settled = (team: string, task: () => Promise<string | undefined>) =>
     act(async () => {
-      settle.current = true;
+      settle.current = team;
+      try {
+        const failed = await task();
+        if (failed !== undefined) settle.current = null;
+        return failed;
+      } catch (reason) {
+        settle.current = null;
+        throw reason;
+      }
+    });
+  const finish = (team: PendingBetaTeam, text: string) =>
+    settled(team.teamId, async () => {
       const { failed } = await runBetaTeamStep(
         session.channelKit,
         control,
@@ -246,8 +273,7 @@ export function BetaTeamSetup({
     group: PendingBetaTeam,
     text: string,
   ) =>
-    act(async () => {
-      settle.current = true;
+    settled(group.teamId, async () => {
       if (!control.restoreBetaTeam || !control.betaTeams)
         throw new Error("Teams from old Buzz are unavailable.");
       await control

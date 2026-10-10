@@ -408,41 +408,129 @@ it("never claims setup is done when pending teams could not be read", async () =
   expect(screen.queryByText("All teams from old Buzz are set up.")).toBeNull();
 });
 
+const writers = (status: "pending" | "completed") => [
+  agent("a1", { teamId: "beta-1", name: "Writers", status }),
+];
+const remount = (
+  rerender: (ui: React.ReactElement) => void,
+  c: AgentControl,
+  status: "pending" | "completed",
+) =>
+  rerender(
+    <BetaTeamSetup
+      control={c}
+      state={state(writers(status))}
+      session={session}
+      viewer={viewer}
+    />,
+  );
+// Tabs forward until the named control has focus.
+const tabTo = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) => {
+  const target = await screen.findByRole("button", { name });
+  for (let i = 0; i < 20 && document.activeElement !== target; i++)
+    await user.tab();
+  expect(target).toHaveFocus();
+};
+
 it("keeps keyboard focus in the section after a chosen text finishes its row", async () => {
+  const user = userEvent.setup();
   const betaTeams = vi.fn(async () => [team(["ONE", "TWO"])]);
   runner.runBetaTeamStep.mockReset().mockImplementation(async () => {
     betaTeams.mockResolvedValue([]);
     return { finished: ["a1"], failed: [] };
   });
   const c = control({ betaTeams });
-  const { rerender } = mount(c, [
-    agent("a1", { teamId: "beta-1", name: "Writers", status: "pending" }),
-  ]);
-  await userEvent.click(
-    await screen.findByRole("button", {
-      name: "Choose instructions for Writers",
-    }),
-  );
-  await userEvent.click(
-    await screen.findByRole("button", {
-      name: "Finish team setup for Writers with instructions 2",
-    }),
-  );
+  const { rerender } = mount(c, writers("pending"));
+  await tabTo(user, "Choose instructions for Writers");
+  await user.keyboard("{Enter}");
+  await tabTo(user, "Finish team setup for Writers with instructions 2");
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
   // The finished agent's new status triggers the re-read that drops the row.
-  rerender(
-    <BetaTeamSetup
-      control={c}
-      state={state([
-        agent("a1", { teamId: "beta-1", name: "Writers", status: "completed" }),
-      ])}
-      session={session}
-      viewer={viewer}
-    />,
-  );
+  remount(rerender, c, "completed");
   expect(
     await screen.findByText("All teams from old Buzz are set up."),
   ).toBeVisible();
   const region = screen.getByRole("region", { name: "From old Buzz" });
   await waitFor(() => expect(region).toHaveFocus());
+});
+
+it("forgets the focus handoff when Finish setup fails", async () => {
+  runner.runBetaTeamStep
+    .mockReset()
+    .mockResolvedValue({ finished: [], failed: ["refused"] });
+  const betaTeams = vi.fn(async () => [team(["ONE"])]);
+  const c = control({ betaTeams });
+  const { rerender } = mount(c, writers("pending"));
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("refused");
+  (document.activeElement as HTMLElement | null)?.blur();
+  expect(document.body).toHaveFocus();
+  // A later re-read removes the row without any new choice.
+  betaTeams.mockResolvedValue([]);
+  remount(rerender, c, "completed");
+  expect(
+    await screen.findByText("All teams from old Buzz are set up."),
+  ).toBeVisible();
+  expect(document.body).toHaveFocus();
+});
+
+it("forgets the focus handoff once focus moves away during a successful choice", async () => {
+  const betaTeams = vi.fn(async () => [team(["ONE"])]);
+  let release = () => {};
+  runner.runBetaTeamStep.mockReset().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => {
+          betaTeams.mockResolvedValue([]);
+          resolve({ finished: ["a1"], failed: [] });
+        };
+      }),
+  );
+  const c = control({ betaTeams });
+  const { rerender } = render(
+    <>
+      <button type="button">Elsewhere</button>
+      <BetaTeamSetup
+        control={c}
+        state={state(writers("pending"))}
+        session={session}
+        viewer={viewer}
+      />
+    </>,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  );
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  act(() => elsewhere.focus());
+  await act(async () => release());
+  expect(elsewhere).toHaveFocus();
+  // Leaving that control later must not revive the old handoff.
+  act(() => elsewhere.blur());
+  rerender(
+    <>
+      <button type="button">Elsewhere</button>
+      <BetaTeamSetup
+        control={c}
+        state={state(writers("completed"))}
+        session={session}
+        viewer={viewer}
+      />
+    </>,
+  );
+  expect(
+    await screen.findByText("All teams from old Buzz are set up."),
+  ).toBeVisible();
+  expect(document.body).toHaveFocus();
 });

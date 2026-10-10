@@ -265,7 +265,9 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     let credentials = Memory::default();
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
-    let sha = "a".repeat(64);
+    use sha2::{Digest, Sha256};
+    let bytes = b"media body";
+    let sha = format!("{:x}", Sha256::digest(bytes));
     let auth = agent.upload_auth(&key, &sha).unwrap();
     assert_eq!(auth["kind"], 24242);
     let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
@@ -289,6 +291,12 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     );
     assert_eq!(agent.media_url(&media).unwrap(), media);
     assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
+    assert!(agent.verify_media_hash(&media, bytes).is_ok());
+    assert!(agent.verify_media_hash(&media, b"different body").is_err());
+    let thumbnail = format!("{}/media/{sha}.thumb.jpg", agent.endpoint(""));
+    assert!(agent
+        .verify_media_hash(&thumbnail, b"derived thumbnail")
+        .is_ok());
     for input in [
         format!("https://elsewhere.test/media/{sha}.png"),
         format!("{media}?x=1"),

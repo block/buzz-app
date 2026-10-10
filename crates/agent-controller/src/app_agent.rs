@@ -85,6 +85,25 @@ impl AppAgent {
         }
         Ok(format!("{base}{name}"))
     }
+    /// Confirms a downloaded media body matches the hash in its community URL.
+    pub fn verify_media_hash(&self, url: &str, bytes: &[u8]) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let canonical = self.media_url(url)?;
+        let expected = canonical
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.get(..64))
+            .ok_or("Invalid media hash")?;
+        if canonical.ends_with(".thumb.jpg") {
+            // Thumbnails are derived JPEGs, but keep the source blob's name.
+            return Ok(());
+        }
+        let actual = format!("{:x}", Sha256::digest(bytes));
+        if actual != expected {
+            return Err("Media did not match its SHA-256".into());
+        }
+        Ok(())
+    }
     fn endpoint(&self, path: &str) -> String {
         format!("{}{path}", self.relay.replacen("wss://", "https://", 1))
     }

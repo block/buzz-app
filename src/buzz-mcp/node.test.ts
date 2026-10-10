@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { bytesToHex } from "nostr-tools/utils";
 import { keypair, signed } from "../features/relay/testing";
 import { nodeClient } from "./node";
@@ -67,9 +68,10 @@ it("reads back its memory and rejects a tampered entry", async () => {
 });
 
 it("fetches only its community's media, signed for a get", async () => {
-  const sha = "a".repeat(64);
+  const bytes = new Uint8Array([1, 2, 3]);
+  const sha = createHash("sha256").update(bytes).digest("hex");
   const fetch = vi.mocked(globalThis.fetch);
-  fetch.mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3])));
+  fetch.mockResolvedValueOnce(new Response(bytes));
   await expect(
     client().media(`https://relay.test/media/${sha}.png`),
   ).resolves.toBe(btoa("\x01\x02\x03"));
@@ -95,4 +97,13 @@ it("fetches only its community's media, signed for a get", async () => {
     new Response(new Uint8Array(5 * 1024 * 1024 + 1)),
   );
   await expect(client().media(sha)).rejects.toThrow("over 5 MB");
+  const wrongHash = "a".repeat(64);
+  fetch.mockResolvedValueOnce(new Response(bytes));
+  await expect(client().media(wrongHash)).rejects.toThrow(
+    "Media did not match its SHA-256",
+  );
+  fetch.mockResolvedValueOnce(new Response(bytes));
+  await expect(client().media(`${wrongHash}.thumb.jpg`)).resolves.toBe(
+    btoa("\x01\x02\x03"),
+  );
 });

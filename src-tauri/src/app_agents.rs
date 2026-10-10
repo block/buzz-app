@@ -499,6 +499,7 @@ pub(crate) async fn app_agent_media(
             reason(status, &body)
         ));
     }
+    agent.verify_media_hash(&url, &body)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(body))
 }
 

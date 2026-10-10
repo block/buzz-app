@@ -1230,3 +1230,49 @@ it("drills into multi-family Databricks catalogs without changing the selected m
     control.dispose();
   }
 });
+
+it("keeps quick-picker loading and retry actions in the floating popup", async () => {
+  const f = controlFixture();
+  let rejectLookup!: (reason: Error) => void;
+  f.host.models = {
+    begin: async () => 1,
+    cancel: async () => {},
+    run: () =>
+      new Promise<ModelCatalog>((_, reject) => {
+        rejectLookup = reject;
+      }),
+  };
+  const control = createAgentControl(f.host);
+  const view = render(
+    <AgentModelPicker
+      compact
+      feedbackInPopup
+      draft={{
+        ...agentDraft(f.agent),
+        command: "buzz-agent",
+        provider: "databricks_v2",
+      }}
+      defaults={{ host: "https://example.com", filter: "" }}
+      control={control}
+      onChange={() => {}}
+    />,
+  );
+  try {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    const cancel = await screen.findByRole("button", {
+      name: "Cancel sign-in",
+    });
+    expect(view.container).not.toContainElement(cancel);
+    await act(async () => rejectLookup(new Error("Models unavailable")));
+    const retry = await screen.findByRole("button", { name: "Retry models" });
+    expect(view.container).not.toContainElement(retry);
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("button", { name: "Retry models" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});

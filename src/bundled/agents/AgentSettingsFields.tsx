@@ -515,6 +515,7 @@ export function AgentSettingsFields({
         <AgentModelPicker
           integration={integration}
           compact={cardLayout && !customize}
+          feedbackInPopup={quickModelOnly}
           catalogProvider={buzzProvider ?? undefined}
           onAdvanced={
             cardLayout && !quickModelOnly

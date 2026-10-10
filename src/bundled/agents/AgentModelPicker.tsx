@@ -65,12 +65,14 @@ export function AgentModelPicker({
   providerSelection = 0,
   renderSections,
   compact = false,
+  feedbackInPopup = false,
   catalogProvider,
   onAdvanced,
   advancedOpen = false,
   integration,
 }: {
   compact?: boolean;
+  feedbackInPopup?: boolean;
   catalogProvider?: string | undefined;
   onAdvanced?: (() => void) | undefined;
   advancedOpen?: boolean;
@@ -453,6 +455,95 @@ export function AgentModelPicker({
     chooseModel(match?.id ?? query);
     setQuery(null);
   };
+  const modelFeedback = (
+    <>
+      {goose && fresh && entries.length > VISIBLE_MODEL_LIMIT && (
+        <p className="text-body-sm text-secondary">
+          Showing up to {VISIBLE_MODEL_LIMIT} models. Type to search all{" "}
+          {entries.length}.
+        </p>
+      )}
+      {!compact && status && (!open || busy) && (
+        <p
+          id={statusId}
+          role="status"
+          className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
+        >
+          {busy && goose && (
+            <CircleNotchIcon
+              size={16}
+              className="motion-safe:animate-spin"
+              aria-hidden="true"
+            />
+          )}
+          {status}
+        </p>
+      )}
+      {busy ? (
+        <Button
+          disabled={disabled}
+          onClick={() => {
+            pending.current?.abort();
+            pending.current = null;
+            setBusy(false);
+            setStatus("Cancelled. Retry when ready.");
+          }}
+        >
+          {external ? "Cancel model lookup" : "Cancel sign-in"}
+        </Button>
+      ) : (
+        status &&
+        supported && (
+          <Button disabled={disabled} onClick={() => void run("connect")}>
+            Retry models
+          </Button>
+        )
+      )}
+      {(policy ? policy.model === "withProvider" : pi) &&
+        draft.provider &&
+        !draft.model && (
+          <p className="text-body-sm text-warning">
+            Choose a model for this provider before starting, or clear Provider
+            to use Pi defaults.
+          </p>
+        )}
+      {pi && fresh && entries.length === 0 && draft.provider && (
+        <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
+      )}
+      {pi &&
+        fresh &&
+        draft.model &&
+        !entries.some((model) => model.id === selectedId) && (
+          <p className="text-body-sm text-warning">
+            This model ID is not in Pi’s available catalog. Select a listed
+            model or confirm the exact custom ID before starting; Pi may accept
+            an invalid ID until the first message.
+          </p>
+        )}
+      {fresh?.modelOverridden && (
+        <p className="text-body-sm text-warning">
+          {goose ? "A GOOSE_MODEL" : "A saved BUZZ_AGENT_MODEL"} environment
+          override takes precedence. Change it in Advanced → Environment to use
+          this selection.
+        </p>
+      )}
+      {goose &&
+        fresh &&
+        draft.model &&
+        !entries.some((model) => model.id === draft.model) && (
+          <p className="text-body-sm text-warning">
+            This model ID is not in Goose’s current provider list. Select a
+            listed model or confirm the custom ID before starting.
+          </p>
+        )}
+      {goose && (
+        <p className="text-body-sm text-secondary">
+          Models load for the selected provider using credentials entered above
+          or already configured in Goose. You can also enter a custom model ID.
+        </p>
+      )}
+    </>
+  );
   const modelFields = (
     <div
       className={compact ? "agent-compact-model-fields space-y-3" : "space-y-3"}
@@ -704,94 +795,11 @@ export function AgentModelPicker({
                 }}
               </Combobox.List>
             )}
+            {feedbackInPopup && modelFeedback}
           </Combobox.Popup>
         </Combobox.Root>
       </div>
-      {goose && fresh && entries.length > VISIBLE_MODEL_LIMIT && (
-        <p className="text-body-sm text-secondary">
-          Showing up to {VISIBLE_MODEL_LIMIT} models. Type to search all{" "}
-          {entries.length}.
-        </p>
-      )}
-      {!compact && status && (!open || busy) && (
-        <p
-          id={statusId}
-          role="status"
-          className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
-        >
-          {busy && goose && (
-            <CircleNotchIcon
-              size={16}
-              className="motion-safe:animate-spin"
-              aria-hidden="true"
-            />
-          )}
-          {status}
-        </p>
-      )}
-      {busy ? (
-        <Button
-          disabled={disabled}
-          onClick={() => {
-            pending.current?.abort();
-            pending.current = null;
-            setBusy(false);
-            setStatus("Cancelled. Retry when ready.");
-          }}
-        >
-          {external ? "Cancel model lookup" : "Cancel sign-in"}
-        </Button>
-      ) : (
-        status &&
-        supported && (
-          <Button disabled={disabled} onClick={() => void run("connect")}>
-            Retry models
-          </Button>
-        )
-      )}
-      {(policy ? policy.model === "withProvider" : pi) &&
-        draft.provider &&
-        !draft.model && (
-          <p className="text-body-sm text-warning">
-            Choose a model for this provider before starting, or clear Provider
-            to use Pi defaults.
-          </p>
-        )}
-      {pi && fresh && entries.length === 0 && draft.provider && (
-        <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
-      )}
-      {pi &&
-        fresh &&
-        draft.model &&
-        !entries.some((model) => model.id === selectedId) && (
-          <p className="text-body-sm text-warning">
-            This model ID is not in Pi’s available catalog. Select a listed
-            model or confirm the exact custom ID before starting; Pi may accept
-            an invalid ID until the first message.
-          </p>
-        )}
-      {fresh?.modelOverridden && (
-        <p className="text-body-sm text-warning">
-          {goose ? "A GOOSE_MODEL" : "A saved BUZZ_AGENT_MODEL"} environment
-          override takes precedence. Change it in Advanced → Environment to use
-          this selection.
-        </p>
-      )}
-      {goose &&
-        fresh &&
-        draft.model &&
-        !entries.some((model) => model.id === draft.model) && (
-          <p className="text-body-sm text-warning">
-            This model ID is not in Goose’s current provider list. Select a
-            listed model or confirm the custom ID before starting.
-          </p>
-        )}
-      {goose && (
-        <p className="text-body-sm text-secondary">
-          Models load for the selected provider using credentials entered above
-          or already configured in Goose. You can also enter a custom model ID.
-        </p>
-      )}
+      {!feedbackInPopup && modelFeedback}
     </div>
   );
   const advancedFields = (

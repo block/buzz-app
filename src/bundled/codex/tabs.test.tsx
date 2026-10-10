@@ -177,6 +177,25 @@ it("offers sign-in without an account and cancels a running sign-in", async () =
   await screen.findByRole("button", { name: "Check again" });
   expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });
+it("leaves Linux sign-in to a terminal, where the browser it opens is safe", async () => {
+  const platform = vi
+    .spyOn(navigator, "platform", "get")
+    .mockReturnValue("Linux x86_64");
+  try {
+    const f = fixture({ installed: true, signedIn: false });
+    render(<f.tabs.CodexTab {...f.props()} />);
+    await screen.findByText("Codex needs you to sign in.");
+    expect(screen.getByText("codex login").closest("p")).toHaveTextContent(
+      "Run codex login in a terminal, then check again.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(f.spawn).not.toHaveBeenCalledWith("login", expect.anything());
+  } finally {
+    platform.mockRestore();
+  }
+});
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
   const saving = deferred<void>();

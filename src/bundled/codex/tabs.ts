@@ -155,12 +155,15 @@ export function createTabs(
     const sessions = React.useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
     );
+    // On Linux, `codex login` can start a browser that was not running inside
+    // the login's process group, which the host kills when sign-in ends.
+    const signInHere = !/Linux/i.test(navigator.platform);
     // One button per slot, so focus stays put as Install becomes Sign in and
     // Cancel becomes Check again.
     const action =
       need === "install"
         ? ({ step: "install", label: "Install Codex" } as const)
-        : need === "login"
+        : need === "login" && signInHere
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;
     return h(
@@ -218,7 +221,15 @@ export function createTabs(
             h("code", null, "~/.local/bin"),
             ".",
           )
-        : null,
+        : need === "login" && !signInHere
+          ? h(
+              "p",
+              { className: "buzz-field-description" },
+              "Run ",
+              h("code", null, "codex login"),
+              " in a terminal, then check again.",
+            )
+          : null,
       output
         ? h(
             "pre",

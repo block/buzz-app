@@ -1,6 +1,6 @@
 import { AgentInstructions } from "./AgentInstructions";
 import { createPortal } from "react-dom";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -202,7 +202,32 @@ export function AgentSettingsFields({
   };
   const apiKey = providerApiKey(draft, environmentKeys, state.data);
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
+  const fields = useRef<HTMLDivElement>(null);
+  const harnessFocus = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const previous = harnessFocus.current;
+    harnessFocus.current = null;
+    // Switching harness families replaces the configuration subtree. Keep
+    // keyboard focus on its new trigger rather than the discarded node.
+    if (previous && !previous.isConnected) {
+      fields.current
+        ?.querySelector<HTMLElement>('[data-agent-harness] [role="combobox"]')
+        ?.focus();
+    }
+  });
   const change = (patch: Partial<AgentDraft>) => {
+    if (
+      patch.command !== undefined &&
+      document.activeElement instanceof HTMLElement
+    ) {
+      const active = document.activeElement;
+      if (
+        active.closest("[data-agent-harness]") ||
+        active.getAttribute("role") === "option"
+      ) {
+        harnessFocus.current = active;
+      }
+    }
     const key = apiKey?.env;
     // A typed key belongs to the provider it was entered for.
     if (
@@ -421,6 +446,7 @@ export function AgentSettingsFields({
   );
   return (
     <div
+      ref={fields}
       className="min-w-0 space-y-section-gap"
       hidden={
         cardLayout &&

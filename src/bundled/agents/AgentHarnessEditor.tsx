@@ -65,7 +65,10 @@ export function AgentHarnessEditor({
   return (
     <div className="space-y-4">
       {!hideHarness && (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4">
+        <div
+          data-agent-harness=""
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4"
+        >
           <ConfigChoice
             disabled={disabled}
             label="Harness"

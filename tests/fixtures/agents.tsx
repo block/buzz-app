@@ -131,6 +131,15 @@ function Fixture() {
         <button
           type="button"
           onClick={() => {
+            void current.session.agentLibrary.refresh();
+            void current.session.archives.refresh();
+          }}
+        >
+          Refresh fixture inventory
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             archived = !archived;
           }}
         >

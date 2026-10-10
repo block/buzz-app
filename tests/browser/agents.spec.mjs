@@ -157,7 +157,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle empty", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await page.getByText(/^Other agents \(/).click();
     await expect(
@@ -174,7 +174,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle error", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await expect(page.getByRole("alert").first()).toContainText(
       "Could not read",
@@ -182,7 +182,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Toggle error", exact: true })
       .click();
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
+      .click();
     await page.getByText(/^Other agents \(/).evaluate((el) => {
       if (!el.parentElement.open) el.click();
     });
@@ -191,7 +193,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle archive", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await page.getByText(/^Other agents \(/).evaluate((el) => {
       if (!el.parentElement.open) el.click();
@@ -205,7 +207,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle missing archive", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await page.getByText(/^Other agents \(/).evaluate((el) => {
       if (!el.parentElement.open) el.click();
@@ -219,7 +221,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle missing archive", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await page.getByText(/^Other agents \(/).click();
     await expect(page.getByText(/Archive visibility is unknown/)).toHaveCount(
@@ -246,7 +248,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle hold", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Refresh agents", exact: true })
+      .getByRole("button", { name: "Refresh fixture inventory", exact: true })
       .click();
     await expect(page.getByRole("status")).toHaveText(
       "Reading agent inventory…",
@@ -272,7 +274,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Clear cache", exact: true })
       .click();
-    await expect(page.getByRole("status")).toContainText("Library cleared");
+    await expect(page.getByRole("status")).toContainText(
+      "Reopen this page to load agents.",
+    );
     await expect(page.getByRole("article")).toHaveCount(0);
     expect(errors.unexplained()).toEqual([]);
   } finally {

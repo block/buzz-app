@@ -638,9 +638,15 @@ export function AgentCreateDialog({
                       }
                       onClick={
                         configurationOpen
-                          ? () => setConfigurationOpen(false)
+                          ? (event) => {
+                              event.preventDefault();
+                              setConfigurationOpen(false);
+                            }
                           : instructionActive
-                            ? () => instructionEditing.current?.done()
+                            ? (event) => {
+                                event.preventDefault();
+                                instructionEditing.current?.done();
+                              }
                             : undefined
                       }
                       variant="primary"

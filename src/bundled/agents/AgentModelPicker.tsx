@@ -198,7 +198,9 @@ export function AgentModelPicker({
     if (!control.models || testing.current) return;
     pending.current?.abort();
     pending.current = null;
-    attempted.current = null;
+    // Closing the popup can restore focus and request it again. Only an
+    // explicit Browse action should replace this connection test.
+    attempted.current = key;
     setBusy(false);
     setStatus("");
     setOpen(false);
@@ -667,7 +669,11 @@ export function AgentModelPicker({
             aria-describedby={!compact && status ? statusId : undefined}
             loading={busy}
             onBrowse={() => {
-              if (supported && !fresh && attempted.current !== key)
+              if (
+                supported &&
+                !fresh &&
+                (attempted.current !== key || testResult !== null)
+              )
                 void run("connect");
             }}
             placeholder={

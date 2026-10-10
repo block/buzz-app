@@ -78,13 +78,16 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
     window.agentFixture.setArtwork("https://images.example/failure.png"),
   );
   await page
-    .getByRole("button", { name: "Refresh agents", exact: true })
+    .getByRole("button", { name: "Refresh fixture inventory", exact: true })
     .click();
   await page.getByText(/^Other agents \(/).evaluate((el) => {
     if (!el.parentElement.open) el.click();
   });
   await expect(avatar).toContainText("A");
   await expect(image).toHaveCSS("opacity", "0");
+  await page.evaluate(() =>
+    window.scrollTo(0, document.documentElement.scrollHeight),
+  );
   expect(await avatar.boundingBox()).toEqual(original);
   release();
   await expect(avatar).toContainText("A");
@@ -93,7 +96,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
     window.agentFixture.setArtwork("https://images.example/avatar.png"),
   );
   await page
-    .getByRole("button", { name: "Refresh agents", exact: true })
+    .getByRole("button", { name: "Refresh fixture inventory", exact: true })
     .click();
   await page.getByText(/^Other agents \(/).evaluate((el) => el.click());
   await expect

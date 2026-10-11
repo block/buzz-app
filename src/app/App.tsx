@@ -7,7 +7,12 @@ import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
-import { useEffect, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
@@ -80,6 +85,18 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  const retryFocus = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!retryFocus.current) return;
+    if (retryFocus.current === route.state.attempt.id && !settings && restoring)
+      return;
+    if (
+      retryFocus.current === route.state.attempt.id &&
+      document.activeElement === document.body
+    )
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+    retryFocus.current = undefined;
+  }, [restoring, settings, route.state.attempt]);
   const terminal =
     startup === "recovery" ||
     route.state.status === "failed" ||
@@ -254,7 +271,19 @@ function ConnectedApp({ services }: { services: AppServices }) {
                       : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
                 </p>
                 {(!route.state.ingress || route.state.retryable) && (
-                  <Button type="button" onClick={route.retry}>
+                  <Button
+                    type="button"
+                    onClick={(event) => {
+                      const focused =
+                        event.currentTarget === document.activeElement;
+                      route.retry();
+                      // Retry can remove this control and briefly unmount the
+                      // shell; hand focus to main only once it has fallen away.
+                      retryFocus.current = focused
+                        ? services.navigation.snapshot().attempt.id
+                        : undefined;
+                    }}
+                  >
                     Retry navigation
                   </Button>
                 )}

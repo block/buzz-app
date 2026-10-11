@@ -72,7 +72,10 @@ semantic tokens, UI authoring rules and the local component reference.
   tab. Each opening carries focus intent: topbar activation suppresses destination
   autofocus, while explicit New conversation, sidebar and deep-link openings keep
   their content focus. This intent is not saved in addresses or history; retry
-  preserves it for the same opening. The selected page is a separately focusable,
+  preserves it for the same opening. A focused Retry navigation control hands
+  focus to main before retry removes it, restoring that focus if reconnect
+  temporarily remounts the shell. A new opening or focus elsewhere cancels this
+  handoff. The selected page is a separately focusable,
   labelled tabpanel. Toolbar
   and overflow destinations remain native buttons using `aria-current` and
   focus main content on selection. Header pages never become companion launchers.

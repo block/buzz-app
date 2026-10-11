@@ -231,6 +231,7 @@ export class ClaudeRuntime {
     effort,
     team,
     workingUntil,
+    step,
   }: Delivery) {
     const settings = config(raw);
     // Claude runs commands as you, so only you and your agents can ask.
@@ -289,6 +290,7 @@ export class ClaudeRuntime {
     );
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
+      ...(step ? { step } : {}),
       fresh: async () => (await prompt(true)).text,
       pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     });

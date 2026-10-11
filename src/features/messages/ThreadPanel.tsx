@@ -1,6 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { workflowLabel } from "../relay/workflow-attribution";
-import { LoadedThreadMessages } from "./loaded-thread-messages";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -1393,77 +1392,75 @@ function ThreadMessages({
         (!requireReadyRoot ||
           (snapshot.root.id === messageId &&
             snapshot.targetStatus === "ready")) && (
-          <LoadedThreadMessages.Provider value={rows}>
-            <MessageComposer
-              sessionConversation={sessionConversation}
-              personalConversation={personalConversation}
-              activityClickOpensPanel={activityClickOpensPanel}
-              key={`${scope}:${channelId}:${snapshot.root.id}`}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              channelId={channelId}
-              channelName={channelName}
-              placeholder={`Reply in thread to ${senderName(snapshot.root)}`}
-              threadRootId={snapshot.root.id}
-              replyParentId={replyParent}
-              disabled={
-                disabled ||
-                (requireReadyRoot &&
-                  (snapshot.status !== "ready" || !!snapshot.error)) ||
-                (!!replyParent && !selectedParent)
-              }
-              replyContext={
-                replyParent && !selectedParent ? (
+          <MessageComposer
+            sessionConversation={sessionConversation}
+            personalConversation={personalConversation}
+            activityClickOpensPanel={activityClickOpensPanel}
+            key={`${scope}:${channelId}:${snapshot.root.id}`}
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            channelName={channelName}
+            placeholder={`Reply in thread to ${senderName(snapshot.root)}`}
+            threadRootId={snapshot.root.id}
+            replyParentId={replyParent}
+            disabled={
+              disabled ||
+              (requireReadyRoot &&
+                (snapshot.status !== "ready" || !!snapshot.error)) ||
+              (!!replyParent && !selectedParent)
+            }
+            replyContext={
+              replyParent && !selectedParent ? (
+                <div className={styles.replyContext}>
+                  <span>Reply target is no longer available.</span>
+                  <Button size="sm" onClick={focusReply}>
+                    Cancel reply target
+                  </Button>
+                </div>
+              ) : (
+                selectedParent && (
                   <div className={styles.replyContext}>
-                    <span>Reply target is no longer available.</span>
-                    <Button size="sm" onClick={focusReply}>
-                      Cancel reply target
-                    </Button>
-                  </div>
-                ) : (
-                  selectedParent && (
-                    <div className={styles.replyContext}>
-                      <div>
-                        <span>Replying to {senderName(selectedParent)}</span>
-                        <p>{selectedParent.content}</p>
-                      </div>
-                      <IconButton
-                        size="sm"
-                        aria-label="Cancel reply target"
-                        onClick={focusReply}
-                        icon={<XIcon size={16} aria-hidden="true" />}
-                      />
+                    <div>
+                      <span>Replying to {senderName(selectedParent)}</span>
+                      <p>{selectedParent.content}</p>
                     </div>
-                  )
+                    <IconButton
+                      size="sm"
+                      aria-label="Cancel reply target"
+                      onClick={focusReply}
+                      icon={<XIcon size={16} aria-hidden="true" />}
+                    />
+                  </div>
                 )
-              }
-              editMessages={rows}
-              focusRequest={replyFocus}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              onDraftSaved={onDraftSaved}
-              onSend={(id) => {
-                targetAnchor.current = undefined;
-                positioned.current = true;
-                follow.current = !selectedParent;
-                if (selectedParent)
-                  setExpanded(
-                    (current) =>
-                      new Set([
-                        ...current,
-                        selectedParent.id,
-                        ...tree.ancestors(selectedParent.id),
-                      ]),
-                  );
-                // A background send may publish after the user picked a new target.
-                setReplyParent((current) =>
-                  current === replyParent ? undefined : current,
+              )
+            }
+            editMessages={rows}
+            focusRequest={replyFocus}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            onDraftSaved={onDraftSaved}
+            onSend={(id) => {
+              targetAnchor.current = undefined;
+              positioned.current = true;
+              follow.current = !selectedParent;
+              if (selectedParent)
+                setExpanded(
+                  (current) =>
+                    new Set([
+                      ...current,
+                      selectedParent.id,
+                      ...tree.ancestors(selectedParent.id),
+                    ]),
                 );
-                setSent(id);
-              }}
-            />
-          </LoadedThreadMessages.Provider>
+              // A background send may publish after the user picked a new target.
+              setReplyParent((current) =>
+                current === replyParent ? undefined : current,
+              );
+              setSent(id);
+            }}
+          />
         )}
     </MessageEditScope>
   );

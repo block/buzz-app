@@ -71,6 +71,8 @@ import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../../../src/shared/design-system/ui/AvatarStack";
+import { ShimmerText } from "../../../../src/shared/design-system/ui/ShimmerText";
+import { TypingDots } from "../../../../src/shared/design-system/ui/TypingDots";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
@@ -204,6 +206,66 @@ function Specimen({
       <code className="component-specimen-prop text-mono-sm text-tertiary">
         {prop ?? "default"}
       </code>
+    </div>
+  );
+}
+
+function ShimmerTextSpecimen() {
+  return (
+    <div className="component-specimen-row">
+      <Specimen prop="active (default)">
+        <span className="text-body-sm">
+          <ShimmerText>Bash</ShimmerText>
+        </span>
+      </Specimen>
+      <Specimen prop="active={false}">
+        <span className="text-body-sm">
+          <ShimmerText active={false}>Finished</ShimmerText>
+        </span>
+      </Specimen>
+    </div>
+  );
+}
+
+function TypingDotsSpecimen() {
+  const [state, setState] = useState<"waiting" | "working">("waiting");
+  return (
+    <div className="component-specimen-stack">
+      <div className="component-specimen-row">
+        <Specimen prop='state="waiting"'>
+          <span className="flex items-center gap-2 text-body">
+            <TypingDots state="waiting" /> Received · waiting to start
+          </span>
+        </Specimen>
+        <Specimen prop='state="working" (default)'>
+          <span className="flex items-center gap-2 text-body">
+            <TypingDots /> Working
+          </span>
+        </Specimen>
+      </div>
+      <ExamplePreview
+        label="Activity transition"
+        code={'<TypingDots state="waiting" />\n<TypingDots state="working" />'}
+      >
+        <div className="component-specimen-stack">
+          <span
+            role="status"
+            aria-label="Example activity"
+            className="flex items-center gap-2 text-body"
+          >
+            <TypingDots state={state} />
+            {state === "waiting" ? "Received · waiting to start" : "Working"}
+          </span>
+          <Button
+            size="sm"
+            onClick={() =>
+              setState(state === "waiting" ? "working" : "waiting")
+            }
+          >
+            {state === "waiting" ? "Start work" : "Reset to waiting"}
+          </Button>
+        </div>
+      </ExamplePreview>
     </div>
   );
 }
@@ -1843,6 +1905,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "icon-button": IconButtonSpecimen,
   avatar: AvatarSpecimen,
   "avatar-stack": AvatarStackSpecimen,
+  "shimmer-text": ShimmerTextSpecimen,
+  "typing-dots": TypingDotsSpecimen,
   "preview-card": PreviewCardSpecimen,
   "inline-chip": InlineChipSpecimen,
   "full-page-surface": FullPageSurfaceSpecimen,

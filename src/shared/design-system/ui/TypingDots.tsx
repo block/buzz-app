@@ -1,9 +1,13 @@
 import styles from "./TypingDots.module.css";
 
-/** Shared channel typing motion. Callers own live-state evidence and labelling. */
-export function TypingDots() {
+/** Shared activity motion. Callers own receipt/work evidence and accessible labels. */
+export function TypingDots({
+  state = "working",
+}: {
+  state?: "waiting" | "working";
+}) {
   return (
-    <span className={styles.dots} aria-hidden="true">
+    <span className={styles.dots} data-state={state} aria-hidden="true">
       <span />
       <span />
       <span />

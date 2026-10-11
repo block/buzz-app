@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "./transcript";
+import type { ToolItem } from "../../features/agents/activity-transcript";
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -23,9 +23,9 @@ function basename(value: unknown): string | undefined {
 }
 
 /** Display only. Never feeds send association, status, permissions or execution. */
-export function activityPresentation(entry: TranscriptEntry) {
+export function activityPresentation(entry: ToolItem) {
   const input = parsed(entry.input);
-  const name = entry.toolName ?? entry.title;
+  const name = entry.title;
   let title = entry.title,
     target: string | undefined;
   if (name === "buzz-dev-mcp__shell") {
@@ -87,15 +87,4 @@ export function activityPresentation(entry: TranscriptEntry) {
       ? input.command
       : undefined;
   return { title, target, shellOutput, command };
-}
-
-/** Explicit projection categories, independent of harness names and completion state. */
-export function activityCategory(
-  entry: TranscriptEntry,
-): "operation" | "communication" | "diagnostic" {
-  if (entry.diagnostic) return "diagnostic";
-  if (entry.kind === "tool" || entry.kind === "plan") return "operation";
-  if (["message", "prompt", "thought"].includes(entry.kind))
-    return "communication";
-  return "diagnostic";
 }

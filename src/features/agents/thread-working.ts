@@ -1,3 +1,4 @@
+import { localActivity } from "../agents/local-activity";
 import type { createAgentActivity } from "./activity";
 import { requestWork } from "./request-work";
 
@@ -12,8 +13,24 @@ export function threadWorkingAgents(
   typing: readonly string[],
   channelId: string,
   rootId: string,
+  represented?: { messageId: string; agents: ReadonlySet<string> },
 ): readonly string[] {
-  if (activity?.status !== "listening") return typing;
+  const local = localActivity(activity, channelId, rootId);
+  const activeLocal = (activity?.local ?? [])
+    .filter(
+      (row) =>
+        row.channelId === channelId &&
+        row.threadRootId === rootId &&
+        (row.state === "waiting" || row.state === "working") &&
+        !(
+          represented?.messageId === row.messageId &&
+          represented.agents.has(row.agent)
+        ),
+    )
+    .map((row) => row.agent);
+  const untrackedTyping = typing.filter((agent) => !local.has(agent));
+  if (activity?.status !== "listening")
+    return [...new Set([...untrackedTyping, ...activeLocal])];
   const linked = activity.turns.filter(
     (turn) =>
       turn.channelId === channelId &&
@@ -29,14 +46,32 @@ export function threadWorkingAgents(
     ),
   ];
   const work = requestWork(activity, channelId, requests);
+  const elsewhere = represented?.agents.size
+    ? requestWork(
+        activity,
+        channelId,
+        requests.filter((id) => id !== represented.messageId),
+      )
+    : work;
   const known = new Set([
     ...linked.map((turn) => turn.agent),
     ...work.map((entry) => entry.agent),
   ]);
   return [
     ...new Set([
-      ...work.filter((entry) => entry.working).map((entry) => entry.agent),
-      ...typing.filter((agent) => !known.has(agent)),
+      ...activeLocal,
+      ...work
+        .filter(
+          (entry) =>
+            !local.has(entry.agent) &&
+            (represented?.agents.has(entry.agent)
+              ? elsewhere.some(
+                  (other) => other.agent === entry.agent && other.working,
+                )
+              : entry.working),
+        )
+        .map((entry) => entry.agent),
+      ...untrackedTyping.filter((agent) => !known.has(agent)),
     ]),
   ];
 }

@@ -494,6 +494,36 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["avatar"],
   },
   {
+    slug: "typing-dots",
+    name: "TypingDots",
+    purpose:
+      "Show received/waiting activity with unison breathing, and working activity with staggered dots. The caller supplies the state and accessible text.",
+    behavior:
+      "CSS-only decorative motion. Reduced motion keeps the dots still; receipt detection and lifecycle state stay with the feature.",
+    variants: ["waiting", "working (default)", "reduced motion"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/TypingDots.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "shimmer-text",
+    name: "ShimmerText",
+    purpose:
+      "Give a short live-work label, such as an agent's current step, a moving sheen while that work is live.",
+    behavior:
+      "CSS-only decorative motion over subtle-to-standard text roles. Reduced motion shows plain text; the caller decides when work is live.",
+    variants: ["active (default)", "inactive", "reduced motion"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/ShimmerText.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "preview-card",
     name: "PreviewCard",
     purpose:

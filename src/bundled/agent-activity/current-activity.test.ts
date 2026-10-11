@@ -34,7 +34,7 @@ it("does not borrow historical actions when typing has no live turn", () => {
     currentActivity(records, [{ turnId: "new", state: "working" }]),
   ).toBeUndefined();
 });
-it("uses the last update, including folded tool completions and failures", () => {
+it("prefers the latest tool over later prose, including folded completions and failures", () => {
   const turns = [{ turnId: "t", state: "working" }];
   const records = [
     frame("1", "t", tool),
@@ -44,8 +44,8 @@ it("uses the last update, including folded tool completions and failures", () =>
     }),
   ];
   expect(currentActivity(records, turns)).toEqual({
-    title: "Thinking",
-    detail: "Thinking text",
+    title: "Read file · Running",
+    detail: "file.ts",
   });
   records.push(
     frame("3", "t", {

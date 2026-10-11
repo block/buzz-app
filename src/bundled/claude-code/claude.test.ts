@@ -1,5 +1,5 @@
-import { expect, it, vi } from "vitest";
-import { ClaudeProcess } from "./claude";
+import { describe, expect, it, vi } from "vitest";
+import { ClaudeProcess, stepLabel } from "./claude";
 import { fakeSpawn, flush } from "./claude-testing";
 
 const launch = {
@@ -341,4 +341,42 @@ it("reads messages split across output chunks", async () => {
   stdout?.(`${line.slice(10)}\n`);
   expect(claude.started).toBe(true);
   expect(claude.sessionId).toBe("s2");
+});
+
+describe("stepLabel", () => {
+  const msg = (content: unknown) => ({
+    type: "assistant",
+    message: { content },
+  });
+  it("names the latest tool with its target, thought or reply block", () => {
+    expect(
+      stepLabel(
+        msg([
+          { type: "tool_use", name: "Read", input: { file_path: "/a/b.txt" } },
+        ]),
+      ),
+    ).toEqual({ tool: "Read", target: "b.txt" });
+    expect(
+      stepLabel(
+        msg([
+          {
+            type: "tool_use",
+            name: "Bash",
+            input: { command: "ls", description: "List files" },
+          },
+        ]),
+      ),
+    ).toEqual({ tool: "Bash", target: "List files" });
+    expect(
+      stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
+    ).toEqual({ tool: "send_message" });
+    expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
+      tool: "Thinking",
+    });
+    expect(stepLabel(msg([{ type: "text", text: "hi" }]))).toEqual({
+      tool: "Writing reply",
+    });
+    expect(stepLabel(msg("text"))).toBeUndefined();
+    expect(stepLabel({ type: "assistant" })).toBeUndefined();
+  });
 });

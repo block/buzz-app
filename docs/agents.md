@@ -358,22 +358,16 @@ HTTP broker/verified transport, including corrupted signature rejection.
 
 ## Agent Activity plugin
 
-**Agent Activity** is an independently toggleable bundled plugin that owns capture
-and the transcript panel. Conversation presentation uses a compact, floating
-avatar control above the composer, without a reserved strip or permanent avatar
-container. Hover, click, tap or keyboard opens **Working now**, reusing the sidebar's
-working-agent row. The row opens its known thread (or channel when no unique thread
-is known); a separate **View activity** action opens the agent's transcript.
+**Agent Activity** owns live capture demand and the full Transcript/Raw panel;
+host-owned saved history remains independent of plugin enablement. This branch
+adds an avatar-and-dots bubble beneath the exact message that triggered current
+work. Multiple turns group by agent; completing one turn does not hide another.
+Hover, click, tap or keyboard opens a compact avatar-and-latest-tool popup. Its
+row opens that exact agent's profile Activity tab, using the mainline transcript,
+conversation filtering and saved-history controls. Escape or outside click closes
+the popup. Human typing remains in the ordinary conversation indicator.
 
-The channel control includes work in threads. A thread control includes only
-exact-root evidence, never unconfirmed work. Current owner-visible turns provide
-brief tool status; unknown scopes fall back to channel activity. Multiple concurrent
-scopes never choose an arbitrary transcript thread. Public typing for the viewer's
-own `agentChoices` identities remains visible without telemetry; someone else's
-self-declared agent remains ordinary typing, without this owner-activity doorway.
-All projections consume existing stores and loaded profiles/channel rows, not new
-capture leases, relay reads or timers. A persistent, visually hidden status region
-announces working/typing transitions even when visual controls are absent.
+### Local plugin-agent lifecycle
 
 The popup resets on conversation changes and when current work ends. Idle and
 historical activity remain accessible from the activity panel rather

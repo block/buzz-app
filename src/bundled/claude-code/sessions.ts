@@ -158,10 +158,12 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
+      step,
     }: Readonly<{
       steer?: string;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
+      step?: (tool: string, target?: string) => void;
     }> = {},
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
@@ -180,6 +182,7 @@ export class AgentSessions {
     }
     if (live) {
       this.touch(key, live, seen);
+      live.process.onStep = step;
       return this.answer(key, live, live.process.busy ? steer : text, pick);
     }
     const saved = this.options.store.get(key);
@@ -196,13 +199,17 @@ export class AgentSessions {
       void live.process.kill();
       return { ok: false, error: "Claude was stopped" };
     }
+    live.process.onStep = step;
     const delivered = await this.answer(key, live, text, pick);
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
       this.options.store.delete(key);
       this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen, { pick });
+      return this.deliver(key, fresh ? await fresh() : text, seen, {
+        pick,
+        ...(step ? { step } : {}),
+      });
     }
     return delivered;
   }

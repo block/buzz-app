@@ -129,9 +129,9 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "activity" | "channels" | `agent:${string}`>(
-    initialTab,
-  );
+  const [tab, setTab] = useState<
+    "info" | "activity" | "channels" | `agent:${string}`
+  >(initialTab);
   // An agent's sections come from its type and the app, not the harness.
   const plugin = useAgent(agents, pubkey);
   const channelChoices = useChannelChoices(
@@ -146,7 +146,16 @@ function ProfileDetails({
     plugin && agents
       ? agentSections({ agents, ...plugin, channels: channelChoices })
       : [];
-  const section = sections.find((item) => item.value === tab);
+  // Opened for activity, a plugin agent shows its type's own first tab (its
+  // sessions) until the reader picks a tab; harness agents keep Activity.
+  const [activityRequested, setActivityRequested] = useState(
+    initialTab === "activity",
+  );
+  const requestedTab =
+    activityRequested && tab === "activity" && sections[0]
+      ? sections[0].value
+      : tab;
+  const section = sections.find((item) => item.value === requestedTab);
   const activity = activityTarget(pubkey, context?.channelId);
   const resolvedActivity = panels?.resolve(activity);
   const activityPanel =
@@ -194,7 +203,15 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
-  const selectedTab = (tab === "activity" && !activityPanel) || (tab.startsWith("agent:") && !section) ? "info" : tab;
+  useEffect(() => {
+    if (!activityPanel && !sections.length)
+      setTab((current) => current === "activity" ? "info" : current);
+  }, [activityPanel, sections.length]);
+  const selectedTab =
+    (requestedTab === "activity" && !activityPanel) ||
+    (requestedTab.startsWith("agent:") && !section)
+      ? "info"
+      : requestedTab;
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -314,12 +331,17 @@ function ProfileDetails({
         </div>
         <Tabs
           value={selectedTab}
-          onValueChange={setTab}
+          onValueChange={(value) => {
+            setActivityRequested(false);
+            setTab(value);
+          }}
           items={[
             { value: "info", label: "Info" },
             ...sections.map(({ value, label }) => ({ value, label })),
             { value: "channels", label: "Channels" },
-            ...(displayAgent && activityPanel ? [{ value: "activity" as const, label: "Activity" }] : []),
+            ...(displayAgent && activityPanel
+              ? [{ value: "activity" as const, label: "Activity" }]
+              : []),
           ]}
           label="Profile sections"
           variant="panel"

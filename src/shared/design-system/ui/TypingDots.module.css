@@ -12,22 +12,41 @@
   background: currentColor;
 }
 
+/* Rests at the breath's dim level, so waiting → working rises instead of flashing. */
 @keyframes typing-pulse {
-  50% {
+  0%,
+  100% {
     opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes waiting-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .dots > span {
-    animation: typing-pulse 1.4s ease-in-out infinite;
+  .dots[data-state="waiting"] > span {
+    animation: waiting-breathe 2.4s ease-in-out infinite;
   }
 
-  .dots > span:nth-child(2) {
+  .dots[data-state="working"] > span {
+    animation: typing-pulse 1.4s ease-in-out infinite backwards;
+  }
+
+  .dots[data-state="working"] > span:nth-child(2) {
     animation-delay: 0.2s;
   }
 
-  .dots > span:nth-child(3) {
+  .dots[data-state="working"] > span:nth-child(3) {
     animation-delay: 0.4s;
   }
 }

@@ -52,7 +52,7 @@ const empty: readonly Replacement[] = [];
 const emptySnapshot = () => empty;
 const noopSubscribe = () => () => {};
 
-/** Mounted composer presentation only; no data, timers, or plugin identity checks. */
+/** Mounted conversation presentation only; no data, timers, or plugin identity checks. */
 export function TypingPresentation({
   active,
   children,
@@ -82,7 +82,7 @@ export function useTypingReplacement(value: Replacement, enabled: boolean) {
   }, [store, active, enabled, session, channelId, threadRootId, pubkey]);
 }
 export function useReplacedTypers(
-  session: RelaySession,
+  session: RelaySession | undefined,
   channelId: string,
   threadRootId: string | undefined,
 ) {

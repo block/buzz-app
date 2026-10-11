@@ -169,7 +169,7 @@ test("message activity opens a grouped preview and profile Activity without losi
   ];
   publish(keys[0], 20002, "", typingTags);
   publish(human, 20002, "", typingTags);
-  const typing = thread.getByRole("status", { name: "Typing activity" });
+  const typing = thread.getByRole("status", { name: "Conversation activity" });
   await expect(typing).toContainText(getPublicKey(human).slice(0, 10));
   await expect(typing).not.toContainText("Agent 1");
   const threadIndicator = row.locator("[data-thread-working]");
@@ -203,11 +203,32 @@ test("message activity opens a grouped preview and profile Activity without losi
         exact: true,
       });
       await expect(popup).toBeVisible();
-      await expect(popup.getByRole("region")).toHaveCount(2);
+      await expect(
+        popup.getByRole("button", { name: /^View activity for/ }),
+      ).toHaveCount(2);
+      await expect(popup.getByRole("button")).toHaveCount(2);
+      for (const text of [
+        "Agent activity",
+        "Latest reported activity for this message.",
+        "Agent 1",
+        "Agent 2",
+        "View activity",
+        "Close",
+      ])
+        await expect(popup.getByText(text, { exact: true })).toHaveCount(0);
       await expect(popup.getByRole("tab")).toHaveCount(0);
-      const prose = popup
-        .getByText(/^Checking the result and explaining/)
-        .first();
+      await expect(
+        popup.getByText(/^Checking the result and explaining/),
+      ).toHaveCount(0);
+      const action = popup.getByRole("button", {
+        name: "View activity for Agent 1",
+        exact: true,
+      });
+      await expect(action).toContainText("Read file · Completed");
+      const prose = action.getByText("README.md", { exact: true });
+      const avatarBox = await action.locator(".buzz-avatar").boundingBox();
+      const detailBox = await prose.boundingBox();
+      expect(avatarBox.x + avatarBox.width).toBeLessThanOrEqual(detailBox.x);
       await expect(prose).toBeVisible();
       await expect(prose).toHaveCSS("white-space", "pre-wrap");
       expect(
@@ -245,10 +266,15 @@ test("message activity opens a grouped preview and profile Activity without losi
     exact: true,
   });
   await expect(popup).toBeVisible();
-  await popup
+  await reply.click();
+  await expect(popup).toBeHidden();
+  await bubble.focus();
+  await page.keyboard.press("Enter");
+  const activityRow = popup
     .getByRole("button", { name: /^View activity for/ })
-    .first()
-    .click();
+    .first();
+  await activityRow.focus();
+  await page.keyboard.press("Enter");
   const profile = page.getByRole("region", {
     name: "Profile details",
     exact: true,
@@ -257,8 +283,8 @@ test("message activity opens a grouped preview and profile Activity without losi
     profile.getByRole("tab", { name: "Activity", selected: true }),
   ).toBeVisible();
   await expect(
-    profile.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+    profile.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/#Alpha.*whole channel/);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(reply).toHaveText("Keep this draft while inspecting activity");
   publish(keys[0], 9, "Agent reply with plain avatar", typingTags);

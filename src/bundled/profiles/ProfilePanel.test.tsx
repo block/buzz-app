@@ -493,9 +493,9 @@ it("opens profile Activity in its originating channel and retires a disabled con
     expect(
       screen.getByRole("tab", { name: "Activity", selected: true }),
     ).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
-      "originating-channel",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Conversation" }),
+    ).toHaveTextContent("originating-channel");
     expect(screen.getByText(key, { exact: true })).toBeVisible();
     expect(activate).not.toHaveBeenCalled();
     await act(() => fiber.dispose());

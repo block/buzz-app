@@ -1,20 +1,23 @@
 import { expect, it } from "vitest";
 import { activityPresentation } from "./activity-presentation";
-import type { TranscriptEntry } from "./transcript";
+import type { ToolItem } from "../../features/agents/activity-transcript";
 const entry = (
   toolName: string,
   input: unknown = {},
   output = "",
-): TranscriptEntry => ({
+): ToolItem => ({
   id: "tool",
-  kind: "tool",
+  type: "tool",
+  kind: "other",
+  toolCallId: "tool",
+  at: 0,
+  diffs: [],
+  paths: [],
+  truncated: false,
   title: toolName,
-  toolName,
   input: JSON.stringify(input),
   output,
-  body: "",
   status: "completed",
-  sourceIds: [],
 });
 it("maps only exact tools and structured paths; commands remain indivisible", () => {
   expect(
@@ -123,21 +126,4 @@ it("previews distinct command text rather than repeated working directories", ()
       entry("buzz-dev-mcp__shell", { command: "\t\u001bwc -w file" }),
     ).target,
   ).toBe("wc -w file");
-});
-
-it("classifies tools by explicit event kind, never by familiar harness/tool names or completion", async () => {
-  const { activityCategory } = await import("./activity-presentation");
-  const tool = entry("harness_specific_tool");
-  for (const status of ["pending", "in_progress", "completed", "failed"]) {
-    expect(activityCategory({ ...tool, status })).toBe("operation");
-  }
-  expect(activityCategory({ ...tool, kind: "plan" })).toBe("operation");
-  for (const kind of ["prompt", "thought", "message"] as const)
-    expect(activityCategory({ ...tool, kind })).toBe("communication");
-  expect(
-    activityCategory({ ...tool, kind: "event", title: "unknown_tool" }),
-  ).toBe("diagnostic");
-  expect(activityCategory({ ...tool, kind: "prompt", diagnostic: true })).toBe(
-    "diagnostic",
-  );
 });

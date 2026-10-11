@@ -115,3 +115,20 @@ it("never uses typing as message association or resurrects an ended request", ()
     ),
   ).toEqual(["agent"]);
 });
+
+it("keeps restored starts out of live message bubbles even if a heartbeat has the same turn ID", () => {
+  const source = fixture();
+  expect(
+    messageActivity(
+      {
+        ...source,
+        records: source.records.map((record) => ({
+          ...record,
+          historical: true,
+        })),
+      },
+      "channel",
+      request,
+    ),
+  ).toEqual([]);
+});

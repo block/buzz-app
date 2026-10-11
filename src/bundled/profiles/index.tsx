@@ -10,7 +10,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "profile",
     title: "Profile",
-    matches: (target) => !!profilePanelKey(target) || !!profileActivityViewKey(target),
+    matches: (target) =>
+      !!profilePanelKey(target) || !!profileActivityViewKey(target),
     component: (props) => (
       <ProfilePanel
         {...props}

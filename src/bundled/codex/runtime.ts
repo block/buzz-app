@@ -1,3 +1,4 @@
+import type { WorkOutcome } from "../../features/agents/local-activity";
 import {
   fromOwner,
   type Agent,
@@ -50,6 +51,8 @@ type Request = {
   effort?: string;
   /** Called once a final send answers this request, or one steered after it. */
   answered: () => void;
+  step?: (tool: string, target?: string) => void;
+  failActivity(reason: string): void;
 };
 type Saved = { threadId: string; workspace: string };
 type Active = {
@@ -346,12 +349,16 @@ export class CodexRuntime {
     const toolRoot =
       channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
-    let answered!: () => void;
+    let finishActivity!: (result: WorkOutcome) => void;
+    const replied = new Promise<WorkOutcome>((resolve) => {
+      finishActivity = resolve;
+    });
+    const answered = () => finishActivity({ ok: true });
+    const failActivity = (error: string) =>
+      finishActivity({ ok: false, error });
+    delivery.workingUntil(replied);
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
-    const replied = new Promise<void>((resolve) => {
-      answered = resolve;
-    });
     const request: Request = {
       scope: snapshot.scope ?? "",
       event: trigger.event,
@@ -369,8 +376,13 @@ export class CodexRuntime {
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
       team: delivery.team ?? "",
       answered,
+      failActivity,
+      ...(delivery.step ? { step: delivery.step } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
+      failActivity(
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      );
       await this.publish(
         request,
         "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
@@ -391,13 +403,19 @@ export class CodexRuntime {
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
-          if (entry.abort.signal.aborted) return;
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
           if (active.finished) {
             this.start(request, text, key, lane, entry);
             return;
           }
           const context = await this.history(request, entry.abort.signal);
-          if (entry.abort.signal.aborted) return;
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
           if (active.finished) {
             this.start(request, text, key, lane, entry);
             return;
@@ -413,12 +431,16 @@ export class CodexRuntime {
           active.requests.push(request);
           active.version++;
         } catch (error) {
-          if (entry.abort.signal.aborted) return;
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
           // A completion racing the request means this is the next ordinary turn.
           if (message(error) === "no active turn to steer") {
             this.start(request, text, key, lane, entry);
             return;
           }
+          request.failActivity(`Steering was not accepted: ${message(error)}`);
           await this.publish(
             request,
             `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
@@ -428,17 +450,11 @@ export class CodexRuntime {
       active.steering = accepted.catch((error) =>
         console.error("Codex steering failed", error),
       );
-      // The steered turn, or one started in its place, answers this mention.
-      const steered = lane;
-      delivery.workingUntil(
-        Promise.race([replied, accepted.then(() => steered.tail)]),
-      );
       return;
     }
-    delivery.workingUntil(
-      Promise.race([replied, this.start(request, text, key, lane, entry)]),
-    );
+    this.start(request, text, key, lane, entry);
   }
+
   private start(
     request: Request,
     text: string,
@@ -450,7 +466,10 @@ export class CodexRuntime {
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
-        if (entry.abort.signal.aborted) return;
+        if (entry.abort.signal.aborted) {
+          request.failActivity("Codex was stopped");
+          return;
+        }
         await this.execute(request, text, key, current, entry);
       });
     lane.tail = job;
@@ -664,6 +683,11 @@ export class CodexRuntime {
       }
       if (!p || p.threadId !== active.threadId) return;
       if (wire.method === "turn/started" && p.turn) active.turnId = p.turn.id;
+      const step =
+        wire.method === "item/started" ? codexStep(p.item) : undefined;
+      if (step)
+        for (const taken of active.requests)
+          taken.step?.(step.tool, step.target);
       if (wire.method === "item/started" && p.item?.command)
         this.status(agent.pubkey, key, "Working", p.item.command);
       if (
@@ -824,6 +848,7 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
       active.finished = true;
       notReady(error);
@@ -849,6 +874,8 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Needs attention", reason);
       }
     } finally {
+      for (const taken of active.requests)
+        taken.failActivity("Codex ended without a final reply");
       signal.removeEventListener("abort", abort);
       turnAbort.abort(new Error("The Codex turn has ended"));
       off();
@@ -871,3 +898,101 @@ const DYNAMIC_TOOLS = [
   },
 ];
 const EMPTY: readonly SessionView[] = Object.freeze([]);
+
+/** A started Codex item as a step, named in the shared step vocabulary.
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+export function codexStep(
+  item: Record<string, unknown> | undefined,
+): { tool: string; target?: string } | undefined {
+  const text = (value: unknown) =>
+    typeof value === "string" && value ? value : undefined;
+  const step = (tool: string, target?: unknown) => {
+    const on = text(target);
+    return on ? { tool, target: on } : { tool };
+  };
+  const file = (value: unknown) => text(value)?.split("/").at(-1);
+  switch (item?.type) {
+    case "commandExecution": {
+      const actions = Array.isArray(item.commandActions)
+        ? (item.commandActions as Record<string, unknown>[])
+        : [];
+      const action = actions[0];
+      if (action?.type === "read")
+        return step("Read", text(action.name) ?? file(action.path));
+      if (action?.type === "search") return step("Grep", action.query);
+      if (action?.type === "listFiles") return step("ListFiles", action.path);
+      return step(
+        "Shell",
+        programs(text(action?.command) ?? text(item.command)),
+      );
+    }
+    case "fileChange": {
+      const first = Array.isArray(item.changes)
+        ? (item.changes[0] as { path?: unknown } | undefined)
+        : undefined;
+      return step("Edit", file(first?.path));
+    }
+    case "mcpToolCall":
+    case "dynamicToolCall":
+      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "collabAgentToolCall":
+      return step("Agent", item.prompt);
+    case "webSearch":
+      return step("WebSearch", item.query);
+    case "imageView":
+      return step("ImageView", file(item.path));
+    case "plan":
+      return step("TodoWrite");
+    case "contextCompaction":
+      return step("Compacting");
+    case "reasoning":
+      return step("Thinking");
+    case "agentMessage":
+      return step("Writing reply");
+    default:
+      return undefined;
+  }
+}
+
+/** The programs a shell command runs ("mktemp, xargs"), without the login-shell
+ * wrapper, arguments or quoted scripts. Raw commands stay in the transcript. */
+export function programs(command: string | undefined): string | undefined {
+  if (!command) return undefined;
+  const inner =
+    /^(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+(["'])([\s\S]*)\1\s*$/.exec(
+      command.trim(),
+    )?.[2] ?? command;
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (const char of inner) {
+    if (quote) {
+      if (char === quote) quote = undefined;
+      current += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+    } else if (char === "|" || char === ";" || char === "&" || char === "\n") {
+      segments.push(current);
+      current = "";
+    } else current += char;
+  }
+  segments.push(current);
+  const names = new Set<string>();
+  for (const segment of segments) {
+    const word = segment
+      .trim()
+      .split(/\s+/)
+      .find((token) => token && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token));
+    const name = word
+      ?.replace(/^["']|["']$/g, "")
+      .split("/")
+      .at(-1);
+    if (name && /^[\w.+-]+$/.test(name)) names.add(name);
+  }
+  const list = [...names];
+  if (!list.length) return undefined;
+  return list.length > 3
+    ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more`
+    : list.join(", ");
+}

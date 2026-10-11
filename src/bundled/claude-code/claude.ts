@@ -387,6 +387,8 @@ export class ClaudeProcess {
       this.handle(message);
     }
   }
+  /** Latest live step of the current turn, for display only. */
+  onStep: ((tool: string, target?: string) => void) | undefined;
   private handle(message: Message) {
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
@@ -413,6 +415,11 @@ export class ClaudeProcess {
     ) {
       this.reportsState = true;
       if (message.state === "idle" && this.pending) this.done();
+      return;
+    }
+    if (message.type === "assistant") {
+      const step = stepLabel(message);
+      if (step) this.onStep?.(step.tool, step.target);
       return;
     }
     if (message.type !== "result") return;
@@ -479,4 +486,43 @@ export class ClaudeProcess {
       this.pending === 1
     );
   }
+}
+
+/** The last content block of an assistant message as the tool it names and its target. */
+export function stepLabel(
+  message: Message,
+): { tool: string; target?: string } | undefined {
+  const content = (message.message as { content?: unknown } | undefined)
+    ?.content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content.at(-1) as {
+    type?: unknown;
+    name?: unknown;
+    input?: Record<string, unknown>;
+  } | null;
+  if (block?.type === "tool_use" && typeof block.name === "string") {
+    const tool = block.name.split("__").at(-1);
+    if (!tool) return undefined;
+    const input = block.input ?? {};
+    const target = [
+      "description",
+      "file_path",
+      "notebook_path",
+      "pattern",
+      "url",
+      "query",
+      "command",
+    ]
+      .map((key) => input[key])
+      .find((value): value is string => typeof value === "string" && !!value);
+    return target ? { tool, target: shortTarget(target) } : { tool };
+  }
+  if (block?.type === "thinking") return { tool: "Thinking" };
+  if (block?.type === "text") return { tool: "Writing reply" };
+  return undefined;
+}
+
+/** File paths show their name; everything else is passed through for trimming. */
+function shortTarget(value: string) {
+  return value.startsWith("/") ? (value.split("/").at(-1) ?? value) : value;
 }

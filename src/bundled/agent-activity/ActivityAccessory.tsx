@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
@@ -8,19 +15,22 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
   PopoverRoot,
   PopoverTrigger,
   PopoverPopup,
-  PopoverTitle,
-  PopoverDescription,
-  PopoverClose,
 } from "../../shared/design-system/ui/Popover";
 import { currentActivity } from "./current-activity";
 import { messageActivity } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
-import { useKnownAgentPubkeys } from "../../features/agents/use-known";
+import {
+  requestWork,
+  type RequestWork,
+} from "../../features/agents/request-work";
+import { localWorkLabel, type WorkStep } from "../../features/agents/local-activity";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 
@@ -40,6 +50,10 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  const choices = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+  );
   const resolveName = useChannelIdentityNames(session, channelId);
   const keys = entries.map((entry) => entry.agent);
   const identityKeys = keys.join(":");
@@ -51,36 +65,97 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
   }, [session.profiles, identityKeys]);
   const suffixes = publicKeyLabels(keys);
   const names = keys.map((key) =>
-    resolveName(key, profiles.get(key)?.name ?? suffixes.get(key) ?? "Agent"),
+    resolveName(
+      key,
+      profiles.get(key)?.name ??
+        choices.identities.find((row) => row.pubkey === key)?.name ??
+        suffixes.get(key) ??
+        "Agent",
+    ),
   );
   const visible = entries.filter((entry) =>
-    canOpen(activityTarget(entry.agent, channelId)),
+    entry.lifecycle
+      ? canOpen(profileActivityViewTarget(entry.agent) ?? "")
+      : canOpen(activityTarget(entry.agent, channelId)),
   );
-  if (!visible.length) return null;
+  const shown: Entry[] = visible.map((entry) => {
+    const name = names[keys.indexOf(entry.agent)] ?? "Agent";
+    return {
+      agent: entry.agent,
+      name:
+        names.filter((value) => value === name).length > 1
+          ? `${name} · ${suffixes.get(entry.agent)}`
+          : name,
+      picture: profiles.get(entry.agent)?.picture,
+      working: entry.working,
+      state: entry.state,
+      reason: entry.reason,
+      ...(entry.step ? { step: entry.step } : {}),
+      lifecycle: entry.lifecycle,
+      records: entry.selected.records,
+      turns: entry.turns,
+    };
+  });
+  // When work ends (not when access is revoked), keep the last bubble long
+  // enough for the shared leave recipe, then remove it.
+  const section = useRef<HTMLElement>(null);
+  const retained = useRef<Entry[]>([]);
+  const [leaving, setLeaving] = useState<Entry[] | null>(null);
+  const ended = !entries.length;
+  useLayoutEffect(() => {
+    if (shown.length) {
+      retained.current = shown;
+      if (leaving) setLeaving(null);
+      return;
+    }
+    if (ended && retained.current.length) setLeaving(retained.current);
+    retained.current = [];
+  });
+  useLayoutEffect(() => {
+    if (!leaving) return;
+    const animations = section.current?.getAnimations?.() ?? [];
+    if (!animations.length) {
+      setLeaving(null);
+      return;
+    }
+    let live = true;
+    const done = () => {
+      if (live) setLeaving(null);
+    };
+    void Promise.all(animations.map((animation) => animation.finished)).then(
+      done,
+      done,
+    );
+    return () => {
+      live = false;
+    };
+  }, [leaving]);
+  // The render where work ends keeps the same element (from the last shown
+  // entries) so the list never loses and regains its height mid-handoff.
+  const bubble = shown.length
+    ? shown
+    : (leaving ?? (ended ? retained.current : []));
+  if (!bubble.length) return null;
   return (
     <section
-      className={styles.root}
+      ref={section}
+      className={`${styles.root} buzz-arrive`}
+      data-arrive="grow"
+      data-leaving={shown.length ? undefined : ""}
       data-buzz-ui=""
       aria-label="Agent activity on this message"
+      aria-hidden={shown.length ? undefined : true}
     >
-      <ActivityBubble
-        key={`${channelId}:${message?.id ?? ""}`}
-        {...props}
-        entries={visible.map((entry) => {
-          const name = names[keys.indexOf(entry.agent)] ?? "Agent";
-          return {
-            agent: entry.agent,
-            name:
-              names.filter((value) => value === name).length > 1
-                ? `${name} · ${suffixes.get(entry.agent)}`
-                : name,
-            picture: profiles.get(entry.agent)?.picture,
-            working: entry.working,
-            records: entry.selected.records,
-            turns: entry.turns,
-          };
-        })}
-      />
+      <div>
+        {shown.map((entry) => (
+          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
+        ))}
+        <ActivityBubble
+          key={`${channelId}:${message?.id ?? ""}`}
+          {...props}
+          entries={bubble}
+        />
+      </div>
     </section>
   );
 }
@@ -90,6 +165,10 @@ type Entry = {
   name: string;
   picture: string | undefined;
   working: boolean;
+  state: RequestWork["state"];
+  reason: string | undefined;
+  step?: WorkStep;
+  lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
 };
@@ -100,7 +179,32 @@ function ActivityBubble({
 }: ComposerAccessoryProps & { entries: Entry[] }) {
   const [expanded, setExpanded] = useState(false);
   const working = entries.some((entry) => entry.working);
-  const unknown = entries.some((entry) => !entry.working);
+  // Local work breathes until its first step ("Starting"), like the sidebar and thread.
+  const starting = (entry: Entry) =>
+    entry.lifecycle &&
+    (entry.state === "waiting" || (entry.state === "working" && !entry.step));
+  const waiting = entries.some(starting);
+  const stepping = entries.some((entry) => entry.working && !starting(entry));
+
+  const unknown = entries.some((entry) => !entry.lifecycle && !entry.working);
+  const failed = entries.some(
+    (entry) => entry.lifecycle && entry.state === "error",
+  );
+  const label = (entry: Entry) =>
+    entry.lifecycle
+      ? localWorkLabel({
+          state:
+            entry.state === "ended"
+              ? "done"
+              : entry.state === "unknown"
+                ? "error"
+                : entry.state,
+          ...(entry.reason ? { error: entry.reason } : {}),
+          ...(entry.step ? { step: entry.step } : {}),
+        })
+      : entry.working
+        ? "working"
+        : "status unknown";
   return (
     <PopoverRoot open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger
@@ -109,7 +213,7 @@ function ActivityBubble({
           <Button
             size="xs"
             variant="subtle"
-            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.working ? "working" : "status unknown"}`).join("; ")}`}
+            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
           >
             <AvatarStack
               items={entries.map((entry) => ({
@@ -121,95 +225,104 @@ function ActivityBubble({
                 shape: "squircle",
               }))}
             />
-            {working && <TypingDots />}
+            {(working || waiting) && (
+              <TypingDots state={stepping ? "working" : "waiting"} />
+            )}
+            {failed && <span>Could not finish</span>}
             {unknown && <span>Status unknown</span>}
           </Button>
         }
       />
-      <PopoverPopup side="top" aria-label="Agent activity">
-        <PopoverTitle>Agent activity</PopoverTitle>
-        <PopoverDescription>
-          Latest reported activity for this message.
-        </PopoverDescription>
+      <PopoverPopup side="top" padding="list" aria-label="Agent activity">
         {expanded && (
           <div className={styles.previews}>
             {entries.map((entry) => {
+              // Both open the agent's profile on its activity: a plugin
+              // agent's own session tab, or the harness Activity tab.
               const target = profileActivityViewTarget(entry.agent);
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
               return (
-                <section
+                <NavigationItem
                   key={entry.agent}
-                  aria-label={entry.name}
-                  className={styles.preview}
-                >
-                  <div className={styles.identity}>
+                  aria-label={`View activity for ${entry.name}`}
+                  disabled={!target || !props.canOpen(target)}
+                  onClick={() => {
+                    if (target && props.canOpen(target) && props.open(target))
+                      setExpanded(false);
+                  }}
+                  icon={
                     <ActivityAvatar
                       session={props.session}
                       entry={entry}
                       size="small"
                     />
-                    <span className="text-label-sm">{entry.name}</span>
-                  </div>
-                  <p className="text-body-sm">
-                    {!entry.working
-                      ? "Activity interrupted or out of date"
-                      : (preview?.title ?? "Waiting for activity details")}
-                  </p>
-                  {preview?.detail && (
-                    <p className={`text-body-sm ${styles.detail}`}>
-                      {preview.detail}
-                    </p>
-                  )}
-                  {target && props.canOpen(target) && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`View activity for ${entry.name}`}
-                      onClick={() => {
-                        if (props.open(target)) setExpanded(false);
-                      }}
-                    >
-                      View activity
-                    </Button>
-                  )}
-                </section>
+                  }
+                  label={
+                    <span className={`text-body-sm ${styles.preview}`}>
+                      <ShimmerText
+                        active={
+                          entry.lifecycle
+                            ? entry.state === "working"
+                            : entry.working
+                        }
+                      >
+                        {entry.lifecycle
+                          ? label(entry)
+                          : !entry.working
+                            ? "Activity interrupted or out of date"
+                            : (preview?.title ??
+                              "Waiting for activity details")}
+                      </ShimmerText>
+                      {preview?.detail && (
+                        <span className={styles.detail}>{preview.detail}</span>
+                      )}
+                    </span>
+                  }
+                />
               );
             })}
           </div>
         )}
-        <PopoverClose
-          render={
-            <Button size="sm" variant="ghost">
-              Close
-            </Button>
-          }
-        />
       </PopoverPopup>
     </PopoverRoot>
   );
 }
 
-/** Nonvisual composer contribution: agent typing belongs on messages, humans
- * retain the ordinary typing indicator. Removal restores the default display. */
+/** Message-linked work replaces the composer control; unassociated work keeps
+ * main's existing presentation rather than disappearing without a bubble. */
 export function ActivityTypingReplacement(props: ComposerAccessoryProps) {
-  const profiles = useSyncExternalStore(
-    props.session.profiles.subscribe,
-    props.session.profiles.snapshot,
-  );
-  const known = useKnownAgentPubkeys(props.session, profiles);
   const activity = useSyncExternalStore(
     props.session.agentActivity.subscribe,
     props.session.agentActivity.snapshot,
   );
-  const agents = new Set([
-    ...known,
-    ...activity.records.map((record) => record.agent),
-  ]);
+  const ids = [
+    ...(props.threadRootId ? [props.threadRootId] : []),
+    ...(activity.local ?? [])
+      .filter(
+        (request) =>
+          request.channelId === props.channelId &&
+          (!props.threadRootId ||
+            (request.threadRootId ?? request.messageId) === props.threadRootId),
+      )
+      .map((request) => request.messageId),
+    ...activity.turns.flatMap((turn) =>
+      turn.channelId === props.channelId
+        ? (turn.requests ?? [])
+            .filter(
+              (request) =>
+                !props.threadRootId ||
+                request.threadRootId === props.threadRootId,
+            )
+            .map((request) => request.messageId)
+        : [],
+    ),
+  ];
+  const agents = requestWork(activity, props.channelId, ids);
   return (
     <>
-      {[...agents].map((agent) => (
+      {agents.map(({ agent }) => (
         <TypingReplacement key={agent} {...props} agent={agent} />
       ))}
     </>

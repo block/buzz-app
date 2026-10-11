@@ -1,3 +1,9 @@
+import { AgentAvatar } from "../agents/AgentAvatar";
+import {
+  TypingPresentation,
+  useReplacedTypers,
+} from "../conversation/typing-presentation";
+import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ArrowRightIcon,
@@ -19,13 +25,12 @@ import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
-  useId,
   useMemo,
+  useId,
   useRef,
   useState,
   useEffect,
@@ -163,7 +168,21 @@ const noReactionProfiles = new Map<
 >();
 const emptyReactionProfiles = () => noReactionProfiles;
 
-const FullMessageRow = memo(function MessageRow({
+const FullMessageRow = memo(function MessageRow(
+  props: MessageRowProps & { shownRow?: ChannelMessage },
+) {
+  return props.session && props.scope && props.extensions?.accessories ? (
+    <TypingPresentation
+      active
+      key={`${props.scope}:${props.row.channelId}:${props.row.id}`}
+    >
+      <MessageRowContent {...props} />
+    </TypingPresentation>
+  ) : (
+    <MessageRowContent {...props} />
+  );
+});
+function MessageRowContent({
   row,
   shownRow,
   getThreadRoot,
@@ -235,12 +254,14 @@ const FullMessageRow = memo(function MessageRow({
     row.channelId,
     row.threadRootId ?? row.id,
   );
-  const threadAgents = useThreadAgents(
+  const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
     onOpenThread && (row.replyCount > 0 || !row.threadRootId)
       ? session
       : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
+    row.id,
+    row.threadRootId,
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -274,13 +295,13 @@ const FullMessageRow = memo(function MessageRow({
   const workingLabel = threadAgents.length
     ? `${threadAgents
         .map(({ pubkey, name }) => resolveName(pubkey, name))
-        .join(", ")} working`
+        .join(", ")} ${threadWaiting ? "waiting" : "working"}`
     : undefined;
   const firstThreadAgent = threadAgents[0];
   const threadWorkingLabel =
     threadAgents.length === 1 && firstThreadAgent
-      ? `${resolveName(firstThreadAgent.pubkey, firstThreadAgent.name)} is working`
-      : `${threadAgents.length} agents are working`;
+      ? `${resolveName(firstThreadAgent.pubkey, firstThreadAgent.name)} is ${threadWaiting ? "waiting" : "working"}`
+      : `${threadAgents.length} agents are ${threadWaiting ? "waiting" : "working"}`;
   const name = resolveName(
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
@@ -336,7 +357,6 @@ const FullMessageRow = memo(function MessageRow({
     row.authorId,
   );
   const presenceId = useId();
-  const thinkingId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const displayRow = timeReply
@@ -955,7 +975,7 @@ const FullMessageRow = memo(function MessageRow({
                 )}
                 {threadAgents.length > 0 && (
                   <span
-                    className={styles.threadWorking}
+                    className={`${styles.threadWorking} buzz-arrive`}
                     data-thread-working=""
                     aria-hidden="true"
                   >
@@ -977,7 +997,7 @@ const FullMessageRow = memo(function MessageRow({
                     {threadAgents.length > 2 && (
                       <span>+{threadAgents.length - 2}</span>
                     )}
-                    <TypingDots />
+                    <TypingDots state={threadWaiting ? "waiting" : "working"} />
                   </span>
                 )}
                 {threadAgents.length > 0 && row.replyCount === 0 && (
@@ -989,7 +1009,7 @@ const FullMessageRow = memo(function MessageRow({
       </div>
     </div>
   );
-});
+}
 /** Coordination between agents reads as one quiet line in time order: who
  * wrote it, who it is for, and its first paragraph. Opening the line shows
  * the whole message. The mentions it opens with become the line's recipients,
@@ -1152,7 +1172,14 @@ function useThreadAgents(
   session: RelaySession | undefined,
   channelId: string,
   rootId: string,
+  messageId: string,
+  messageThreadRootId: string | undefined,
 ) {
+  const represented = useReplacedTypers(
+    session,
+    channelId,
+    messageThreadRootId,
+  );
   const get = () =>
     session?.typing
       .snapshot()
@@ -1177,6 +1204,7 @@ function useThreadAgents(
     keys ? keys.split(",") : [],
     channelId,
     rootId,
+    { messageId, agents: represented },
   );
   const hasWork = typers.length > 0;
   const getLibrary = (hasWork && session?.agentChoices.snapshot) || noLibrary;
@@ -1185,7 +1213,19 @@ function useThreadAgents(
     getLibrary,
     getLibrary,
   );
-  return (
-    library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? []
+  const local = localActivity(
+    {
+      local: (activity?.local ?? []).filter(
+        (row) => row.messageId !== messageId || !represented.has(row.agent),
+      ),
+    },
+    channelId,
+    rootId,
   );
+  return {
+    agents:
+      library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
+    waiting:
+      typers.length > 0 && typers.every((agent) => breathing(local.get(agent))),
+  };
 }

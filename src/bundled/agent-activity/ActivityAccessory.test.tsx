@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createLocalAgentActivity } from "../../features/agents/local-activity";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -8,10 +9,16 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 
 import { afterEach, expect, it, vi } from "vitest";
-import { ActivityAccessory } from "./ActivityAccessory";
+import {
+  ActivityAccessory,
+  ActivityTypingReplacement,
+} from "./ActivityAccessory";
+import { TypingPresentation } from "../../features/conversation/typing-presentation";
+import { TypingIndicator } from "../../features/messages/TypingIndicator";
 import { createAgentActivity } from "../../features/agents/activity";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { RelaySession } from "../../features/relay/session";
@@ -26,7 +33,7 @@ const A = "b".repeat(64),
   viewer = "a".repeat(64),
   root = "1".repeat(64),
   next = "2".repeat(64);
-function fixture() {
+function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
   vi.useFakeTimers();
   vi.setSystemTime(1000000);
   let generation = 0,
@@ -37,6 +44,10 @@ function fixture() {
       generation = g ?? 0;
     },
     () => true,
+    undefined,
+    undefined,
+    undefined,
+    local ? { source: local.reader, scope: "test" } : undefined,
   );
   const release = activity.queries.activate();
   const live = {
@@ -236,7 +247,9 @@ it("previews only live scoped actions and retains profile navigation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "View activity for Blossom" }),
     );
-    expect(f.props.open).toHaveBeenCalledOnce();
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(
+      `buzz:profile?agent=${A}&tab=activity`,
+    );
   } finally {
     view.unmount();
     f.dispose();
@@ -254,6 +267,157 @@ it("removes the whole popup when access is revoked", () => {
     view.rerender(<ActivityAccessory {...f.props} canOpen={() => false} />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("makes the compact avatar and tool preview one action, retaining the popup when opening fails", () => {
+  const f = fixture();
+  f.props.open.mockReturnValue(false);
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(A, "a", 2, "acp_read", {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "read",
+          title: "buzz-dev-mcp__read_file",
+          status: "in_progress",
+          rawInput: { path: "/project/file.ts" },
+        },
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    const popup = within(
+      screen.getByRole("dialog", { name: "Agent activity" }),
+    );
+    expect(popup.getAllByRole("button")).toHaveLength(1);
+    for (const text of [
+      "Agent activity",
+      "Latest reported activity for this message.",
+      "Blossom",
+      "View activity",
+      "Close",
+    ])
+      expect(popup.queryByText(text, { exact: true })).not.toBeInTheDocument();
+    const row = popup.getByRole("button", {
+      name: "View activity for Blossom",
+    });
+    expect(row).toHaveTextContent("Read file · Running");
+    expect(row.querySelector(".buzz-avatar")).not.toBeNull();
+    fireEvent.click(popup.getByText("file.ts"));
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(
+      `buzz:profile?agent=${A}&tab=activity`,
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(
+      <ActivityAccessory
+        {...f.props}
+        canOpen={(target) => !target.startsWith("buzz:profile?")}
+      />,
+    );
+    expect(row).toBeDisabled();
+    fireEvent.click(row);
+    expect(f.props.open).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps main's unassociated work visible, replacing it only for a linked message in this thread", () => {
+  const f = fixture();
+  const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
+  const session = {
+    ...f.props.session,
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const props = { ...f.props, session };
+  const ui = (replacement: boolean) => (
+    <TypingPresentation active>
+      {/* MessageRow gives each row its own presentation scope. */}
+      <TypingPresentation active>
+        <ActivityAccessory {...props} />
+      </TypingPresentation>
+      {replacement && <ActivityTypingReplacement {...props} />}
+      <TypingIndicator session={session} channelId="c" threadRootId={root} />
+    </TypingPresentation>
+  );
+  const view = render(ui(true));
+  try {
+    f.send(A, "unlinked", 1, "turn_liveness");
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeInTheDocument();
+    f.send(A, "sibling", 1, "turn_started", { triggeringEventIds: [next] });
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeInTheDocument();
+    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(
+      screen.getByRole("button", {
+        name: "View agent activity: Blossom, working",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Activity: Blossom working" }),
+    ).not.toBeInTheDocument();
+    view.rerender(ui(false));
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("shows local receipt and failure without requiring an ACP transcript, and opens the agent profile", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    let work!: ReturnType<typeof local.begin>;
+    act(() => {
+      work = local.begin({
+        scope: "test",
+        channelId: "c",
+        threadRootId: root,
+        messageId: root,
+        agent: A,
+      });
+    });
+    const bubble = screen.getByRole("button", {
+      name: "View agent activity: Blossom, Received · waiting to start",
+    });
+    expect(bubble.querySelector('[data-state="waiting"]')).not.toBeNull();
+    act(() => work.started());
+    expect(bubble).toHaveAccessibleName(
+      "View agent activity: Blossom, Starting",
+    );
+    expect(bubble.querySelector('[data-state="waiting"]')).not.toBeNull();
+    act(() => work.step("Read", "notes.txt"));
+    expect(bubble).toHaveAccessibleName(
+      "View agent activity: Blossom, Reading notes.txt",
+    );
+    expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
+    act(() => work.finish({ ok: false, error: "Provider unavailable" }));
+    expect(bubble).toHaveTextContent("Could not finish");
+    expect(bubble.querySelector("[data-state]")).toBeNull();
+    fireEvent.click(bubble);
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View activity for Blossom" }),
+    );
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(
+      `buzz:profile?agent=${A}&tab=activity`,
+    );
   } finally {
     view.unmount();
     f.dispose();

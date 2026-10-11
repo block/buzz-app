@@ -79,10 +79,18 @@ semantic tokens, UI authoring rules and the local component reference.
   the entire webview. Native traffic lights remain in their reserved titlebar
   area. The shared compact dialog header centers its title and Close action
   without a large empty band. Close and Escape return to the original workspace
-  visit, including after navigating through several Settings sections. `App.tsx` composes `PrimarySidebar` around `features/channel-navigation/ChannelInventory`. The inventory supplies channel rows,
+  visit, including after navigating through several Settings sections.
+  A selected page may replace the conversation sidebar through `Page.sidebar`.
+  It receives the admitted workspace target and shell-generated Pages navigation
+  as children, without navigation completion authority. Healthy sidebar state
+  survives target changes and stays mounted beneath Settings. A failed sidebar
+  shows an alert and scrollable page navigation in the standard frame; a new
+  workspace navigation request retries it independently of the page body.
+  Pages without a sidebar contribution keep the conversation sidebar.
+  `App.tsx` composes `PrimarySidebar` around `features/channel-navigation/ChannelInventory`. The inventory supplies channel rows,
   notices, dialogs and scroll bindings through a render prop; PrimarySidebar owns
   the common frame, Solo/Team arrangement and error fallback. The fallback retains
-  page navigation without remounting a failed inventory. There is no portal or plugin contract expansion.
+  page navigation without remounting a failed inventory. There is no portal.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
@@ -92,11 +100,12 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content for conversation selections. Settings owns its navigation inside
-  the modal instead. Messages, Agents and any selected primary page share an
+  the modal instead. Messages, Agents, any selected primary page, and pages with
+  a sidebar contribution share an
   animated header toggle; hiding the sidebar preserves its mounted state and saved
   width. The toggle uses "Hide sidebar" / "Show sidebar" on every page, and the
   combined Solo and Team sidebar is labelled "Sidebar". Reduced motion disables the transition. Non-primary
-  desktop destinations retain the visible sidebar.
+  desktop destinations without a sidebar contribution retain the visible sidebar.
   The same header keeps history and account/search actions, plus a segmented
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise

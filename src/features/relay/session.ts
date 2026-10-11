@@ -1573,6 +1573,27 @@ export function createRelaySession(
       };
     },
     typing: typing.capability,
+    /** Says the viewer's `agents` are online or offline, on the live socket:
+     * ephemeral, so nothing is queued or retried. The relay keeps only the
+     * agents the viewer owns. */
+    async publishAgentPresence(
+      status: "online" | "offline",
+      agents: readonly string[],
+      signal: AbortSignal,
+    ) {
+      if (closed || !writer || !traffic?.publish)
+        throw new Error("Agent presence needs a live connection");
+      const event = await writer.sign(
+        {
+          kind: 20003,
+          content: status,
+          tags: agents.map((agent) => ["p", agent]),
+          created_at: Math.floor(Date.now() / 1000),
+        },
+        signal,
+      );
+      await traffic.publish(event, signal);
+    },
     channelCreation,
     channelKit: channelKit.capability,
     canvas: channelKit.canvas,

@@ -14,6 +14,7 @@ use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
 };
+mod agent_instructions;
 mod agent_models;
 mod agents;
 mod app_agents;
@@ -541,6 +542,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_clone_settings,
         agent_control_import_preview,
         agent_control_import_commit,
+        agent_instructions::agent_instruction_transcribe,
+        agent_instructions::agent_instruction_generate,
         agent_models_begin,
         agent_models_cancel,
         agent_models_run,

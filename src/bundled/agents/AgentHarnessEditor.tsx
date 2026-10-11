@@ -19,7 +19,11 @@ export function AgentHarnessEditor({
   onOpenHarnesses,
   discardEdits = false,
   disabled = false,
+  hideHarness = false,
+  hideSetupHints = false,
 }: {
+  hideHarness?: boolean;
+  hideSetupHints?: boolean;
   draft: AgentDraft;
   onOpenHarnesses?: (() => void) | undefined;
   discardEdits?: boolean;
@@ -60,117 +64,126 @@ export function AgentHarnessEditor({
   const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
-      <ConfigChoice
-        disabled={disabled}
-        label="Harness"
-        customLabel="Custom executable / current value"
-        inputLabel="Executable"
-        value={draft.command}
-        options={[
-          ...options.map(({ command, label, available, status }) => ({
-            value: command,
-            label:
-              available === false && status === "not-enabled"
-                ? `${label} (coming in a later update)`
-                : available === false
-                  ? `${label} (install first)`
-                  : label,
-            disabled: available === false,
-          })),
-          ...(isPreset &&
-          !options.some((option) => option.command === draft.command)
-            ? [
-                {
-                  value: draft.command,
-                  label: `${harness?.label ?? preset?.label} (current executable)`,
-                },
-              ]
-            : []),
-        ]}
-        onChange={(command, pickedOption) => {
-          const option = options.find((item) => item.command === command);
-          const enteringExternal =
-            !!option &&
-            (!!harnessPreset(option.command) ||
-              (option.configurationPolicy
-                ? option.configurationPolicy.authentication ===
-                  "harnessWithOverrides"
-                : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
-          const wasCodex = draft.integration === "codex";
-          // Rebinding Codex (its option or a custom adapter path) keeps its
-          // saved Default/Advanced settings.
-          if (wasCodex && (!pickedOption || option?.id === "codex")) {
-            onChange({ command });
-            return;
-          }
-          onChange({
-            command,
-            ...(pickedOption
-              ? {
-                  integration: option?.id === "codex" ? option.id : undefined,
-                }
-              : { integration: undefined, configuration: undefined }),
-            ...(pickedOption && (enteringExternal || external || isPreset)
-              ? {
-                  args: JSON.stringify(option?.defaultArgs ?? []),
-                  provider: enteringExternal
-                    ? ""
-                    : (option?.providers[0]?.value ?? ""),
-                  model: "",
-                }
-              : {}),
-            ...(pickedOption && option?.id === "codex"
-              ? {
-                  args: "[]",
-                  provider: "",
-                  model: "",
-                  configuration: { mode: "default" },
-                }
-              : wasCodex
-                ? {
-                    args: JSON.stringify(option?.defaultArgs ?? []),
-                    model: "",
-                    configuration: undefined,
-                  }
-                : {}),
-          });
-        }}
-      />
-      {missingPi && (
-        <p className="text-body-sm text-secondary">
-          Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
-        </p>
-      )}
-      {missingCodex && (
-        <p className="text-body-sm text-secondary">
-          Codex needs its CLI and ACP adapter before you can select it. Set it
-          up under Settings → Agents → Harnesses.
-        </p>
-      )}
-      {missingPreset && (
-        <p className="text-body-sm text-secondary">
-          {preset.label} needs its ACP launcher. Set it up under Settings →
-          Agents → Harnesses.
-        </p>
-      )}
-      {(missingPi || missingPreset || missingCodex) && onOpenHarnesses && (
-        <div className="space-y-1">
-          <Button
-            type="button"
-            variant="link"
+      {!hideHarness && (
+        <div
+          data-agent-harness=""
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4"
+        >
+          <ConfigChoice
             disabled={disabled}
-            onClick={onOpenHarnesses}
-          >
-            Open Harnesses in Settings
-          </Button>
-          {discardEdits && (
-            <p className="m-0 text-body-sm text-secondary">
-              Opening Settings discards unsaved edits.
-            </p>
-          )}
+            label="Harness"
+            customLabel="Custom executable / current value"
+            inputLabel="Executable"
+            value={draft.command}
+            options={[
+              ...options.map(({ command, label, available }) => ({
+                value: command,
+                label: available === false ? `${label} (install first)` : label,
+                disabled: available === false,
+              })),
+              ...(isPreset &&
+              !options.some((option) => option.command === draft.command)
+                ? [
+                    {
+                      value: draft.command,
+                      label: `${harness?.label ?? preset?.label} (current executable)`,
+                    },
+                  ]
+                : []),
+            ]}
+            onChange={(command, pickedOption) => {
+              const option = options.find((item) => item.command === command);
+              const enteringExternal =
+                !!option &&
+                (!!harnessPreset(option.command) ||
+                  (option.configurationPolicy
+                    ? option.configurationPolicy.authentication ===
+                      "harnessWithOverrides"
+                    : ["goose", "pi"].includes(
+                        harnessKind(option.command) ?? "",
+                      )));
+              const wasCodex = draft.integration === "codex";
+              // Rebinding Codex (its option or a custom adapter path) keeps its
+              // saved Default/Advanced settings.
+              if (wasCodex && (!pickedOption || option?.id === "codex")) {
+                onChange({ command });
+                return;
+              }
+              onChange({
+                command,
+                ...(pickedOption
+                  ? {
+                      integration:
+                        option?.id === "codex" ? option.id : undefined,
+                    }
+                  : { integration: undefined, configuration: undefined }),
+                ...(pickedOption && (enteringExternal || external || isPreset)
+                  ? {
+                      args: JSON.stringify(option?.defaultArgs ?? []),
+                      provider: enteringExternal
+                        ? ""
+                        : (option?.providers[0]?.value ?? ""),
+                      model: "",
+                    }
+                  : {}),
+                ...(pickedOption && option?.id === "codex"
+                  ? {
+                      args: "[]",
+                      provider: "",
+                      model: "",
+                      configuration: { mode: "default" },
+                    }
+                  : wasCodex
+                    ? {
+                        args: JSON.stringify(option?.defaultArgs ?? []),
+                        model: "",
+                        configuration: undefined,
+                      }
+                    : {}),
+              });
+            }}
+          />
+          {onOpenHarnesses &&
+            (hideSetupHints || missingPi || missingPreset || missingCodex) && (
+              <Button
+                type="button"
+                variant="link"
+                disabled={disabled}
+                title={
+                  discardEdits
+                    ? "Opening Settings discards unsaved edits."
+                    : undefined
+                }
+                onClick={onOpenHarnesses}
+              >
+                Open Harnesses in Settings
+              </Button>
+            )}
         </div>
       )}
-      {!isPreset && policy?.provider !== "external" && (
+      {!hideSetupHints && (
+        <>
+          {missingPi && (
+            <p className="text-body-sm text-secondary">
+              Pi needs its CLI, Node.js and buzz-pi-acp before you can select
+              it.
+            </p>
+          )}
+          {missingCodex && (
+            <p className="text-body-sm text-secondary">
+              Codex needs its CLI and ACP adapter before you can select it. Set
+              it up under Settings → Agents → Harnesses.
+            </p>
+          )}
+          {missingPreset && (
+            <p className="text-body-sm text-secondary">
+              {preset.label} needs its ACP launcher. Set it up under Settings →
+              Agents → Harnesses.
+            </p>
+          )}
+        </>
+      )}
+      {!isPreset && draft.integration !== "codex" && (
         <ConfigChoice
           disabled={disabled || piLoading}
           key={harness?.label ?? draft.command}
@@ -241,14 +254,17 @@ function ConfigChoice({
   // Custom is an editing mode, not a saved value. Entering it never erases data.
   const [custom, setCustom] = useState(false);
   const index = options.findIndex((option) => option.value === value);
-  const showInput = custom || index < 0;
+  const showInput =
+    custom ||
+    index < 0 ||
+    !!options[index]?.label.endsWith("(current executable)");
   return (
     <div className="min-w-0 space-y-3">
       <Select
         label={label}
         variant="field"
         disabled={disabled}
-        value={showInput ? "custom" : String(index)}
+        value={custom || index < 0 ? "custom" : String(index)}
         groups={[
           {
             label: "",

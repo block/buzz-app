@@ -4260,3 +4260,33 @@ fn codex_saved_adapter_survives_global_install_without_silent_fallback() {
         .codex_model_context(&saved.id, saved.revision, edit)
         .is_err());
 }
+
+#[test]
+fn instruction_model_uses_saved_defaults_and_native_overrides_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("config")).unwrap();
+    let mut defaults = crate::agent_defaults::AgentDefaults {
+        harness: "buzz-agent".into(),
+        provider: "databricks_v2".into(),
+        model: "saved-model".into(),
+        ..Default::default()
+    };
+    defaults
+        .environment
+        .insert("DATABRICKS_HOST".into(), "https://workspace.example".into());
+    defaults
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "override-model".into());
+    store.save_defaults(&defaults).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        dir.path().join("ownership"),
+    );
+    let (model, context) = controller.instruction_model_context().unwrap();
+    assert_eq!(model, "override-model");
+    assert_eq!(context.host.as_deref(), Some("https://workspace.example"));
+    assert_eq!(controller.store.defaults().unwrap().model, "saved-model");
+    assert!(controller.store.agents().unwrap().is_empty());
+}

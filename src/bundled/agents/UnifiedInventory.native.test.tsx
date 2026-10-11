@@ -125,7 +125,7 @@ it("discovers and retries an unselected joined community through native reads", 
     );
     await screen.findByText(/could not be checked for https:\/\/joined/);
     unavailable = false;
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry inventory" }));
     const card = await screen.findByRole("article", {
       name: "Agent Native scout",
     });

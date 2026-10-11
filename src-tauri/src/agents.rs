@@ -848,6 +848,14 @@ impl AgentHost {
     pub(crate) async fn ensure_open(&self) -> Result<(), String> {
         run(self.clone(), |_| Ok(())).await
     }
+    pub(crate) async fn instruction_model_context(
+        &self,
+    ) -> Result<(String, buzz_agent_controller::ModelContext), String> {
+        run(self.clone(), |host| {
+            host.controller.instruction_model_context()
+        })
+        .await
+    }
     pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
         run(self.clone(), |host| host.controller.inherited_workspace()).await
     }

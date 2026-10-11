@@ -140,6 +140,8 @@ fn main() {
             "agent_control_local_clone_settings",
             "agent_control_clone_settings",
             "agent_control_use_here",
+            "agent_instruction_transcribe",
+            "agent_instruction_generate",
             "agent_models_begin",
             "agent_models_cancel",
             "agent_models_run",

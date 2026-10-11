@@ -44,15 +44,15 @@ afterEach(() => {
 function provideAgents2(root: Context, relay: RelayData) {
   return new Agents2Service(root, relay, {
     list: async () => [],
+    query: vi.fn().mockResolvedValue([]),
+    upload: vi.fn(),
+    remember: vi.fn(),
     create: vi.fn(),
     rename: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),
     publishProfile: vi.fn(),
-    query: vi.fn(),
-    upload: vi.fn(),
-    remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),
   });

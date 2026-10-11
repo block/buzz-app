@@ -1,3 +1,4 @@
+import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { Context } from "@deepseek-ai/cordis";
 import { createCommunities } from "../../src/features/communities/service";
@@ -123,7 +124,10 @@ window.fetch = async (input, init) => {
   }
   if (url.endsWith("/authorize-agent")) return Response.json({ auth: [] });
   // Inventory reads stay on the network so browser tests can route them.
-  if (url.endsWith("/agent-inventory")) return networkFetch(input, init);
+  if (url.endsWith("/agent-inventory"))
+    return new URLSearchParams(location.search).has("agent-packs")
+      ? Response.json({ identities: [] })
+      : networkFetch(input, init);
   throw new Error(`Unexpected fixture request: ${url}`);
 };
 // Only this fixture rewrites image display to local blobs; production stores raw URLs.
@@ -144,6 +148,53 @@ imageObserver.observe(document.documentElement, {
   attributeFilter: ["src"],
 });
 const fixture = controlFixture();
+if (new URLSearchParams(location.search).has("agent-packs")) {
+  fixture.data.parked = [];
+  fixture.data.createAvailable = true;
+  fixture.data.defaultWorkspace = "/fixture/workspace";
+  fixture.data.agents = [
+    "chief",
+    "designbot",
+    "codebot",
+    "wordbot",
+    "architectbot",
+    "researchbot",
+    "qualitybot",
+  ].map((name, index) => ({
+    ...structuredClone(fixture.agent),
+    id: `sample-${index}`,
+    pubkey: (index + 16).toString(16).repeat(32),
+    name,
+    picture: agentAvatars[index]?.url,
+    launchModel: "Default model",
+  }));
+  fixture.host.action = async (id, action) => {
+    const target = fixture.data.agents.find((agent) => agent.id === id);
+    if (!target) throw Error("Missing fixture agent");
+    target.status = action === "stop" ? "stopped" : "running";
+    target.enabled = action !== "stop";
+    return structuredClone(fixture.data);
+  };
+  fixture.host.publishProfile = async (id) => {
+    const target = fixture.data.agents.find((agent) => agent.id === id);
+    if (!target) throw Error("Missing fixture agent");
+    target.profilePending = false;
+    return structuredClone(fixture.data);
+  };
+  fixture.host.prepareCreate = async (id) => ({ id, pubkey: "fa".repeat(32) });
+  fixture.host.commitCreate = async (id, edit) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id,
+      pubkey: "fa".repeat(32),
+      name: edit.name,
+      picture: edit.picture,
+      status: "stopped",
+    });
+    return structuredClone(fixture.data);
+  };
+}
+
 // Browser journeys start with an explicitly manual-start agent. The shared
 // control fixture remains explicit-on for the profile preference tests.
 fixture.agent.startOnAppLaunch = false;

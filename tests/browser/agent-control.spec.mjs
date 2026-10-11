@@ -43,7 +43,9 @@ async function openEditor(page, name = "Fixture agent") {
       .getByRole("article", { name: `Agent ${name}`, exact: true })
       .getByRole("button", { name: `Actions for ${name}`, exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
   }
   const runtime = dialog.getByRole("button", { name: "Runtime", exact: true });
   if ((await runtime.getAttribute("aria-expanded")) !== "true")
@@ -84,11 +86,14 @@ test("Codex Create supports keyboard selection, model-specific effort and edit",
     );
     await page.getByRole("button", { name: "Add agent", exact: true }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Add agent",
-      exact: true,
+      name: /^(Create agent|AI configuration)$/,
     });
     await dialog.getByLabel("Name", { exact: true }).fill("Browser Codex");
 
+    await dialog.getByRole("combobox", { name: "Model", exact: true }).click();
+    await page
+      .getByRole("option", { name: "Configure AI setup", exact: true })
+      .click();
     const harness = dialog.getByRole("combobox", {
       name: "Harness",
       exact: true,
@@ -123,6 +128,7 @@ test("Codex Create supports keyboard selection, model-specific effort and edit",
     await effort.press("Enter");
     await chooseOption(page, "High");
 
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await dialog.getByRole("button", { name: "Create agent" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(
@@ -141,10 +147,12 @@ test("Codex Create supports keyboard selection, model-specific effort and edit",
       name: "Agent Browser Codex",
       exact: true,
     });
+    await expect(
+      created.getByRole("combobox", { name: "Codex configuration" }),
+    ).toHaveCount(0);
     await created
-      .getByRole("button", { name: "Actions for Browser Codex", exact: true })
+      .getByRole("button", { name: "Configure Codex", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     const editor = page.getByRole("dialog", {
       name: "Edit agent",
       exact: true,
@@ -217,29 +225,13 @@ test("agent menu leaves focus in Profile after its close animation", async ({
     await profile.getByRole("button", { name: "Close Profile panel" }).click();
     await expect(profile).toHaveCount(0);
     await expect(trigger).toBeFocused();
-    const open = card.getByRole("button", {
-      name: "View profile for Fixture agent",
+    const open = page.getByRole("menuitem", {
+      name: "View profile",
       exact: true,
     });
     const before = await card.boundingBox();
-    for (const mode of ["light", "dark"]) {
-      await page.evaluate((mode) => {
-        document.documentElement.dataset.colorMode = mode;
-      }, mode);
-      await open.hover();
-      await expect
-        .poll(() =>
-          open.evaluate((button) => {
-            const style = getComputedStyle(button.parentElement);
-            return (
-              parseFloat(style.borderTopLeftRadius) > 0 &&
-              style.backgroundColor !== "rgba(0, 0, 0, 0)"
-            );
-          }),
-        )
-        .toBe(true);
-    }
     for (const action of ["click", "Enter", "Space"]) {
+      await trigger.click();
       if (action === "click") await open.click();
       else await open.press(action);
       await expect(profile).toBeVisible();
@@ -254,7 +246,7 @@ test("agent menu leaves focus in Profile after its close animation", async ({
         .getByRole("button", { name: "Close Profile panel" })
         .click();
       await expect(profile).toHaveCount(0);
-      await expect(open).toBeFocused();
+      await expect(trigger).toBeFocused();
     }
     const management = await openManagement(page, card);
     await expect(
@@ -485,10 +477,8 @@ test("local controls preserve drafts, confirm operations and distinguish disable
         .getByRole("article"),
     ).toHaveCount(0);
     await expect(
-      panel
-        .getByRole("region", { name: "Profiles without identities" })
-        .getByRole("article", { name: "Agent Library only", exact: true }),
-    ).toBeVisible();
+      panel.getByRole("region", { name: "Profiles without identities" }),
+    ).toHaveCount(0);
     expect(
       await page.evaluate(() =>
         window.agentControlFixture.data.agents.every((a) => !a.enabled),
@@ -1510,6 +1500,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
       ];
       await fixture.control.refresh();
     });
+    await page.getByRole("tab", { name: "Import", exact: true }).click();
     const card = page.getByRole("article", { name: "Agent Selected import" });
     await expect(card).toBeVisible();
     // A tall inventory must not put the selected import review below the viewport.
@@ -1518,7 +1509,9 @@ test("card Import opens a focused review and restores focus after dismissal", as
       .evaluate((element) => {
         element.style.minHeight = "2500px";
       });
-    await card.getByRole("button", { name: "Import", exact: true }).click();
+    await card
+      .getByRole("button", { name: "Set up model", exact: true })
+      .click();
     const dialog = page.getByRole("dialog", {
       name: "Import Selected import?",
     });
@@ -1565,7 +1558,10 @@ test("card Import opens a focused review and restores focus after dismissal", as
     await expect(dialog).toHaveAttribute("aria-modal", "true");
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
-    const trigger = card.getByRole("button", { name: "Import", exact: true });
+    const trigger = card.getByRole("button", {
+      name: "Set up model",
+      exact: true,
+    });
     await expect(trigger).toBeFocused();
     await trigger.click();
     await expect(dialog).toBeVisible();
@@ -1590,6 +1586,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
       );
       await fixture.control.refresh();
     });
+    await page.getByRole("tab", { name: "Import", exact: true }).click();
     await expect(trigger).toBeVisible();
     // A successful import must not suppress return focus on the next dismissal.
     await trigger.click();
@@ -1615,6 +1612,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
       dialog.getByRole("button", { name: "Importing…" }),
     ).toBeDisabled();
     await expect(dialog).toHaveAttribute("aria-modal", "false");
+    await page.getByRole("tab", { name: "Your agents", exact: true }).click();
     const local = page.getByRole("article", {
       name: "Agent Fixture agent",
       exact: true,
@@ -1656,7 +1654,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
   }
 });
 
-test("inventory keeps current-community tiles and compact rows without repeated detail", async ({
+test("inventory separates configured agents and import cards with accessible management", async ({
   page,
 }, testInfo) => {
   const server = await createServer({
@@ -1715,107 +1713,74 @@ test("inventory keeps current-community tiles and compact rows without repeated 
       name: "My agents",
       exact: true,
     });
-    const imports = inventory.getByRole("region", {
-      name: "Available to import",
-      exact: true,
-    });
-    const relay = inventory.getByRole("region", {
-      name: "Relay-only agents",
-      exact: true,
-    });
-    await expect(imports.getByRole("article")).toHaveCount(2);
-    await expect(relay.getByRole("article")).toHaveCount(2);
-    await expect(inventory.getByText(/No import source confirmed/)).toHaveCount(
-      0,
-    );
-    await expect(inventory.locator("[data-public-key]:visible")).toHaveCount(0);
-    await expect(
-      inventory.getByText(
-        /Known community:|Found in old Buzz:|Discovery does not import/,
-      ),
-    ).toHaveCount(0);
     const local = inventory.getByRole("article", {
       name: "Agent Fixture agent",
       exact: true,
     });
+    const other = inventory.getByRole("article", {
+      name: "Agent Other community agent",
+      exact: true,
+    });
+    await expect(local).toBeVisible();
+    await expect(other).toBeVisible();
+    await expect(inventory.getByRole("article")).toHaveCount(2);
     const management = await openManagement(page, local);
     await expect(
       management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
     await closeManagement(management);
-    expect(await local.evaluate((el) => getComputedStyle(el).display)).toBe(
-      "flex",
-    );
-    const other = inventory
-      .getByRole("region", {
-        name: "Local agents in other communities",
-        exact: true,
-      })
-      .getByRole("article");
-    await expect(
-      inventory.getByRole("heading", {
-        level: 3,
-        name: "https://other.example",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(other.getByRole("heading", { level: 4 })).toHaveText(
-      "Other community agent",
-    );
-    await expect(relay.getByRole("heading", { level: 3 })).toHaveCount(1);
-    await expect(relay.getByRole("region").getByRole("article")).toHaveCount(2);
-    await expect(other).toHaveClass(/agent-inventory-row/);
-    await expect(
-      other.getByText("wss://other.example", { exact: true }),
-    ).toHaveCount(0);
-    // The app runs this setup, so its row keeps its own lifecycle control.
     await expect(
       other.getByRole("button", { name: "Stop", exact: true }),
-    ).toHaveCount(1);
+    ).toBeEnabled();
+    await page.getByRole("tab", { name: "Import", exact: true }).click();
+    await expect(local).toHaveCount(0);
+    await expect(inventory.getByRole("article")).toHaveCount(4);
     await expect(
-      other.getByRole("button", { name: "Use here", exact: true }),
+      inventory.getByText(
+        /No import source confirmed|Discovery does not import/,
+      ),
     ).toHaveCount(0);
-    await expect(
-      other.getByRole("button", { name: "Clone", exact: true }),
-    ).toBeVisible();
-    const first = imports.getByRole("article").first();
-    const second = imports.getByRole("article").nth(1);
     for (const width of [1200, 390]) {
       await page.setViewportSize({ width, height: 1100 });
-      const otherBox = await other.boundingBox();
-      expect(otherBox.width).toBeGreaterThan(width === 1200 ? 600 : 250);
-      const cloneBox = await other
-        .getByRole("button", { name: "Clone", exact: true })
-        .boundingBox();
-      expect(cloneBox.x + cloneBox.width).toBeLessThanOrEqual(
-        otherBox.x + otherBox.width,
-      );
-      const firstBox = await first.boundingBox();
-      const secondBox = await second.boundingBox();
-      expect(firstBox.x).toBe(secondBox.x);
-      expect(firstBox.width).toBe(secondBox.width);
-      expect(secondBox.y).toBeGreaterThanOrEqual(firstBox.y + firstBox.height);
-      expect(firstBox.height).toBeLessThan(width === 1200 ? 100 : 180);
       expect(
         await inventory.evaluate((el) => el.scrollWidth <= el.clientWidth),
       ).toBe(true);
-      const relayRow = relay.getByRole("article").first();
-      const nameBox = await relayRow.getByRole("heading").boundingBox();
-      const detailBox = await relayRow.locator("summary").boundingBox();
-      expect(detailBox.x).toBeGreaterThan(nameBox.x + nameBox.width);
-      expect(
-        Math.abs(
-          detailBox.y + detailBox.height / 2 - nameBox.y - nameBox.height / 2,
-        ),
-      ).toBeLessThan(2);
+      for (const card of await inventory.getByRole("article").all()) {
+        expect(
+          await card.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+      }
       await inventory.screenshot({
         path: testInfo.outputPath(`inventory-${width}.png`),
       });
     }
-    const removeButton = relay
-      .getByRole("article")
-      .first()
-      .getByRole("button", { name: "Remove", exact: true });
+    const first = inventory.getByRole("article", {
+      name: "Agent Release helper",
+      exact: true,
+    });
+    const details = await openManagement(page, first);
+    await expect(
+      details.getByRole("button", { name: "Import", exact: true }),
+    ).toBeDisabled();
+    await details.getByLabel("Old Buzz installation").selectOption("installed");
+    await expect(
+      details.getByRole("button", { name: "Import", exact: true }),
+    ).toBeEnabled();
+    await details.getByText("Identity & sources", { exact: true }).click();
+    await expect(details.locator("[data-public-key]")).toBeVisible();
+    await expect(
+      details.getByRole("button", { name: "Clone", exact: true }),
+    ).toBeVisible();
+    await closeManagement(details);
+    const relayCard = inventory.getByRole("article", {
+      name: "Agent 121212121212",
+      exact: true,
+    });
+    const relayDetails = await openManagement(page, relayCard);
+    const removeButton = relayDetails.getByRole("button", {
+      name: "Remove",
+      exact: true,
+    });
     await removeButton.click();
     const removal = page.getByRole("alertdialog", {
       name: "Remove 121212121212?",
@@ -1825,46 +1790,9 @@ test("inventory keeps current-community tiles and compact rows without repeated 
         "Tries to remove the agent from every channel it belongs to.",
       ),
     ).toBeVisible();
-    await removal.screenshot({
-      path: testInfo.outputPath("remove-dialog.png"),
-    });
     await page.keyboard.press("Escape");
     await expect(removal).toHaveCount(0);
     await expect(removeButton).toBeFocused();
-    await other
-      .getByLabel("Details for Other community agent", { exact: true })
-      .click();
-    await expect(
-      other.getByRole("button", { name: "Clone", exact: true }),
-    ).toBeVisible();
-    await expect(other.locator("[data-public-key]")).toBeVisible();
-    // Edit, Duplicate and Delete stay reachable for a setup outside this community.
-    await expect(
-      other.getByRole("button", { name: "Actions for Other community agent" }),
-    ).toBeVisible();
-    const details = first.getByLabel("Details for Release helper", {
-      exact: true,
-    });
-    await expect(
-      imports.getByRole("button", { name: "Clone", exact: true }),
-    ).toHaveCount(0);
-    await details.click();
-    await expect(
-      first.getByRole("button", { name: "Clone", exact: true }),
-    ).toBeVisible();
-    await expect(first.locator("[data-public-key]")).toBeVisible();
-    expect(
-      await inventory.evaluate((el) => el.scrollWidth <= el.clientWidth),
-    ).toBe(true);
-    await details.click();
-    const source = first.getByLabel("Old Buzz installation");
-    await expect(
-      first.getByRole("button", { name: "Import", exact: true }),
-    ).toBeDisabled();
-    await source.selectOption("installed");
-    await expect(
-      first.getByRole("button", { name: "Import", exact: true }),
-    ).toBeEnabled();
   } finally {
     await server.close();
   }

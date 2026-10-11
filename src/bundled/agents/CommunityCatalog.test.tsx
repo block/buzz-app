@@ -661,7 +661,7 @@ it("adopts a shared agent through the create form with its portable settings", a
     return screen.findByRole("button", { name: "Helper" });
   };
   fireEvent.click(await openCatalog());
-  const form = await screen.findByRole("dialog", { name: "Add agent" });
+  const form = await screen.findByRole("dialog", { name: "Create agent" });
   fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   const edit = commit.mock.calls[0]?.[1];
@@ -688,7 +688,7 @@ it("adopts a shared agent through the create form with its portable settings", a
   const added = await openCatalog();
   fireEvent.click(added);
   expect(
-    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+    within(screen.getByRole("dialog", { name: "Create agent" })).getByRole(
       "button",
       { name: "Added to My Agents" },
     ),
@@ -703,7 +703,7 @@ it("adopts a shared agent through the create form with its portable settings", a
   expect(await openCatalog()).toHaveAccessibleName("Helper");
   fireEvent.click(screen.getByRole("button", { name: "Helper" }));
   expect(
-    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+    within(screen.getByRole("dialog", { name: "Create agent" })).getByRole(
       "button",
       { name: "Add agent" },
     ),
@@ -720,7 +720,7 @@ it("adopts a shared agent through the create form with its portable settings", a
   expect(await openCatalog()).toHaveAccessibleName("Helper");
   fireEvent.click(screen.getByRole("button", { name: "Helper" }));
   expect(
-    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+    within(screen.getByRole("dialog", { name: "Create agent" })).getByRole(
       "button",
       { name: "Add agent" },
     ),
@@ -798,7 +798,7 @@ it.each([["claude", "/fixture/claude-agent-acp", "Claude Code"]])(
     );
     fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
     fireEvent.click(await screen.findByRole("button", { name: "Preset" }));
-    const form = await screen.findByRole("dialog", { name: "Add agent" });
+    const form = await screen.findByRole("dialog", { name: "Create agent" });
     fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
     await waitFor(() => expect(commit).toHaveBeenCalledOnce());
     // The preset owns its model and credentials; the default harness differs.

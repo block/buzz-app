@@ -192,7 +192,6 @@ it("opens Harnesses from both profile editors and closes a discarded draft after
     within(dialog).getByRole("textbox", { name: "Name" }),
     " edited",
   );
-  expect(dialog).toHaveTextContent("Opening Settings discards unsaved edits.");
   await user.click(
     within(dialog).getByRole("button", { name: "Open Harnesses in Settings" }),
   );

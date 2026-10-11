@@ -416,6 +416,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "link",
       "size: xs | sm | md | lg",
       "shape: capsule (default) | control (12px)",
+      "SurfaceButton: artwork layout with shared activation and focus (proposed)",
       "loading",
     ],
     status: "proposed",

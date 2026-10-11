@@ -19,14 +19,20 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- The main individual-agent grid is reserved for native local agents; teams follow
-  it, with old/importable/relay inventory below. Browser-only hosts cannot establish
+- The main individual-agent grid includes native local agents and the current
+  account’s existing relay identities; teams follow it. Only configured local
+  agents receive execution controls. Import candidates live in the Import tab;
+  **Your agents** is the default tab. **Import** opens the existing installation
+  import flow, and **Browse** reads explicitly shared kind-30175 definitions from
+  the current relay, with read-only details and paginated discovery. The page
+  header uses the same navigation styling as Channels. The page has no Refresh
+  control and omits the legacy-library partial-source warning. Browser-only hosts cannot establish
   current local custody: their read-only library lives in a collapsed **Other
   agents** section below teams, not in the individual-agent grid.
 - The compatibility library shows one compact row per exact identity. Identity
   details are available from its overflow button, not an exposed Public key link.
   Explicit profile links still supply artwork; names never join identities.
-  Profiles with no linked identity appear separately; an archived identity does
+  Profiles with no linked identity are omitted; an archived identity does
   not become an empty profile.
 - Only distinct keys with the same displayed name need a short npub suffix. Names
   alone never create a profile group. Suffix collisions extend deterministically using

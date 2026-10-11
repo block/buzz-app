@@ -814,6 +814,29 @@ impl Controller {
             model_overridden: environment.contains_key("GOOSE_MODEL"),
         })
     }
+    /// Native-only instruction drafting follows saved Agent defaults, never the
+    /// unsaved agent or the process environment. Reuse launch resolution.
+    pub fn instruction_model_context(&self) -> Result<(String, ModelContext)> {
+        let saved = self.store.defaults()?;
+        if saved.harness != "buzz-agent" {
+            return Err("Voice instruction drafting currently needs Buzz Agent with Databricks v2 in Agent defaults".into());
+        }
+        let harness = crate::HarnessEdit {
+            command: "buzz-agent".into(),
+            args: vec![],
+            provider: saved.provider,
+            model: saved.model,
+            databricks: None,
+            integration: None,
+            configuration: None,
+        };
+        let resolved = crate::build_defaults().resolve(&harness, &saved.environment);
+        let context = model_context(&resolved, &saved.environment)?;
+        if resolved.model.trim().is_empty() {
+            return Err("Choose a model in Agent defaults before drafting instructions".into());
+        }
+        Ok((resolved.model, context))
+    }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
         model_context(&edit.harness, &environment)

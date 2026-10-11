@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -9,6 +11,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   AgentControl,
@@ -38,10 +41,10 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(workspace = "/fixture/workspace") {
   const native = controlFixture();
   native.data.createAvailable = true;
-  native.data.defaultWorkspace = "/fixture/workspace";
+  native.data.defaultWorkspace = workspace;
   let state: AgentControlState = {
     status: "ready",
     data: native.data,
@@ -199,7 +202,7 @@ it.each(["start", "profile"])(
   },
 );
 
-it("keeps catalog status recovery and Close available when Create cannot be confirmed", async () => {
+it("keeps Close available after creation fails even when status cannot recover", async () => {
   const f = fixture();
   f.create.mockRejectedValueOnce(Error("create timed out"));
   f.select();
@@ -215,11 +218,14 @@ it("keeps catalog status recovery and Close available when Create cannot be conf
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
   expect(f.control.refresh).toHaveBeenCalledTimes(2);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(f.close).toHaveBeenCalledOnce();
 });
 
-it("allows Close during deferred catalog Create without late dismissal", async () => {
+it("blocks Close during deferred catalog Create and ignores completion after host unmount", async () => {
   const f = fixture();
   let complete!: (
     agent: Awaited<ReturnType<NonNullable<AgentControl["create"]>>>,
@@ -236,10 +242,10 @@ it("allows Close during deferred catalog Create without late dismissal", async (
     "Adding agent…",
   );
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(f.close).toHaveBeenCalledOnce();
+  expect(f.close).not.toHaveBeenCalled();
   f.view.unmount();
   await act(async () => complete(f.native.agent));
-  expect(f.close).toHaveBeenCalledOnce();
+  expect(f.close).not.toHaveBeenCalled();
 });
 
 it("does not admit the viewer's own publication", () => {
@@ -249,4 +255,84 @@ it("does not admit the viewer's own publication", () => {
   expect(
     screen.getByRole("button", { name: "Added to My Agents" }),
   ).toBeDisabled();
+});
+
+it.each(["write", "validation"])(
+  "retains a dirty draft after %s failure until explicit Close",
+  async (failure) => {
+    const f = fixture(failure === "validation" ? "" : undefined);
+    const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Keep me" },
+    });
+    f.create.mockRejectedValueOnce(Error("write failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await screen.findByRole("alert");
+    if (failure === "write") expect(f.create).toHaveBeenCalledOnce();
+    else expect(f.create).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
+    );
+    expect(f.close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Keep me");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(f.close).toHaveBeenCalledOnce();
+  },
+);
+
+it("retains a rejected recovery Stop after creation settles and status refresh succeeds", async () => {
+  const f = fixture();
+  let rejectCreate!: (reason: Error) => void;
+  f.create.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectCreate = reject;
+      }),
+  );
+  f.action.mockRejectedValueOnce(Error("stop rejected"));
+  f.native.agent.status = "running";
+  f.select();
+  fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Stop Fixture agent/ }));
+  const notice = await screen.findByText(/The agent didn't stop/);
+  await act(async () => rejectCreate(Error("create failed")));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled(),
+  );
+  expect(notice).toBeVisible();
+  expect(f.close).not.toHaveBeenCalled();
+});
+
+it("finishes successful setup after recovery Stop without offering another profile retry", async () => {
+  const f = fixture();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.profile.mockImplementationOnce(async () => {
+    await gate;
+    const created = f.native.data.agents.find((agent) => agent.id === "copy");
+    if (created) created.profilePending = false;
+    return f.native.data;
+  });
+  f.native.agent.status = "running";
+  fireEvent.change(screen.getByLabelText("Name"), {
+    target: { value: "Helper" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(f.profile).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: /^Stop Fixture agent/ }));
+  await act(async () => {
+    release();
+    await gate;
+  });
+  expect(await screen.findByText("Helper: setup is complete.")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Finish profile" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Agent recovery" })).toBeVisible();
+  expect(f.close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(f.close).toHaveBeenCalledOnce();
 });

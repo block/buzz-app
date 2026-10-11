@@ -62,18 +62,93 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       Math.abs(name.x + name.width / 2 - avatar.x - avatar.width / 2),
     ).toBeLessThan(1);
     expect(bounds.height).toBeLessThan(300);
-    const add = page.getByRole("button", { name: "Add agent", exact: true });
+    const add = page.getByRole("button", {
+      name: "Add agent",
+      exact: true,
+      includeHidden: true,
+    });
     await expect(add).toHaveAttribute("aria-haspopup", "dialog");
     await add.focus();
     await add.press("Enter");
     const create = page.getByRole("dialog", {
-      name: "Add agent",
+      name: "Create agent",
       exact: true,
     });
     await expect(create.getByLabel("Name", { exact: true })).toBeVisible();
-    await create.getByRole("button", { name: "Cancel", exact: true }).click();
+    const nameInput = create.getByLabel("Name", { exact: true });
+    await page.keyboard.press("Tab");
+    await nameInput.focus();
+    await expect(nameInput).toBeFocused();
+    await expect(nameInput).toHaveCSS("border-top-width", "1px");
+    await expect(nameInput).not.toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    const instructions = create.getByRole("button", {
+      name: "Agent instructions",
+      exact: true,
+    });
+    await instructions.focus();
+    await instructions.press("Enter");
+    const textChoice = create.getByRole("button", {
+      name: "Text",
+      exact: true,
+    });
+    await expect(textChoice).toBeFocused();
+    await textChoice.press("Enter");
+    await expect(
+      create.getByRole("textbox", { name: "Agent instructions", exact: true }),
+    ).toBeFocused();
+    await create
+      .getByRole("button", { name: "Done editing", exact: true })
+      .click();
+    await expect(instructions).toBeFocused();
+    await instructions.press("Enter");
+    await create.getByRole("button", { name: "Audio", exact: true }).click();
+    // Browser recording is unavailable; focus remains within the incoming view.
+    await expect(
+      create.locator('[data-instruction-view="voice"]'),
+    ).toBeFocused();
+    await create
+      .getByRole("button", { name: "Done editing", exact: true })
+      .click();
+    await expect(instructions).toBeFocused();
+    const choose = create.getByRole("button", {
+      name: "Choose avatar",
+      exact: true,
+    });
+    await choose.focus();
+    await choose.press("Enter");
+    await expect(create.locator('[data-avatar-view="selected"]')).toHaveCount(
+      0,
+    );
+    await expect(
+      create.locator('[data-avatar-view="collections"] button').first(),
+    ).toBeFocused();
+    const image = create.getByRole("button", {
+      name: "Use image",
+      exact: true,
+    });
+    await image.focus();
+    await image.press("Enter");
+    await expect(
+      create.locator('[data-avatar-view="collections"]'),
+    ).toHaveCount(0);
+    await expect(
+      create.locator('[data-avatar-view="image"] button').first(),
+    ).toBeFocused();
+
+    await create.getByRole("button", { name: "Close", exact: true }).click();
     await expect(create).toBeHidden();
     await expect(add).toBeFocused();
+    const cardBeforePicker = await card.boundingBox();
+    const addBeforePicker = await add.boundingBox();
+    await card.getByRole("combobox", { name: "Model", exact: true }).click();
+    await expect(page.locator(".agent-model-options[data-open]")).toBeVisible();
+    expect(await card.boundingBox()).toEqual(cardBeforePicker);
+    expect(await add.boundingBox()).toEqual(addBeforePicker);
+    await page.keyboard.press("Escape");
+
     await expect(
       card.getByRole("button", { name: "Edit", exact: true }),
     ).toHaveCount(0);
@@ -87,10 +162,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     ).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(
-      page.getByRole("menuitem", { name: "Edit", exact: true }),
+      page.getByRole("menuitem", { name: "Edit agent settings", exact: true }),
     ).toBeFocused();
     await page
-      .getByRole("menuitem", { name: "Edit", exact: true })
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
       .press("Enter");
     const dialog = page.getByRole("dialog", {
       name: "Edit agent",
@@ -165,7 +240,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await card
       .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Browse models", exact: true })
       .click();
@@ -266,7 +343,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       .toBe("custom.enter");
     await expect(dialog).toHaveCount(0);
     await actions.click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
     await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("custom.click-save");
     await expect(
@@ -286,7 +365,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       .toBe("custom.click-save");
     await expect(dialog).toHaveCount(0);
     await actions.click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
     await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("");
     await dialog
@@ -306,7 +387,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       .toBe("");
     await expect(dialog).toHaveCount(0);
     await actions.click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
     await dialog.getByRole("button", { name: "Model", exact: true }).click();
     // Dirty write-only values receive the same incidental-dismissal protection.
     await dialog
@@ -321,7 +404,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await card
       .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Environment", exact: true })
       .click();
@@ -357,7 +442,10 @@ test("managed cards omit the channel picker at narrow widths", async ({
       exact: true,
     });
     await expect(
-      card.getByRole("button", { name: "Manage Fixture agent", exact: true }),
+      card.getByRole("button", {
+        name: "Actions for Fixture agent",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       card.getByRole("button", { name: "Stop", exact: true }),

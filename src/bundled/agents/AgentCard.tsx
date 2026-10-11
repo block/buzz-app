@@ -1,3 +1,5 @@
+import { agentAvatars } from "../../features/agents/avatar-packs";
+import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import styles from "./AgentCard.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
@@ -15,6 +17,8 @@ import {
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
+  UserIcon,
+  GearIcon,
   ArchiveIcon,
   ArchiveOffIcon,
   ArrowsClockwiseIcon,
@@ -57,6 +61,10 @@ export function AgentCard({
   archived = false,
   feedback,
   children,
+  primaryAction,
+  menuActions,
+  modelPicker,
+  subtitle,
   identityLabel = (identity) => identity.name,
   layout = "tile",
   headingLevel = 3,
@@ -64,6 +72,10 @@ export function AgentCard({
   imported = false,
 }: {
   children?: ReactNode;
+  primaryAction?: ReactNode;
+  menuActions?: ReactNode;
+  modelPicker?: ReactNode;
+  subtitle?: ReactNode;
   revealControls?: boolean;
   imported?: boolean;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
@@ -158,6 +170,9 @@ export function AgentCard({
         ? "Custom model"
         : managed.harness.model || "Default model"))
     : undefined;
+  const packed = agentAvatars.find(
+    (avatar) => avatar.url === (managed?.picture ?? source),
+  );
   const restartRequired = editable.some(
     (agent) => (agent.restartDiff?.length ?? 0) > 0,
   );
@@ -172,19 +187,32 @@ export function AgentCard({
     </span>
   ) : null;
   const portrait = (
-    <div className={tile ? styles.portrait : "shrink-0"}>
-      <AgentAvatar
-        session={session}
-        agentPubkey={
-          identities.length === 1 ? identities[0]?.pubkey : undefined
-        }
-        alt={name}
-        fallback={name}
-        src={picture ?? null}
-        size={tile ? "fill" : "default"}
-        shape="squircle"
-        statusBadge={presence === "unknown" ? undefined : presence}
-      />
+    <div
+      className={tile ? styles.portrait : "shrink-0"}
+      data-animated={packed ? "" : undefined}
+    >
+      {packed ? (
+        <div
+          role="img"
+          aria-label={`${name}, ${presence}`}
+          style={{ width: "100%", height: "100%" }}
+        >
+          <PackedAgentAvatar avatar={packed} />
+        </div>
+      ) : (
+        <AgentAvatar
+          session={session}
+          agentPubkey={
+            identities.length === 1 ? identities[0]?.pubkey : undefined
+          }
+          alt={name}
+          fallback={name}
+          src={picture ?? null}
+          size={tile ? "fill" : "default"}
+          shape="squircle"
+          statusBadge={presence === "unknown" ? undefined : presence}
+        />
+      )}
     </div>
   );
   const label = (
@@ -203,7 +231,7 @@ export function AgentCard({
           Archived
         </span>
       )}
-      {tile && model && (
+      {tile && model && !modelPicker && (
         <p
           className={`m-0 text-caption text-subtle ${styles.model}`}
           title={model}
@@ -221,8 +249,8 @@ export function AgentCard({
       }
       className={`relative min-w-0 ${tile ? styles.card : "agent-inventory-row"}`}
     >
-      {(onEdit || onViewProfile || archive || hasControls) && (
-        <div className="absolute right-2 top-2 z-10">
+      {(onEdit || onViewProfile || archive || hasControls || menuActions) && (
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
           <MenuRoot
             onOpenChange={(open) => {
               if (open) profileHandoff.current = false;
@@ -253,20 +281,26 @@ export function AgentCard({
                     }
                   }}
                 >
+                  <MenuIcon>
+                    <UserIcon size={14} />
+                  </MenuIcon>
                   View profile
                 </MenuItem>
               )}
               {hasControls && (
                 <MenuItem
                   onClick={() => {
-                    trigger.current?.focus();
                     profileHandoff.current = true;
                     manage(trigger.current);
                   }}
                 >
+                  <MenuIcon>
+                    <GearIcon size={14} />
+                  </MenuIcon>
                   Manage agent
                 </MenuItem>
               )}
+              {menuActions}
               {archive && (
                 <MenuItem
                   disabled={archive.pending}
@@ -301,7 +335,7 @@ export function AgentCard({
                           <PencilSimpleIcon size={14} />
                         </MenuIcon>
                         {editable.length === 1 ? (
-                          "Edit"
+                          "Edit agent settings"
                         ) : (
                           <ChoiceRow
                             label={`Edit ${identityLabel(agent)}`}
@@ -393,18 +427,9 @@ export function AgentCard({
       >
         {portrait}
         {label}
-        {tile && (onViewProfile || hasControls) && (
-          <button
-            type="button"
-            className={styles.open}
-            aria-label={
-              onViewProfile ? `View profile for ${name}` : `Manage ${name}`
-            }
-            onClick={(event) => {
-              if (onViewProfile) onViewProfile(event.currentTarget);
-              else manage(event.currentTarget);
-            }}
-          />
+        {modelPicker && <div className={styles.modelPicker}>{modelPicker}</div>}
+        {primaryAction && (
+          <div className="flex justify-center">{primaryAction}</div>
         )}
       </div>
       {hasControls && (
@@ -480,7 +505,7 @@ export function AgentCard({
         </div>
       ) : !children && !identities.length ? (
         <p className="m-0 mb-6 text-center text-caption text-subtle">
-          No linked identity
+          {subtitle ?? "No linked identity"}
         </p>
       ) : null}
     </article>

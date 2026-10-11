@@ -130,7 +130,9 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   await page
     .getByRole("button", { name: "Actions for Fixture agent", exact: true })
     .click();
-  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Edit agent settings", exact: true })
+    .click();
   await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
   const search = page.getByRole("searchbox", { name: "Search emoji" });

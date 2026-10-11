@@ -16,13 +16,18 @@ it("derives the complete categorized inventory from the public gateway", () => {
     "BestieIcon",
     "ClaudeLogoIcon",
     "CodexLogoIcon",
+    "DeepSeekLogoIcon",
+    "GeminiLogoIcon",
     "GitHubIssueIcon",
     "GooseLogoIcon",
+    "GrokLogoIcon",
     "HashArrowInIcon",
     "HermesLogoIcon",
+    "KimiLogoIcon",
     "NotificationFilledIcon",
     "OneDriveLogoIcon",
     "PiLogoIcon",
+    "QwenLogoIcon",
   ]);
   expect([...tablerNames, ...customNames].sort()).toEqual(
     Object.keys(gatewayIcons).sort(),
@@ -50,6 +55,16 @@ it("derives the complete categorized inventory from the public gateway", () => {
       intendedSizes: [{ width: 32, height: 32 }],
     }),
     expect.objectContaining({
+      name: "DeepSeekLogoIcon",
+      category: "Custom brand mark",
+      intendedSizes: [{ width: 18, height: 18 }],
+    }),
+    expect.objectContaining({
+      name: "GeminiLogoIcon",
+      category: "Custom brand mark",
+      intendedSizes: [{ width: 18, height: 18 }],
+    }),
+    expect.objectContaining({
       name: "GitHubIssueIcon",
       category: "Product mark",
       intendedSizes: [{ width: 22, height: 22 }],
@@ -58,6 +73,11 @@ it("derives the complete categorized inventory from the public gateway", () => {
       name: "GooseLogoIcon",
       category: "Custom brand mark",
       intendedSizes: [{ width: 32, height: 32 }],
+    }),
+    expect.objectContaining({
+      name: "GrokLogoIcon",
+      category: "Custom brand mark",
+      intendedSizes: [{ width: 18, height: 18 }],
     }),
     expect.objectContaining({
       name: "HashArrowInIcon",
@@ -74,6 +94,11 @@ it("derives the complete categorized inventory from the public gateway", () => {
       ],
     }),
     expect.objectContaining({
+      name: "KimiLogoIcon",
+      category: "Custom brand mark",
+      intendedSizes: [{ width: 18, height: 18 }],
+    }),
+    expect.objectContaining({
       name: "NotificationFilledIcon",
       category: "State indicator",
       intendedSizes: [{ width: 20, height: 20 }],
@@ -87,6 +112,11 @@ it("derives the complete categorized inventory from the public gateway", () => {
       name: "PiLogoIcon",
       category: "Custom brand mark",
       intendedSizes: [{ width: 32, height: 32 }],
+    }),
+    expect.objectContaining({
+      name: "QwenLogoIcon",
+      category: "Custom brand mark",
+      intendedSizes: [{ width: 18, height: 18 }],
     }),
   ]);
 });

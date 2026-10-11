@@ -2,7 +2,6 @@
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
-import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -60,8 +59,10 @@ function setup(
   );
   const onImport = vi.fn();
   const onUseHere = vi.fn();
+  let importTab = false;
   const view = () => (
     <InventoryView
+      importTab={importTab}
       state={{ ...control.snapshot(), status: "ready", data: f.data }}
       control={control}
       session={owned.session}
@@ -83,52 +84,58 @@ function setup(
     onUseHere,
     rows,
     redraw: () => mounted.rerender(view()),
+    showImport: () => {
+      importTab = true;
+      mounted.rerender(view());
+    },
   };
 }
-
-it("sorts displayed names within groups and profile cards without merging equal names", async () => {
-  const keys = ["11", "22", "33", "44"].map((s) => s.repeat(32));
+it("shows only locally configured agents in Your agents", async () => {
   setup(
     "connected",
     (f) => {
-      f.data.agents = [];
-      f.data.parked = keys.map((pubkey, i) => ({
-        pubkey,
-        name: ["Zebra", "beta", "Alpha", "Alpha"][i] ?? "",
-        sources: ["installed"],
-      }));
+      f.data.parked = [
+        { pubkey: "ee".repeat(32), name: "Importable", sources: ["installed"] },
+      ];
     },
-    keys,
-    [
-      { id: "z", name: "Zebra profile" },
-      { id: "a", name: "alpha profile" },
-    ],
+    ["cd".repeat(32)],
+    [{ id: "empty", name: "Profile only" }],
   );
-  const group = await screen.findByRole("region", {
-    name: "Available to import",
-  });
-  const cards = within(group).getAllByRole("article");
-  expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual([
-    "Agent Alpha",
-    "Agent Alpha",
-    "Agent beta",
-    "Agent Zebra",
-  ]);
+  await screen.findByRole("article", { name: "Agent Fixture agent" });
+  for (const name of [
+    "Available to import",
+    "Relay-only agents",
+    "Profiles without identities",
+  ]) {
+    expect(screen.queryByRole("region", { name })).toBeNull();
+  }
   expect(
-    cards.map((card) => card.querySelector("[data-public-key]")?.textContent),
-  ).toEqual(["33", "44", "22", "11"].map((key) => npubEncode(key.repeat(32))));
-  const profiles = await screen.findByRole("region", {
-    name: "Profiles without identities",
-  });
-  expect(
-    within(profiles)
-      .getAllByRole("article")
-      .map((card) => card.getAttribute("aria-label")),
-  ).toEqual(["Agent alpha profile", "Agent Zebra profile"]);
-  expect(within(group).getAllByRole("article")).toHaveLength(4);
+    screen.queryByRole("article", { name: "Agent Not imported" }),
+  ).toBeNull();
+  expect(screen.queryByText("Importable")).toBeNull();
+  expect(screen.queryByText("Profile only")).toBeNull();
 });
 
-it("renders four exclusive sections with all setups on one exact-key card", async () => {
+it("sorts local agents without merging equal names", async () => {
+  setup("connected", (f) => {
+    f.data.agents = ["Zebra", "beta", "Alpha", "Alpha"].map((name, i) => ({
+      ...f.agent,
+      id: String(i),
+      pubkey: String(i + 1).repeat(64),
+      name,
+    }));
+  });
+  const group = await screen.findByRole("region", {
+    name: "Local agents in this community",
+  });
+  expect(
+    within(group)
+      .getAllByRole("article")
+      .map((card) => card.getAttribute("aria-label")),
+  ).toEqual(["Agent Alpha", "Agent Alpha", "Agent beta", "Agent Zebra"]);
+});
+
+it("renders local sections with all setups on one exact-key card", async () => {
   setup("connected", (f) => {
     const here = { ...f.agent };
     f.data.agents.push({
@@ -162,7 +169,10 @@ it("renders four exclusive sections with all setups on one exact-key card", asyn
   expect(screen.getAllByRole("article", { name: "Agent Shared" })).toHaveLength(
     1,
   );
-  fireEvent.click(within(card).getByLabelText("Manage Shared"));
+  fireEvent.click(within(card).getByLabelText("Actions for Shared"));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
   const management = await screen.findByRole("dialog", {
     name: "Manage Shared",
   });
@@ -187,15 +197,11 @@ it("renders four exclusive sections with all setups on one exact-key card", asyn
     ).getAllByRole("article"),
   ).toHaveLength(1);
   expect(
-    within(
-      screen.getByRole("region", { name: "Available to import" }),
-    ).getByRole("article", { name: "Agent Importable" }),
-  ).toBeVisible();
+    screen.queryByRole("region", { name: "Available to import" }),
+  ).toBeNull();
   expect(
-    within(
-      await screen.findByRole("region", { name: "Relay-only agents" }),
-    ).getByRole("article", { name: "Agent Not imported" }),
-  ).toBeVisible();
+    screen.queryByRole("region", { name: "Relay-only agents" }),
+  ).toBeNull();
 });
 
 it("nests local rows by saved community once, with unknown last", async () => {
@@ -265,49 +271,20 @@ it("nests local rows by saved community once, with unknown last", async () => {
   ).toHaveTextContent("Legacy");
 });
 
-it("does not invent a community for library-only relay identities", async () => {
-  setup("connected", () => {}, []);
-  const group = await screen.findByRole("region", {
-    name: "Relay-only agents",
+it("moves relay identities to Import while retaining the same cards", () => {
+  const { rows, redraw, showImport } = setup("connected", (f) => {
+    f.data.agents = [];
   });
-  const unknown = within(group).getByRole("region", {
-    name: "Community unknown",
-  });
-  expect(
-    within(unknown).getByRole("article", { name: "Agent Not imported" }),
-  ).toBeVisible();
-});
-
-it("retains the chosen source when an identity card unmounts and returns", () => {
-  const { rows, redraw, onImport } = setup("connected", (f) => {
-    f.data.parked = [
-      {
-        pubkey: "cd".repeat(32),
-        name: "Shared source",
-        sources: ["installed", "development"],
-      },
-    ];
-  });
-  const key = "cd".repeat(32);
-  const row = rows.get(key);
-  if (!row) throw Error("Missing fixture identity");
-  fireEvent.change(screen.getByLabelText("Old Buzz installation"), {
-    target: { value: "development" },
-  });
-  rows.delete(key);
   redraw();
+  expect(rows.size).toBeGreaterThan(0);
   expect(
-    screen.queryByRole("article", { name: "Agent Shared source" }),
+    screen.queryByRole("article", { name: "Agent Not imported" }),
   ).toBeNull();
-  rows.set(key, row);
-  redraw();
-  expect(screen.getByLabelText("Old Buzz installation")).toHaveValue(
-    "development",
-  );
-  fireEvent.click(
-    within(
-      screen.getByRole("article", { name: "Agent Shared source" }),
-    ).getByRole("button", { name: "Import" }),
-  );
-  expect(onImport).toHaveBeenCalledWith(key, "development");
+  showImport();
+  expect(
+    screen.getByRole("article", { name: "Agent Not imported" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("No agents yet. Add an agent to get started."),
+  ).toBeNull();
 });

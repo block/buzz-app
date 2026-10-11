@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentControl } from "../../features/agents/control";
@@ -66,6 +68,7 @@ it("creates Codex directly without an inference validation phase", async () => {
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
   const control = createAgentControl(fixture.host);
   await control.refresh();
+  const onClose = vi.fn();
   function Dialog() {
     const state = useSyncExternalStore(control.subscribe, control.snapshot);
     return (
@@ -75,7 +78,7 @@ it("creates Codex directly without an inference validation phase", async () => {
         destination="https://relay.example.test"
         owner={"de".repeat(32)}
         source={fixture.agent}
-        onClose={() => {}}
+        onClose={onClose}
       />
     );
   }
@@ -86,7 +89,56 @@ it("creates Codex directly without an inference validation phase", async () => {
   expect(
     screen.queryByRole("button", { name: "Cancel validation" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+  const close = screen.getByRole("button", { name: "Close" });
+  expect(close).toBeDisabled();
+  await userEvent.click(close);
+  await userEvent.keyboard("{Escape}");
+  expect(onClose).not.toHaveBeenCalled();
   committed.resolve(structuredClone(fixture.data));
   control.dispose();
 });
+
+it.each(["starting", "publishing"] as const)(
+  "prevents dismissal during %s",
+  async (phase) => {
+    const fixture = codexFixture();
+    fixture.agent.status = phase === "starting" ? "stopped" : "running";
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const pending = deferred<never>();
+    const onClose = vi.fn();
+    control.create = vi.fn().mockResolvedValue(fixture.agent);
+    vi.spyOn(control, "action").mockImplementation(async () => {
+      if (phase === "starting") return pending.promise;
+      return {
+        ...fixture.data,
+        agents: [{ ...fixture.agent, status: "running" }],
+      };
+    });
+    vi.spyOn(control, "publishProfile").mockImplementation(
+      () => pending.promise,
+    );
+    const view = render(
+      <AgentCreateDialog
+        control={control}
+        state={control.snapshot()}
+        destination="https://relay.example.test"
+        owner={"de".repeat(32)}
+        source={fixture.agent}
+        onClose={onClose}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await waitFor(() =>
+      expect(
+        phase === "starting" ? control.action : control.publishProfile,
+      ).toHaveBeenCalled(),
+    );
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    view.unmount();
+    control.dispose();
+  },
+);

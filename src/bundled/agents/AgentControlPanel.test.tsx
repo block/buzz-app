@@ -226,7 +226,7 @@ it("dialog actions choose the destination record when several local setups share
   expect(f.calls.find((call) => call.action === "localClone")?.payload).toEqual(
     { id: "fixture-agent" },
   );
-  fireEvent.click(within(create).getByRole("button", { name: "Cancel" }));
+  fireEvent.click(within(create).getByRole("button", { name: "Close" }));
   fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
   const setupDialog = await screen.findByRole("dialog", {
     name: "Set up agent here",

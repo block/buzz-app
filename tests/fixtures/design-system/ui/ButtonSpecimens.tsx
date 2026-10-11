@@ -16,6 +16,7 @@ import {
   MenuPopup,
   MenuItem,
 } from "../../../../src/shared/design-system/ui/Menu";
+import { SurfaceButton } from "../../../../src/shared/design-system/ui/SurfaceButton";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 
@@ -140,6 +141,27 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <section
+        aria-label="Artwork controls"
+        className="component-specimen-stack"
+      >
+        <SectionHeading
+          title="Surface button (proposed)"
+          description="Artwork supplies the layout; shared activation and keyboard focus stay consistent."
+        />
+        <ExamplePreview code='<SurfaceButton aria-label="Choose artwork"><PlusIcon /></SurfaceButton>'>
+          <SurfaceButton aria-label="Choose artwork" className="rounded-xl p-4">
+            <PlusIcon size={32} />
+          </SurfaceButton>
+          <SurfaceButton
+            aria-label="Unavailable artwork"
+            disabled
+            className="rounded-xl p-4"
+          >
+            <PlusIcon size={32} />
+          </SurfaceButton>
+        </ExamplePreview>
+      </section>
       <section
         aria-label="Button behavior"
         className="component-specimen-group"

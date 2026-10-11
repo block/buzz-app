@@ -66,6 +66,7 @@ export function AgentModelPicker({
   renderSections,
   compact = false,
   feedbackInPopup = false,
+  autoDiscover = true,
   catalogProvider,
   onAdvanced,
   advancedOpen = false,
@@ -73,6 +74,7 @@ export function AgentModelPicker({
 }: {
   compact?: boolean;
   feedbackInPopup?: boolean;
+  autoDiscover?: boolean;
   catalogProvider?: string | undefined;
   onAdvanced?: (() => void) | undefined;
   advancedOpen?: boolean;
@@ -306,8 +308,8 @@ export function AgentModelPicker({
   // it when Pi is selected. Later context edits wait for Browse or Retry.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only entering Pi triggers the automatic lookup.
   useEffect(() => {
-    if (pi) void run("connect");
-  }, [pi, draft.command]);
+    if (pi && autoDiscover) void run("connect");
+  }, [pi, draft.command, autoDiscover]);
   // Provider selection loads Goose's catalog. Credential/context edits retire
   // that request but wait for Browse or Retry, never signing in per keystroke.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only selecting a Goose provider triggers automatic discovery.

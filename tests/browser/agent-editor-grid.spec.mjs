@@ -84,6 +84,35 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       "border-top-color",
       "rgba(0, 0, 0, 0)",
     );
+    const instructions = create.getByRole("button", {
+      name: "Agent instructions",
+      exact: true,
+    });
+    await instructions.focus();
+    await instructions.press("Enter");
+    const textChoice = create.getByRole("button", {
+      name: "Text",
+      exact: true,
+    });
+    await expect(textChoice).toBeFocused();
+    await textChoice.press("Enter");
+    await expect(
+      create.getByRole("textbox", { name: "Agent instructions", exact: true }),
+    ).toBeFocused();
+    await create
+      .getByRole("button", { name: "Done editing", exact: true })
+      .click();
+    await expect(instructions).toBeFocused();
+    await instructions.press("Enter");
+    await create.getByRole("button", { name: "Audio", exact: true }).click();
+    // Browser recording is unavailable; focus remains within the incoming view.
+    await expect(
+      create.locator('[data-instruction-view="voice"]'),
+    ).toBeFocused();
+    await create
+      .getByRole("button", { name: "Done editing", exact: true })
+      .click();
+    await expect(instructions).toBeFocused();
     const choose = create.getByRole("button", {
       name: "Choose avatar",
       exact: true,

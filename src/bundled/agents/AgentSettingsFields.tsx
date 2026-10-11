@@ -542,6 +542,7 @@ export function AgentSettingsFields({
           integration={integration}
           compact={cardLayout && !customize}
           feedbackInPopup={quickModelOnly}
+          autoDiscover={!quickModelOnly}
           catalogProvider={buzzProvider ?? undefined}
           onAdvanced={
             cardLayout && !quickModelOnly

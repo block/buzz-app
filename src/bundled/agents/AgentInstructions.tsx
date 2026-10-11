@@ -1,6 +1,7 @@
 import { InstructionExamples } from "./InstructionExamples";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useImperativeHandle,
@@ -39,6 +40,19 @@ export function AgentInstructions({
 }) {
   const [mode, setMode] = useState<"text" | "voice" | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const view = embedded && !expanded ? "entry" : (mode ?? "choices");
+  const root = useRef<HTMLDivElement>(null);
+  const previousView = useRef(view);
+  useLayoutEffect(() => {
+    if (previousView.current === view) return;
+    previousView.current = view;
+    const content =
+      root.current?.querySelector(".agent-instruction-content") ?? root.current;
+    const target = content?.querySelector<HTMLElement>(
+      "textarea:not(:disabled), button:not(:disabled)",
+    );
+    (target ?? root.current)?.focus();
+  }, [view]);
   useEffect(() => {
     onActiveChange?.(expanded);
   }, [expanded, onActiveChange]);
@@ -125,9 +139,9 @@ export function AgentInstructions({
   return (
     <div
       className="space-y-4"
-      data-instruction-view={
-        embedded && !expanded ? "entry" : (mode ?? "choices")
-      }
+      ref={root}
+      tabIndex={-1}
+      data-instruction-view={view}
     >
       {!embedded && <div className="text-label">Agent instructions</div>}
       {embedded && !expanded ? (

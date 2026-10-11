@@ -24,6 +24,15 @@ export function AgentQuickModel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef(false);
+  // Write-only environment selectors win over scalar model/provider settings.
+  // The full editor owns replacement and removal of those selectors.
+  if (agent.launchModelEnv || agent.launchProviderEnv) {
+    return (
+      <Button onClick={onConfigure} disabled={state.busy} variant="ghost">
+        Configure model
+      </Button>
+    );
+  }
   if (harnessPreset(agent.harness.command)) return null;
   // Codex validates model and effort as one draft; model-only immediate saves
   // cannot safely apply its configuration patches.

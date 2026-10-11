@@ -19,6 +19,7 @@ import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import type { ComposerInputElement } from "../features/messages/composer-dom";
+import { sidebarFixtureState } from "./sidebar-plugin.fixture";
 
 composerDOMFixture();
 
@@ -39,6 +40,10 @@ vi.mock("../bundled", async () => ({
     {
       manifest: { id: "buzz.profiles", name: "Profiles", apiVersion: 1 },
       module: await import("../bundled/profiles"),
+    },
+    {
+      manifest: { id: "test.sidebar", name: "Sidebar fixture", apiVersion: 1 },
+      module: await import("./sidebar-plugin.fixture"),
     },
   ],
 }));
@@ -71,6 +76,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   localStorage.clear();
+  sidebarFixtureState.broken = true;
+  sidebarFixtureState.onTarget = undefined;
   window.history.replaceState(null, "", "/");
 });
 
@@ -163,6 +170,231 @@ it("focuses an unavailable profile on first opening and returns focus after Esca
   await user.keyboard("{Escape}");
   await waitFor(() => expect(panel).not.toBeInTheDocument());
   expect(trigger).toHaveFocus();
+});
+
+it("renders an owned page sidebar with the current target and isolates its failure", async () => {
+  const user = await setup();
+  sidebarFixtureState.broken = true;
+  await act(async () => {
+    await services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "test.sidebar",
+      pageId: "main",
+      route: { version: 1, params: "first" },
+    });
+  });
+  expect(await screen.findByText("Beacon page content")).toBeVisible();
+  expect(
+    screen.getByRole("complementary", { name: "Beacon sidebar" }),
+  ).toHaveTextContent("main:first");
+  const sidebarDraft = screen.getByRole("textbox", { name: "Sidebar draft" });
+  await user.type(sidebarDraft, "keep this draft");
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Beacon sidebar" }),
+    ).getByRole("navigation", { name: "Pages" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Hide Beacon sidebar" }),
+  ).toBeVisible();
+
+  await act(async () => {
+    await services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "test.sidebar",
+      pageId: "main",
+      route: { version: 1, params: "second" },
+    });
+  });
+  expect(
+    await within(
+      screen.getByRole("complementary", { name: "Beacon sidebar" }),
+    ).findByText("main:second"),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toHaveValue(
+    "keep this draft",
+  );
+  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
+    sidebarDraft,
+  );
+
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await act(async () => {
+      await services?.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "broken-sidebar" },
+      });
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This page’s sidebar is unavailable.",
+    );
+    expect(screen.getByText("Beacon page content")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+
+    await act(async () => {
+      await services?.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "recovered" },
+      });
+    });
+    expect(
+      await screen.findByRole("complementary", { name: "Beacon sidebar" }),
+    ).toHaveTextContent("main:recovered");
+
+    await act(async () => {
+      await services?.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "plain",
+      });
+    });
+    expect(await screen.findByText("Plain page content")).toBeVisible();
+    expect(
+      screen.getByRole("complementary", { name: "Channel sidebar" }),
+    ).toBeVisible();
+
+    await act(async () => {
+      await services?.navigation.open({ version: 1, kind: "settings" });
+    });
+    expect(
+      await screen.findByRole("region", { name: "Settings" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("complementary", { name: "Settings sidebar" }),
+    ).toBeVisible();
+
+    await act(async () => {
+      await services?.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "broken",
+      });
+    });
+    expect(await screen.findByText("Broken Beacon page content")).toBeVisible();
+    const fallback = screen.getByRole("complementary", {
+      name: "Broken Beacon sidebar",
+    });
+    expect(fallback).toContainElement(within(fallback).getByRole("alert"));
+    expect(
+      within(fallback).getByRole("navigation", { name: "Pages" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Hide Broken Beacon sidebar" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
+
+    await act(async () => {
+      await services?.plugins.change("disable", "test.sidebar");
+    });
+    sidebarFixtureState.broken = false;
+    await act(async () => {
+      await services?.plugins.change("enable", "test.sidebar");
+    });
+    expect(
+      await screen.findByRole("complementary", {
+        name: "Recovered Beacon sidebar",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("Broken Beacon page content")).toBeVisible();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it.each([
+  {
+    name: "rejected route parameters",
+    params: 42,
+    scope: undefined,
+    reason: "unavailable",
+  },
+  {
+    name: "a foreign viewer",
+    params: "foreign-viewer",
+    scope: { viewer: recipient.pubkey, communityOrigin: origin },
+    reason: "denied",
+  },
+  {
+    name: "an unjoined community",
+    params: "unjoined-community",
+    scope: { viewer, communityOrigin: "https://other.example" },
+    reason: "denied",
+  },
+])("withholds a page sidebar for $name", async ({ params, scope, reason }) => {
+  await setup();
+  const current = services;
+  if (!current) throw new Error("Missing services");
+  const delivered = vi.fn();
+  sidebarFixtureState.onTarget = delivered;
+  await act(async () => {
+    expect(
+      await current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params },
+        ...(scope !== undefined ? { scope } : {}),
+      }),
+    ).toMatchObject({ status: "failed", reason });
+  });
+  expect(
+    await screen.findByRole("heading", {
+      name: "This destination couldn’t open",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Beacon page content")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("complementary", { name: "Beacon sidebar" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+  expect(delivered).not.toHaveBeenCalled();
+});
+
+it("delivers a page sidebar target only after selecting its personal scope", async () => {
+  await setup();
+  const current = services;
+  if (!current) throw new Error("Missing services");
+  const observed: {
+    selected: string | null;
+    relayScope: string | undefined;
+  }[] = [];
+  sidebarFixtureState.onTarget = () => {
+    observed.push({
+      selected: current.communities.snapshot().selected,
+      relayScope: current.relay.snapshot().scope,
+    });
+  };
+  await act(async () => {
+    expect(
+      await current.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "test.sidebar",
+        pageId: "main",
+        route: { version: 1, params: "personal-space" },
+        scope: null,
+      }),
+    ).toMatchObject({ status: "opened" });
+  });
+  expect(await screen.findByText("Beacon page content")).toBeVisible();
+  expect(observed.length).toBeGreaterThan(0);
+  for (const observation of observed) {
+    expect(observation.selected).toBeNull();
+    expect(observation.relayScope).toBeUndefined();
+  }
 });
 
 it("opens the viewer's community profile from the account menu avatar", async () => {

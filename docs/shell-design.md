@@ -45,12 +45,21 @@ semantic tokens, UI authoring rules and the local component reference.
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Presentation is keyed by full contribution identity, not plugin-local IDs.
 - `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
-  launchers, Settings access, community rail, and page frames. Page navigation sits
-  above the channel list outside Settings, using its saved sidebar width
+  launchers, Settings access, community rail, and page frames. A page may set
+  `Page.sidebar` to contribute in the shell's existing `shell-sidebar-default`
+  slot; when absent, `App.tsx` keeps the ChannelSidebar fallback. Page contributors
+  own their frame and local layout inside that slot. The host owns collapse and
+  narrow-drawer behavior. Supplied Pages navigation children are optional: Me uses
+  its own navigation instead, and page search still lists every active page. The
+  host delivers sidebar targets only after route validation and scope selection
+  are ready; rejected or waiting page targets retain neutral host page navigation.
+  A failed sidebar's alert and page destinations share a scrollport, keeping recovery
+  rows reachable at short heights and enlarged text. Me uses this same page-sidebar
+  contract. Page navigation sits above the channel list outside Settings, using its saved sidebar width
   and resize behavior. Settings replaces that region with `SettingsSidebar.tsx`,
   preserving the same width (220px minimum) and returning to the previous view
   with Back. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
-  through an ordinary render prop; there is no portal or plugin contract expansion.
+  through an ordinary render prop; there is no portal.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
@@ -60,8 +69,9 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, and desktop Settings share an animated header toggle; hiding
-  the sidebar preserves its mounted state and saved width. Reduced motion disables
+  Contributed-sidebar pages, Me, Messages, and desktop Settings share an animated
+  header toggle; hiding the sidebar preserves its mounted state and saved width.
+  Reduced motion disables
   the transition. Other desktop pages retain the visible sidebar.
   The same header keeps history and account/search actions, plus a centered
   navigation strip and full-page toolbar icons. Real control widths, native insets

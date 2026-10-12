@@ -850,6 +850,24 @@ function TabsSpecimen() {
           parts={TABS_PANEL_PARTS}
         />
       </section>
+      <SpecimenGroup
+        label="Segmented — equal-width choices for a compact picker"
+        code={`<Tabs
+  value={panelDestination}
+  items={DESTINATIONS}
+  label="Picker views"
+  onValueChange={setPanelDestination}
+  variant="segmented"
+/>`}
+      >
+        <Tabs
+          value={panelDestination}
+          items={DESTINATIONS}
+          label="Picker views"
+          onValueChange={setPanelDestination}
+          variant="segmented"
+        />
+      </SpecimenGroup>
       <section className="component-specimen-group">
         <h2 className="text-label text-primary">
           Chrome, with icons and a trailing action outside the selection

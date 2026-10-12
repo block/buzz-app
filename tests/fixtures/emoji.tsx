@@ -41,6 +41,23 @@ const viewer = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
 const long = new URLSearchParams(location.search).has("long");
+const gifs = new URLSearchParams(location.search).has("gifs");
+if (gifs) {
+  const networkFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const url = String(input);
+    if (/^\/api\/relay\/https%3A%2F%2F[ab]\.test\//.test(url)) {
+      if (url.endsWith("/gif-info"))
+        return Response.json({
+          supported_extensions: ["buzz-gif"],
+          gif: { provider: "klipy", search: "/gifs/search" },
+        });
+      if (url.endsWith("/gifs"))
+        return Response.json({ result: true, data: { data: [] } });
+    }
+    return networkFetch(input, init);
+  };
+}
 const participantProfiles = new Map([
   [viewer.pubkey, { name: "Fixture Reader" }],
   [member.pubkey, { name: "Fixture Member" }],
@@ -52,6 +69,7 @@ const report = {
 };
 const sessions = ["a", "b"].map((community) => {
   const origin = `https://${community}.test`;
+  const scope = gifs ? `${origin}:${viewer.pubkey}` : community;
   let time = 1,
     fail = false,
     rejectReaction = false,
@@ -101,7 +119,7 @@ const sessions = ["a", "b"].map((community) => {
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
-      scope: community,
+      scope,
       media: (url) =>
         url.includes("no-source")
           ? undefined
@@ -247,6 +265,7 @@ const sessions = ["a", "b"].map((community) => {
   return {
     ...owner,
     community,
+    scope,
     root,
     rows: foldMessages("c", relay.pubkey, [
       root,
@@ -366,6 +385,9 @@ function Fixture() {
         Toggle thread
       </button>
       <h1>Community {item.community}</h1>
+      {gifs && (
+        <p>Local preview. GIF search returns an empty fixture result.</p>
+      )}
 
       <section key={`${selected}/${messageRevision}`}>
         {(new URLSearchParams(location.search).has("reactions")
@@ -377,7 +399,7 @@ function Fixture() {
             key={row.id}
             row={row}
             session={item.session}
-            scope={item.community}
+            scope={item.scope}
             profile={{ name: "Fixture Reader" }}
             participantProfiles={participantProfiles}
             media={item.session.media}
@@ -390,7 +412,7 @@ function Fixture() {
       <MessageComposer
         extensions={extensions}
         session={item.session}
-        scope={item.community}
+        scope={item.scope}
         channelId="c"
         channelName="general"
         {...(thread ? { threadRootId: item.root.id } : {})}

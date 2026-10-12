@@ -43,7 +43,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const draft = () =>
       page.getByRole("textbox", { name: /Message #general|Reply to thread/ });
     const picker = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFs",
       exact: true,
     });
     await expect(
@@ -372,15 +372,13 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
     await expect(toneMenu).toBeVisible();
     await expect(toneMenu).toHaveCSS("z-index", "100");
-    // Mart's opening transform temporarily lifts the menu above its final edge.
-    // Measure the settled menu: its control-size offset meets the nav flush,
-    // which is non-overlapping but does not leave a strictly positive gap.
+    // Measure after Mart's opening transform settles below the top navigation.
     await expect(toneMenu).toHaveCSS("transform", "none");
     await expect(toneMenu).toHaveCSS("opacity", "1");
     const toneMenuBox = await toneMenu.boundingBox();
     const categoryNavigationBox = await categoryNavigation.boundingBox();
-    expect(toneMenuBox.y + toneMenuBox.height).toBeLessThanOrEqual(
-      categoryNavigationBox.y,
+    expect(toneMenuBox.y).toBeGreaterThanOrEqual(
+      categoryNavigationBox.y + categoryNavigationBox.height,
     );
     expect(
       await toneMenu.evaluate((menu) => {
@@ -456,8 +454,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         .getRootNode()
         .querySelector("#root")
         .getBoundingClientRect();
+      const navigationBounds = input
+        .getRootNode()
+        .querySelector("#nav")
+        .getBoundingClientRect();
       return {
-        top: searchBounds.top - rootBounds.top,
+        top: searchBounds.top - navigationBounds.bottom,
         left: searchBounds.left - rootBounds.left,
         right: rootBounds.right - searchBounds.right,
       };
@@ -651,11 +653,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       await expect
         .poll(() =>
           selectedCategory.evaluate((element) => {
-            const selected = getComputedStyle(element, "::before");
+            const selected = getComputedStyle(element, "::after");
             const other = element.parentElement.querySelector(
               "button:not([aria-selected])",
             );
-            const unselected = getComputedStyle(other, "::before");
             return (
               selected.content !== "none" &&
               selected.display !== "none" &&
@@ -663,7 +664,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
               parseFloat(selected.width) > 0 &&
               parseFloat(selected.height) > 0 &&
               selected.backgroundColor !== "rgba(0, 0, 0, 0)" &&
-              selected.backgroundColor !== unselected.backgroundColor
+              selected.backgroundColor === getComputedStyle(element).color &&
+              getComputedStyle(element).color !== getComputedStyle(other).color
             );
           }),
         )
@@ -699,7 +701,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     const rootBox = await surface.boundingBox();
     const navBox = await navigation.boundingBox();
-    expect(navBox.y).toBeGreaterThan(rootBox.y + rootBox.height / 2);
+    expect(navBox.y).toBeCloseTo(rootBox.y, 1);
     await search.fill("party");
     await expect(insert.locator("img")).toHaveAttribute(
       "src",
@@ -758,6 +760,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBeVisible();
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(draft()).toHaveJSProperty("value", ":aonly:😀");
+    await expect(region).toHaveCount(0);
     await draft().fill("before after");
     await draft().evaluate((el) => el.setSelectionRange(7, 7));
     await picker.press("Enter");

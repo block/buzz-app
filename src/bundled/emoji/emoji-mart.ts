@@ -114,7 +114,7 @@ export function mountEmojiMart({
     dynamicWidth: false,
     maxFrequentRows: 2,
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
-    navPosition: perLine < 6 ? "none" : "bottom",
+    navPosition: perLine < 6 ? "none" : "top",
     perLine,
     previewPosition: "none",
     set: "native",
@@ -175,7 +175,7 @@ export function mountEmojiMart({
       --em-color-border-over: var(--affordance-subtle-hover);
       --buzz-category-fill: var(--affordance-subtle-hover);
       --buzz-category-icon: var(--text-subtle);
-      --buzz-category-icon-selected: var(--text-standard);
+      --buzz-category-icon-selected: var(--text-link);
       --buzz-category-label: var(--text-subtle);
       background: var(--surface-popover);
       color: var(--text-standard);
@@ -291,7 +291,17 @@ export function mountEmojiMart({
       color: var(--buzz-category-icon-selected);
     }
     #nav button[aria-selected]::before {
-      background: var(--buzz-category-fill);
+      background: transparent;
+    }
+    #nav button[aria-selected]:not(.buzz-skin-tone-nav-button)::after {
+      position: absolute;
+      bottom: -0.6875rem;
+      left: 0;
+      right: 0;
+      height: 0.1875rem;
+      border-radius: var(--radius-pill);
+      background: var(--buzz-category-icon-selected);
+      content: "";
     }
     #nav .buzz-skin-tone-nav-button:hover::before,
     #nav .buzz-skin-tone-nav-button[aria-selected]::before {
@@ -321,9 +331,9 @@ export function mountEmojiMart({
       padding: var(--space-1);
       box-shadow: var(--shadow-sm);
       backdrop-filter: none;
-      top: auto !important;
+      top: var(--size-control) !important;
       right: 0.5rem !important;
-      bottom: var(--size-control) !important;
+      bottom: auto !important;
       left: auto !important;
       z-index: 100 !important;
       transform-origin: 100% 100%;

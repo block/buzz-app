@@ -671,6 +671,38 @@
     box-shadow: var(--shadow-xs);
   }
 
+  /* Compact media pickers use equal-width segments on a recessed header. */
+  .buzz-tabs[data-variant="segmented"] {
+    display: flex;
+    padding: var(--space-1);
+    border-radius: var(--radius-control);
+    background: var(--affordance-selected);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+    width: 100%;
+    gap: var(--space-1);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 2rem;
+    gap: var(--space-1h);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-row);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"]
+    .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+    top: 0;
+    bottom: 0;
+    border-radius: var(--radius-row);
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-xs);
+  }
+
   /* --- panel: an underline on a plain surface ---------------- */
 
   /* No container fill and no border: on a panel the tabs are text, and the only

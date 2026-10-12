@@ -12,6 +12,7 @@ import {
 import {
   SmileyIcon,
   SmileyPlusIcon,
+  ImagesIcon,
 } from "../../shared/design-system/icons/index";
 import {
   PopoverRoot,
@@ -249,13 +250,25 @@ export function EmojiPicker({
   const picker = (
     <div className={styles.emojiContent} data-tabs={showGifTab || undefined}>
       <Tabs
-        variant="panel"
+        variant="segmented"
         label="Media type"
         value={tab}
         onValueChange={setTab}
         items={[
-          { value: "emoji", label: "Emoji" },
-          ...(showGifTab ? [{ value: "gifs" as const, label: "GIF" }] : []),
+          {
+            value: "emoji",
+            label: "Emoji",
+            icon: <SmileyIcon size={16} aria-hidden="true" />,
+          },
+          ...(showGifTab
+            ? [
+                {
+                  value: "gifs" as const,
+                  label: "GIFs",
+                  icon: <ImagesIcon size={16} aria-hidden="true" />,
+                },
+              ]
+            : []),
         ]}
         renderPanel={(value) => (value === "emoji" ? emojiContent : gifContent)}
       />
@@ -284,8 +297,8 @@ export function EmojiPicker({
       shape={reaction ? "round" : "control"}
       ref={trigger}
       type="button"
-      aria-label={reaction ? "Add reaction" : "Insert emoji"}
-      title={reaction ? "Add reaction" : "Insert emoji"}
+      aria-label={reaction ? "Add reaction" : "Emoji and GIFs"}
+      title={reaction ? "Add reaction" : "Emoji and GIFs"}
       aria-busy={(gifDiscoveryRequested && gifs === undefined) || undefined}
       disabled={disabled}
       onPointerEnter={() => setGifDiscoveryRequested(true)}

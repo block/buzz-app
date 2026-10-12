@@ -86,7 +86,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     exact: true,
   });
   const emojiTrigger = page.getByRole("button", {
-    name: "Insert emoji",
+    name: "Emoji and GIFs",
     exact: true,
   });
   await draft.fill("unfinished draft");
@@ -95,9 +95,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const picker = page.getByRole("dialog", { name: "Emoji picker" });
   await expect(emojiTrigger).toHaveAttribute("aria-busy", "true");
   await expect(picker).toBeVisible();
-  await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("tab", { name: "GIFs", exact: true }),
+  ).toHaveCount(0);
   const initialEmojiSearch = page.getByRole("searchbox", {
     name: "Search emoji",
     exact: true,
@@ -114,14 +114,19 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   releaseInfo();
   await expect(emojiTrigger).not.toHaveAttribute("aria-busy", "true");
   await expect(
-    page.getByRole("tab", { name: "GIF", exact: true }),
+    page.getByRole("tab", { name: "GIFs", exact: true }),
   ).toBeVisible();
   await expect(picker).toBeVisible();
   await expect(picker).toHaveCSS("border-radius", "16px");
   await expect(picker).toHaveCSS("border-top-width", "1px");
   await expect(picker).not.toHaveCSS("box-shadow", "none");
   const emojiTab = page.getByRole("tab", { name: "Emoji", exact: true });
-  const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
+  const gifTab = page.getByRole("tab", { name: "GIFs", exact: true });
+  await expect(emojiTab.locator("svg")).toHaveClass(/tabler-icon-mood-smile/);
+  await expect(gifTab.locator("svg")).toHaveClass(/tabler-icon-library-photo/);
+  const emojiTabBox = await emojiTab.boundingBox();
+  const gifTabBox = await gifTab.boundingBox();
+  expect(emojiTabBox.width).toBeCloseTo(gifTabBox.width, 1);
   const emojiSearch = page.getByRole("searchbox", {
     name: "Search emoji",
     exact: true,
@@ -131,9 +136,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(emojiSearch.locator("..")).toHaveCSS("outline-style", "none");
   const emojiSearchFrame = await emojiSearch.locator("..").boundingBox();
   const emojiTabsBox = await picker.getByRole("tablist").boundingBox();
-  expect(emojiSearchFrame.x).toBeCloseTo(emojiTabsBox.x, 1);
+  expect(emojiSearchFrame.x - emojiTabsBox.x).toBeCloseTo(8, 1);
   expect(emojiSearchFrame.y - emojiTabsBox.y - emojiTabsBox.height).toBeCloseTo(
-    16,
+    56,
     1,
   );
   await expect(initialScroll).toHaveCSS(
@@ -146,13 +151,17 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     .locator("em-emoji-picker .scroll")
     .boundingBox();
   const emojiPickerBox = await picker.boundingBox();
-  const emojiFooterBox = await picker
+  const emojiNavigationBox = await picker
     .locator("em-emoji-picker #nav")
     .boundingBox();
   expect(
     emojiResultsBox.y - emojiSearchFrame.y - emojiSearchFrame.height,
   ).toBeCloseTo(12, 1);
-  expect(emojiFooterBox.height).toBeCloseTo(40, 1);
+  expect(emojiNavigationBox.height).toBeCloseTo(40, 1);
+  expect(emojiNavigationBox.y).toBeCloseTo(
+    emojiTabsBox.y + emojiTabsBox.height + 4,
+    1,
+  );
   await expect(emojiSearch).toBeFocused();
   // Discovering GIF support must not replace the focused vendor search.
   expect(await initialSearchNode.evaluate((node) => node.isConnected)).toBe(
@@ -167,6 +176,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(
     picker.getByRole("tabpanel", { name: "Emoji", exact: true }),
   ).toBeVisible();
+  await picker.screenshot({ path: testInfo.outputPath("emoji-picker.png") });
   await emojiSearch.fill("hello");
   // Base UI owns the tab keyboard model; the selected panel focuses its search.
   await emojiTab.focus();
@@ -175,14 +185,18 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await gifTab.press("Enter");
   await expect(gifTab).toHaveAttribute("aria-selected", "true");
   await expect(
-    picker.getByRole("tabpanel", { name: "GIF", exact: true }),
+    picker.getByRole("tabpanel", { name: "GIFs", exact: true }),
   ).toBeVisible();
   await expect(
     picker.getByRole("tabpanel", { name: "Emoji", exact: true }),
   ).toHaveCount(0);
   const tabIndicator = picker.locator(".buzz-tabs-indicator");
-  await expect(tabIndicator).toHaveCSS("height", "2px");
-  await expect(tabIndicator).toHaveCSS("background-color", "rgb(15, 15, 15)");
+  await expect(tabIndicator).toHaveCSS("height", "32px");
+  await expect(tabIndicator).toHaveCSS("border-radius", "8px");
+  await expect(tabIndicator).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");
@@ -241,7 +255,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("font-family", /Inter Variable/);
   const gifSearchPosition = await searchFrame.boundingBox();
   const tabListBox = await picker.getByRole("tablist").boundingBox();
-  expect(gifSearchPosition.x).toBeCloseTo(tabListBox.x, 1);
+  expect(gifSearchPosition.x - tabListBox.x).toBeCloseTo(8, 1);
   expect(gifSearchPosition.y - tabListBox.y - tabListBox.height).toBeCloseTo(
     16,
     1,
@@ -272,7 +286,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   expect(gifResultGutters.left).toBeCloseTo(12, 1);
   const gifResults = page.getByTestId("klipy-gif-grid").locator("..");
   const gifResultsBox = await gifResults.boundingBox();
-  expect(gifResultsBox.y).toBeCloseTo(emojiResultsBox.y, 1);
+  expect(emojiResultsBox.y - gifResultsBox.y).toBeCloseTo(40, 1);
   expect(gifResultsBox.height).toBeCloseTo(emojiResultsBox.height, 1);
   expect(await picker.boundingBox()).toEqual(emojiPickerBox);
   await expect(gifResults).toHaveCSS("scrollbar-width", "thin");
@@ -387,10 +401,10 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     await page.goto(app.origin);
     await openPage(page, "Messages");
     const trigger = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFs",
       exact: true,
     });
-    const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
+    const gifTab = page.getByRole("tab", { name: "GIFs", exact: true });
 
     // Hover/focus may prefetch. Hold that response through the opening click
     // so the click cannot accidentally become a retry of a completed request.
@@ -452,11 +466,11 @@ test.describe("GIF send roundtrip", () => {
       exact: true,
     });
     const trigger = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFs",
       exact: true,
     });
     await trigger.click();
-    const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
+    const gifTab = page.getByRole("tab", { name: "GIFs", exact: true });
     await expect(gifTab).toBeVisible();
     await gifTab.click();
     await page

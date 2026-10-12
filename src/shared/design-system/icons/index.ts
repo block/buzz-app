@@ -234,6 +234,8 @@ import TablerSlackLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandSla
 export const SlackLogoIcon = defineIcon("tabler", TablerSlackLogoIcon);
 import TablerSmileyIcon from "@tabler/icons-react/dist/esm/icons/IconMoodSmile.mjs";
 export const SmileyIcon = defineIcon("tabler", TablerSmileyIcon);
+import TablerImagesIcon from "@tabler/icons-react/dist/esm/icons/IconLibraryPhoto.mjs";
+export const ImagesIcon = defineIcon("tabler", TablerImagesIcon);
 import TablerSmileyPlusIcon from "@tabler/icons-react/dist/esm/icons/IconMoodPlus.mjs";
 export const SmileyPlusIcon = defineIcon("tabler", TablerSmileyPlusIcon);
 import TablerSmileyStickerIcon from "@tabler/icons-react/dist/esm/icons/IconSticker2.mjs";

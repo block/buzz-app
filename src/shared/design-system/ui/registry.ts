@@ -540,9 +540,9 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, workspace for combined panes, or navigation for 12rem tabs with icons or avatars. Closable tabs provide a sibling close button and support Delete. The caller owns selection, retained content, and the next selection after closing.",
+      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, segmented for compact equal-width choices, workspace for combined panes, or navigation for 12rem tabs with icons or avatars. Closable tabs provide a sibling close button and support Delete. The caller owns selection, retained content, and the next selection after closing.",
     behavior: "Base UI Tabs.",
-    variants: ["chrome", "panel", "workspace", "navigation"],
+    variants: ["chrome", "panel", "segmented", "workspace", "navigation"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

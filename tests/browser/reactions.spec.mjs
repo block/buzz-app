@@ -89,8 +89,12 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       .getRootNode()
       .querySelector("#root")
       .getBoundingClientRect();
+    const navigation = input
+      .getRootNode()
+      .querySelector("#nav")
+      .getBoundingClientRect();
     return {
-      top: field.top - picker.top,
+      top: field.top - navigation.bottom,
       left: field.left - picker.left,
       right: picker.right - field.right,
     };
@@ -98,9 +102,9 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   expect(padding.top).toBeCloseTo(padding.left, 1);
   expect(padding.top).toBeCloseTo(padding.right, 1);
   await expect(search.locator("..")).toHaveCSS("border-radius", "159984px");
-  await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("tab", { name: "GIFs", exact: true }),
+  ).toHaveCount(0);
   await search.press("Escape");
   await expect(search).toHaveCount(0);
   await expect(plus).toBeFocused();

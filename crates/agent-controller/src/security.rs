@@ -210,6 +210,7 @@ impl Controller {
         protected_paths.push(std::env::current_exe().map_err(|_| "Cannot locate host executable")?);
         let context = json!({"version":2, "providerDirectory":directory,
             "policy":binding.policy,"relayUrl":agent.relay_url,"workspace":agent.workspace,
+            "agent":{"id":agent.id,"pubkey":agent.pubkey,"name":agent.name},
             "protectedPaths":protected_paths});
         let path = control.join("launch-protection.json");
         let launcher = control.join("launcher");

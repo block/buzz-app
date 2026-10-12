@@ -1,6 +1,7 @@
 import type { PluginModule } from "../../plugins/api";
 import { SessionsPage } from "../sessions/SessionsPage";
 import { isMeRoute } from "./routes";
+import { MeSidebar } from "./MeSidebar";
 
 export const inject = [
   "pages",
@@ -20,6 +21,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     placement: "topbar",
     layout: "workspace",
     companion: true,
+    sidebar: ({ target }) => (
+      <MeSidebar relay={relay} navigator={navigator} target={target} />
+    ),
     route: { version: 1, validate: isMeRoute },
     component: ({ navigation, companion }) => (
       <div className="flex h-full min-h-0 flex-col">

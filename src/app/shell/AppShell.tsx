@@ -82,6 +82,10 @@ export function AppShell({
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
+  const selectedPage = pages.find((page) => page.key === selected);
+  const selectedSidebarTitle = selectedPage?.sidebar
+    ? selectedPage.title
+    : undefined;
   const channelsNavigation =
     selected === "buzz.channels/channels" || selected === "buzz.agents/agents";
   const [narrow, setNarrow] = useState(
@@ -94,9 +98,10 @@ export function AppShell({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const meNavigation = selected === "buzz.me/me";
   const collapsibleSidebar =
-    channelsNavigation || meNavigation || selected === "settings";
+    channelsNavigation ||
+    selected === "settings" ||
+    selectedSidebarTitle !== undefined;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
@@ -106,8 +111,8 @@ export function AppShell({
       ? "Hide navigation"
       : "Show navigation"
     : sidebarOpen
-      ? `Hide ${meNavigation ? "Me" : "Channel"} sidebar`
-      : `Show ${meNavigation ? "Me" : "Channel"} sidebar`;
+      ? `Hide ${selectedSidebarTitle ?? "Channel"} sidebar`
+      : `Show ${selectedSidebarTitle ?? "Channel"} sidebar`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a navigation attempt closes the drawer.
   useEffect(() => {
     if (navigationOpen && navigationToggle.current?.getClientRects().length) {

@@ -12,10 +12,18 @@ export function contributionKey(entry: object) {
   return key;
 }
 export class ContributionBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { failed: boolean }
+  { children: ReactNode; fallback: ReactNode; resetIdentity?: unknown },
+  { failed: boolean; resetIdentity?: unknown }
 > {
-  state = { failed: false };
+  state = { failed: false, resetIdentity: this.props.resetIdentity };
+  static getDerivedStateFromProps(
+    props: ContributionBoundary["props"],
+    state: ContributionBoundary["state"],
+  ) {
+    if (props.resetIdentity !== state.resetIdentity)
+      return { failed: false, resetIdentity: props.resetIdentity };
+    return null;
+  }
   static getDerivedStateFromError() {
     return { failed: true };
   }

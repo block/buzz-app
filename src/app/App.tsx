@@ -1,6 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { IdentitySetup } from "../features/identity/IdentitySetup";
-import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -31,6 +30,8 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
+import { OwnedContribution } from "../plugins/OwnedContribution";
+import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -129,6 +130,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const ownProfile =
     client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
+  // A registration lookup does not admit the target's parameters and scope.
+  const pageSidebarReady =
+    startup === "ready" &&
+    !route.waiting &&
+    !route.failure &&
+    route.state.status !== "failed";
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -177,12 +184,37 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   });
                 }}
               />
-            ) : route.selected === "buzz.me/me" ? (
-              <MeSidebar
-                relay={services.relay}
-                navigator={services.navigation}
-                target={route.target}
-              />
+            ) : route.page?.sidebar && pageSidebarReady ? (
+              <OwnedContribution
+                entry={route.page}
+                registry={services.pages}
+                resetIdentity={route.request}
+                fallback={
+                  <div className="shell-sidebar-default">
+                    <SidebarFrame label={`${route.page.title} sidebar`}>
+                      <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 pb-1.5">
+                        <p role="alert">This page’s sidebar is unavailable.</p>
+                        {pageNavigation}
+                      </div>
+                    </SidebarFrame>
+                  </div>
+                }
+              >
+                {(entry) => {
+                  const Sidebar = entry.sidebar;
+                  return Sidebar ? (
+                    <Sidebar target={route.target}>{pageNavigation}</Sidebar>
+                  ) : null;
+                }}
+              </OwnedContribution>
+            ) : route.page?.sidebar ? (
+              <div className="shell-sidebar-default">
+                <SidebarFrame label="Page navigation">
+                  <div className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 pb-1.5">
+                    {pageNavigation}
+                  </div>
+                </SidebarFrame>
+              </div>
             ) : (
               <ChannelSidebar
                 relay={services.relay}

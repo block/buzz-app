@@ -74,13 +74,16 @@ bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
-The host composes the channel sidebar beside independently mounted pages, with
-Settings and Me supplying their own sidebar contents. Me currently has an empty
-sidebar sharing the channel sidebar's frame and saved width. The channel sidebar reuses
+The host composes the Channels sidebar beside independently mounted pages. Settings
+has its own host-owned navigation; a selected page can replace the Channels sidebar
+through its optional `sidebar` contribution. Me uses this contract and retains its
+existing sidebar frame and saved width. The channel sidebar reuses
 session-owned roster, unread, creation and preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
-have separate boundaries. Sidebar presentation helpers currently remain importable
-from `bundled/channels`; no public sidebar contribution contract is introduced.
+have separate boundaries. A page sidebar is isolated by the same owned-contribution
+boundary, so a failure falls back to a concise alert without taking down the page,
+Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
+the page owns its sidebar content and local interaction state.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -97,7 +100,7 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
@@ -117,6 +120,48 @@ ctx.pages.register({
   primary: true,
   placement: "toolbar",
   component: Dashboard,
+});
+```
+
+A page may replace the Channels sidebar while selected. Its component receives
+the current read-only `OpenTarget` and, when present, shell-generated primary
+Pages navigation as `children`. It supplies only its sidebar contents within the
+existing sidebar slot. Wrap that content in the existing `shell-sidebar-default`
+layout role to receive the default sidebar width and shell sizing constraints
+(260px default width, 220px minimum, with the shell's available-width clamp). That
+role provides outer slot geometry and its divider; it does not provide an inner
+surface, frame, padding, or content layout. The contributor owns those details.
+External authors use this CSS role and their own markup; internal source components
+such as `SidebarFrame` are not part of the author SDK. The host owns the slot and
+collapse/drawer interaction. A page may manage its own width preference; Me retains
+its existing Me-specific behavior. Pages do not receive navigation completion
+authority or own routing. On wide layouts the shell labels its toggle with the page title;
+on narrow layouts the existing Show/Hide navigation drawer, focus handoff, Escape,
+inert, and ARIA behavior remain shell-owned. Pages without `sidebar` continue to
+use Channels. The host isolates sidebar rendering with `OwnedContribution`; a
+throwing sidebar shows a concise alert inside the standard fallback frame while
+the selected page and shell remain usable.
+
+```tsx
+import type { PageSidebarProps } from "@buzz/author";
+
+function ActivitySidebar({ target, children }: PageSidebarProps) {
+  return (
+    <div className="shell-sidebar-default">
+      <aside className="activity-sidebar" aria-label="Activity sidebar">
+        <header>Activity</header>
+        <p>Current destination: {target.kind}</p>
+        {children}
+      </aside>
+    </div>
+  );
+}
+
+ctx.pages.register({
+  id: "activity",
+  title: "Activity",
+  component: ActivityPage,
+  sidebar: ActivitySidebar,
 });
 ```
 

@@ -75,8 +75,19 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const me = services.pages
       .snapshot()
       .find((page) => page.key === "buzz.me/me");
+    const renderMeSidebar = (page) =>
+      renderToStaticMarkup(
+        createElement(page.sidebar, {
+          target: { version: 1, kind: "home" },
+        }),
+      );
     assert.equal(me.primary, true);
     assert.equal(me.placement, "topbar");
+    assert.match(renderMeSidebar(me), /aria-label="Me sidebar"/);
+    assert.match(
+      renderMeSidebar(me),
+      /Connect to a community to see your conversations\./,
+    );
     assert.match(
       renderToStaticMarkup(createElement(me.component)),
       /Connect to a community to work with your agents\./,
@@ -96,6 +107,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.ok(
         services.pages.snapshot().some((page) => page.key === "buzz.me/me"),
       ),
+    );
+    const reenabledMe = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.me/me");
+    assert.match(renderMeSidebar(reenabledMe), /aria-label="Me sidebar"/);
+    assert.match(
+      renderMeSidebar(reenabledMe),
+      /Connect to a community to see your conversations\./,
     );
     await services.plugins.change("disable", "buzz.me");
     const inbox = services.pages

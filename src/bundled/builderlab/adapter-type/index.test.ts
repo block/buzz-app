@@ -33,11 +33,7 @@ async function fixture(subject = "account-a") {
   await session.signIn();
   const request = vi.fn<Host["request"]>();
   const host: Host = { runCommand: vi.fn(), request };
-  const client = createAgentClient(
-    host,
-    session,
-    () => "wss://selected.example",
-  );
+  const client = createAgentClient(host, session);
   const type = builderlabType(client, session);
   if (!type.remote) throw new Error("Missing hosted adapter");
   return {

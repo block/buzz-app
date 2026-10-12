@@ -62,11 +62,7 @@ function fixture() {
     account: { subject, email: "a@example.com" },
   }));
   const request = vi.fn<Host["request"]>().mockResolvedValue(response());
-  const client = createAgentClient(
-    { request, runCommand: vi.fn() },
-    session,
-    () => agent().relay,
-  );
+  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   const Tab = builderlabType(client, session).tabs?.[0]?.component;
   if (!Tab) throw new Error("Missing Instructions tab");
   return {

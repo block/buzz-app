@@ -22,13 +22,10 @@ import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
-import { createOAuthSession } from "./oauth/session";
 import type { OAuthCallback } from "./oauth/browser";
 import { deferred } from "./test-helpers";
-import { enrollmentFixture } from "./agents/enrollment-testing";
+import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
-import { createNameProvider } from "../../features/identity-names/directory";
-import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -56,7 +53,7 @@ afterEach(() => {
 
 function provideAgents(
   root: Context,
-  community: ReturnType<typeof enrollmentFixture>,
+  community: ReturnType<typeof communityFixture>,
 ) {
   const communities = {
     ...community.reader,
@@ -90,14 +87,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     const cards = new SettingsCardsService(root);
-    const community = enrollmentFixture(
-      createOAuthSession(async () => {
-        throw new Error("unused");
-      }),
-      null,
-    );
-    root.provide("relay", community.relay);
-    root.provide("communityReader", community.reader);
+    const community = communityFixture(null);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -200,13 +190,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       if (name === "Browser") browserCreated = true;
       result = {
         status: 1,
-        agent_id: name === "Browser" ? "browser" : hosted ? "hosted" : "one",
-        agent_pubkey:
-          name === "Browser"
-            ? browserKey
-            : hosted
-              ? hostedKey
-              : "ab".repeat(32),
+        agent_id: hosted ? "hosted" : "browser",
+        agent_pubkey: hosted ? hostedKey : browserKey,
       };
     } else if (url.endsWith("/attest-agent")) {
       result = { status: 1 };
@@ -225,13 +210,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
-  const community = enrollmentFixture(
-    createOAuthSession(async () => {
-      throw new Error("unused");
-    }),
-  );
-  root.provide("relay", community.relay);
-  root.provide("communityReader", community.reader);
+  const community = communityFixture();
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
@@ -278,65 +257,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
       "private-token",
     );
-    await user.type(
-      screen.getByRole("textbox", { name: "Agent name" }),
-      "Helper",
-    );
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
-    expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
-    expect(
-      await screen.findByText("Registration confirmed in this community."),
-    ).toBeInTheDocument();
-    expect(community.events).toHaveLength(1);
-    expect(community.events[0]).toMatchObject({
-      pubkey: community.viewer,
-      kind: 30177,
-      content: JSON.stringify({
-        name: "Helper",
-        parallelism: 1,
-        respond_to: "owner-only",
-      }),
-    });
-    expect(community.events[0]?.tags).toContainEqual(["d", "ab".repeat(32)]);
-    const relaySession = community.relay.snapshot().session;
-    const names = createNameProvider({
-      id: "agents",
-      resolve: resolveIdentityNames,
-    });
-    expect(
-      names.scope({
-        agentLibrary: relaySession.agentLibrary,
-        profiles: relaySession.profiles,
-        viewer: community.viewer,
-        relayUrl: "https://community.example",
-      })("ab".repeat(32)),
-    ).toEqual({ name: "Helper" });
-    expect(
-      community.relay.snapshot().session.agentChoices.snapshot().selectable,
-    ).toEqual([{ pubkey: "ab".repeat(32), name: "Helper", managed: false }]);
-    expect(native.invoke).toHaveBeenCalledWith(
-      "identity_prepare_remote_agent_authorization",
-      { owner: community.viewer, agentPubkey: "ab".repeat(32) },
-    );
-    const mutations = native.invoke.mock.calls
-      .filter(
-        ([command, input]) =>
-          command === "plugin_host_request" &&
-          /\/(register|attest)-agent$/.test(input.request.url),
-      )
-      .map(([, input]) => input);
-    expect(mutations).toHaveLength(2);
-    expect(JSON.parse(mutations[1].request.body).community_url).toBe(
-      "wss://community.example",
-    );
-    expect(
-      mutations.every(
-        (input) =>
-          input.id === "block.builderlab" && input.revision === "bundled",
-      ),
-    ).toBe(true);
-    // The same signed-in plugin also serves Agents' hosted lifecycle, without
-    // the Settings enrollment path creating a second community registration.
     // Both writes happen after Beekeeper has returned the identity. Neither
     // failure may turn a retry into a second backend creation.
     for (const failedKey of [
@@ -378,7 +298,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(agents.find(hostedKey)?.unfinished).toBeUndefined();
     expect(
       community.events.filter((event) => event.kind === 30177),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(community.events.at(-1)?.tags).toContainEqual([
       "runtime",
       "block.builderlab/builderlab",

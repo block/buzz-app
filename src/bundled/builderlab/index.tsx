@@ -1,4 +1,3 @@
-import { communityDestination } from "../../features/communities/destination";
 import type { PluginModule } from "../../plugins/api";
 import { Login } from "./login/Login";
 import {
@@ -9,16 +8,9 @@ import {
 import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
-import { createEnrollment } from "./agents/enrollment";
 import { builderlabType } from "./adapter-type";
 
-export const inject = [
-  "host",
-  "settingsCards",
-  "relay",
-  "communityReader",
-  "agents",
-];
+export const inject = ["host", "settingsCards", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -35,14 +27,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
-  const agents = createAgentClient(ctx.host, session, () => {
-    const selected = ctx.communityReader.snapshot().selected;
-    return selected
-      ? communityDestination(selected).url.replace(/^https:/, "wss:")
-      : undefined;
-  });
+  const agents = createAgentClient(ctx.host, session);
   if (!unavailable) ctx.agents.register(builderlabType(agents, session));
-  const enrollment = createEnrollment(ctx.relay, ctx.communityReader, session);
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
@@ -59,12 +45,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           }
           active={active}
         />
-        <RemoteAgents
-          client={agents}
-          session={session}
-          enrollment={enrollment}
-          active={active}
-        />
+        <RemoteAgents client={agents} session={session} active={active} />
       </>
     ),
   });

@@ -47,11 +47,7 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   return "Unknown";
 }
 
-export function createAgentClient(
-  host: Host,
-  session: OAuthSession,
-  communityUrl: () => string | undefined,
-) {
+export function createAgentClient(host: Host, session: OAuthSession) {
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
     if (
@@ -126,9 +122,7 @@ export function createAgentClient(
       signal,
     );
     if (![1, "ACTIVE"].includes(resultStatus(result.status)))
-      throw new Error(
-        "Agent setup was not confirmed. Use Finish setup to try again.",
-      );
+      throw new Error("Agent setup was not confirmed. Retry setup in Agents.");
   }
   return {
     activate,
@@ -175,7 +169,7 @@ export function createAgentClient(
       signal: AbortSignal,
       /** Retains the provisioned identity and owns completion of its replay
        * intent. A throw leaves the UUID available for retry. */
-      retainRegistration?: (
+      retainRegistration: (
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
@@ -253,40 +247,8 @@ export function createAgentClient(
       };
       // Hosted provisioning keeps replay until Agents has durably saved setup.
       check(credential, signal);
-      if (retainRegistration) retainRegistration(agent, intent);
-      else clearRegistration(intent);
+      retainRegistration(agent, intent);
       return agent;
-    },
-    async attest(
-      agent: RemoteAgent,
-      signal: AbortSignal,
-      active: () => boolean,
-      owner?: string,
-    ): Promise<RemoteAgent> {
-      signal.throwIfAborted();
-      if (!active())
-        throw new DOMException("Builderlab card is inactive.", "AbortError");
-      const credential = session.credential();
-      const community = communityUrl();
-      if (!host.prepareRemoteAgentAuthorization)
-        throw new Error(
-          "Remote agent authorization is unavailable in this Buzz build.",
-        );
-      const tag = await host.prepareRemoteAgentAuthorization(
-        agent.pubkey,
-        signal,
-      );
-      check(credential, signal);
-      if (!active())
-        throw new DOMException("Builderlab card is inactive.", "AbortError");
-      if (communityUrl() !== community)
-        throw new Error("Community changed. Use Finish setup to try again.");
-      if (owner && tag[1] !== owner)
-        throw new Error(
-          "Agent authorization and community identities differ. Retry with the same Buzz identity.",
-        );
-      await activate(agent.pubkey, tag, community, signal);
-      return { ...agent, status: "Active" };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
       const result = await request(

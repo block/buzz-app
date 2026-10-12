@@ -503,7 +503,8 @@ export function useConversationTabs({
                 event.key === "Escape" &&
                 !event.nativeEvent.isComposing &&
                 event.nativeEvent.keyCode !== 229 &&
-                !event.defaultPrevented
+                !event.defaultPrevented &&
+                event.currentTarget.contains(event.target as Node)
               ) {
                 event.stopPropagation();
                 closeConversationTab(tab.id);

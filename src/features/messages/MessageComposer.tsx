@@ -116,7 +116,11 @@ type AcceptedDraft = {
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
 const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
-type RecoveredSend = { draft: MentionDraft; preparationError?: unknown };
+type RecoveredSend = {
+  draft: MentionDraft;
+  picks?: MentionPicks;
+  preparationError?: unknown;
+};
 const recoveryListeners = new WeakMap<
   RelaySession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
@@ -605,43 +609,61 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
-  const reconcileDraft = useEffectEvent((restored?: MentionDraft) => {
-    if (submission || editing.target || writing.current) return;
-    if (accepted) {
-      // The recovered revision can precede attachment adoption. The explicit
-      // recovery notification below reconciles the mounted owner afterward.
-      if (recoveryFor(session).get(recoveryKey) === accepted) return;
-      const current = viewRevision(scope, draftKey);
-      if (current !== undefined) {
-        setAccepted(undefined);
-        loadSaved(current);
+  // Picks belong to the recovered revision alone. They return whenever the
+  // composer holds it unedited, never to a later edit that keeps a conflict.
+  const reconcileDraft = useEffectEvent(
+    (restored?: MentionDraft, picks?: MentionPicks) => {
+      if (submission || editing.target || writing.current) return;
+      if (accepted) {
+        // The recovered revision can precede attachment adoption. The explicit
+        // recovery notification below reconciles the mounted owner afterward.
+        if (recoveryFor(session).get(recoveryKey) === accepted) return;
+        const current = viewRevision(scope, draftKey);
+        if (current !== undefined) {
+          setAccepted(undefined);
+          loadSaved(current);
+          if (restored && current === JSON.stringify(restored))
+            setPicks(picks ?? {});
+        }
+        return;
       }
-      return;
-    }
-    const current = viewRevision(scope, draftKey);
-    if (current === undefined || current === revision.current) return;
-    // An explicit successful recovery may replace only the cleared follow-up,
-    // never a meaningful unsaved edit. Ordinary external revisions keep their
-    // conflict behavior.
-    if (
-      restored &&
-      current === JSON.stringify(restored) &&
-      !valueRef.current.text.trim() &&
-      !valueRef.current.recipients.length &&
-      !composerMarkdown(valueRef.current).trim() &&
-      !sendAttempt.current
-    )
-      loadSaved(current);
-    else if (dirty.current || sendAttempt.current) setConflict(true);
-    else loadSaved(current);
-  });
+      const current = viewRevision(scope, draftKey);
+      if (current === undefined) return;
+      const recovering = !!restored && current === JSON.stringify(restored);
+      if (current === revision.current) {
+        // The storage listener usually loads the recovered revision before
+        // its notification arrives.
+        if (recovering && !dirty.current) setPicks(picks ?? {});
+        return;
+      }
+      // An explicit successful recovery may replace only the cleared follow-up,
+      // never a meaningful unsaved edit. Ordinary external revisions keep their
+      // conflict behavior.
+      if (
+        recovering &&
+        !valueRef.current.text.trim() &&
+        !valueRef.current.recipients.length &&
+        !composerMarkdown(valueRef.current).trim() &&
+        !sendAttempt.current
+      )
+        loadSaved(current);
+      else if (dirty.current || sendAttempt.current) {
+        setConflict(true);
+        return;
+      } else loadSaved(current);
+      if (recovering) setPicks(picks ?? {});
+    },
+  );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(scope, () => reconcileDraft());
     // Reconcile changes while message-edit mode or mounting paused this listener.
-    reconcileDraft(deferredRecovery.current?.draft);
+    reconcileDraft(
+      deferredRecovery.current?.draft,
+      deferredRecovery.current?.picks,
+    );
     if (!editingDraft && deferredRecovery.current) {
       takeMissedPreparation(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
@@ -651,7 +673,7 @@ function Composer({
   }, [scope, submission, editingDraft, session, recoveryKey]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
     if (editing.target) deferredRecovery.current = recovered;
-    reconcileDraft(recovered.draft);
+    reconcileDraft(recovered.draft, recovered.picks);
     if (!editing.target) {
       takeMissedPreparation(session, recoveryKey);
       setError(errorForRecovery(recovered.preparationError));
@@ -1257,8 +1279,11 @@ function Composer({
               return false;
             if (!target.adopt(files)) return false;
             recoveryFor(session).delete(recoveryKey);
+            // The whole captured pick set returns with the whole draft; the
+            // recipient filter above applies again on the next send.
             notifyRecovered(session, recoveryKey, {
               draft: captured,
+              picks: capturedPicks,
               preparationError,
             });
             return true;

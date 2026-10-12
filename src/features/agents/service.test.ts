@@ -448,6 +448,43 @@ it("brings over an identity not already an agent, with its type's defaults and w
   ).rejects.toThrow("That agent type is not available");
 });
 
+it("imports a shared agent as a new identity with its name and picture, adopting its instructions", async () => {
+  const { service, native } = await setup();
+  const agent = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: " Baymax ",
+    picture: "https://example.test/baymax.png",
+    instructions: "Open drafts only.",
+  });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Baymax",
+  );
+  expect(native.port).not.toHaveBeenCalled();
+  expect(native.setPicture).toHaveBeenCalledWith(
+    agent.pubkey,
+    "https://example.test/baymax.png",
+  );
+  expect(agent).toMatchObject({
+    name: "Baymax",
+    picture: "https://example.test/baymax.png",
+    config: { reply: "Open drafts only." },
+  });
+  // Without instructions it starts from the type's defaults.
+  const plain = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Plain",
+  });
+  expect(plain.config).toEqual({ reply: "ok" });
+  await expect(
+    service.port({ source: "shared", type: "example/echo", name: "  " }),
+  ).rejects.toThrow("Name the agent");
+});
+
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

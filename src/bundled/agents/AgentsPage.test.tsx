@@ -285,10 +285,10 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("tab", { name: "Import" }));
   const list = await screen.findByRole("region", { name: "Agents to import" });
-  expect(
-    within(list).getByText(/Buzz 1\.0 harness agent · npub/),
-  ).toBeInTheDocument();
-  expect(within(list).getByText(/Buzz 0\.X · npub/)).toBeInTheDocument();
+  // Names are unique here, so each card shows only where it comes from.
+  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
+  expect(within(list).getByText("Buzz 0.X")).toBeInTheDocument();
+  expect(within(list).queryByText(/npub/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Import Bea" }));
   expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
@@ -299,6 +299,23 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
     "aria-selected",
     "true",
   );
+});
+
+it("tells same-named agents to import apart by their keys", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [
+      ...portable,
+      { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
+    ],
+    warnings: [],
+  });
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const list = await screen.findByRole("region", { name: "Agents to import" });
+  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
+  expect(within(list).getByText(/^Buzz 0\.X · npub…/)).toBeInTheDocument();
+  expect(within(list).getByText(/^Buzz 0\.X dev · npub…/)).toBeInTheDocument();
 });
 
 it("imports agents only as a type that runs here", async () => {

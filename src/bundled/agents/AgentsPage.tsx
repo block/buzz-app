@@ -55,7 +55,9 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
+  canonicalPublicKey,
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
@@ -121,6 +123,8 @@ export function AgentsPage({
       setFrame({ view: "build", pubkey });
   };
   const ready = types.length > 0 && snapshot.status === "ready";
+  // Importing gives an agent a key here, so a hosted type cannot take one.
+  const runnable = types.filter((type) => !type.remote);
   const openTeams = () => setFrame({ view: "browse", side: "teams" });
 
   const yours = (() => {
@@ -219,11 +223,16 @@ export function AgentsPage({
               ) : tab === "import" ? (
                 <ImportAgents
                   agents={agents}
-                  types={types.filter((type) => !type.remote)}
+                  types={runnable}
                   onImported={() => setTab("yours")}
                 />
               ) : (
-                <AgentBrowse relay={relay} />
+                <AgentBrowse
+                  relay={relay}
+                  agents={agents}
+                  types={runnable}
+                  onImported={() => setTab("yours")}
+                />
               )}
             </section>
           </div>
@@ -582,6 +591,9 @@ function ImportAgents({
   }, [agents]);
   const chosen = types.find((item) => item.key === type) ?? types[0];
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
+  const named = new Map<string, number>();
+  for (const agent of found?.agents ?? [])
+    named.set(agent.name, (named.get(agent.name) ?? 0) + 1);
   const port = async (agent: PortableAgent) => {
     if (!chosen || pending) return;
     setPending(agent.pubkey);
@@ -662,13 +674,30 @@ function ImportAgents({
               key={agent.pubkey}
               agent={agent}
               community={agent.relay || undefined}
-              detail={[
-                SOURCES[agent.source],
-                labels.get(agent.pubkey),
-                agent.relay && host(agent.relay),
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              detail={
+                <Tooltip
+                  content={[
+                    canonicalPublicKey(agent.pubkey),
+                    agent.relay && host(agent.relay),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  delay={300}
+                >
+                  <span
+                    // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
+                    tabIndex={0}
+                  >
+                    {[
+                      SOURCES[agent.source],
+                      // Its key tells it apart only from one of the same name.
+                      named.get(agent.name) !== 1 && labels.get(agent.pubkey),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </Tooltip>
+              }
             >
               <Button
                 size="compact"

@@ -381,7 +381,21 @@ export function createThreadView({
       if (!active()) return "cancelled";
       if (!stage(union(pending, related(tombstones, id)))) return "error";
     }
-    const accepted = acceptTarget(pending);
+    // Live deletions received while reads were held are retained only by this
+    // reader; admit them with the fold so every reader withdraws the overlay.
+    const staging = new Set(pending.map((event) => event.id));
+    const accepted = acceptTarget(
+      union(
+        pending,
+        remote.filter(
+          (event) =>
+            (event.kind === 5 || event.kind === 9005) &&
+            event.tags.some(
+              ([name, value]) => name === "e" && staging.has(value ?? ""),
+            ),
+        ),
+      ),
+    );
     if (!active()) return "cancelled";
     if (!accepted.some((event) => event.id === id)) {
       stage([]);

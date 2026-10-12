@@ -710,6 +710,10 @@ it.each(["finite", "live"] as const)(
     const { loading } = await targetRead(h);
     h.next().respond([root]);
     await loading;
+    const other = h.session.thread("a", root.id);
+    const refresh = other.refresh();
+    h.next().respond([root]);
+    await refresh;
     const candidate = message(alice, "a", "Original candidate", 90, [
       ["e", root.id, "", "reply"],
     ]);
@@ -735,10 +739,15 @@ it.each(["finite", "live"] as const)(
         content: candidate.content,
         reactions: [],
       });
+      // Shared admission must carry the deletion to a reader that never saw it.
+      expect(
+        other.snapshot().replies.find((row) => row.id === candidate.id),
+      ).toMatchObject({ content: candidate.content, reactions: [] });
     } finally {
       cancel.abort();
       tombstones.respond([]);
       await selecting;
+      other.dispose();
     }
   },
 );

@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { createRelaySession } from "./session";
+import { createThreadView } from "./threads";
 import { ReadError } from "./errors";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
@@ -623,4 +624,160 @@ it("a failed retarget cannot strand a pending missing-target repair in loading",
     targetStatus: "ready",
     target: { id: reply.id },
   });
+});
+
+// Exercise the session's real synchronous reconciliation, not a stubbed admission
+// callback: a bare candidate must not leak to this or another owned reader.
+it.each(["selected", "error", "cancelled"] as const)(
+  "retarget holds a new candidate out of published replies through held overlays: %s",
+  async (outcome) => {
+    const h = setup();
+    const { loading } = await targetRead(h);
+    h.next().respond([root]);
+    await loading;
+    const other = h.session.thread("a", root.id);
+    const refresh = other.refresh();
+    h.next().respond([root]);
+    await refresh;
+    const candidate = message(alice, "a", "Bare candidate", 90, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const observed: string[] = [];
+    const stop = h.view.subscribe(() => {
+      const row = h.view
+        .snapshot()
+        .replies.find((row) => row.id === candidate.id);
+      if (row) observed.push(row.content);
+    });
+    const cancel = new AbortController();
+    const selecting = h.view.retarget(candidate.id, cancel.signal);
+    h.next().respond([candidate]);
+    await flush();
+    const held = h.next();
+    try {
+      expect(h.view.snapshot().target?.id).toBe(reply.id);
+      expect(
+        h.view.snapshot().replies.some((row) => row.id === candidate.id),
+      ).toBe(false);
+      expect(
+        other.snapshot().replies.some((row) => row.id === candidate.id),
+      ).toBe(false);
+      expect(observed).toEqual([]);
+      if (outcome === "error") held.fail(new Error("overlay unavailable"));
+      else if (outcome === "cancelled") {
+        cancel.abort();
+        held.respond([]);
+      } else {
+        held.respond([aux(40003, candidate, "Complete candidate")]);
+        await flush();
+        h.next().respond([]);
+      }
+      expect(await selecting).toBe(outcome);
+      if (outcome === "selected") {
+        expect(h.view.snapshot().target).toMatchObject({
+          id: candidate.id,
+          content: "Complete candidate",
+        });
+        expect(
+          other.snapshot().replies.find((row) => row.id === candidate.id)
+            ?.content,
+        ).toBe("Complete candidate");
+        expect(observed).not.toContain("Bare candidate");
+      } else {
+        expect(h.view.snapshot().target?.id).toBe(reply.id);
+        expect(
+          h.view.snapshot().replies.some((row) => row.id === candidate.id),
+        ).toBe(false);
+        expect(
+          other.snapshot().replies.some((row) => row.id === candidate.id),
+        ).toBe(false);
+        expect(observed).toEqual([]);
+      }
+    } finally {
+      cancel.abort();
+      held.respond([]);
+      await selecting;
+      stop();
+      other.dispose();
+    }
+  },
+);
+
+it.each(["finite", "live"] as const)(
+  "retarget retains %s tombstones for selection-staged edits and reactions",
+  async (delivery) => {
+    const h = setup();
+    const { loading } = await targetRead(h);
+    h.next().respond([root]);
+    await loading;
+    const candidate = message(alice, "a", "Original candidate", 90, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const edit = aux(40003, candidate, "Withdrawn edit"),
+      reaction = aux(7, candidate, "+");
+    const withdrawn = [aux(5, edit), aux(5, reaction)];
+    const cancel = new AbortController();
+    const selecting = h.view.retarget(candidate.id, cancel.signal);
+    h.next().respond([candidate]);
+    await flush();
+    h.next().respond([edit, reaction]);
+    await flush();
+    const tombstones = h.next();
+    try {
+      expect(tombstones.filters[0]?.["#e"]).toEqual(
+        expect.arrayContaining([edit.id, reaction.id]),
+      );
+      if (delivery === "live") h.traffic.receive(withdrawn);
+      tombstones.respond(delivery === "finite" ? withdrawn : []);
+      expect(await selecting).toBe("selected");
+      expect(h.view.snapshot().target).toMatchObject({
+        id: candidate.id,
+        content: candidate.content,
+        reactions: [],
+      });
+    } finally {
+      cancel.abort();
+      tombstones.respond([]);
+      await selecting;
+    }
+  },
+);
+
+it("a candidate rejected by final admission never establishes a thread identity", async () => {
+  const thread = createThreadView({
+    channelId: "a",
+    messageId: reply.id,
+    relayAuthor: relay.pubkey,
+    reader: { read: async (filters) => (filters[0]?.ids ? [reply] : []) },
+    seed: undefined,
+    local: undefined,
+    canAccess: () => true,
+    // Pure read visibility can permit local-only evidence; final remote
+    // admission is still authoritative and may reject this candidate.
+    visible: (events) => events,
+    admit: () => [],
+    notify: (listener) => listener(),
+    exact: true,
+  });
+  try {
+    await thread.view.refresh();
+    expect(thread.view.snapshot()).toMatchObject({
+      targetStatus: "unavailable",
+      root: undefined,
+      replies: [],
+    });
+    thread.receive([
+      root,
+      message(alice, "a", "Later live reply", 10002, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ]);
+    expect(thread.view.snapshot()).toMatchObject({
+      root: undefined,
+      target: undefined,
+      replies: [],
+    });
+  } finally {
+    thread.view.dispose();
+  }
 });

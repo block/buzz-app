@@ -148,7 +148,9 @@ export function createThreadView({
     );
     const ids = new Set([
       ...(selectedId ? [selectedId] : []),
-      ...[...remote, ...staged, ...rows].map((event) => event.id),
+      ...[...remote, ...staged, ...selectionStaged, ...rows].map(
+        (event) => event.id,
+      ),
     ]);
     const result = new Map(rows.map((event) => [event.id, event]));
     // Aux closure includes deletion of an auxiliary, not just direct row overlays.
@@ -344,7 +346,10 @@ export function createThreadView({
       { signal: owned.signal },
     );
     if (!active()) return "cancelled";
-    const event = acceptTarget(response).find(
+    // The reader verifies the wire response; this pure visibility check does
+    // not reconcile the bare candidate into this or another published view.
+    // Only the complete target/overlay fold enters shared admission below.
+    const event = visible(response).find(
       (event) =>
         event.id === id && contentKind(event) && inChannel(event, channelId),
     );
@@ -352,7 +357,6 @@ export function createThreadView({
     if (!event) return "unavailable";
     const resolvedRoot = threadReference(event)?.rootId ?? event.id;
     if (expectedRoot && resolvedRoot !== expectedRoot) return "different";
-    if (!expectedRoot) rootId = resolvedRoot;
     // Staging makes live overlay deletions resolvable without exposing an
     // incomplete selected fold. Existing displayed content remains untouched.
     if (!stage([event])) return "error";
@@ -379,6 +383,13 @@ export function createThreadView({
     }
     const accepted = acceptTarget(pending);
     if (!active()) return "cancelled";
+    if (!accepted.some((event) => event.id === id)) {
+      stage([]);
+      return "unavailable";
+    }
+    // Rejected first-open evidence must never latch a root that later live
+    // traffic could populate. Resolve identity only after final admission.
+    if (!expectedRoot) rootId = resolvedRoot;
     const combined = union(remote, related(accepted, id));
     if (!retain(combined)) return "error";
     stage([]);

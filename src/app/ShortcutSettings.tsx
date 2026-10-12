@@ -19,6 +19,7 @@ import {
 } from "../features/shortcuts/bindings";
 import { formatBinding, isApplePlatform } from "../features/shortcuts/format";
 import { KeyCombo } from "../features/shortcuts/KeyCombo";
+import { MessageSendSettings } from "./MessageSendSettings";
 import {
   KeyCaptureControl,
   type CapturedChord,
@@ -94,6 +95,7 @@ export function ShortcutSettings({
   plugins,
   apple = isApplePlatform(navigator.platform),
   desktop = isTauri(),
+  active = true,
 }: {
   shortcuts: ShortcutsService;
   bindings: ShortcutBindings;
@@ -102,6 +104,7 @@ export function ShortcutSettings({
   apple?: boolean;
   /** Packaged desktop build, where close/quit chords belong to the shell. */
   desktop?: boolean;
+  active?: boolean;
 }) {
   const host = useSyncExternalStore(
     shortcuts.hostSubscribe,
@@ -267,9 +270,10 @@ export function ShortcutSettings({
     <section aria-labelledby="shortcut-settings-title">
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
-        {groups.length ? (
-          <div className="grid gap-section-gap">
-            {groups.map((group) => (
+        <div className="grid gap-section-gap">
+          <MessageSendSettings apple={apple} active={active} />
+          {groups.length ? (
+            groups.map((group) => (
               <section key={group.id}>
                 <InlineHeader title={group.label} />
                 <SettingsGroup>
@@ -293,13 +297,13 @@ export function ShortcutSettings({
                   ))}
                 </SettingsGroup>
               </section>
-            ))}
-          </div>
-        ) : (
-          <p className="m-0 px-control-inset text-body-sm text-subtle">
-            No shortcuts are available yet.
-          </p>
-        )}
+            ))
+          ) : (
+            <p className="m-0 px-control-inset text-body-sm text-subtle">
+              No shortcuts are available yet.
+            </p>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"

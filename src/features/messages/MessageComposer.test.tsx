@@ -66,6 +66,7 @@ import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
+import { sendWithModEnterPreference } from "./send-keystroke";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
 import type { Entity, ProjectHome } from "../projects/destinations";
@@ -2537,6 +2538,34 @@ it("exits an empty list item on Enter, then sends from ordinary prose", async ()
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
     "- first\n- second\n\noutside",
+    [],
+    [],
+  );
+});
+
+it("sends on Mod+Enter and adds lines on Enter when that preference is on", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "first{Enter}second");
+  expect(h.input()).toHaveValue("first\nsecond");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "first\nsecond",
+    [],
+    [],
+  );
+});
+
+it("sends from inside a list on Mod+Enter when that preference is on", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first",
     [],
     [],
   );

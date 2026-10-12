@@ -20,6 +20,7 @@ import {
 } from "../features/shortcuts/preferences";
 import { ShortcutsService } from "../features/shortcuts/service";
 import type { PluginManager } from "../plugins/manager";
+import { sendWithModEnterPreference } from "../features/messages/send-keystroke";
 import type { PluginInfo } from "../plugins/types";
 import { createAppearance } from "../shared/theme/service";
 import { createNavigationController } from "../features/navigation/controller";
@@ -185,7 +186,12 @@ it("lists live host and plugin shortcuts without search or intro text and follow
     const groups = screen
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
-    expect(groups).toEqual(["Buzz", "Shortcut counter", "Terminal"]);
+    expect(groups).toEqual([
+      "Messages",
+      "Buzz",
+      "Shortcut counter",
+      "Terminal",
+    ]);
     expect(
       screen
         .getAllByRole("article")
@@ -672,6 +678,39 @@ it("ignores AltGraph capture without changing a saved override, then captures an
   }
 });
 
+it("switches message sending to Mod+Enter on this device", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    const view = render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple={false}
+      />,
+    );
+    const toggle = screen.getByRole("switch", { name: "Send with Ctrl+Enter" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(sendWithModEnterPreference.isEnabled()).toBe(true);
+    view.rerender(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    expect(
+      screen.getByRole("switch", { name: "Send with ⌘Enter" }),
+    ).toBeChecked();
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("keeps a change active when saving fails and offers a retry", async () => {
   const user = userEvent.setup();
   const h = await harness();
@@ -887,7 +926,13 @@ it("keeps the host group distinct from a plugin whose manifest id is buzz", asyn
       screen
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Buzz", "Buzz plugin", "Shortcut counter", "Terminal"]);
+    ).toEqual([
+      "Messages",
+      "Buzz",
+      "Buzz plugin",
+      "Shortcut counter",
+      "Terminal",
+    ]);
     expect(row("Ping")).toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
   } finally {

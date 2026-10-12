@@ -102,11 +102,8 @@ it("adopts and carries an agent's instructions and workspace, nothing else", () 
       unchangedKey: "channel",
     },
   ]);
-  expect(type?.migrationNotice?.("Claude Code")).toContain(
-    "Replies already sent to Buzz remain",
-  );
-  expect(type?.migrationNotice?.("Claude Code")).toContain(
-    "Codex background commands stop",
+  expect(type?.migrationWarning).toBe(
+    "Any commands Codex left running will stop.",
   );
 });
 

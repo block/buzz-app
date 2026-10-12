@@ -73,8 +73,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       ];
     },
-    migrationNotice: (target) =>
-      `Claude keeps its sessions if you switch back. ${target} uses its own sessions with the Buzz conversation, not Claude's.`,
     summary: (agent) => config(agent.config).model || "Claude",
     tabs: [
       { id: "claude", title: "Claude", component: ClaudeTab },

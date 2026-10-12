@@ -1171,7 +1171,7 @@ function TypeField({
             ? `Move ${agent.name} to ${migration.target.title}?`
             : "Move agent?"
         }
-        description="Review what changes before moving."
+        headerGap="compact"
         preventClose={pending}
         actions={
           <>
@@ -1219,7 +1219,7 @@ function MigrationPreview({
   const carry = CARRY_KEYS.filter(
     (key) => preview.moved.includes(key) || preview.dropped.includes(key),
   );
-  const notice = source?.migrationNotice?.(target.title);
+  const warning = source?.migrationWarning;
   return (
     <div className="grid gap-4">
       <div className="flex items-center gap-3 text-body">
@@ -1233,6 +1233,10 @@ function MigrationPreview({
           {target.title}
         </span>
       </div>
+      <p className="m-0 text-body-sm text-secondary">
+        Your agent will continue the conversation in Buzz.
+        {warning && ` ${warning}`}
+      </p>
       {(carry.length > 0 || preview.settings.length > 0) && (
         <dl className="m-0 grid gap-2">
           {carry.map((key) => {
@@ -1261,7 +1265,6 @@ function MigrationPreview({
           ))}
         </dl>
       )}
-      {notice && <p className="m-0 text-body-sm text-secondary">{notice}</p>}
     </div>
   );
 }

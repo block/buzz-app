@@ -319,8 +319,8 @@ export type AgentType<Config = unknown> = {
   /** Describes harness settings for a type-change preview. Rendered labels
    * never determine migration behavior. */
   describeMigration?(config: Config): readonly AgentMigrationSetting[];
-  /** Brief session or runtime consequences of leaving this type. */
-  migrationNotice?(targetTitle: string): string;
+  /** Brief runtime consequence of leaving this type. */
+  migrationWarning?: string;
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */

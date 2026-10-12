@@ -186,9 +186,6 @@ it("is an agent type on the desktop app", () => {
       unchangedKey: "channel",
     },
   ]);
-  expect(type.migrationNotice?.("Codex")).toBe(
-    "Claude Code keeps its sessions if you switch back. Codex uses its own sessions with the Buzz conversation, not Claude Code's.",
-  );
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );

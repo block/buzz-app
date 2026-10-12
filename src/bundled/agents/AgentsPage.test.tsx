@@ -89,8 +89,7 @@ function setup(
     title: "Echo",
     icon: RobotIcon,
     description: "Says its line.",
-    migrationNotice: (target: string) =>
-      `Echo keeps its sessions if you switch back; ${target} starts separately.`,
+    migrationWarning: "Anything Echo left running will stop.",
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
@@ -301,8 +300,9 @@ it("changes an agent type from the build view and reports failures", async () =>
     "ThinkingDropped",
   );
   expect(dialog).toHaveTextContent(
-    "Echo keeps its sessions if you switch back; Relay starts separately.",
+    "Your agent will continue the conversation in Buzz.",
   );
+  expect(dialog).toHaveTextContent("Anything Echo left running will stop.");
   await user.click(
     within(dialog).getByRole("button", { name: "Move to Relay" }),
   );

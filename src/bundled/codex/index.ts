@@ -72,8 +72,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       ];
     },
-    migrationNotice: (target) =>
-      `Codex keeps its sessions if you switch back. ${target} uses its own sessions with the Buzz conversation, not Codex's. Replies already sent to Buzz remain, but Codex background commands stop.`,
+    migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
     tabs: [
       { id: "codex", title: "Codex", component: CodexTab },

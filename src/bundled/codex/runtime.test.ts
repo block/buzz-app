@@ -1526,6 +1526,157 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   expect(f.publish).toHaveBeenCalledTimes(2);
 });
 
+it.each(["accepted", "rejected"] as const)(
+  "moves same-thread activity only after steering is accepted: %s",
+  async (outcome) => {
+    const f = fixture();
+    const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+    const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+    await f.runtime.run({ ...f.delivery("first"), ...first });
+    await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
+    const started = f.starts()[0];
+    if (!started) throw new Error("Expected started turn");
+    const threadId = (started.params as { threadId: string }).threadId;
+    const step = (command: string) =>
+      f.emit({
+        method: "item/started",
+        params: { threadId, item: { type: "commandExecution", command } },
+      });
+    step("sleep 20");
+    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep");
+    const requested = deferred<void>();
+    const response = deferred<void>();
+    const write = f.process.write;
+    f.process.write = async (data) => {
+      const wire: Wire = JSON.parse(data);
+      if (wire.method !== "turn/steer") return write(data);
+      if (wire.id === undefined) throw new Error("Expected steering RPC id");
+      requested.resolve();
+      await response.promise;
+      if (outcome === "rejected") {
+        f.emit({
+          id: wire.id,
+          error: { code: -32000, message: "Cannot accept follow-up" },
+        });
+        return;
+      }
+      await write(data);
+    };
+    try {
+      await f.runtime.run({ ...f.delivery("follow-up"), ...next });
+      await requested.promise;
+      step("ls");
+      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+      expect(first.superseded).not.toHaveBeenCalled();
+      expect(next.acknowledged).not.toHaveBeenCalled();
+      expect(next.step).not.toHaveBeenCalled();
+      response.resolve();
+      if (outcome === "accepted") {
+        await vi.waitFor(() =>
+          expect(next.acknowledged).toHaveBeenCalledOnce(),
+        );
+        expect(first.superseded).toHaveBeenCalledOnce();
+        step("pwd");
+        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+        await f.tool("send", {
+          audience: "everyone",
+          text: "Updated answer",
+          final: true,
+        });
+        for (const [done] of f.workingUntil.mock.calls)
+          await expect(done).resolves.toEqual({ ok: true });
+      } else {
+        await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+          ok: false,
+        });
+        expect(first.superseded).not.toHaveBeenCalled();
+        expect(next.acknowledged).not.toHaveBeenCalled();
+        step("pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        await f.tool("send", {
+          audience: "everyone",
+          text: "Original answer",
+          final: true,
+        });
+        await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+          ok: true,
+        });
+      }
+      await f.complete();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+      );
+    } finally {
+      response.resolve();
+    }
+  },
+);
+
+it("keeps each thread's activity in a shared session and does not move it to watches", async () => {
+  const f = fixture();
+  const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const second = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const delivery = (text: string, threadRoot: string) => {
+    const d = f.delivery(text, threadRoot);
+    return { ...d, config: { ...(d.config as object), scope: "channel" } };
+  };
+  await f.runtime.run({ ...delivery("first thread", root), ...first });
+  await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
+  await f.runtime.run({
+    ...delivery("second thread", "e".repeat(64)),
+    ...second,
+  });
+  await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalledOnce());
+  expect(first.superseded).not.toHaveBeenCalled();
+  const watch = delivery("watched message", root);
+  if (watch.trigger.type !== "mention") throw new Error("Expected mention");
+  const watched = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  await f.runtime.run({
+    ...watch,
+    ...watched,
+    trigger: {
+      type: "watch",
+      event: watch.trigger.event,
+      slug: "watch/test",
+      watch: {
+        type: "event",
+        enabled: true,
+        interest_id: "test",
+        since: 0,
+        channels: "all",
+        kinds: [9],
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
+  );
+  // A tool call waits for the steering chain, establishing that the watch was taken.
+  await f.tool("send", {
+    audience: "everyone",
+    text: "Progress",
+    final: false,
+  });
+  const started = f.starts()[0];
+  if (!started) throw new Error("Expected started turn");
+  const threadId = (started.params as { threadId: string }).threadId;
+  f.emit({
+    method: "item/started",
+    params: { threadId, item: { type: "reasoning" } },
+  });
+  expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
+  expect(first.superseded).not.toHaveBeenCalled();
+  expect(second.superseded).not.toHaveBeenCalled();
+  expect(watched.acknowledged).not.toHaveBeenCalled();
+  expect(watched.step).not.toHaveBeenCalled();
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+});
+
 it("delivers pending owner steering after a final send and posts its own answer", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));

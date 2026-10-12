@@ -52,6 +52,8 @@ type Request = {
   /** Called once a final send answers this request, or one steered after it. */
   answered: () => void;
   step?: (tool: string, target?: string) => void;
+  acknowledged?: () => void;
+  superseded?: () => void;
   failActivity(reason: string): void;
 };
 type Saved = { threadId: string; workspace: string };
@@ -70,6 +72,8 @@ type Active = {
   sentVersion?: number;
   /** Every request this turn has taken in, the first and each steered one. */
   requests: Request[];
+  /** Latest acknowledged mention per Buzz thread; independent of session scope. */
+  activity: Map<string, Request>;
 };
 type Lane = {
   tail: Promise<void>;
@@ -380,7 +384,15 @@ export class CodexRuntime {
       team: delivery.team ?? "",
       answered,
       failActivity,
-      ...(delivery.step ? { step: delivery.step } : {}),
+      ...(trigger.type === "mention"
+        ? {
+            ...(delivery.step ? { step: delivery.step } : {}),
+            ...(delivery.acknowledged
+              ? { acknowledged: delivery.acknowledged }
+              : {}),
+            ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
+          }
+        : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -433,6 +445,7 @@ export class CodexRuntime {
           active.reply = request;
           active.requests.push(request);
           active.version++;
+          this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
             request.failActivity("Codex was stopped");
@@ -456,6 +469,18 @@ export class CodexRuntime {
       return;
     }
     this.start(request, text, key, lane, entry);
+  }
+
+  /** A positive harness response transfers presentation, not execution or
+   * success. Watches have no bubble; mentions in other threads keep theirs. */
+  private acknowledgeActivity(active: Active, request: Request) {
+    if (!request.step) return;
+    const scope = rootOf(request.event);
+    const prior = active.activity.get(scope);
+    if (prior === request) return;
+    prior?.superseded?.();
+    active.activity.set(scope, request);
+    request.acknowledged?.();
   }
 
   private start(
@@ -652,6 +677,7 @@ export class CodexRuntime {
       signal,
       version: 0,
       requests: [request],
+      activity: new Map(),
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
@@ -689,7 +715,7 @@ export class CodexRuntime {
       const step =
         wire.method === "item/started" ? codexStep(p.item) : undefined;
       if (step)
-        for (const taken of active.requests)
+        for (const taken of active.activity.values())
           taken.step?.(step.tool, step.target);
       if (wire.method === "item/started" && p.item?.command)
         this.status(agent.pubkey, key, "Working", p.item.command);
@@ -825,6 +851,7 @@ export class CodexRuntime {
         },
       });
       active.turnId = turn.turn.id;
+      this.acknowledgeActivity(active, request);
       // Empty threads have no resumable rollout until a user turn is accepted.
       this.save(request, entry, key, {
         threadId: started.thread.id,

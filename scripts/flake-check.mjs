@@ -3,8 +3,9 @@
 // every iteration. Playwright repeats natively with --repeat-each.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { relative } from "node:path";
+import { extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseAst } from "rolldown/parseAst";
 import { parseVitest } from "./ci-test-report.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -39,22 +40,65 @@ export function hunkRanges(diff) {
   );
 }
 
-// A test owns the lines from its start to the next test's start. Hunks inside
-// tests select those tests. A hunk before the first test (imports, helpers,
-// hooks, module constants) can change every test, so it, a new file, or a file
+// Bodies of the listed tests: the lines of each `test`/`it` call, from its
+// first line to its closing parenthesis, keyed by the line the runner listed.
+// Runners only report a call-site line, which may sit inside the call
+// (`it.each([…])(` lists at the second parenthesis), so each listed line is
+// owned by the enclosing test call. `describe` groups and hooks are not
+// bodies; tests registered through a wrapper have no enclosing call and leave
+// their lines to the whole-file rule.
+export function testBodies(source, lang, lines) {
+  const lineAt = (offset) => source.slice(0, offset).split("\n").length;
+  const names = (callee) =>
+    callee.type === "Identifier"
+      ? [callee.name]
+      : callee.type === "MemberExpression"
+        ? names(callee.object)?.concat(callee.property.name ?? "")
+        : callee.type === "CallExpression"
+          ? names(callee.callee)
+          : undefined;
+  const calls = [];
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    const chain = node.type === "CallExpression" ? names(node.callee) : null;
+    if (
+      chain &&
+      ["test", "it"].includes(chain[0]) &&
+      !chain.includes("describe")
+    ) {
+      calls.push({ start: lineAt(node.start), end: lineAt(node.end - 1) });
+      return;
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(parseAst(source, { lang }));
+  const bodies = new Map();
+  for (const line of [...lines].sort((a, b) => a - b)) {
+    const call = calls.find(({ start, end }) => start <= line && line <= end);
+    if (call && !bodies.has(call)) bodies.set(call, { ...call, line });
+  }
+  return [...bodies.values()].sort((a, b) => a.start - b.start);
+}
+
+// A hunk whose every line lies in a test body selects those tests. A changed
+// line outside every body (imports, helpers, hooks or constants before,
+// between or after tests) can change every test, so it, a new file, or a file
 // with no listed tests selects the whole file.
-export function selectTests(ranges, starts, { added = false } = {}) {
-  const sorted = [...new Set(starts)].sort((a, b) => a - b);
+export function selectTests(ranges, bodies, { added = false } = {}) {
   if (added) return { whole: true, reason: "new file" };
-  if (sorted.length === 0) return { whole: true, reason: "no tests listed" };
+  if (bodies.length === 0) return { whole: true, reason: "no tests listed" };
   const selected = new Set();
   for (const { start, end } of ranges) {
-    const owner = sorted.findLast((line) => line <= start);
-    if (owner === undefined)
-      return { whole: true, reason: "shared code changed" };
-    selected.add(owner);
-    for (const line of sorted)
-      if (line > start && line <= end) selected.add(line);
+    for (let line = start; line <= end; ) {
+      const body = bodies.find((b) => b.start <= line && line <= b.end);
+      if (!body) return { whole: true, reason: "shared code changed" };
+      selected.add(body.line);
+      line = body.end + 1;
+    }
   }
   return { lines: [...selected].sort((a, b) => a - b) };
 }
@@ -171,9 +215,10 @@ function select(base = "HEAD^1", head = "HEAD") {
         runner === "vitest"
           ? vitestStarts.get(file)
           : specs.map((spec) => spec.line);
+      const lang = { ".ts": "ts", ".tsx": "tsx" }[extname(file)] ?? "js";
       const selection = selectTests(
         hunkRanges(git("diff", "-U0", "--no-color", base, head, "--", file)),
-        starts,
+        testBodies(readFileSync(`${root}${file}`, "utf8"), lang, starts),
         { added: added.has(file) },
       );
       let entries;

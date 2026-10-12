@@ -584,8 +584,9 @@ the complete suite still runs with `pnpm test` / `just scan`:
   jobs keep their normal toolchain and library setup.
 - **Flake check (advisory):** on pull requests, `scripts/flake-check.mjs select`
   maps the diff against the base branch to the Vitest tests and Playwright
-  journeys it changed (`file:line`; the whole file when the diff touches shared
-  code such as imports, helpers or hooks, or the file is new). `flake_vitest`
+  journeys it changed (`file:line` for hunks inside a test body; the whole file
+  when the diff touches any line outside one, such as imports, helpers or hooks
+  before, between or after tests, or the file is new). `flake_vitest`
   then runs that selection ten times with the JavaScript lane's two workers, and
   `flake_browser` runs `--repeat-each=10` once per engine (Chromium and WebKit)
   on the shard container with the same native fixture. Measurement specs and

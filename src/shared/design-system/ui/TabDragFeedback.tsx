@@ -1,5 +1,4 @@
 import { createPortal } from "react-dom";
-import "../styles/tab-drag.css";
 
 /** Panel Swap's title-only drag treatment. Geometry belongs to the host. */
 export function TabDragFeedback({

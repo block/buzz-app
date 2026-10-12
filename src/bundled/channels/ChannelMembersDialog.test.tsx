@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -49,6 +56,8 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  // First, so a failed paging test cannot leak its fake clock into the next setup().
+  vi.useRealTimers();
   for (const task of tasks) task.controller.abort();
   await Promise.all(tasks.splice(0).map(({ outcome }) => outcome));
   cleanup();
@@ -1266,16 +1275,28 @@ async function pagedInvitations(
         : remote
       : query(filters);
   });
+  // The 200 ms search debounce runs on a controlled clock. user-event awaits a
+  // real setTimeout(0) after every action, so these steps drive fireEvent.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const input = screen.getByRole("searchbox");
   const refresh = screen.getByRole("button", { name: "Refresh member data" });
   const idle = () =>
-    step(() =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
-    );
+    step(async () => {
+      await act(() => vi.advanceTimersByTimeAsync(200));
+      await vi.waitFor(() =>
+        expect(refresh).toHaveAttribute("aria-busy", "false"),
+      );
+    });
+  const search = (value: string) =>
+    step(async () => {
+      fireEvent.change(input, { target: { value } });
+    });
+  const click = (button: HTMLElement) =>
+    step(async () => {
+      fireEvent.click(button);
+    });
   const more = () =>
-    step(() =>
-      t.user.click(screen.getByRole("button", { name: "Show more results" })),
-    );
+    click(screen.getByRole("button", { name: "Show more results" }));
   const rows = () =>
     within(
       screen.getByRole("region", { name: "Not in this channel" }),
@@ -1285,16 +1306,16 @@ async function pagedInvitations(
       .flatMap(([filters]) => filters)
       .filter((filter) => filter.search)
       .map((filter) => filter.page);
-  await step(() => t.user.type(input, "Helper"));
+  await search("Helper");
   await idle();
-  return { t, input, refresh, idle, more, rows, pages };
+  return { t, refresh, idle, search, click, more, rows, pages };
 }
 
 it("pages combined local and relay invitations without losing matches", async ({
   signal,
 }) => {
   return ownedTask(signal, async (step) => {
-    const { t, more, rows, pages } = await pagedInvitations(step, 65);
+    const { t, idle, more, rows, pages } = await pagedInvitations(step, 65);
     expect(rows()).toHaveLength(30);
     expect(
       rows().every((row) =>
@@ -1308,9 +1329,8 @@ it("pages combined local and relay invitations without losing matches", async ({
       expect(pages()).toEqual([1]);
     }
     await more();
-    await step(() =>
-      screen.findByRole("button", { name: /^Add Helper final/ }),
-    );
+    await idle();
+    screen.getByRole("button", { name: /^Add Helper final/ });
     expect(rows()).toHaveLength(96);
     expect(pages()).toEqual([1, 2]);
     expect(
@@ -1325,24 +1345,23 @@ it("resets combined invitation paging on refresh or query change", async ({
 }) => {
   return ownedTask(signal, async (step) => {
     // 31 local agents: past one page locally, so a reset is observable.
-    const { t, input, refresh, idle, more, rows, pages } =
+    const { t, refresh, idle, search, click, more, rows, pages } =
       await pagedInvitations(step, 31);
     for (let i = 0; i < 3; i++) await more();
-    await step(() =>
-      screen.findByRole("button", { name: /^Add Helper final/ }),
-    );
+    await idle();
+    screen.getByRole("button", { name: /^Add Helper final/ });
     expect(rows()).toHaveLength(62);
     expect(pages()).toEqual([1, 2]);
-    await step(() => t.user.click(refresh));
+    await click(refresh);
     await idle();
     expect(rows()).toHaveLength(30);
     expect(pages()).toEqual([1, 2, 1]);
     await more();
     expect(rows()).toHaveLength(60);
-    await step(() => t.user.type(input, " local"));
+    await search("Helper local");
     await idle();
     expect(rows()).toHaveLength(30);
-    await step(() => t.user.clear(input));
+    await search("");
     expect(
       screen.queryByRole("region", { name: "Not in this channel" }),
     ).toBeNull();

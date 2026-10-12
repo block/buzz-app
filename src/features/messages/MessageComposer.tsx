@@ -612,7 +612,7 @@ function Composer({
   // Picks belong to the recovered revision alone. They return whenever the
   // composer holds it unedited, never to a later edit that keeps a conflict.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, picks?: MentionPicks) => {
+    (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
       if (submission || editing.target || writing.current) return;
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
@@ -623,7 +623,7 @@ function Composer({
           setAccepted(undefined);
           loadSaved(current);
           if (restored && current === JSON.stringify(restored))
-            setPicks(picks ?? {});
+            setPicks(recoveredPicks ?? {});
         }
         return;
       }
@@ -633,7 +633,7 @@ function Composer({
       if (current === revision.current) {
         // The storage listener usually loads the recovered revision before
         // its notification arrives.
-        if (recovering && !dirty.current) setPicks(picks ?? {});
+        if (recovering && !dirty.current) setPicks(recoveredPicks ?? {});
         return;
       }
       // An explicit successful recovery may replace only the cleared follow-up,
@@ -651,7 +651,7 @@ function Composer({
         setConflict(true);
         return;
       } else loadSaved(current);
-      if (recovering) setPicks(picks ?? {});
+      if (recovering) setPicks(recoveredPicks ?? {});
     },
   );
   const editingDraft = !!editing.target;

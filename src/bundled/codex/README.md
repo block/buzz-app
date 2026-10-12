@@ -19,8 +19,10 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
-2. Open **Agents → New agent**, choose **Codex**, and create an agent. The Codex
-   tab checks the installed CLI and existing account. If needed, install Codex
+2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
+   optionally pick a model beside it and add instructions. Name the agent and
+   click **Create agent**. The Codex tab checks the installed CLI and existing
+   account. If needed, install Codex
    and run `codex login` in a terminal, then click **Check again**.
 3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores

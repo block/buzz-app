@@ -3,7 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import { config, defaults, validWorkspace } from "./config";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
-export const inject = ["react", "agents", "host"];
+export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and file uploads run `base64`,
   // which stock Windows lacks; no unusable type elsewhere.
@@ -29,13 +29,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     offAgents();
     runtime.dispose();
   });
-  const { CodexTab, SettingsTab } = createTabs(ctx.react, start, runtime);
+  const { CodexTab, SettingsTab, Create } = createTabs(start, runtime);
   ctx.agents.register({
     id: "codex",
     title: "Codex",
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    Create,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import * as React from "react";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
@@ -288,7 +287,6 @@ function fixture(
     vi.stubGlobal("localStorage", store);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
-      react: React,
       host: { spawn },
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),

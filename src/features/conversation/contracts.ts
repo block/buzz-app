@@ -106,6 +106,8 @@ export type ComposerAccessoryProps = Readonly<{
   /** Host-owned thread navigation from a timeline message, even before replies.
    * Absent inside the thread. False after this contribution or message retires. */
   openThread?: (() => boolean) | undefined;
+  /** Return keyboard focus to a stable host control when a focused accessory retires. */
+  onFocusedRemoval?: (() => void) | undefined;
   /** Presentation only; the host re-resolves targets. No editor or access grant. */
   canOpen(target: string): boolean;
   /** False after contribution removal or the originating composer retires. */

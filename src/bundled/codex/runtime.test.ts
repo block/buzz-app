@@ -884,6 +884,10 @@ it("cleans background terminals on server interruption and permits same-thread r
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("turn was interrupted"),
   });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "Codex’s turn was interrupted",
+  });
   await f.runtime.run(f.delivery("recover"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.complete();

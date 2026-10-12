@@ -863,6 +863,8 @@ export class CodexRuntime {
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted") {
+        for (const taken of active.requests)
+          taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
         await this.publish(
           active.reply,

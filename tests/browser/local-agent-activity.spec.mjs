@@ -274,3 +274,98 @@ test("opens an active message's empty thread without losing its activity preview
     request.id,
   );
 });
+
+for (const focusOn of ["bubble", "popup", "composer"]) {
+  test(`finishing activity retires keyboard controls without stealing focus: ${focusOn}`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => page.evaluate(() => !!window.localAgentFixture))
+      .toBe(true);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content.startsWith("Thread root"));
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${root.id}"]`,
+    );
+    await row.hover();
+    await row.getByRole("button", { name: /^View thread:/ }).click();
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const composer = thread.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await expect(composer).toBeVisible();
+    const request = app.sign({
+      kind: 9,
+      content: "Finish while focused",
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["h", "alpha"],
+        ["e", root.id, "", "reply"],
+        ["p", "b".repeat(64)],
+      ],
+    });
+    app.relay.publish("primary", request);
+    const message = thread.locator(`[data-message-id="${request.id}"]`);
+    const bubble = message.getByRole("button", {
+      name: /^View agent activity:/,
+    });
+    await expect(bubble).toBeVisible();
+    // Finish entrance and hold only the exit so the intermediate state is testable.
+    await message.locator("section").evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations({ subtree: true })
+          .filter((a) => a.effect.getTiming().iterations !== Infinity)
+          .map((a) => a.finished),
+      );
+      element.addEventListener("animationstart", (event) => {
+        if (event.animationName === "buzz-leave")
+          for (const a of element.getAnimations()) a.pause();
+      });
+    });
+    const popup = page.getByRole("dialog", {
+      name: "Agent activity",
+      exact: true,
+    });
+    if (focusOn === "popup") {
+      await bubble.click();
+      await popup
+        .getByRole("button", { name: "View activity for Local tester" })
+        .focus();
+    } else if (focusOn === "bubble") await bubble.focus();
+    else await composer.focus();
+    const section = message.locator("section");
+    try {
+      await page.evaluate(
+        (id) => window.localAgentFixture.finish(id, true),
+        request.id,
+      );
+      await expect(section).toHaveAttribute("data-leaving", "");
+      await expect(section).toHaveAttribute("inert", "");
+      await expect(popup).toHaveCount(0);
+      const destination =
+        focusOn === "composer"
+          ? composer
+          : message.getByRole("button", { name: "More message actions" });
+      await expect(destination).toBeFocused();
+      await page.keyboard.press("Tab");
+      expect(
+        await section.evaluate((e) => e.contains(document.activeElement)),
+      ).toBe(false);
+    } finally {
+      await section
+        .evaluate((e) => {
+          for (const a of e.getAnimations()) a.finish();
+        })
+        .catch(() => {});
+    }
+    await expect(section).toHaveCount(0);
+  });
+}

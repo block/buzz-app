@@ -1,4 +1,7 @@
-import { localActivity, localWorkLabel } from "../../features/agents/local-activity";
+import {
+  localActivity,
+  localWorkLabel,
+} from "../../features/agents/local-activity";
 import type { RelaySession } from "../../features/relay/session";
 import { activityRecords } from "../../features/agents/activity-records";
 

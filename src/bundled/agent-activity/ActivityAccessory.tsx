@@ -106,6 +106,8 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
   const [leaving, setLeaving] = useState<Entry[] | null>(null);
   const ended = !entries.length;
   useLayoutEffect(() => {
+    // Child closes its portal and restores focus before this subtree is inert.
+    if (section.current) section.current.inert = !shown.length;
     if (shown.length) {
       retained.current = shown;
       if (leaving) setLeaving(null);
@@ -157,6 +159,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
           key={`${channelId}:${message?.id ?? ""}`}
           {...props}
           entries={bubble}
+          interactive={shown.length > 0}
         />
       </div>
     </section>
@@ -178,9 +181,22 @@ type Entry = {
 
 function ActivityBubble({
   entries,
+  interactive,
   ...props
-}: ComposerAccessoryProps & { entries: Entry[] }) {
+}: ComposerAccessoryProps & { entries: Entry[]; interactive: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (interactive) return;
+    const active = trigger.current?.ownerDocument.activeElement;
+    if (
+      active &&
+      (trigger.current?.contains(active) || popup.current?.contains(active))
+    )
+      props.onFocusedRemoval?.();
+    setExpanded(false);
+  }, [interactive, props.onFocusedRemoval]);
   const working = entries.some((entry) => entry.working);
   // Local work breathes until its first step ("Starting"), like the sidebar and thread.
   const starting = (entry: Entry) =>
@@ -209,10 +225,17 @@ function ActivityBubble({
         ? "working"
         : "status unknown";
   return (
-    <PopoverRoot open={expanded} onOpenChange={setExpanded}>
+    <PopoverRoot
+      open={expanded}
+      onOpenChange={(open) => setExpanded(interactive && open)}
+    >
       <PopoverTrigger
         openOnHover
         onClick={(event) => {
+          if (!interactive) {
+            event.preventBaseUIHandler();
+            return;
+          }
           if (props.openThread?.()) {
             event.preventBaseUIHandler();
             setExpanded(false);
@@ -220,6 +243,8 @@ function ActivityBubble({
         }}
         render={
           <Button
+            ref={trigger}
+            tabIndex={interactive ? undefined : -1}
             size="xs"
             variant="subtle"
             aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
@@ -242,7 +267,13 @@ function ActivityBubble({
           </Button>
         }
       />
-      <PopoverPopup side="top" padding="list" aria-label="Agent activity">
+      <PopoverPopup
+        ref={popup}
+        finalFocus={interactive ? undefined : false}
+        side="top"
+        padding="list"
+        aria-label="Agent activity"
+      >
         {expanded && (
           <div className={styles.previews}>
             {entries.map((entry) => {

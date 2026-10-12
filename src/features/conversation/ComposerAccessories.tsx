@@ -49,7 +49,12 @@ function OwnedAccessory({
   });
   const canOpenThread = !!props.openThread;
   const [commands, setCommands] =
-    useState<Pick<ComposerAccessoryProps, "canOpen" | "open" | "openThread">>();
+    useState<
+      Pick<
+        ComposerAccessoryProps,
+        "canOpen" | "open" | "openThread" | "onFocusedRemoval"
+      >
+    >();
   useLayoutEffect(() => {
     let live = true;
     const session = props.session;
@@ -60,6 +65,9 @@ function OwnedAccessory({
     setCommands({
       canOpen: (target) => active() && current.current.canOpen(target),
       open: (target) => active() && current.current.open(target),
+      onFocusedRemoval: () => {
+        if (active()) current.current.onFocusedRemoval?.();
+      },
       openThread: canOpenThread
         ? () => active() && (current.current.openThread?.() ?? false)
         : undefined,

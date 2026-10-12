@@ -205,7 +205,7 @@ function ProfileDetails({
   const verifiedOwner = ownership.owner;
   useEffect(() => {
     if (!activityPanel && !sections.length)
-      setTab((current) => current === "activity" ? "info" : current);
+      setTab((current) => (current === "activity" ? "info" : current));
   }, [activityPanel, sections.length]);
   const selectedTab =
     (requestedTab === "activity" && !activityPanel) ||

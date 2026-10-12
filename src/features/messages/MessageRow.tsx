@@ -888,6 +888,9 @@ function MessageRowContent({
               channelId={row.channelId}
               threadRootId={row.threadRootId}
               message={row}
+              onFocusedRemoval={() =>
+                menuTrigger.current?.focus({ preventScroll: true })
+              }
               openThread={
                 onOpenThread
                   ? () => {

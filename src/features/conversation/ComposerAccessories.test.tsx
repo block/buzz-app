@@ -104,6 +104,7 @@ it("keeps message accessories out of the composer and revokes commands on messag
     canOpen: () => true,
     open: vi.fn(() => true),
     openThread: vi.fn(() => true),
+    onFocusedRemoval: vi.fn(),
   };
   const message = {
     id: "one",
@@ -125,17 +126,23 @@ it("keeps message accessories out of the composer and revokes commands on messag
   if (!original) throw new Error("Missing accessory commands");
   expect(original.message?.id).toBe("one");
   expect(original.openThread?.()).toBe(true);
+  original.onFocusedRemoval?.();
+  expect(props.onFocusedRemoval).toHaveBeenCalledOnce();
   expect(original.open("target")).toBe(true);
   view.rerender(
     <ComposerAccessories {...props} message={{ ...message, id: "two" }} />,
   );
   expect(original.open("target")).toBe(false);
   expect(original.openThread?.()).toBe(false);
+  original.onFocusedRemoval?.();
+  expect(props.onFocusedRemoval).toHaveBeenCalledOnce();
   expect(commands.at(-1)?.openThread?.()).toBe(true);
   expect(commands.at(-1)?.message?.id).toBe("two");
   expect(commands.at(-1)?.open("target")).toBe(true);
   view.unmount();
   expect(commands.at(-1)?.open("target")).toBe(false);
   expect(commands.at(-1)?.openThread?.()).toBe(false);
+  commands.at(-1)?.onFocusedRemoval?.();
+  expect(props.onFocusedRemoval).toHaveBeenCalledOnce();
   expect(props.openThread).toHaveBeenCalledTimes(2);
 });

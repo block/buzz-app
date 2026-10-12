@@ -358,7 +358,7 @@ function MessageRowContent({
       {action.title}
     </MenuItem>
   ));
-  // Keep mixed attachments in sender order; only adjacent images share a list.
+  // Preserve attachment order; only adjacent images share a list.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url)) continue;

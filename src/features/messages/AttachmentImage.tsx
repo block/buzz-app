@@ -36,16 +36,25 @@ export function AttachmentImage({
     // lets the restored preview keep the row mounted instead.
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
-  const style = attachment.dimensions
-    ? {
-        width: Math.min(
-          360,
-          attachment.dimensions.width,
-          (320 * attachment.dimensions.width) / attachment.dimensions.height,
-        ),
-        aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
-      }
-    : undefined;
+  const dimensions = attachment.dimensions;
+  const width = dimensions
+    ? Math.min(
+        360,
+        dimensions.width,
+        (320 * dimensions.width) / dimensions.height,
+      )
+    : 0;
+  const height = dimensions
+    ? (width * dimensions.height) / dimensions.width
+    : 0;
+  const style =
+    dimensions &&
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width >= 1 &&
+    height >= 1
+      ? { width, aspectRatio: `${dimensions.width} / ${dimensions.height}` }
+      : undefined;
   if (!source)
     return cached ? (
       <span
@@ -55,7 +64,12 @@ export function AttachmentImage({
         aria-hidden="true"
       />
     ) : (
-      <span className={styles.attachmentUnavailable} role="status">
+      <span
+        ref={corners}
+        className={`${styles.attachmentImage} ${styles.mediaPlaceholder} ${styles.attachmentImageUnavailable}`}
+        style={style}
+        role="status"
+      >
         Image unavailable
       </span>
     );

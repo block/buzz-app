@@ -19,9 +19,10 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
     "src",
     /^data:image\/svg\+xml/,
   );
-  await expect(
-    page.locator('[data-message-id="gif-unavailable"]').getByRole("status"),
-  ).toHaveText("Image unavailable");
+  const unavailable = page
+    .locator('[data-message-id="gif-unavailable"]')
+    .getByRole("status");
+  await expect(unavailable).toHaveText("Image unavailable");
 
   for (const theme of ["light", "dark"]) {
     await page.evaluate((theme) => {
@@ -45,6 +46,8 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
           expect(bounds.x).toBeGreaterThanOrEqual(0);
           expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
         }
+        const reserved = await unavailable.boundingBox();
+        expect(reserved.width / reserved.height).toBeCloseTo(360 / 320, 2);
         const positions = await links.evaluateAll((elements) =>
           elements.map((el) => {
             const bounds = el.getBoundingClientRect();

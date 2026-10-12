@@ -577,6 +577,8 @@ it.each([
   { dimensions: { width: 1600, height: 900 }, width: "360px" },
   { dimensions: { width: 200, height: 800 }, width: "80px" },
   { dimensions: { width: 40, height: 20 }, width: "40px" },
+  { dimensions: { width: 999999, height: 1 }, width: "" },
+  { dimensions: { width: 1, height: 999999 }, width: "" },
 ])(
   "reserves a bounded preview from image dimensions: %j",
   ({ dimensions, width }) => {
@@ -600,7 +602,7 @@ it.each([
       .querySelector<HTMLAnchorElement>("a[data-media-preview]");
     expect(preview?.style.width).toBe(width);
     expect(preview?.style.aspectRatio).toBe(
-      `${dimensions.width} / ${dimensions.height}`,
+      width ? `${dimensions.width} / ${dimensions.height}` : "",
     );
     expect(html).toContain('aria-label="Open image attachment"');
     expect(html).toContain('loading="lazy"');
@@ -658,10 +660,14 @@ it.each([undefined, { width: 640, height: 400 }])(
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
-      expect(
-        view.container.querySelector('[class*="attachmentImage"]'),
-      ).toBeNull();
+      const unavailable = screen.getByRole("status");
+      expect(unavailable).toHaveTextContent("Image unavailable");
+      if (dimensions)
+        expect(unavailable).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
     } finally {

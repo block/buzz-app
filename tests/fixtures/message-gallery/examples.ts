@@ -109,7 +109,7 @@ export const groups: Group[] = [
       single(
         "gif-multiple",
         "Multiple GIFs and a photo",
-        "All images keep full previews in sender order.",
+        "All images keep full previews in attachment order.",
         "Both of these made me smile.",
         {
           attachments: [

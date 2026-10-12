@@ -379,7 +379,7 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     "src",
     "/media?url=https://example.com/alice.png",
   );
-  expect(image).toHaveAttribute("loading", "lazy");
+  expect(image).not.toHaveAttribute("loading", "lazy");
   expect(image).toHaveAttribute("referrerpolicy", "no-referrer");
   expect(row.querySelector(".buzz-avatar")).toHaveAttribute(
     "data-avatar-shape",

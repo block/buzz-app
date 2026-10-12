@@ -1,7 +1,13 @@
 import "../styles/avatar-shape.css";
 import "../styles/avatar-status.css";
 import { Avatar as BaseAvatar } from "@base-ui/react/avatar";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 type AvatarSize = "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
@@ -15,18 +21,27 @@ function AvatarArtwork({
 }) {
   const [status, setStatus] = useState<ImageStatus>("loading");
   const [showFallback, setShowFallback] = useState(false);
+  const image = useRef<HTMLImageElement>(null);
+  useLayoutEffect(() => {
+    // Cached artwork is already ready at mount; reveal it before the first paint
+    // instead of waiting for another asynchronous load event after navigation.
+    if (image.current?.complete) {
+      setStatus(image.current.naturalWidth > 0 ? "loaded" : "failed");
+    }
+  }, []);
   useEffect(() => {
+    if (status !== "loading") return;
     const timer = window.setTimeout(() => setShowFallback(true), 150);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [status]);
   if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
   return (
     <>
       <img
+        ref={image}
         src={src}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
-        loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={() => setStatus("loaded")}

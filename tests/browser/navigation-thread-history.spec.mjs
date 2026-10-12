@@ -505,6 +505,66 @@ for (const scenario of ["narrow overlay", "same-channel history"]) {
   });
 }
 
+// Paint and actual viewport intersection cannot be established in jsdom.
+test("closing an active thread highlights its visible channel origin without scrolling", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  const timeline = page.locator('[data-channel-timeline="alpha"]');
+  const item = timeline.locator(`[data-message-id="${roots[0].id}"]`);
+  const origin = item.locator(":scope > [data-layout]");
+  // Keep another side tab open so closing does not change the channel width
+  // and rewrap the history independently of the highlight.
+  await timeline
+    .locator(`[data-message-id="${roots[1].id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  await item.getByRole("button", { name: /^View thread:/ }).click();
+  const side = page.locator("[data-panel-workspace]");
+  await expect(
+    side.locator('[role="tab"][data-tab-value^="thread:"]'),
+  ).toHaveCount(2);
+  await virtuaIdle(page, timeline);
+  const scroll = await timeline.evaluate((element) => element.scrollTop);
+  // Observe paint admission before triggering close; the cue is transient.
+  await origin.evaluate((element) => {
+    window.returnHighlightPainted = false;
+    const observer = new MutationObserver(() => {
+      if (
+        getComputedStyle(element, "::after").animationName.includes(
+          "return-message-highlight",
+        )
+      ) {
+        window.returnHighlightPainted = true;
+        observer.disconnect();
+      }
+    });
+    observer.observe(element, { attributes: true, attributeFilter: ["class"] });
+  });
+  await side
+    .locator(
+      '.buzz-tabs-item:has([role="tab"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.returnHighlightPainted))
+    .toBe(true);
+  await expect
+    .poll(() => timeline.evaluate((element) => element.scrollTop))
+    .toBe(scroll);
+  await expect
+    .poll(() =>
+      origin.evaluate(
+        (element) => getComputedStyle(element, "::after").animationName,
+      ),
+    )
+    .toBe("none");
+});
+
 // A malformed root hint crosses real navigation/reader/store/portal wiring;
 // only the verified message ancestry may replace selection, never an old editor.
 test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({

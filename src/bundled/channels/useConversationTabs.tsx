@@ -87,7 +87,7 @@ export function useConversationTabs({
   routed?:
     | { channelId: string; messageId: string; navigation: PageNavigation }
     | undefined;
-  onCloseThread?(tab: Extract<Tab, { kind: "thread" }>): void;
+  onCloseThread?(tab: Extract<Tab, { kind: "thread" }>, active: boolean): void;
   onRetryNavigation?(): void;
 }) {
   const currentId = current?.id;
@@ -283,10 +283,14 @@ export function useConversationTabs({
   };
   const closeConversationTab = (id: string) => {
     const closing = tabState.tabs.find((tab) => tab.id === id);
+    const wasActive =
+      closing && tabPane(closing) === "main"
+        ? tabState.mainSelected === id
+        : tabState.paneOpen && selectedTab === id;
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     // The page's own focus return (to the opener) is the last word.
     const notify = () => {
-      if (closing?.kind === "thread") onCloseThread?.(closing);
+      if (closing?.kind === "thread") onCloseThread?.(closing, !!wasActive);
     };
     if (closing && tabPane(closing) === "main") {
       // The conversation remains; neighbours keep their order.

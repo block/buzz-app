@@ -6,6 +6,7 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
 import { useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
@@ -638,6 +639,8 @@ function ChannelWorkspace({
       <Icon size="1rem" />
     );
   };
+  const channelConversation = useRef<HTMLDivElement>(null);
+  const highlightReturn = useReturnHighlight(channelConversation, currentId);
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -652,7 +655,7 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab) => {
+    onCloseThread: (tab, active) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
       if (
@@ -661,6 +664,7 @@ function ChannelWorkspace({
       )
         select(tab.channelId);
       if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+      if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
     onOpenDrawer: () => setSettings(undefined),
@@ -1435,7 +1439,12 @@ function ChannelWorkspace({
                             <CurrentChannelIcon size="1rem" />
                           ),
                         content: (
-                          <div className={styles.conversation}>{body}</div>
+                          <div
+                            ref={channelConversation}
+                            className={styles.conversation}
+                          >
+                            {body}
+                          </div>
                         ),
                       },
                       ...secondary.mainItems,

@@ -1494,6 +1494,8 @@ function Composer({
                     )
               }
               data-single-emoji={largeEmojiDraft || undefined}
+              // Choosing this conversation's tab resumes typing here.
+              data-tab-focus=""
               maxLength={16000}
               aria-label={label}
               placeholder={placeholder ?? label}

@@ -663,7 +663,18 @@ function ChannelWorkspace({
         routedThread.messageId === tab.messageId
       )
         select(tab.channelId);
-      if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+      const trigger = threadTrigger.current;
+      const closingChannel = currentId;
+      requestAnimationFrame(() => {
+        // Workspace selection commits first. Return focus only if the channel
+        // is actually showing; never focus hidden content under a sibling tab.
+        if (
+          trigger?.isConnected &&
+          linkContext.current.channelId === closingChannel &&
+          !trigger.closest('[inert], [hidden], [aria-hidden="true"]')
+        )
+          trigger.focus({ preventScroll: true });
+      });
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),

@@ -97,6 +97,10 @@ export function PanelWorkspace({
   const root = useRef<HTMLDivElement>(null);
   const focusTab = useRef(false);
   const closingTab = useRef<string | undefined>(undefined);
+  // Choosing a tab with the pointer resumes its content's typing target;
+  // keyboard selection keeps focus in the tab list.
+  const pointerTab = useRef(false);
+  const focusContent = useRef(false);
   const register = useCallback((tab: Local) => {
     setLocals((current) => [
       ...current.filter((item) => item.id !== tab.id),
@@ -189,10 +193,14 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      // Routed tab selection must not override a modal's focus owner.
+      // A route may mount/select a retained tab behind an open dialog.
+      // Its navigation must not take focus from the modal's own handoff.
       const modal = document.querySelector('dialog[open], [aria-modal="true"]');
-      if (!modal || modal.contains(root.current))
-        tab?.focus({ preventScroll: true });
+      if (!modal || modal.contains(root.current)) {
+        content?.focus({ preventScroll: true });
+        if (!content || document.activeElement !== content)
+          tab?.focus({ preventScroll: true });
+      }
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
         inline: "nearest",
@@ -200,6 +208,7 @@ export function PanelWorkspace({
       previous.current = selected;
       previousInstance.current = instance;
       focusTab.current = false;
+      focusContent.current = false;
       closingTab.current = undefined;
     }
   });
@@ -217,6 +226,12 @@ export function PanelWorkspace({
       onClickCapture={drag?.click}
       onPointerDownCapture={(event) => {
         drag?.begin(event);
+        pointerTab.current = !!(event.target as Element).closest?.(
+          '[role="tab"]',
+        );
+      }}
+      onKeyDownCapture={() => {
+        pointerTab.current = false;
       }}
       onKeyDown={(event) => {
         if (
@@ -255,6 +270,8 @@ export function PanelWorkspace({
                 : undefined,
             }))}
             onValueChange={(id) => {
+              focusContent.current = pointerTab.current;
+              pointerTab.current = false;
               const local = owned.find((tab) => tab.id === id);
               setLocalSelection(local?.id);
               select(local?.owner ?? id);

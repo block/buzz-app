@@ -1,4 +1,5 @@
-import type { LocalEvents } from "../relay/outbox";
+import type { EventData } from "../relay/events";
+import type { LocalEvents, Outbox } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 
 type RemovalSession = Pick<
@@ -124,17 +125,12 @@ export async function deleteAgentRecord(
   signal.throwIfAborted();
   const coordinate = `30177:${viewer}:${pubkey}`;
   const active = () => !signal.aborted;
-  const previous = outbox
-    .snapshot()
-    .find(
-      ({ event, delivery }) =>
-        delivery !== "accepted" &&
-        delivery !== "seen" &&
-        event.kind === 5 &&
-        event.tags.some(
-          ([name, value]) => name === "a" && value === coordinate,
-        ),
-    );
+  const previous = await resumable(
+    outbox,
+    (event) =>
+      event.kind === 5 &&
+      event.tags.some(([name, value]) => name === "a" && value === coordinate),
+  );
   if (previous) outbox.retry(previous.event.id, active);
   const id =
     previous?.event.id ??
@@ -182,18 +178,13 @@ export async function removeAgentFromChannels(
   let enqueueFailure: unknown;
   try {
     for (const id of pending) {
-      const previous = outbox
-        .snapshot()
-        .find(
-          ({ event, delivery }) =>
-            delivery !== "accepted" &&
-            delivery !== "seen" &&
-            event.kind === 9001 &&
-            event.tags.some(([name, value]) => name === "h" && value === id) &&
-            event.tags.some(
-              ([name, value]) => name === "p" && value === pubkey,
-            ),
-        );
+      const previous = await resumable(
+        outbox,
+        (event) =>
+          event.kind === 9001 &&
+          event.tags.some(([name, value]) => name === "h" && value === id) &&
+          event.tags.some(([name, value]) => name === "p" && value === pubkey),
+      );
       // Retry reuses the outbox's own operation, including an unknown result.
       if (previous) {
         outbox.retry(previous.event.id, active);
@@ -241,6 +232,30 @@ export async function removeAgentFromChannels(
     );
   // The rosters confirm the outcome; nothing is left for the outbox to retry.
   await Promise.all(operations.map((id) => outbox.dismiss(id)));
+}
+
+/** The relay refuses an event more than 15 minutes from its clock, and a
+ * retry republishes the same signed event, so an older saved attempt can never
+ * land. Removal repeats safely: drop a stale attempt so the caller signs anew. */
+const RESUMABLE_ATTEMPT_MS = 10 * 60_000;
+async function resumable(
+  outbox: Outbox,
+  matches: (event: EventData) => boolean,
+) {
+  const previous = outbox
+    .snapshot()
+    .find(
+      ({ event, delivery }) =>
+        delivery !== "accepted" && delivery !== "seen" && matches(event),
+    );
+  if (
+    !previous ||
+    previous.delivery === "sending" ||
+    Date.now() - previous.event.created_at * 1000 < RESUMABLE_ATTEMPT_MS
+  )
+    return previous;
+  await outbox.dismiss(previous.event.id);
+  return undefined;
 }
 
 function delivered(

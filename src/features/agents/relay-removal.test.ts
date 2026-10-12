@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
-import { publishAgentRecord, removeRelayAgent } from "./relay-removal";
+import {
+  publishAgentRecord,
+  removeAgentFromChannels,
+  removeRelayAgent,
+} from "./relay-removal";
 
 const viewer = keypair(),
   relay = keypair(),
@@ -140,6 +144,37 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(fixture.archived.has(agent.pubkey)).toBe(true);
   expect(fixture.deleted).toEqual(new Set([coordinate()]));
   expect(Object.values(fixture.channels).flat()).toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("signs a new channel removal instead of resending one the relay would refuse as stale", async () => {
+  const { fixture, instance } = setup();
+  const removeFromChannels = () =>
+    removeAgentFromChannels(
+      instance.session,
+      agent.pubkey,
+      new AbortController().signal,
+    );
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 9001;
+  await expect(removeFromChannels()).rejects.toThrow();
+  const [stale] = instance.session.outbox?.snapshot() ?? [];
+  expect(stale?.event.kind).toBe(9001);
+  delete fixture.removal.fail;
+  // Past the relay's 15-minute timestamp bound, resending `stale` can never land.
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20 * 60_000 });
+  try {
+    await removeFromChannels();
+  } finally {
+    vi.useRealTimers();
+  }
+  const [sent] = fixture.published;
+  expect(fixture.published).toHaveLength(1);
+  expect(sent?.id).not.toBe(stale?.event.id);
+  expect(sent?.created_at).toBeGreaterThan(
+    (stale?.event.created_at ?? 0) + 15 * 60,
+  );
+  expect(Object.values(fixture.channels).flat()).not.toContain(agent.pubkey);
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 

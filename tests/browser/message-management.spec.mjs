@@ -133,7 +133,9 @@ test("manage a channel message, peer unread state, and its thread", async ({
   await expect(root).toContainText("Edited from thread");
   await expect(row).toContainText("Edited from thread");
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   for (const width of [900, 390]) {
     await page.setViewportSize({ width, height: 850 });

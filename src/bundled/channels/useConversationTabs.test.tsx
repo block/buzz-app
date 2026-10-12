@@ -15,7 +15,12 @@ it("retained offline tabs can close and open threads without activating connecte
   ];
   const session = {
     viewer: "viewer",
-    channels: { list: () => ({ channels }) },
+    channels: {
+      list: () => ({ channels }),
+      window: () => ({
+        rows: [{ id: "root", content: "Original message title" }],
+      }),
+    },
   } as unknown as RelaySession;
   const panel = { key: "activity", title: "Activity" } as RegisteredPanel;
   const available = [panel];
@@ -56,9 +61,18 @@ it("retained offline tabs can close and open threads without activating connecte
     h.result.current.workspace.openConversationThread("beta", "root", "root"),
   );
   expect(h.result.current.state.tabs).toHaveLength(1);
+  act(() => h.result.current.state.openThreadTab("alpha", "reply", "hint"));
+  act(() =>
+    h.result.current.state.resolveThreadRoot("thread:alpha:hint", "root"),
+  );
+  expect(
+    h.result.current.workspace.items.find(
+      (tab) => tab.id === "thread:alpha:hint",
+    )?.label,
+  ).toBe("Original message title");
   const staleOpen = h.result.current.workspace.openConversationThread;
   h.unmount();
   act(() => staleOpen("beta", "another-root", "another-root"));
   const restored = renderHook(() => useChannelTabState(session, "alpha"));
-  expect(restored.result.current.tabs).toHaveLength(1);
+  expect(restored.result.current.tabs).toHaveLength(2);
 });

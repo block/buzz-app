@@ -18,6 +18,9 @@
   min-width: 0;
   flex-wrap: wrap;
 }
+.ingress[hidden] {
+  display: none;
+}
 .expanded {
   min-width: 0;
   flex: 1;

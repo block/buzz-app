@@ -5324,6 +5324,48 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
+  it("keeps a chat without a project free of the PR button after closing formatting", async () => {
+    const pending: ((value: unknown) => void)[] = [];
+    const p = picker(() => new Promise((resolve) => pending.push(resolve)));
+    await waitFor(() => expect(p.homes).toHaveBeenCalled());
+    await act(async () => {
+      for (const resolve of pending) resolve({ status: "none" });
+    });
+    const initialReads = p.homes.mock.calls.length;
+    const resourceButton = () =>
+      screen.queryByRole("button", { name: "Add issue or pull request" });
+    expect(resourceButton()).toBeNull();
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle formatting" }),
+      );
+      const close = await screen.findByRole("button", {
+        name: "Close formatting",
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", {
+            name: "Toggle formatting",
+            hidden: true,
+          }),
+        ).toBeNull(),
+      );
+      expect(resourceButton()).toBeNull();
+      fireEvent.click(close);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Toggle formatting" }),
+        ).toBeVisible(),
+      );
+      expect(resourceButton()).toBeNull();
+      expect(p.homes).toHaveBeenCalledTimes(initialReads);
+    } finally {
+      await act(async () => {
+        for (const resolve of pending) resolve({ status: "none" });
+      });
+    }
+  });
+
   it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
     const none = picker(() => Promise.resolve({ status: "none" }));
     await waitFor(() => expect(none.homes).toHaveBeenCalled());

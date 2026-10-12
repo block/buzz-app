@@ -538,7 +538,11 @@ function render() {
   const query = $("search").value.toLowerCase();
   renderPicker(state.candidates, state.file);
   const { harness, model, effort } = state.header ?? {};
-  const scope = `<strong>${htmlEscape(state.agent?.name ?? harness)}</strong>${state.agent ? `<span>${htmlEscape(harness)}</span>` : ""}${model ? `<span class="chip">${htmlEscape(model)}</span>` : ""}${effort ? `<span class="chip effort">${htmlEscape(effort)}</span>` : ""}`;
+  // The picker, when shown, already names the agent and harness.
+  const who = $("session").hidden
+    ? `<strong>${htmlEscape(state.agent?.name ?? harness)}</strong>${state.agent ? `<span>${htmlEscape(harness)}</span>` : ""}`
+    : "";
+  const scope = `${who}${model ? `<span class="chip">${htmlEscape(model)}</span>` : ""}${effort ? `<span class="chip effort">${htmlEscape(effort)}</span>` : ""}`;
   if ($("scope").innerHTML !== scope) $("scope").innerHTML = scope;
   $("scope").title = state.sessionId ?? "";
   renderTiming(state.timing);

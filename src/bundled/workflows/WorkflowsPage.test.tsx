@@ -362,9 +362,8 @@ it("discards form-only state on same-revision review and re-arms the next draft'
     );
     await user.click(screen.getByRole("combobox", { name: "Add condition" }));
     await user.click(await screen.findByRole("option", { name: "Author" }));
-    // Set the value in one change event: two draft cycles already cost ~75
-    // jsdom interactions and ran ~4.6 s on CI against the 5 s default timeout,
-    // and per-keystroke entry is pinned by the `guards canonical…` siblings.
+    // One change event keeps this two-cycle test inside the default timeout;
+    // keystroke entry is pinned by the `guards canonical…` siblings.
     fireEvent.change(screen.getByRole("textbox", { name: "Value" }), {
       target: { value },
     });

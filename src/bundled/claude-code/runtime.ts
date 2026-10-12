@@ -231,6 +231,7 @@ export class ClaudeRuntime {
     effort,
     team,
     workingUntil,
+    ignored,
     step,
     acknowledged,
     superseded,
@@ -240,8 +241,10 @@ export class ClaudeRuntime {
     if (
       trigger.type !== "timer" &&
       !(await fromOwner(trigger.event, agent.owner))
-    )
+    ) {
+      ignored?.();
       return;
+    }
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";

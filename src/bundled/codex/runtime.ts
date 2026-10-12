@@ -336,7 +336,10 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (!(await fromOwner(trigger.event, agent.owner))) return;
+    if (!(await fromOwner(trigger.event, agent.owner))) {
+      delivery.ignored?.();
+      return;
+    }
     const snapshot = this.relay(agent.pubkey)?.snapshot();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");

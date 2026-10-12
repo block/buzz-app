@@ -495,6 +495,10 @@ it("says so in the thread when a turn fails", async () => {
   spare.exit(1, "Error: Invalid API key\n");
   await flush(10);
   expect(settled).toBe(true);
+  await expect(done).resolves.toMatchObject({
+    ok: false,
+    error: "Error: Invalid API key",
+  });
   const report = published.find((event) => event.kind === 9);
   expect(report?.content).toBe(
     "⚠️ I couldn't finish that: Error: Invalid API key",

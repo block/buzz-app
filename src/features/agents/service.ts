@@ -209,6 +209,8 @@ export type Delivery<Config = unknown> = Readonly<{
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
+  /** The plugin declined this request; no work or successful outcome is implied. */
+  ignored?(): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
   acknowledged?(): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
@@ -1847,6 +1849,14 @@ export class AgentsService extends Service implements Agents {
       runner.admitted = 0;
     }
     if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
+      if (runner.activityClaimed) {
+        this.showWork(runner, job);
+        job.work?.finish({
+          ok: false,
+          error:
+            "Agent is busy and could not queue this request. Try again when it finishes.",
+        });
+      }
       console.warn(`Agent ${this.agent(runner.pubkey)?.name} dropped an event`);
       return;
     }
@@ -1949,6 +1959,7 @@ export class AgentsService extends Service implements Agents {
             ...(team ? { team } : {}),
             signal,
             workingUntil: working.hold,
+            ignored: () => job.work?.remove(),
             acknowledged: () => job.work?.started(),
             superseded: () => job.work?.remove(),
             step: (tool: string, target?: string) =>

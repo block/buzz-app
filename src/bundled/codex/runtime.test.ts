@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
-import { afterEach, expect, it, vi } from "vitest";
+import { describe, afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
-import { CodexRuntime } from "./runtime";
+import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
 
 // The plugin registers only in the Mac/Linux desktop app.
@@ -920,7 +920,9 @@ it("ignores non-owner messages without spawning", async () => {
   const other = f.delivery("work");
   if (other.trigger.type !== "timer")
     other.trigger.event.pubkey = "f".repeat(64);
-  await f.runtime.run(other);
+  const ignored = vi.fn();
+  await f.runtime.run({ ...other, ignored });
+  expect(ignored).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
@@ -962,12 +964,19 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("without a final reply"),
   });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+    ok: false,
+  });
   await f.runtime.run(f.delivery("next"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.exits.resolve(3);
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
   expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
+  });
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Codex exited"),
   });
 });
 it("sets no deadline of its own on a turn", async () => {
@@ -1572,7 +1581,9 @@ it("finishes final sends normally and preserves the agent's background terminals
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
   // The request is answered, so it stops counting as working before Codex's
   // closing model call ends the turn.
-  await f.workingUntil.mock.calls[0]?.[0];
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
   const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
     ?.threadId;
   f.emit({
@@ -1633,3 +1644,51 @@ it.each([false, true])(
     });
   },
 );
+
+describe("codexStep", () => {
+  it("maps started items into the shared step vocabulary", () => {
+    expect(codexStep({ type: "commandExecution", command: "ls" })).toEqual({
+      tool: "Shell",
+      target: "ls",
+    });
+    expect(
+      codexStep({
+        type: "commandExecution",
+        command: "sed -n 1,40p src/a.ts",
+        commandActions: [{ type: "read", name: "a.ts", path: "src/a.ts" }],
+      }),
+    ).toEqual({ tool: "Read", target: "a.ts" });
+    expect(
+      codexStep({
+        type: "commandExecution",
+        command: "rg agent",
+        commandActions: [{ type: "search", query: "agent", path: null }],
+      }),
+    ).toEqual({ tool: "Grep", target: "agent" });
+    expect(
+      codexStep({ type: "fileChange", changes: [{ path: "/x/notes.md" }] }),
+    ).toEqual({ tool: "Edit", target: "notes.md" });
+    expect(codexStep({ type: "mcpToolCall", tool: "send_message" })).toEqual({
+      tool: "send_message",
+    });
+    expect(codexStep({ type: "reasoning" })).toEqual({ tool: "Thinking" });
+    expect(codexStep({ type: "userMessage" })).toBeUndefined();
+    expect(codexStep(undefined)).toBeUndefined();
+  });
+});
+
+describe("programs", () => {
+  it("names the programs a command runs, without the shell wrapper or scripts", () => {
+    expect(
+      programs(
+        `/bin/zsh -lc "mktemp /tmp/activity-test.XXXX | xargs -I'{}' sh -c 'printf hello > \\"$1\\"; printf x' sh '{}'"`,
+      ),
+    ).toBe("mktemp, xargs");
+    expect(programs("which copilot || true")).toBe("which, true");
+    expect(programs("FOO=1 /usr/bin/git status && pnpm test")).toBe(
+      "git, pnpm",
+    );
+    expect(programs("a; b; c; d; e")).toBe("a, b, c and 2 more");
+    expect(programs("")).toBeUndefined();
+  });
+});

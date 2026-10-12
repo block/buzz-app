@@ -1231,9 +1231,23 @@ it("publishes workspace errors without starting work", async () => {
     config: { workspace: "relative" },
   });
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("absolute workspace"),
+    content: expect.stringContaining("absolute or ~/… workspace"),
   });
   expect(f.spawn).not.toHaveBeenCalled();
+});
+
+it("resolves a workspace under home through the process host", async () => {
+  const f = fixture();
+  await f.runtime.run({
+    ...f.delivery("hello"),
+    config: { workspace: "~/code" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.spawn).toHaveBeenCalledWith(
+    "workspace",
+    expect.objectContaining({ cwd: "~/code" }),
+  );
+  f.runtime.dispose();
 });
 
 it.each([{}, { workspace: "" }, { workspace: "  " }])(
@@ -1280,7 +1294,7 @@ it("reports a default workspace resolution failure without starting a turn", asy
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining(
-      "Could not resolve the default Codex workspace",
+      "Could not resolve the Codex workspace ~/.buzz",
     ),
   });
   expect(f.starts()).toHaveLength(0);

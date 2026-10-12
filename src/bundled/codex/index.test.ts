@@ -61,8 +61,12 @@ it("adopts a brought-over agent's instructions and workspace, nothing else", () 
     ...(saved as object),
     workspace: "/work/code",
   });
+  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual({
+    ...(saved as object),
+    workspace: "~/code",
+  });
   // A workspace Codex cannot run in stays the default.
-  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual(saved);
+  expect(type?.adopt?.({ workspace: "code" }, saved)).toEqual(saved);
 });
 
 it("stops agents that stop running even when the agent list could not be read", () => {

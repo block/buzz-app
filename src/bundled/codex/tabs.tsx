@@ -397,7 +397,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
       try {
         const settings = readConfig(draft);
         if (!validWorkspace(settings.workspace))
-          throw new Error("Enter an absolute workspace path or ~/.buzz.");
+          throw new Error("Enter an absolute or ~/… workspace path.");
         await save(settings);
       } catch (reason) {
         setError(message(reason));

@@ -261,7 +261,7 @@ fn development_and_release_items_are_separate() {
     assert_eq!(
         credentials::HUMAN_SERVICE,
         if cfg!(debug_assertions) {
-            "dev.local.buzz.foundation.identity.debug"
+            "dev.local.buzz.foundation.identity.debug.onboarding"
         } else {
             "dev.local.buzz.foundation.identity"
         }

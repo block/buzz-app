@@ -2,11 +2,20 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
+  AgentProviderSnapshot,
   Agents,
   AgentsSnapshot,
   Carry,
@@ -70,6 +79,31 @@ const portable: PortableAgent[] = [
   },
 ];
 
+function provider(
+  initial: AgentProviderSnapshot["readiness"],
+  DialogBody: () => ReactNode = () => <p>Provider controls</p>,
+) {
+  let state: AgentProviderSnapshot = { readiness: initial };
+  const listeners = new Set<() => void>();
+  const check = vi.fn(async () => undefined);
+  return {
+    contribution: {
+      snapshot: () => state,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      check,
+      DialogBody,
+    },
+    check,
+    set(next: AgentProviderSnapshot) {
+      state = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 function setup(
   saved: Agent[],
   { shown = true, more = [] as RegisteredAgentType[] } = {},
@@ -81,6 +115,7 @@ function setup(
     teams: [],
   };
   const listeners = new Set<() => void>();
+  const echoProvider = provider("ready", () => <p>Echo controls</p>);
   const type = {
     key: "test/echo",
     pluginId: "test",
@@ -93,6 +128,7 @@ function setup(
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
+    provider: echoProvider.contribution,
     tabs: [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }],
     Create: ({
       config,
@@ -179,7 +215,15 @@ function setup(
     snapshot = { ...snapshot, agents: next };
     for (const listener of listeners) listener();
   };
-  return { agents, types, show };
+  return { agents, echoProvider, types, show };
+}
+
+async function openAction(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await user.click(screen.getByRole("button", { name: "More agent actions" }));
+  await user.click(await screen.findByRole("menuitem", { name }));
 }
 
 it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
@@ -224,6 +268,104 @@ it("opens the build view with the type's tabs and the app's Attention tab", asyn
     "aria-selected",
     "true",
   );
+});
+
+it("checks active providers in a health submenu and opens their host-owned dialogs", async () => {
+  const user = userEvent.setup();
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    icon: PlugIcon,
+    defaults: () => ({ config: {} }),
+  } as unknown as RegisteredAgentType;
+  const brokenProvider = provider("attention", () => {
+    throw new Error("Broken controls");
+  });
+  brokenProvider.contribution.check = vi.fn(() => {
+    throw new Error("Broken check");
+  });
+  const broken = {
+    ...relay,
+    key: "test/broken",
+    id: "broken",
+    title: "Broken",
+    provider: brokenProvider.contribution,
+  } as unknown as RegisteredAgentType;
+  const checkingProvider = provider("checking");
+  const checking = {
+    ...relay,
+    key: "test/checking",
+    id: "checking",
+    title: "Checking",
+    provider: checkingProvider.contribution,
+  } as unknown as RegisteredAgentType;
+  try {
+    const { echoProvider } = setup([agent("Ada", 1)], {
+      more: [relay, broken, checking],
+    });
+    const more = screen.getByRole("button", { name: "More agent actions" });
+
+    await user.click(more);
+    const trigger = await screen.findByRole("menuitem", { name: "Providers" });
+    await user.hover(trigger);
+    const menu = await screen.findByRole("menu", { name: "Providers" });
+    await vi.waitFor(() =>
+      expect(menu).not.toHaveAttribute("data-starting-style"),
+    );
+    expect(screen.getAllByRole("menu")).toHaveLength(2);
+    const echo = within(menu).getByRole("menuitem", {
+      name: "Echo, ready",
+    });
+    const relayRow = within(menu).getByRole("menuitem", {
+      name: "Relay, unavailable",
+    });
+    expect(relayRow).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(menu).getByRole("menuitem", { name: "Broken, attention" }),
+    ).toBeEnabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Checking, checking" }),
+    ).toBeEnabled();
+    expect(echo.querySelector("svg")).toBeInTheDocument();
+    expect(checkingProvider.check).toHaveBeenCalled();
+
+    fireEvent.click(echo);
+    const dialog = await screen.findByRole("dialog", { name: "Echo" });
+    expect(within(dialog).getByText("Echo controls")).toBeVisible();
+    act(() => echoProvider.set({ readiness: "ready", blocking: true }));
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+    act(() => echoProvider.set({ readiness: "ready" }));
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(more).toHaveFocus();
+
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Providers" }),
+    );
+    const providers = await screen.findByRole("menu", { name: "Providers" });
+    await vi.waitFor(() =>
+      expect(providers).not.toHaveAttribute("data-starting-style"),
+    );
+    fireEvent.click(
+      within(providers).getByRole("menuitem", {
+        name: "Broken, attention",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Provider controls are unavailable.",
+    );
+  } finally {
+    errors.mockRestore();
+  }
 });
 
 it("shows an agent's picture in the grid, peek and build view", async () => {
@@ -453,7 +595,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
-  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await openAction(user, "Teams");
   expect(screen.getByText("No teams yet.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");

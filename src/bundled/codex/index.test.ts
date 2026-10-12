@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
 });
 afterEach(() => {
+  localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -38,12 +39,15 @@ function applied() {
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
-  expect(applied()).toMatchObject({
+  const type = applied();
+  expect(type).toMatchObject({
     id: "codex",
     title: "Codex",
     Create: expect.any(Function),
     icon: CodexLogoIcon,
   });
+  expect(type?.provider).toBeDefined();
+  expect(type?.tabs?.map((tab) => tab.title)).toEqual(["Settings"]);
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");

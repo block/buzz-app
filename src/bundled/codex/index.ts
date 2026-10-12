@@ -3,7 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { config, defaults, validWorkspace } from "./config";
 import { CodexRuntime } from "./runtime";
-import { createTabs } from "./tabs";
+import { CodexProvider, createTabs } from "./tabs";
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and file uploads run `base64`,
@@ -15,7 +15,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const runtime = new CodexRuntime(start, ctx.agents.relay);
+  const providerController = new CodexProvider(start);
+  const runtime = new CodexRuntime(
+    start,
+    ctx.agents.relay,
+    localStorage,
+    (raw) => providerController.resolve(raw),
+  );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
   // Agents that stop running stop their turns, and the last one stops the
   // server; switching communities or a reconnect does not.
@@ -25,12 +31,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
   const offAgents = ctx.agents.subscribe(sync);
+  const offProvider = providerController.subscribe(sync);
   sync();
   ctx.effect(() => () => {
     offAgents();
+    offProvider();
+    providerController.dispose();
     runtime.dispose();
   });
-  const { CodexTab, SettingsTab, Create } = createTabs(start, runtime);
+  const { Create, ProviderDialogBody, SettingsTab } = createTabs(
+    providerController,
+    runtime,
+  );
   ctx.agents.register({
     id: "codex",
     title: "Codex",
@@ -74,10 +86,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
-    tabs: [
-      { id: "codex", title: "Codex", component: CodexTab },
-      { id: "settings", title: "Settings", component: SettingsTab },
-    ],
+    provider: {
+      snapshot: providerController.snapshot,
+      subscribe: providerController.subscribe,
+      check: () => providerController.check(),
+      DialogBody: ProviderDialogBody,
+    },
+    tabs: [{ id: "settings", title: "Settings", component: SettingsTab }],
     models: (agent) => runtime.preview(agent),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: 2 * 60_000,

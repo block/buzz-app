@@ -14,6 +14,7 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
+import { ClaudeDefaults } from "./defaults";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => desktop.tauri }));
@@ -34,6 +35,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
   vi.restoreAllMocks();
   localStorage.clear();
 });
@@ -127,6 +129,10 @@ function tab(type: AgentType<Config>, index: number) {
   if (!component) throw new Error("no tab");
   return component;
 }
+function providerSetup(type: AgentType<Config>) {
+  if (!type.provider) throw new Error("no provider contribution");
+  return type.provider.DialogBody;
+}
 async function choose(label: string, option: string) {
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: label }));
@@ -189,7 +195,8 @@ it("is an agent type on the desktop app", () => {
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );
-  expect(type.tabs?.map((tab) => tab.title)).toEqual(["Claude", "Settings"]);
+  expect(type.provider).toBeDefined();
+  expect(type.tabs?.map((tab) => tab.title)).toEqual(["Settings"]);
 });
 
 it("registers only where setup's bash and base64 exist", () => {
@@ -202,22 +209,62 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("shows that Claude is ready and that nothing is running yet", async () => {
-  const Claude = tab(installed().type, 0);
-  render(<Claude agent={agent()} save={vi.fn()} />);
+it("shows provider readiness separately from collapsed agent diagnostics", async () => {
+  const installedType = installed().type;
+  const Setup = providerSetup(installedType);
+  render(<Setup />);
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude 2.1.292 is ready (me@example.com).",
+      "Claude is ready.",
     ),
   );
+  cleanup();
+  const Settings = tab(installedType, 0);
+  render(<Settings agent={agent()} save={vi.fn()} />);
+  expect(
+    screen.getByText("Runtime diagnostics").closest("details"),
+  ).not.toHaveAttribute("open");
   expect(
     screen.getByText(/None\. A conversation's session starts/),
-  ).toBeVisible();
+  ).toBeInTheDocument();
+});
+
+it("saves a provider model default explicitly and leaves blank agent config inherited", async () => {
+  const installedType = installed().type;
+  const Provider = providerSetup(installedType);
+  render(<Provider />);
+  await screen.findByText("Claude Code is ready.");
+  await choose("Default model", "Sonnet");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Save defaults" }));
+  cleanup();
+
+  const Settings = tab(installedType, 0);
+  const save = vi.fn(async () => undefined);
+  render(<Settings agent={agent()} save={save} />);
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "Provider default · Sonnet",
+  );
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {
+  localStorage.setItem("buzz.claude-code.provider-defaults.v1", "not json");
+  const defaults = new ClaudeDefaults(localStorage);
+  expect(defaults.resolve(DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
+  defaults.save({ model: "sonnet" });
+  const inherited = { ...DEFAULT_CONFIG };
+  expect(defaults.resolve(inherited).model).toBe("sonnet");
+  expect(inherited).toEqual(DEFAULT_CONFIG);
+  expect(defaults.resolve({ ...DEFAULT_CONFIG, model: "opus" }).model).toBe(
+    "opus",
+  );
 });
 
 it("keeps focus on sign-in while it runs and on the same button after cancel", async () => {
-  const Claude = tab(installed({ loggedIn: false }).type, 0);
-  render(<Claude agent={agent()} save={vi.fn()} />);
+  const Setup = providerSetup(installed({ loggedIn: false }).type);
+  render(<Setup />);
   const user = userEvent.setup();
   const signIn = await screen.findByRole("button", { name: "Sign in" });
   await user.click(signIn);
@@ -235,7 +282,7 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
 });
 
 it("saves settings as one config", async () => {
-  const Settings = tab(installed().type, 1);
+  const Settings = tab(installed().type, 0);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   const user = userEvent.setup();
@@ -257,7 +304,7 @@ it("saves settings as one config", async () => {
 });
 
 it("keeps Save focused while saving, and lets a failed save be retried", async () => {
-  const Settings = tab(installed().type, 1);
+  const Settings = tab(installed().type, 0);
   let fail: (error: Error) => void = () => undefined;
   const save = vi
     .fn<(config: Config) => Promise<void>>()

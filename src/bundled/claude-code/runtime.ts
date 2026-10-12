@@ -126,6 +126,7 @@ export class ClaudeRuntime {
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
 
   private get spawn(): Spawn {
@@ -148,7 +149,7 @@ export class ClaudeRuntime {
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
-      const next = config(agent.config);
+      const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
       if (!entry)
         this.entry(agent.pubkey, next, agent.attentionEnabled).name =
@@ -167,7 +168,9 @@ export class ClaudeRuntime {
         entry.sessions.reconfigure();
       }
     }
-    this.spare.warm(...agents.map((agent) => where(config(agent.config))));
+    this.spare.warm(
+      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+    );
     this.notify();
   }
 
@@ -301,7 +304,7 @@ export class ClaudeRuntime {
     superseded,
     current,
   }: Delivery) {
-    const settings = config(raw);
+    const settings = this.resolveConfig(raw);
     // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.

@@ -9,8 +9,10 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
@@ -39,9 +41,14 @@ import type {
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import {
+  ContributionBoundary,
+  contributionKey,
+} from "../../features/conversation/ContributionBoundary";
+import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CopyIcon,
+  DotsThreeIcon,
   PlusIcon,
   RobotIcon,
   XIcon,
@@ -58,12 +65,21 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   MenuPopup,
+  MenuIcon,
+  MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
   MenuRoot,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
+  MenuTrailing,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -120,6 +136,7 @@ export function AgentsPage({
   const [tab, setTab] = useState<Tab>("yours");
   const [frame, setFrame] = useState<Frame>({ view: "browse" });
   const [creating, setCreating] = useState(false);
+  const [providerKey, setProviderKey] = useState<string>();
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
@@ -139,6 +156,7 @@ export function AgentsPage({
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   const openTeams = () => setFrame({ view: "browse", side: "teams" });
+  const more = useRef<HTMLButtonElement>(null);
 
   const yours = (() => {
     if (snapshot.status === "unavailable")
@@ -295,13 +313,28 @@ export function AgentsPage({
             }
             actions={
               !building && tab === "yours" && ready ? (
-                <Button
-                  size="compact"
-                  onClick={openTeams}
-                  disabled={side === "teams"}
-                >
-                  Teams
-                </Button>
+                <MenuRoot>
+                  <MenuTrigger
+                    render={
+                      <IconButton
+                        ref={more}
+                        aria-label="More agent actions"
+                        title="More agent actions"
+                        size="sm"
+                        icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+                      />
+                    }
+                  />
+                  <MenuPopup align="end">
+                    <ProviderSubmenu
+                      types={types}
+                      onSelect={setProviderKey}
+                    />
+                    <MenuItem onClick={openTeams} disabled={side === "teams"}>
+                      Teams
+                    </MenuItem>
+                  </MenuPopup>
+                </MenuRoot>
               ) : undefined
             }
           />
@@ -323,7 +356,215 @@ export function AgentsPage({
           }}
         />
       )}
+      {providerKey && (
+        <ProviderDialog
+          type={types.find((type) => type.key === providerKey)}
+          finalFocus={more}
+          onClose={() => setProviderKey(undefined)}
+        />
+      )}
     </div>
+  );
+}
+
+/** A quick device-wide health view. Controls stay in each provider's dialog. */
+function ProviderSubmenu({
+  types,
+  onSelect,
+}: {
+  types: readonly RegisteredAgentType[];
+  onSelect(key: string): void;
+}) {
+  const check = () => {
+    for (const { provider } of types)
+      if (provider)
+        try {
+          void Promise.resolve(provider.check()).catch(() => {});
+        } catch {
+          // A failed contribution does not prevent the remaining health checks.
+        }
+  };
+  return (
+    <MenuSubmenu>
+      <MenuSubmenuTrigger onFocus={check} onPointerEnter={check}>
+        Providers
+      </MenuSubmenuTrigger>
+      <MenuSubmenuPopup aria-label="Providers">
+        {types.map((type) => {
+          const fallback = (
+            <MenuItem aria-label={`${type.title}, unavailable`} disabled>
+              <ProviderIcon type={type} />
+              {type.title}
+              <MenuTrailing>
+                <ProviderStatus readiness="attention" />
+                <span className="sr-only">Unavailable</span>
+              </MenuTrailing>
+            </MenuItem>
+          );
+          return (
+            <ContributionBoundary key={type.key} fallback={fallback}>
+              <ProviderMenuItem
+                type={type}
+                onSelect={() => onSelect(type.key)}
+              />
+            </ContributionBoundary>
+          );
+        })}
+      </MenuSubmenuPopup>
+    </MenuSubmenu>
+  );
+}
+
+function ProviderIcon({ type }: { type: RegisteredAgentType }) {
+  const Icon = type.icon;
+  return Icon ? (
+    <MenuIcon>
+      <Icon size={17} />
+    </MenuIcon>
+  ) : null;
+}
+
+function ProviderMenuItem({
+  type,
+  onSelect,
+}: {
+  type: RegisteredAgentType;
+  onSelect(): void;
+}) {
+  const provider = type.provider;
+  if (!provider)
+    return (
+      <MenuItem aria-label={`${type.title}, unavailable`} disabled>
+        <ProviderIcon type={type} />
+        {type.title}
+        <MenuTrailing>
+          <ProviderStatus readiness="unavailable" />
+        </MenuTrailing>
+      </MenuItem>
+    );
+  return (
+    <ProviderHealthMenuItem
+      type={type}
+      provider={provider}
+      onSelect={onSelect}
+    />
+  );
+}
+
+function ProviderHealthMenuItem({
+  type,
+  provider,
+  onSelect,
+}: {
+  type: RegisteredAgentType;
+  provider: NonNullable<RegisteredAgentType["provider"]>;
+  onSelect(): void;
+}) {
+  const state = useSyncExternalStore(
+    provider.subscribe,
+    provider.snapshot,
+    provider.snapshot,
+  );
+  return (
+    <MenuItem
+      aria-label={`${type.title}, ${state.readiness}`}
+      onClick={onSelect}
+    >
+      <ProviderIcon type={type} />
+      {type.title}
+      <MenuTrailing>
+        <ProviderStatus readiness={state.readiness} />
+        <span className="sr-only">{state.readiness}</span>
+      </MenuTrailing>
+    </MenuItem>
+  );
+}
+
+function ProviderStatus({
+  readiness,
+}: {
+  readiness: "ready" | "checking" | "attention" | "unavailable";
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={styles.providerStatus}
+      data-readiness={readiness}
+    />
+  );
+}
+
+function ProviderDialog({
+  type,
+  finalFocus,
+  onClose,
+}: {
+  type: RegisteredAgentType | undefined;
+  finalFocus: RefObject<HTMLButtonElement | null>;
+  onClose(): void;
+}) {
+  const provider = type?.provider;
+  if (!type || !provider) return null;
+  return (
+    <ContributionBoundary
+      key={contributionKey(type)}
+      fallback={
+        <Dialog
+          open
+          onOpenChange={(open) => !open && onClose()}
+          title={type.title}
+          finalFocus={() => finalFocus.current}
+        >
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            Provider controls are unavailable.
+          </p>
+        </Dialog>
+      }
+    >
+      <ManagedProviderDialog
+        type={type}
+        provider={provider}
+        finalFocus={finalFocus}
+        onClose={onClose}
+      />
+    </ContributionBoundary>
+  );
+}
+
+function ManagedProviderDialog({
+  type,
+  provider,
+  finalFocus,
+  onClose,
+}: {
+  type: RegisteredAgentType;
+  provider: NonNullable<RegisteredAgentType["provider"]>;
+  finalFocus: RefObject<HTMLButtonElement | null>;
+  onClose(): void;
+}) {
+  const state = useSyncExternalStore(
+    provider.subscribe,
+    provider.snapshot,
+    provider.snapshot,
+  );
+  const Icon = type.icon;
+  const Body = provider.DialogBody;
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={
+        <span className="flex items-center gap-2">
+          {Icon && <Icon size={22} aria-hidden="true" />}
+          {type.title}
+        </span>
+      }
+      height="stable"
+      preventClose={!!state.blocking}
+      finalFocus={() => finalFocus.current}
+    >
+      <Body />
+    </Dialog>
   );
 }
 
@@ -1079,7 +1320,11 @@ function TypeField({
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
 }) {
-  const others = types.filter((item) => item.key !== agent.type);
+  // A local key can move only between local runtimes. Hosted providers own
+  // their agents' keys and have a separate lifecycle.
+  const available =
+    agent.place === "here" ? types.filter((item) => !item.remote) : [];
+  const others = available.filter((item) => item.key !== agent.type);
   const TypeIcon = type?.icon;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -1139,7 +1384,7 @@ function TypeField({
               value={agent.type}
               onValueChange={(next) => choose(String(next))}
             >
-              {types.map((item) => (
+              {available.map((item) => (
                 <AgentTypeChoice key={item.key} type={item} variant="menu" />
               ))}
             </MenuRadioGroup>

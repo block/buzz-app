@@ -6,7 +6,8 @@ import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
-import { Create, createTabs } from "./tabs";
+import { createTabs } from "./tabs";
+import { ClaudeDefaults } from "./defaults";
 
 export const TYPE_ID = "claude-code";
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
@@ -21,7 +22,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);
   const setup = new ClaudeSetup(spawn);
-  const runtime = new ClaudeRuntime(host, agents.relay);
+  const providerDefaults = new ClaudeDefaults();
+  const runtime = new ClaudeRuntime(host, agents.relay, localStorage, (raw) =>
+    providerDefaults.resolve(raw),
+  );
   const sync = () => {
     const snapshot = agents.snapshot();
     // Agents that stop running, the app signing out included, stop their
@@ -32,15 +36,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // One spare session waits for whichever running agent needs it next.
   if (spawn) {
     const unsubscribe = agents.subscribe(sync);
+    const unsubscribeDefaults = providerDefaults.subscribe(sync);
     sync();
     ctx.effect(() => () => {
       unsubscribe();
+      unsubscribeDefaults();
       runtime.dispose();
       setup.dispose();
     });
   }
 
-  const { ClaudeTab, SettingsTab } = createTabs({ setup, runtime });
+  const { Create, ProviderDialogBody, SettingsTab } = createTabs({
+    setup,
+    defaults: providerDefaults,
+    runtime,
+  });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
@@ -74,10 +84,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ];
     },
     summary: (agent) => config(agent.config).model || "Claude",
-    tabs: [
-      { id: "claude", title: "Claude", component: ClaudeTab },
-      { id: "settings", title: "Settings", component: SettingsTab },
-    ],
+    provider: {
+      snapshot: setup.providerSnapshot,
+      subscribe: setup.subscribe,
+      check: () => setup.check(),
+      DialogBody: ProviderDialogBody,
+    },
+    tabs: [{ id: "settings", title: "Settings", component: SettingsTab }],
     models: (agent) => runtime.models(agent.pubkey),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: HANDOVER_MS,

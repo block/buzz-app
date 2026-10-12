@@ -299,6 +299,19 @@ export type Model = Readonly<{
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
 export type Models = Readonly<{ current: string; models: readonly Model[] }>;
+export type AgentProviderSnapshot = Readonly<{
+  readiness: "checking" | "ready" | "attention";
+  /** Installation and sign-in work must be cancelled before its dialog closes. */
+  blocking?: boolean;
+}>;
+export type AgentProvider = Readonly<{
+  snapshot(): AgentProviderSnapshot;
+  subscribe(listener: () => void): () => void;
+  /** Refreshes device-wide readiness without changing installation or auth. */
+  check(): void | Promise<void>;
+  /** Provider-owned connection controls and optional saved defaults. */
+  DialogBody: ComponentType;
+}>;
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
@@ -328,6 +341,9 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Device-wide readiness and management. Agents supplies the menu row,
+   * provider identity, modal framing and focus behavior. */
+  provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
   /** Models and effort levels the owner can pick for the next run while
@@ -1239,6 +1255,8 @@ export class AgentsService extends Service implements Agents {
     const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
     const kind = kinds.get(type);
     if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type) return [];
     if (this.runners.get(pubkey)?.working)
       throw new Error(
@@ -1272,6 +1290,8 @@ export class AgentsService extends Service implements Agents {
     const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
     const kind = kinds.get(type);
     if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type) return { moved: [], dropped: [], settings: [] };
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }

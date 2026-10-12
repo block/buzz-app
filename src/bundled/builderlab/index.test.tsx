@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -225,14 +226,55 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   try {
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents.types()).toMatchObject([
+      { key: "block.builderlab/builderlab", title: "Builderlab" },
+    ]);
+    expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
+    const picker = render(
+      <AgentsPage agents={agents} relay={community.relay} />,
+    );
+    const [newAgent] = await screen.findAllByRole("button", {
+      name: "New agent",
+    });
+    if (!newAgent) throw new Error("Missing New agent button");
+    await userEvent.setup().click(newAgent);
+    expect(
+      screen.getByRole("radio", { name: /Builderlab/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TBD")).toBeInTheDocument();
+    const providerUser = userEvent.setup();
+    await providerUser.click(
+      screen.getByRole("button", { name: "More agent actions" }),
+    );
+    await providerUser.hover(
+      await screen.findByRole("menuitem", { name: "Providers" }),
+    );
+    const providers = await screen.findByRole("menu", { name: "Providers" });
+    await waitFor(() =>
+      expect(providers).not.toHaveAttribute("data-starting-style"),
+    );
+    fireEvent.click(
+      within(providers).getByRole("menuitem", {
+        name: "Builderlab, attention",
+      }),
+    );
+    const providerDialog = await screen.findByRole("dialog", {
+      name: "Builderlab",
+    });
+    await providerUser.click(
+      within(providerDialog).getByRole("button", {
+        name: "Sign in with Builderlab",
+      }),
+    );
+    expect(
+      await within(providerDialog).findByRole("button", { name: "Sign out" }),
+    ).toBeEnabled();
+    picker.unmount();
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Integrations");
     if (!card) throw new Error("Missing Builderlab login card");
     const Card = card.component;
     const mounted = render(<Card active={() => true} />);
-    await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
-    );
     expect(
       await screen.findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();

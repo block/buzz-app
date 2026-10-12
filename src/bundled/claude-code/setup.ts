@@ -1,6 +1,7 @@
 // Claude on this computer: whether it is installed and signed in, and the
 // installer and sign-in, each run as a declared process.
 import type { HostProcess } from "../../features/host/service";
+import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { ENV, type Spawn } from "./claude";
 
 export type ClaudeStatus =
@@ -99,6 +100,7 @@ export class ClaudeSetup {
     output: "",
   };
   private readonly listeners = new Set<() => void>();
+  private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
@@ -106,6 +108,7 @@ export class ClaudeSetup {
   constructor(private readonly spawn: Spawn | undefined) {}
 
   snapshot = () => this.state;
+  providerSnapshot = () => this.health;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -114,6 +117,15 @@ export class ClaudeSetup {
   };
   private set(change: Partial<SetupState>) {
     this.state = { ...this.state, ...change };
+    this.health = Object.freeze({
+      readiness:
+        !this.state.status || this.state.checking
+          ? "checking"
+          : this.state.status.state === "ready"
+            ? "ready"
+            : "attention",
+      ...(this.state.running ? { blocking: true } : {}),
+    });
     for (const listener of this.listeners) listener();
   }
 
@@ -127,7 +139,7 @@ export class ClaudeSetup {
       });
       return;
     }
-    if (this.state.checking) return;
+    if (this.state.checking || this.state.running) return;
     this.set({ checking: true });
     const status = await checkClaude(this.spawn);
     this.set({ status, checking: false });

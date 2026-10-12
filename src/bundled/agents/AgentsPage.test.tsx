@@ -233,7 +233,7 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("changes the agent's type from the build view and says what stayed behind", async () => {
+it("dismisses or submits an agent type change from the build view", async () => {
   const user = userEvent.setup();
   const relay = {
     key: "test/relay",
@@ -255,11 +255,23 @@ it("changes the agent's type from the build view and says what stayed behind", a
     name: "Change Ada's type",
   });
   expect(within(dialog).getByRole("radio", { name: "Relay" })).toBeChecked();
-  await user.click(within(dialog).getByRole("button", { name: "Change type" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+  await user.click(
+    document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.click(within(rail).getByRole("button", { name: "Change" }));
+  const reopenedDialog = await screen.findByRole("dialog", {
+    name: "Change Ada's type",
+  });
+  await user.click(
+    within(reopenedDialog).getByRole("button", { name: "Change type" }),
+  );
+  expect(await within(reopenedDialog).findByRole("alert")).toHaveTextContent(
     "Ada is answering",
   );
-  await user.click(within(dialog).getByRole("button", { name: "Change type" }));
+  await user.click(
+    within(reopenedDialog).getByRole("button", { name: "Change type" }),
+  );
   expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay");
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(within(rail).getByRole("status")).toHaveTextContent(

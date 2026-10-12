@@ -1088,6 +1088,7 @@ function TypeField({
             ? "Its instructions and workspace move if the new type has a place for them; its other settings start from the new type's defaults."
             : "Without its current type its settings can't be read, so they start from the new type's defaults."
         }`}
+        dismissOnOutsideClick
         preventClose={pending}
         actions={
           <>

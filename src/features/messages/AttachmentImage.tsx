@@ -15,10 +15,8 @@ export function AttachmentImage({
   cached = false,
   onOpenReview,
   keepMounted,
-  thumbnail = false,
   label = "Open image attachment",
 }: {
-  thumbnail?: boolean;
   label?: string;
   attachment: Attachment;
   source: string | undefined;
@@ -35,36 +33,29 @@ export function AttachmentImage({
   useEffect(() => {
     const release = viewerOpen ? keepMounted?.() : undefined;
     // The modal boundary restores focus on the next frame; releasing after it
-    // lets the restored thumbnail keep the row mounted instead.
+    // lets the restored preview keep the row mounted instead.
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
-  const style =
-    !thumbnail && attachment.dimensions
-      ? {
-          width: Math.min(
-            360,
-            attachment.dimensions.width,
-            (320 * attachment.dimensions.width) / attachment.dimensions.height,
-          ),
-          aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
-        }
-      : undefined;
+  const style = attachment.dimensions
+    ? {
+        width: Math.min(
+          360,
+          attachment.dimensions.width,
+          (320 * attachment.dimensions.width) / attachment.dimensions.height,
+        ),
+        aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+      }
+    : undefined;
   if (!source)
     return cached ? (
       <span
         ref={corners}
         className={`${styles.attachmentImage} ${styles.mediaPlaceholder}`}
-        data-thumbnail={thumbnail || undefined}
         style={style}
         aria-hidden="true"
       />
     ) : (
-      <span
-        className={
-          thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable
-        }
-        role="status"
-      >
+      <span className={styles.attachmentUnavailable} role="status">
         Image unavailable
       </span>
     );
@@ -73,7 +64,6 @@ export function AttachmentImage({
       <a
         ref={corners}
         className={styles.attachmentImage}
-        data-thumbnail={thumbnail || undefined}
         style={style}
         href={source}
         target="_blank"

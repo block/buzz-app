@@ -246,9 +246,9 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await page.screenshot({ path: testInfo.outputPath("held-blurhash.png") });
     await releaseDecode(page, "first");
     await shown(page);
-    // The original fills the stable frame; transparency never exposes old colors.
+    // The full original uses the stable frame; transparency never exposes old colors.
     await expect(frame(page).locator("canvas")).toHaveCount(0);
-    await expect(frame(page).locator("img")).toHaveCSS("object-fit", "cover");
+    await expect(frame(page).locator("img")).toHaveCSS("object-fit", "contain");
     await expect(frame(page)).toHaveCSS("clip-path", "none");
     await expect(frame(page).locator("[data-image-outline]")).toHaveCSS(
       "overflow",

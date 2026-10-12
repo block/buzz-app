@@ -152,7 +152,7 @@
   min-height: var(--size-emoji-line);
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
-  line-height: var(--size-emoji-display);
+  line-height: var(--size-emoji-line);
 }
 .text a:not([data-link-renderer]) {
   color: inherit;
@@ -419,27 +419,18 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: cover;
+  object-fit: contain;
 }
-/* Fixed tiles keep lazy loading from moving the reading position. */
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
 }
-.imageStrip {
+.imageList {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-2);
-  overflow-x: auto;
   padding: var(--space-1);
-  scroll-padding-inline: var(--space-1);
-  scrollbar-width: thin;
-}
-.attachmentImage[data-thumbnail],
-.imageUnavailable {
-  flex: 0 0 auto;
-  width: calc(var(--space-16) + var(--space-2));
-  aspect-ratio: 1;
-  margin: 0;
 }
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
   outline: 2px solid var(--border-focus);
@@ -449,15 +440,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   @apply text-caption;
   color: var(--text-subtle);
   margin-top: var(--space-1);
-}
-.imageUnavailable {
-  @apply text-caption;
-  display: grid;
-  place-items: center;
-  padding: var(--space-1);
-  border-radius: var(--radius-row);
-  background: var(--affordance-subtle-hover);
-  color: var(--text-subtle);
 }
 /* Optional plugin accessories use only the space they actually render. */
 .composerContext {

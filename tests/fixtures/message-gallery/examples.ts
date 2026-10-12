@@ -8,6 +8,7 @@ import type {
 import type { TimelineRow } from "../../../src/features/messages/membership-rows";
 import video from "./assets/sample.mp4";
 import avatar from "../design-system/assets/avatar.png";
+import animatedGif from "../attachment-media/animated.gif";
 
 export const reader = "a".repeat(64);
 export const teammate = "b".repeat(64);
@@ -23,6 +24,7 @@ export const profiles = new Map<string, Profile>([
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
 export const media = (url: string) => {
+  if (url.includes("/gif-")) return animatedGif;
   if (url.endsWith("/video")) return video;
   if (url.endsWith("/avatar")) return avatar;
   if (url.endsWith("/landscape") || url.endsWith("/poster")) return artwork;
@@ -70,6 +72,83 @@ const single = (
   patch: Partial<ChannelMessage> = {},
 ): Example => ({ id, title, description, rows: [message(id, content, patch)] });
 export const groups: Group[] = [
+  {
+    id: "gifs",
+    title: "Sent images and GIFs",
+    description: "Full-frame image previews, with and without message text.",
+    examples: [
+      single(
+        "gif-only",
+        "GIF only",
+        "Known dimensions reserve the full frame.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-landscape.gif",
+              kind: "image",
+              dimensions: { width: 480, height: 320 },
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-caption",
+        "GIF with text",
+        "Missing dimensions retain a stable frame without cropping.",
+        "A little celebration!",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-caption.GIF?version=1",
+              kind: "image",
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-multiple",
+        "Multiple GIFs and a photo",
+        "All images keep full previews in sender order.",
+        "Both of these made me smile.",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-one.gif",
+              kind: "image",
+              dimensions: { width: 480, height: 320 },
+            },
+            {
+              url: "https://fixture.test/landscape",
+              kind: "image",
+              dimensions: { width: 640, height: 360 },
+            },
+            {
+              url: "https://fixture.test/gif-extensionless",
+              kind: "image",
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-unavailable",
+        "Unavailable GIF",
+        "Unavailable media keeps a readable status.",
+        "This GIF is unavailable.",
+        {
+          attachments: [
+            { url: "https://fixture.test/unavailable.gif", kind: "image" },
+          ],
+        },
+      ),
+      single(
+        "emoji-wrapped",
+        "Wrapped emoji",
+        "Large emoji have enough line space when they wrap.",
+        "🎉 🚀 👍🏽 👨‍👩‍👧‍👦 🇦🇺 1️⃣ 🎉 🚀 👍🏽 👨‍👩‍👧‍👦 🇦🇺 1️⃣",
+      ),
+    ],
+  },
   {
     id: "workflow",
     title: "Workflow attribution",

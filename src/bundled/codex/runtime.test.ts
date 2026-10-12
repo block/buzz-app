@@ -1776,6 +1776,42 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
+it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const memory = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext?: Record<string, { value: string }> }
+        | undefined
+    )?.additionalContext?.["buzz.instructions"]?.value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(memory(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
+  );
+  f.complete(0, "FIRST");
+  await f.remember("core", "I am Codex.", 0);
+  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(memory(1)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  f.complete(1, "SECOND");
+  f.memoryView.refresh.mockRejectedValueOnce(new Error("offline"));
+  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
+  expect(memory(2)).not.toContain("<core-memory>");
+  expect(warn).toHaveBeenCalledWith(
+    "Codex could not read the agent's memory",
+    expect.any(Error),
+  );
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  warn.mockRestore();
+});
+
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -1807,7 +1843,8 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
+  // The turn's own `core` read, then the two tool calls.
+  expect(f.memoryView.dispose).toHaveBeenCalledTimes(3);
   expect(
     (
       await f.tool("send", {

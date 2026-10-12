@@ -694,23 +694,9 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
-        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
-          throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-        const abort = () => view.dispose();
-        active.signal.addEventListener("abort", abort, { once: true });
-        try {
-          await view.refresh();
-          check();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          active.signal.removeEventListener("abort", abort);
-          view.dispose();
-        }
+        const entries = await this.memories(request, active.signal);
+        check();
+        return entries;
       },
     });
     const reply = await callTool(
@@ -738,6 +724,39 @@ export class CodexRuntime {
             },
       ],
     };
+  }
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private async memories(request: Request, signal: AbortSignal) {
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+      throw new Error("Buzz is not connected to this community");
+    const view = snapshot.session.agentMemories.open(request.agent.pubkey);
+    const abort = () => view.dispose();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await view.refresh();
+      signal.throwIfAborted();
+      const { status, listing } = view.snapshot();
+      if (status !== "ready" || !listing)
+        throw new Error(`Memory unavailable (${status})`);
+      return listing.entries;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      view.dispose();
+    }
+  }
+  /** The agent's `core` memory for a turn: its text, `null` when it has none,
+   * or undefined when it could not be read, so the turn goes on without it. */
+  private async core(request: Request, signal: AbortSignal) {
+    try {
+      const entries = await this.memories(request, signal);
+      return entries.find((entry) => entry.slug === "core")?.body ?? null;
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Codex could not read the agent's memory", error);
+      return undefined;
+    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -961,7 +980,10 @@ export class CodexRuntime {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
       });
-      const context = await this.history(request, signal);
+      const [context, memory] = await Promise.all([
+        this.history(request, signal),
+        this.core(request, signal),
+      ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
@@ -974,7 +996,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team),
+            value: developerInstructions(agent, settings, request.team, memory),
           },
         },
       });

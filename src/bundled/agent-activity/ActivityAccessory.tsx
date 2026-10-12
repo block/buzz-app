@@ -30,7 +30,10 @@ import {
   requestWork,
   type RequestWork,
 } from "../../features/agents/request-work";
-import { localWorkLabel, type WorkStep } from "../../features/agents/local-activity";
+import {
+  localWorkLabel,
+  type WorkStep,
+} from "../../features/agents/local-activity";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 
@@ -209,11 +212,17 @@ function ActivityBubble({
     <PopoverRoot open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger
         openOnHover
+        onClick={(event) => {
+          if (props.openThread?.()) {
+            event.preventBaseUIHandler();
+            setExpanded(false);
+          }
+        }}
         render={
           <Button
             size="xs"
             variant="subtle"
-            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+            aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
           >
             <AvatarStack
               items={entries.map((entry) => ({

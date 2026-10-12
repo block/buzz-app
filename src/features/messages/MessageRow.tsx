@@ -888,6 +888,14 @@ function MessageRowContent({
               channelId={row.channelId}
               threadRootId={row.threadRootId}
               message={row}
+              openThread={
+                onOpenThread
+                  ? () => {
+                      onOpenThread(row.id, row.threadRootId ?? row.id);
+                      return true;
+                    }
+                  : undefined
+              }
               canOpen={canOpenLink ?? (() => false)}
               open={onOpenLink}
             />

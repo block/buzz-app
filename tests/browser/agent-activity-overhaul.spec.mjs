@@ -173,13 +173,9 @@ test("message activity opens a grouped preview and profile Activity without losi
   await expect(typing).toContainText(getPublicKey(human).slice(0, 10));
   await expect(typing).not.toContainText("Agent 1");
   const threadIndicator = row.locator("[data-thread-working]");
-  await expect(threadIndicator).toBeVisible();
-  await expect(
-    threadIndicator.locator('[data-avatar-shape="squircle"]'),
-  ).toHaveCount(2);
-  await expect(threadIndicator.locator(".buzz-avatar-status-dot")).toHaveCount(
-    0,
-  );
+  // The message bubble already represents these exact requests; don't duplicate
+  // them in the summary. Other-reply activity has its own regression journey.
+  await expect(threadIndicator).toHaveCount(0);
   await reply.fill("Keep this draft while inspecting activity");
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
@@ -230,7 +226,7 @@ test("message activity opens a grouped preview and profile Activity without losi
       const detailBox = await prose.boundingBox();
       expect(avatarBox.x + avatarBox.width).toBeLessThanOrEqual(detailBox.x);
       await expect(prose).toBeVisible();
-      await expect(prose).toHaveCSS("white-space", "pre-wrap");
+      await expect(prose).toHaveCSS("white-space", "nowrap");
       expect(
         await prose.evaluate(
           (element) => element.scrollWidth <= element.clientWidth,
@@ -319,9 +315,7 @@ test("message activity opens a grouped preview and profile Activity without losi
   const resumedAt = await page.evaluate(() => Math.floor(Date.now() / 1000));
   publish(keys[0], 20002, "", typingTags, resumedAt);
   publish(keys[1], 20002, "", typingTags, resumedAt);
-  await expect(
-    threadIndicator.locator('[data-avatar-shape="squircle"]'),
-  ).toHaveCount(2);
+  await expect(threadIndicator).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
@@ -338,9 +332,7 @@ test("message activity opens a grouped preview and profile Activity without losi
       await expect(summary.locator("[data-avatar-shape][title]")).toHaveCount(
         3,
       );
-      await expect(
-        threadIndicator.locator('[data-avatar-shape="squircle"]'),
-      ).toHaveCount(2);
+      await expect(threadIndicator).toHaveCount(0);
       const avatarSizes = await row
         .locator(".buzz-avatar")
         .evaluateAll((avatars) =>
@@ -355,7 +347,8 @@ test("message activity opens a grouped preview and profile Activity without losi
               height: avatar.getBoundingClientRect().height,
             })),
         );
-      expect(avatarSizes).toHaveLength(7);
+      // Three reply participants and two activity avatars; no duplicate working group.
+      expect(avatarSizes).toHaveLength(5);
       for (const size of avatarSizes) {
         expect(size.width).toBe(21);
         expect(size.height).toBe(21);
@@ -379,9 +372,7 @@ test("message activity opens a grouped preview and profile Activity without losi
   telemetryTime = await page.evaluate(() => new Date().toISOString());
   send(0, "turn_completed", 4);
   await expect(bubble.locator(".buzz-avatar")).toHaveCount(1);
-  await expect(
-    threadIndicator.locator('[data-avatar-shape="squircle"]'),
-  ).toHaveCount(1);
+  await expect(threadIndicator).toHaveCount(0);
   send(1, "turn_completed", 4);
   await expect(region).toHaveCount(0);
   await expect(threadIndicator).toHaveCount(0);

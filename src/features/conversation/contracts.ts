@@ -103,6 +103,9 @@ export type ComposerAccessoryProps = Readonly<{
   threadRootId?: string | undefined;
   /** Present only for message-placed accessories; the exact triggering row. */
   message?: ChannelMessage;
+  /** Host-owned thread navigation from a timeline message, even before replies.
+   * Absent inside the thread. False after this contribution or message retires. */
+  openThread?: (() => boolean) | undefined;
   /** Presentation only; the host re-resolves targets. No editor or access grant. */
   canOpen(target: string): boolean;
   /** False after contribution removal or the originating composer retires. */

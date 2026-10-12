@@ -145,7 +145,7 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const bubble = row.getByRole("button", { name: /^View agent activity:/ });
+  const bubble = row.getByRole("button", { name: /^Open thread:/ });
   await expect(bubble).toBeVisible();
   await expect(row.locator("[data-thread-working]")).toHaveCount(0);
   // Existing replies keep their navigation even while the bubble owns work here.
@@ -205,4 +205,72 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   );
   await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
   await expect(summary).toContainText("1 reply");
+});
+
+// Real host navigation and hover/keyboard coexistence require a browser: no reply
+// exists yet, and the same root's accessory must change behavior inside the pane.
+test("opens an active message's empty thread without losing its activity preview", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const request = app.sign({
+    kind: 9,
+    content: "Open this active thread before its first reply",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["p", "b".repeat(64)],
+    ],
+  });
+  app.histories.get("primary/alpha").push(request);
+  app.relay.publish("primary", request);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${request.id}"]`,
+  );
+  const trigger = row.getByRole("button", { name: /^Open thread:/ });
+  await expect(trigger).toBeVisible();
+  await trigger.hover();
+  const preview = page.getByRole("dialog", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(preview).toBeVisible();
+  await trigger.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeVisible();
+  await expect(preview).toHaveCount(0);
+  const root = thread.locator(`[data-message-id="${request.id}"]`);
+  await expect(root).toContainText(request.content);
+  const activity = root.getByRole("button", { name: /^View agent activity:/ });
+  await expect(activity).toBeVisible();
+  await activity.click();
+  await expect(preview).toBeVisible();
+  await expect(
+    preview.getByRole("button", { name: "View activity for Local tester" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .click();
+  await expect(thread).toHaveCount(0);
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeVisible();
+  await expect(activity).toBeVisible();
+  await page.evaluate(
+    (id) => window.localAgentFixture.finish(id, true),
+    request.id,
+  );
 });

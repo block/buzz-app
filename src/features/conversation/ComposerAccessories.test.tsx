@@ -103,6 +103,7 @@ it("keeps message accessories out of the composer and revokes commands on messag
     channelId: "channel",
     canOpen: () => true,
     open: vi.fn(() => true),
+    openThread: vi.fn(() => true),
   };
   const message = {
     id: "one",
@@ -123,13 +124,18 @@ it("keeps message accessories out of the composer and revokes commands on messag
   const original = commands.at(-1);
   if (!original) throw new Error("Missing accessory commands");
   expect(original.message?.id).toBe("one");
+  expect(original.openThread?.()).toBe(true);
   expect(original.open("target")).toBe(true);
   view.rerender(
     <ComposerAccessories {...props} message={{ ...message, id: "two" }} />,
   );
   expect(original.open("target")).toBe(false);
+  expect(original.openThread?.()).toBe(false);
+  expect(commands.at(-1)?.openThread?.()).toBe(true);
   expect(commands.at(-1)?.message?.id).toBe("two");
   expect(commands.at(-1)?.open("target")).toBe(true);
   view.unmount();
   expect(commands.at(-1)?.open("target")).toBe(false);
+  expect(commands.at(-1)?.openThread?.()).toBe(false);
+  expect(props.openThread).toHaveBeenCalledTimes(2);
 });

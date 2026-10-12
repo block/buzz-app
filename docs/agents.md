@@ -113,8 +113,8 @@ the lookup.
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 In streams and forums, nonmember mentions also offer people from the selected
-community directory and, when the viewer can add members, the viewer's `managed`
-agents that are not in the channel. Send asks before adding them; selection grants
+community directory and, when the viewer can add members, the viewer's own agents
+(`managed` or not) that are not in the channel. Send asks before adding them; selection grants
 no access. A pasted mention of a known profile is offered the same way. A DM can
 name outsiders but never notifies them. Session invitations keep their existing
 rules, including library choices. Shared choice visibility is not permission to

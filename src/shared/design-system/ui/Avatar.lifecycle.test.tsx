@@ -49,6 +49,62 @@ it("uses the fallback for an already completed broken image", () => {
   expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("A");
 });
 
+it("defers new sources, uses eager loading after success, and forgets a failed remount", () => {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const props = {
+    src: "https://example.test/warm-remount.png",
+    alt: "Agent",
+    fallback: "A",
+  };
+  const first = render(<Avatar {...props} />);
+  const image = first.container.querySelector("img");
+  if (!image) throw new Error("Expected initial artwork");
+  expect(image).toHaveAttribute("loading", "lazy");
+  fireEvent.load(image);
+  first.unmount();
+
+  const second = render(<Avatar {...props} />);
+  const remount = second.container.querySelector("img");
+  if (!remount) throw new Error("Expected remounted artwork");
+  expect(remount).toHaveAttribute("loading", "eager");
+  // Remembered success is only a scheduling hint: the browser may have evicted
+  // the bytes, so actual image readiness still controls visibility.
+  expect(remount).not.toHaveAttribute("data-loaded");
+  fireEvent.error(remount);
+  expect(screen.getByRole("img", { name: "Agent" })).toHaveTextContent("A");
+  second.unmount();
+
+  const retry = render(<Avatar {...props} />);
+  expect(retry.container.querySelector("img")).toHaveAttribute(
+    "loading",
+    "lazy",
+  );
+});
+
+it("bounds remembered sources and retains recently used artwork", () => {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const src = (index: number) => `https://example.test/bounded-${index}.png`;
+  const view = render(<Avatar src={src(0)} alt="Agent" fallback="A" />);
+  const mount = (index: number) => {
+    view.rerender(<Avatar src={src(index)} alt="Agent" fallback="A" />);
+    const image = view.container.querySelector("img");
+    if (!image) throw new Error("Expected bounded-cache artwork");
+    return image;
+  };
+  fireEvent.load(mount(0));
+  for (let index = 1; index < 128; index++) fireEvent.load(mount(index));
+  // Refresh the oldest entry before adding another distinct source.
+  expect(mount(0)).toHaveAttribute("loading", "eager");
+  fireEvent.load(mount(0));
+  fireEvent.load(mount(128));
+  expect(mount(1)).toHaveAttribute("loading", "lazy");
+  expect(mount(0)).toHaveAttribute("loading", "eager");
+});
+
 it("preserves delayed loading and error fallbacks, resetting when the source changes", () => {
   vi.useFakeTimers();
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(

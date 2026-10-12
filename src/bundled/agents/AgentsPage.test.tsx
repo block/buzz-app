@@ -134,7 +134,11 @@ function setup(saved: Agent[], { shown = true } = {}) {
     subscribe: () => () => {},
   } as unknown as RelayData;
   render(<AgentsPage agents={agents} relay={relay} />);
-  return { agents };
+  const show = (next: Agent[]) => {
+    snapshot = { ...snapshot, agents: next };
+    for (const listener of listeners) listener();
+  };
+  return { agents, types, show };
 }
 
 it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
@@ -279,6 +283,23 @@ it("brings over an earlier agent as the chosen type and drops it from the list",
   expect(within(list).getByText("Ada")).toBeInTheDocument();
 });
 
+it("brings over agents only as a type that runs here", async () => {
+  const user = userEvent.setup();
+  const { types } = setup([]);
+  types.push({
+    ...types[0],
+    key: "test/cloud",
+    title: "Cloud",
+    remote: {},
+  } as unknown as RegisteredAgentType);
+  await user.click(screen.getByRole("button", { name: "Bring over" }));
+  await screen.findByRole("button", { name: "Bring over Ada" });
+  expect(screen.getByRole("radio", { name: "Echo" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("radio", { name: "Cloud" }),
+  ).not.toBeInTheDocument();
+});
+
 it("shows why bringing an agent over failed and keeps it listed", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -362,4 +383,22 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   expect(agents.finish).toHaveBeenCalledWith(sky.pubkey);
   await user.dblClick(within(grid).getByText("Sky"));
   expect(screen.getByRole("listbox")).toBeInTheDocument();
+});
+
+it("moves focus from Finish setup to Open once the setup finishes", async () => {
+  const user = userEvent.setup();
+  const finished: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    attention: {},
+  };
+  const { agents, show } = setup([{ ...finished, unfinished: true }]);
+  agents.finish.mockImplementationOnce(async () => {
+    show([finished]);
+    return finished;
+  });
+  await user.click(screen.getByText("Sky"));
+  screen.getByRole("button", { name: "Finish setup" }).focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("button", { name: "Open" })).toHaveFocus();
 });

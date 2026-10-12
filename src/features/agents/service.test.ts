@@ -1898,3 +1898,120 @@ it("refuses a hosted type that also runs here", async () => {
     /hosted agent type/,
   );
 });
+
+it("brings over no identity as a hosted type, whose key stays with its provider", async () => {
+  const { service, plugin, native } = await setup();
+  plugin.agents.register(cloud().type);
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/cloud",
+    }),
+  ).rejects.toThrow(/stays with its provider/);
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("refuses a key from the provider that the owner already lists", async () => {
+  const { service, plugin } = await setup({ listed: [record(sibling)] });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  remote.provision.mockResolvedValueOnce({ pubkey: sibling });
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow(/already in use/);
+  expect(remote.activate).not.toHaveBeenCalled();
+  expect(service.find(sibling)).toMatchObject({
+    name: "Far",
+    place: "elsewhere",
+  });
+});
+
+it("lists a rename made while the agent's earlier record was being written", async () => {
+  const { service, session } = await setup();
+  let release = () => {};
+  records.publish.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      }) as never,
+  );
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(records.publish).toHaveBeenCalledTimes(1));
+  await service.save(bot, { name: "Echo Two" });
+  await settle();
+  expect(records.publish).toHaveBeenCalledTimes(1);
+  release();
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenLastCalledWith(
+      session,
+      expect.objectContaining({ pubkey: bot, name: "Echo Two" }),
+      expect.any(AbortSignal),
+    ),
+  );
+  await settle();
+  expect(records.publish).toHaveBeenCalledTimes(2);
+});
+
+it("refuses to delete a hosted agent while its new name is being saved", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  let release = () => {};
+  remote.profile.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      }),
+  );
+  const saving = service.save(hostedKey, { name: "Sea" });
+  await vi.waitFor(() => expect(remote.profile).toHaveBeenCalled());
+  await expect(service.remove(hostedKey)).rejects.toThrow(/Wait for/);
+  release();
+  await saving;
+  expect(remote.remove).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
+});
+
+it("keeps what it lists when the community's records cannot be read", async () => {
+  const { service, plugin, session, connect } = await setup();
+  plugin.agents.register(cloud().type);
+  const read = vi.mocked(session.read);
+  read.mockRejectedValueOnce(new Error("offline"));
+  connect(false);
+  connect(true);
+  await settle();
+  // Set up after the read failed, it is listed and shown.
+  const agent = await service.create({ type: "example/cloud", name: "Sky" });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  // Renamed while a read is under way that then fails, it keeps the new name.
+  let fail = () => {};
+  read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((_, reject) => {
+        fail = () => reject(new Error("offline"));
+      }) as never,
+  );
+  const reads = read.mock.calls.length;
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(read.mock.calls.length).toBe(reads + 1));
+  await service.save(hostedKey, { name: "Sea" });
+  fail();
+  await settle();
+  expect(service.find(hostedKey)).toMatchObject({
+    name: "Sea",
+    place: "hosted",
+  });
+  // The next read that succeeds keeps it too.
+  await service.save(bot, { name: "Echo Two" });
+  await vi.waitFor(() => expect(read.mock.calls.length).toBe(reads + 2));
+  await settle();
+  expect(service.find(hostedKey)).toMatchObject({
+    name: "Sea",
+    place: "hosted",
+  });
+});

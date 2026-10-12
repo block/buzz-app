@@ -148,7 +148,11 @@ export function AgentsPage({
         onCreated={(agent) => build(agent.pubkey)}
       />
     ) : side === "porting" ? (
-      <BringOver agents={agents} types={types} onClose={() => browse()} />
+      <BringOver
+        agents={agents}
+        types={types.filter((type) => !type.remote)}
+        onClose={() => browse()}
+      />
     ) : side === "teams" ? (
       <Teams
         agents={agents}
@@ -403,16 +407,27 @@ function AgentPeek({
   const summary = summaryOf(agent, type);
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
+  const finishButton = useRef<HTMLButtonElement>(null);
+  const openButton = useRef<HTMLButtonElement>(null);
+  // Finish setup is replaced by Open on success; focus moves with it.
+  const handoff = useRef(false);
   const finish = async () => {
+    handoff.current = document.activeElement === finishButton.current;
     setFinishing(true);
     setError("");
     try {
       await agents.finish(agent.pubkey);
     } catch (reason) {
+      handoff.current = false;
       setError(message(reason));
     }
     setFinishing(false);
   };
+  useEffect(() => {
+    if (agent.unfinished || !handoff.current) return;
+    handoff.current = false;
+    openButton.current?.focus();
+  }, [agent.unfinished]);
   if (agent.place === "elsewhere")
     return (
       <div className={styles.sideBody}>
@@ -438,6 +453,7 @@ function AgentPeek({
             Its provider made it, but its setup did not finish.
           </p>
           <Button
+            ref={finishButton}
             variant="primary"
             loading={finishing}
             onClick={() => void finish()}
@@ -452,7 +468,7 @@ function AgentPeek({
           <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
         </>
       ) : (
-        <Button variant="primary" onClick={onBuild}>
+        <Button ref={openButton} variant="primary" onClick={onBuild}>
           Open
         </Button>
       )}

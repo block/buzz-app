@@ -574,10 +574,13 @@ export class AgentsService extends Service implements Agents {
   private listings = new Map<string, readonly Listing[]>();
   /** Agents whose record is being written, so a sync writes each once. */
   private listing = new Set<string>();
-  /** By origin while its records are read: the listings written or removed
-   * meanwhile, which the read must not undo. */
+  /** By origin until its records are first read: the listings written or
+   * removed meanwhile, which the read must not undo. */
   private edits = new Map<string, Map<string, Listing | null>>();
-  /** Hosted agents whose setup or delete is running, so one waits for the other. */
+  /** By origin, the binding whose read of its records is under way. */
+  private reading = new Map<string, Binding>();
+  /** Hosted agents whose setup, save or delete is running, so one waits for
+   * the others. */
   private busy = new Set<string>();
   /** Hosted and elsewhere agents as last shown, kept while unchanged. */
   private shown = new Map<string, Agent>();
@@ -744,7 +747,8 @@ export class AgentsService extends Service implements Agents {
       throw new Error("The provider did not return the agent's key");
     if (
       pubkey === binding.viewer ||
-      this.identities.some((identity) => identity.pubkey === pubkey)
+      this.identities.some((identity) => identity.pubkey === pubkey) ||
+      [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
     )
       throw new Error("The provider returned a key that is already in use");
     this.writeUnfinished([
@@ -830,6 +834,8 @@ export class AgentsService extends Service implements Agents {
     const binding = this.selectedBinding();
     const kind = this.types().find((entry) => entry.key === type);
     if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted agent's key stays with its provider");
     const settings = defaults("", kind);
     const { agent: identity, carry } = await save(
       native,
@@ -861,7 +867,8 @@ export class AgentsService extends Service implements Agents {
 
   async save(pubkey: string, change: AgentChange) {
     const identity = this.live(pubkey);
-    if (!identity) return this.saveHosted(pubkey, change);
+    if (!identity)
+      return this.exclusive(pubkey, () => this.saveHosted(pubkey, change));
     if (!this.native) throw new Error("No such agent on this device");
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
@@ -975,7 +982,7 @@ export class AgentsService extends Service implements Agents {
   }
   private async exclusive<T>(pubkey: string, step: () => Promise<T>) {
     if (this.busy.has(pubkey))
-      throw new Error("Wait for the agent's setup or delete to finish");
+      throw new Error("Wait for the agent's last change to finish");
     this.busy.add(pubkey);
     try {
       return await step();
@@ -1028,9 +1035,8 @@ export class AgentsService extends Service implements Agents {
    * its agents here that they lack. A sync asks again until one succeeds.
    * Without the desktop app there are no agents to show. */
   private async readListings(origin: string, binding: Binding) {
-    if (!this.native || this.edits.has(origin)) return;
-    const edits = new Map<string, Listing | null>();
-    this.edits.set(origin, edits);
+    if (!this.native || this.reading.get(origin) === binding) return;
+    this.reading.set(origin, binding);
     const { session, viewer, controller } = binding;
     try {
       const events = await session.read(
@@ -1038,17 +1044,20 @@ export class AgentsService extends Service implements Agents {
         { signal: controller.signal, priority: "background", fresh: true },
       );
       if (this.bound.get(origin)?.binding !== binding) return;
+      const edits = this.edits.get(origin);
       const read = listingsOf(events, viewer).filter(
-        (row) => !edits.has(row.pubkey),
+        (row) => !edits?.has(row.pubkey),
       );
-      const written = [...edits.values()].filter((row) => row !== null);
+      const written = [...(edits?.values() ?? [])].filter((row) => !!row);
       this.listings.set(origin, Object.freeze([...read, ...written]));
+      this.edits.delete(origin);
     } catch (error) {
+      // Its edits stay for the next read, which a sync asks for.
       if (!controller.signal.aborted)
         console.warn("The agent list could not be read", error);
       return;
     } finally {
-      if (this.edits.get(origin) === edits) this.edits.delete(origin);
+      if (this.reading.get(origin) === binding) this.reading.delete(origin);
     }
     this.update();
     this.list(origin, binding);
@@ -1085,19 +1094,27 @@ export class AgentsService extends Service implements Agents {
         row.runtime === identity.type
       )
         continue;
-      this.listing.add(identity.pubkey);
+      const { pubkey } = identity;
+      this.listing.add(pubkey);
       this.writeListing(origin, binding, {
-        pubkey: identity.pubkey,
+        pubkey,
         name: identity.name,
         ...(picture ? { picture } : {}),
         runtime: identity.type,
         prior: row?.prior,
-      })
-        .catch((error) => {
+      }).then(
+        () => {
+          this.listing.delete(pubkey);
+          // Lists a rename or new picture made while this write was under way.
+          if (this.bound.get(origin)?.binding === binding)
+            this.list(origin, binding);
+        },
+        (error) => {
+          this.listing.delete(pubkey);
           if (!binding.controller.signal.aborted)
             console.warn(`Agent ${identity.name} was not listed`, error);
-        })
-        .finally(() => this.listing.delete(identity.pubkey));
+        },
+      );
     }
   }
   /** Writes the agent's record and lists it so, without reading it back. */
@@ -1118,12 +1135,15 @@ export class AgentsService extends Service implements Agents {
   private unlist(origin: string, pubkey: string) {
     this.setRow(origin, pubkey, null);
   }
-  /** Replaces or removes the agent's listing, and keeps the change through a
-   * read under way. */
+  /** Replaces or removes the agent's listing, and keeps the change until the
+   * community's records are first read. */
   private setRow(origin: string, pubkey: string, row: Listing | null) {
-    this.edits.get(origin)?.set(pubkey, row);
     const listings = this.listings.get(origin);
-    if (!listings) return;
+    if (!listings) {
+      const edits = this.edits.get(origin) ?? new Map<string, Listing | null>();
+      this.edits.set(origin, edits.set(pubkey, row));
+      return;
+    }
     const rest = listings.filter((entry) => entry.pubkey !== pubkey);
     if (row || rest.length !== listings.length)
       this.listings.set(origin, Object.freeze(row ? [...rest, row] : rest));

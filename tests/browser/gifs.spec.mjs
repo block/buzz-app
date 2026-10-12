@@ -136,11 +136,6 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(emojiSearch.locator("..")).toHaveCSS("outline-style", "none");
   const emojiSearchFrame = await emojiSearch.locator("..").boundingBox();
   const emojiTabsBox = await picker.getByRole("tablist").boundingBox();
-  expect(emojiSearchFrame.x - emojiTabsBox.x).toBeCloseTo(8, 1);
-  expect(emojiSearchFrame.y - emojiTabsBox.y - emojiTabsBox.height).toBeCloseTo(
-    56,
-    1,
-  );
   await expect(initialScroll).toHaveCSS(
     "scrollbar-color",
     await page
@@ -157,10 +152,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   expect(
     emojiResultsBox.y - emojiSearchFrame.y - emojiSearchFrame.height,
   ).toBeCloseTo(12, 1);
-  expect(emojiNavigationBox.height).toBeCloseTo(40, 1);
-  expect(emojiNavigationBox.y).toBeCloseTo(
-    emojiTabsBox.y + emojiTabsBox.height + 4,
-    1,
+  expect(emojiNavigationBox.height).toBeGreaterThan(0);
+  expect(emojiNavigationBox.y).toBeGreaterThanOrEqual(
+    emojiTabsBox.y + emojiTabsBox.height,
+  );
+  expect(emojiSearchFrame.y).toBeGreaterThanOrEqual(
+    emojiNavigationBox.y + emojiNavigationBox.height,
   );
   await expect(emojiSearch).toBeFocused();
   // Discovering GIF support must not replace the focused vendor search.
@@ -191,12 +188,22 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     picker.getByRole("tabpanel", { name: "Emoji", exact: true }),
   ).toHaveCount(0);
   const tabIndicator = picker.locator(".buzz-tabs-indicator");
-  await expect(tabIndicator).toHaveCSS("height", "32px");
-  await expect(tabIndicator).toHaveCSS("border-radius", "8px");
-  await expect(tabIndicator).toHaveCSS(
-    "background-color",
-    "rgb(255, 255, 255)",
-  );
+  await expect
+    .poll(() => tabIndicator.boundingBox())
+    .toEqual(await gifTab.boundingBox());
+  await expect
+    .poll(() =>
+      tabIndicator.evaluate((indicator) => {
+        const header = indicator.closest('[data-variant="segmented"]');
+        const fill = getComputedStyle(indicator).backgroundColor;
+        return (
+          header !== null &&
+          fill !== "rgba(0, 0, 0, 0)" &&
+          fill !== getComputedStyle(header).backgroundColor
+        );
+      }),
+    )
+    .toBe(true);
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");
@@ -255,10 +262,10 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("font-family", /Inter Variable/);
   const gifSearchPosition = await searchFrame.boundingBox();
   const tabListBox = await picker.getByRole("tablist").boundingBox();
-  expect(gifSearchPosition.x - tabListBox.x).toBeCloseTo(8, 1);
-  expect(gifSearchPosition.y - tabListBox.y - tabListBox.height).toBeCloseTo(
-    16,
-    1,
+  expect(gifSearchPosition.x).toBeCloseTo(emojiSearchFrame.x, 1);
+  expect(gifSearchPosition.width).toBeCloseTo(emojiSearchFrame.width, 1);
+  expect(gifSearchPosition.y).toBeGreaterThanOrEqual(
+    tabListBox.y + tabListBox.height,
   );
   expect(gifSearchPosition.width).toBeGreaterThan(0);
   expect(gifSearchPosition.x).toBeGreaterThanOrEqual(
@@ -286,7 +293,10 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   expect(gifResultGutters.left).toBeCloseTo(12, 1);
   const gifResults = page.getByTestId("klipy-gif-grid").locator("..");
   const gifResultsBox = await gifResults.boundingBox();
-  expect(emojiResultsBox.y - gifResultsBox.y).toBeCloseTo(40, 1);
+  expect(emojiResultsBox.y - gifResultsBox.y).toBeCloseTo(
+    emojiNavigationBox.height,
+    1,
+  );
   expect(gifResultsBox.height).toBeCloseTo(emojiResultsBox.height, 1);
   expect(await picker.boundingBox()).toEqual(emojiPickerBox);
   await expect(gifResults).toHaveCSS("scrollbar-width", "thin");

@@ -186,7 +186,10 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      tab?.focus({ preventScroll: true });
+      // Routed tab selection must not override a modal's focus owner.
+      const modal = document.querySelector('dialog[open], [aria-modal="true"]');
+      if (!modal || modal.contains(root.current))
+        tab?.focus({ preventScroll: true });
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
         inline: "nearest",

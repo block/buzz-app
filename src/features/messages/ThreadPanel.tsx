@@ -682,6 +682,10 @@ function ThreadMessages({
     inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
+    focus: !(
+      navigation?.target.kind === "conversation" &&
+      navigation.target.panel === "members"
+    ),
     settled: positioned,
     messageId,
     signal: active ? revealSignal : undefined,

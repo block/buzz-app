@@ -387,6 +387,14 @@ export function useConversationTabs({
         !!target.members?.includes(queries.viewer ?? ""))
     );
   }
+  // The currently resolved channel can be a verified public/archived preview
+  // absent from the joined sidebar list. Reading its thread is not write access.
+  function tabChannel(tab: Exclude<Tab, { kind: "new" }>) {
+    if (tab.kind === "thread" && current?.id === tab.channelId)
+      return current.cached ? undefined : current;
+    const target = channels.find((item) => item.id === tab.channelId);
+    return target && usableChannel(target) ? target : undefined;
+  }
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
     const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
@@ -402,8 +410,8 @@ export function useConversationTabs({
     return text || (name ? `Thread · ${name}` : "Thread");
   }
   function tabItem(tab: Tab) {
-    const target = channels.find((item) => item.id === tab.channelId);
-    const usable = !!target && usableChannel(target);
+    const target = tabChannel(tab);
+    const usable = !!target;
     return {
       id: tab.id,
       label:
@@ -474,8 +482,8 @@ export function useConversationTabs({
     hosts: tabState.tabs.flatMap((tab) => {
       if (tab.kind !== "thread") return [];
       const node = nodes.get(tab.id);
-      const target = channels.find((item) => item.id === tab.channelId);
-      if (!node || !target || !usableChannel(target)) return [];
+      const target = tabChannel(tab);
+      if (!node || !target) return [];
       const active =
         tabPane(tab) === "main"
           ? tabState.mainSelected === tab.id

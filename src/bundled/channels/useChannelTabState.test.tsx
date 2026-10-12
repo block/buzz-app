@@ -416,4 +416,3 @@ test("Back restores an empty side pane as hidden while retaining the later threa
   expect(h.result.current.paneOpen).toBe(false);
   expect(h.result.current.tabs).toHaveLength(1);
 });
-

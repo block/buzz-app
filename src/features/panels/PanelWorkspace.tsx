@@ -193,6 +193,14 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
+      const content =
+        focusContent.current && previous.current !== selected
+          ? document
+              .getElementById(panelId(selected))
+              ?.querySelector<HTMLElement>(
+                '[data-tab-focus]:not([aria-disabled="true"])',
+              )
+          : undefined;
       // A route may mount/select a retained tab behind an open dialog.
       // Its navigation must not take focus from the modal's own handoff.
       const modal = document.querySelector('dialog[open], [aria-modal="true"]');

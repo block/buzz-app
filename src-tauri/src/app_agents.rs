@@ -571,8 +571,9 @@ pub(crate) async fn app_agent_upload(
     serde_json::from_slice(&body).map_err(|_| "Invalid upload receipt".into())
 }
 
-/// The largest image an agent is shown: what models accept.
-const MEDIA_LIMIT: usize = 5 * 1024 * 1024;
+/// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
+/// strictest hosts, and base64 is 4 characters per 3 bytes.
+const MEDIA_LIMIT: usize = 5 * 1024 * 1024 / 4 * 3;
 
 /// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
 /// as the agent, base64.

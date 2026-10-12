@@ -14,8 +14,9 @@ import type { BuzzClient, BuzzEvent, Memory, Template, Upload } from "./client";
 const sha256 = (data: Uint8Array | string) =>
   createHash("sha256").update(data).digest("hex");
 const now = () => Math.floor(Date.now() / 1000);
-/** The largest image an agent is shown: what models accept. */
-const MEDIA_LIMIT = 5 * 1024 * 1024;
+/** The largest image an agent is shown. Claude takes 5 MiB of base64 on its
+ * strictest hosts, and base64 is 4 characters per 3 bytes. */
+const MEDIA_LIMIT = (5 * 1024 * 1024 * 3) / 4;
 
 export function nodeClient(
   options: Readonly<{
@@ -165,7 +166,7 @@ export function nodeClient(
       for await (const chunk of response.body ?? []) {
         size += chunk.length;
         if (size > MEDIA_LIMIT)
-          throw new Error("Media over 5 MB cannot be shown");
+          throw new Error("Media over 3.75 MiB cannot be shown");
         chunks.push(chunk);
       }
       const bytes = Buffer.concat(chunks);

@@ -93,14 +93,15 @@ it("fetches only its community's media, signed for a get", async () => {
       "only their community's media",
     );
   expect(fetch).toHaveBeenCalledTimes(1);
+  // The largest body whose base64 fits Claude's 5 MiB is past the size check.
+  fetch.mockResolvedValueOnce(new Response(new Uint8Array(3_932_160)));
+  await expect(client().media(sha)).rejects.toThrow("match its SHA-256");
+  fetch.mockResolvedValueOnce(new Response(new Uint8Array(3_932_161)));
+  await expect(client().media(sha)).rejects.toThrow("over 3.75 MiB");
   fetch.mockResolvedValueOnce(
-    new Response(new Uint8Array(5 * 1024 * 1024 + 1)),
+    new Response(new Uint8Array(3_932_161), { status: 500 }),
   );
-  await expect(client().media(sha)).rejects.toThrow("over 5 MB");
-  fetch.mockResolvedValueOnce(
-    new Response(new Uint8Array(5 * 1024 * 1024 + 1), { status: 500 }),
-  );
-  await expect(client().media(sha)).rejects.toThrow("over 5 MB");
+  await expect(client().media(sha)).rejects.toThrow("over 3.75 MiB");
   fetch.mockResolvedValueOnce(new Response("denied", { status: 401 }));
   await expect(client().media(sha)).rejects.toThrow("Media failed: 401 denied");
   const wrongHash = "a".repeat(64);

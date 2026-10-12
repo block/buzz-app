@@ -204,7 +204,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
   await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
@@ -676,13 +676,13 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 
   await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(sidebar).not.toBeVisible();
   await expect(rail).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Show Channel sidebar" }).click();

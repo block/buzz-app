@@ -1307,9 +1307,12 @@ and 320px tall without enlarging the frame beyond the original dimensions.
 Missing/invalid dimensions, including metadata that would reserve less than one
 CSS pixel on either axis, use a stable 360:320 frame that shrinks with the available
 width. The fallback can add space around the image while showing the whole frame.
+Responsive frames retain at least one CSS pixel on each axis.
 Loading, failure, or retry does not resize it or force an above-bottom reader to
 the newest row.
 Unavailable media keeps the same reserved frame and displays its status within it.
+Exceptionally small frames can clip the visible label while retaining the complete
+accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
 that same frame when it intersects the viewport. No thumbnail is fetched. The
 preview is removed entirely (including behind transparency) only after the lazy

@@ -24,6 +24,8 @@ export const profiles = new Map<string, Profile>([
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
 export const media = (url: string) => {
+  if (url.endsWith("/panorama"))
+    return `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="1"><path d="M0 .5H360" stroke="#859e89"/></svg>')}`;
   if (url.includes("/gif-")) return animatedGif;
   if (url.endsWith("/video")) return video;
   if (url.endsWith("/avatar")) return avatar;
@@ -138,6 +140,21 @@ export const groups: Group[] = [
         {
           attachments: [
             { url: "https://fixture.test/unavailable.gif", kind: "image" },
+          ],
+        },
+      ),
+      single(
+        "image-panorama",
+        "Thin image in a narrow column",
+        "The preview target retains at least one CSS pixel when it shrinks.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/panorama",
+              kind: "image",
+              dimensions: { width: 360, height: 1 },
+            },
           ],
         },
       ),

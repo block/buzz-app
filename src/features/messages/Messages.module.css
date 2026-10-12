@@ -387,6 +387,8 @@
   display: block;
   width: 360px;
   max-width: 100%;
+  min-width: 1px;
+  min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);

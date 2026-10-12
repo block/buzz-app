@@ -9,7 +9,7 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
   const caption = page.locator('[data-message-id="gif-caption"]');
   const multiple = page.locator('[data-message-id="gif-multiple"]');
   const previews = page.locator("[data-message-id] [data-media-preview]");
-  await expect(previews).toHaveCount(5);
+  await expect(previews).toHaveCount(6);
   await expect(
     caption.getByText("A little celebration!", { exact: true }),
   ).toBeVisible();
@@ -43,6 +43,8 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
           await expect(img).toHaveCSS("visibility", "visible");
           await expect(img).toHaveCSS("object-fit", "contain");
           const bounds = await preview.boundingBox();
+          expect(bounds.width).toBeGreaterThanOrEqual(1);
+          expect(bounds.height).toBeGreaterThanOrEqual(1);
           expect(bounds.x).toBeGreaterThanOrEqual(0);
           expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
         }

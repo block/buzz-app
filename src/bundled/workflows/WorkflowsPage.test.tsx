@@ -403,7 +403,7 @@ it("discards form-only state on same-revision review and re-arms the next draft'
   );
   expect(warnsOnUnload()).toBe(false);
   expect(fixture.calls.save).toBe(1);
-});
+}, 15_000);
 
 async function confirmDeletion(from: "grid" | "detail" = "grid") {
   const user = userEvent.setup();

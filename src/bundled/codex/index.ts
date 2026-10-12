@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
-import { defaults, config } from "./config";
+import { config, defaults, validWorkspace } from "./config";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
 export const inject = ["react", "agents", "host"];
@@ -36,6 +36,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    adopt: (carry, saved) => ({
+      ...saved,
+      instructions: carry.instructions ?? saved.instructions,
+      // Codex runs only in an absolute workspace or the default.
+      workspace:
+        carry.workspace && validWorkspace(carry.workspace)
+          ? carry.workspace
+          : saved.workspace,
+    }),
     summary: (agent) => config(agent.config).model || "Codex",
     tabs: [
       { id: "codex", title: "Codex", component: CodexTab },

@@ -513,6 +513,7 @@ function ProviderDialog({
           open
           onOpenChange={(open) => !open && onClose()}
           title={type.title}
+          dismissOnOutsideClick
           finalFocus={() => finalFocus.current}
         >
           <p role="alert" className="m-0 text-body-sm text-danger">
@@ -560,6 +561,7 @@ function ManagedProviderDialog({
         </span>
       }
       height="stable"
+      dismissOnOutsideClick
       preventClose={!!state.blocking}
       finalFocus={() => finalFocus.current}
     >

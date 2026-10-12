@@ -343,9 +343,10 @@ it("checks active providers in a health submenu and opens their host-owned dialo
       within(dialog).getByRole("button", { name: "Close" }),
     ).toBeDisabled();
     act(() => echoProvider.set({ readiness: "ready" }));
-    await user.keyboard("{Escape}");
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(more).toHaveFocus();
 
     await user.click(more);
     await user.hover(
@@ -363,6 +364,8 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Provider controls are unavailable.",
     );
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(more).toHaveFocus());
   } finally {
     errors.mockRestore();
   }

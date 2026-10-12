@@ -44,7 +44,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(destination).toBeVisible();
   await destination.click();
   await expect(
-    page.getByRole("heading", { name: "Meet your Bestie" }),
+    page.getByText("Sign in to Builderlab to set up Bestie.", { exact: true }),
   ).toBeVisible();
   await plugins(page);
   await bestie.click();

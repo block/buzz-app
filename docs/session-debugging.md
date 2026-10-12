@@ -47,8 +47,10 @@ conversation. The view follows new records while it is scrolled to the bottom
 and leaves your position alone otherwise; expanded disclosures survive updates.
 These are recorded transcript views, not exact reconstructed HTTP inference
 requests. When multiple sessions match a thread, such as two agents answering
-in it, a picker names each by agent (when its prompt records one), harness and
-start time. The most recently active opens first and stays on screen until you
+in it, a picker names each by agent and harness. The name comes from the
+identity line in the recorded prompt or, for older Claude sessions, from who the
+@mentions delivered to it have in common. A start time tells two sessions of one
+agent apart. The most recently active opens first and stays on screen until you
 pick another. Thread discovery checks user delivery envelopes,
 rather than matches in tool outputs that merely quoted a thread. Channel-scoped
 sessions and DMs may require `--file`, and can contain multiple Buzz threads.

@@ -498,14 +498,17 @@ function renderPicker(candidates = [], file) {
   const picker = $("session");
   picker.hidden = candidates.length < 2;
   if (picker.hidden) return;
+  const who = (c) => (c.agent ? `${c.agent.name} (${c.harness})` : c.harness);
   const options = [...candidates]
     .sort((a, b) => String(a.started).localeCompare(String(b.started)))
-    .map((c) => {
-      const who = c.agent ? `${c.agent.name} · ${c.harness}` : c.harness;
-      const since = Number.isFinite(Date.parse(c.started))
-        ? ` · started ${clock(Date.parse(c.started))}`
-        : "";
-      return `<option value="${htmlEscape(c.path)}" title="${htmlEscape(c.path)}">${htmlEscape(who + since)}</option>`;
+    .map((c, _, all) => {
+      // The agent's name, and its start time only to tell two of its sessions apart.
+      const since =
+        all.filter((o) => who(o) === who(c)).length > 1 &&
+        Number.isFinite(Date.parse(c.started))
+          ? ` · started ${clock(Date.parse(c.started))}`
+          : "";
+      return `<option value="${htmlEscape(c.path)}" title="${htmlEscape(c.path)}">${htmlEscape(who(c) + since)}</option>`;
     })
     .join("");
   // Rebuilding an open list would close it, so only when the options change.

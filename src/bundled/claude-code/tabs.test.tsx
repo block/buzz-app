@@ -148,6 +148,15 @@ it("is an agent type on the desktop app", () => {
     workspace: "~/code",
   });
   expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
+  expect(type.carry?.(DEFAULT_CONFIG)).toEqual({});
+  expect(
+    type.carry?.({
+      model: "opus",
+      instructions: "Triage.",
+      workspace: "~/code",
+      scope: "channel",
+    }),
+  ).toEqual({ instructions: "Triage.", workspace: "~/code" });
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );

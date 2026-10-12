@@ -46,6 +46,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
           ? carry.workspace
           : saved.workspace,
     }),
+    carry: (saved) => {
+      const { instructions, workspace } = config(saved);
+      return {
+        ...(instructions.trim() && { instructions }),
+        ...(workspace !== defaults.workspace && { workspace }),
+      };
+    },
     summary: (agent) => config(agent.config).model || "Codex",
     tabs: [
       { id: "codex", title: "Codex", component: CodexTab },

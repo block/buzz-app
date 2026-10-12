@@ -51,7 +51,7 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
-it("adopts a brought-over agent's instructions and workspace, nothing else", () => {
+it("adopts and carries an agent's instructions and workspace, nothing else", () => {
   const type = applied();
   const saved = type?.defaults().config;
   expect(
@@ -67,6 +67,12 @@ it("adopts a brought-over agent's instructions and workspace, nothing else", () 
   });
   // A workspace Codex cannot run in stays the default.
   expect(type?.adopt?.({ workspace: "code" }, saved)).toEqual(saved);
+  expect(
+    type?.carry?.({ ...(saved as object), model: "gpt", instructions: " " }),
+  ).toEqual({});
+  expect(
+    type?.carry?.({ instructions: "Triage.", workspace: "/work/code" }),
+  ).toEqual({ instructions: "Triage.", workspace: "/work/code" });
 });
 
 it("stops agents that stop running even when the agent list could not be read", () => {

@@ -303,6 +303,9 @@ export type AgentType<Config = unknown> = {
   /** A brought-over agent's config: `config` from `defaults` with whatever of
    * `carry` the type has a place for. Without it, all of `carry` stays behind. */
   adopt?(carry: Carry, config: Config): Config;
+  /** What of `config` another type may adopt when the agent changes type.
+   * Without it, all of its settings stay behind. */
+  carry?(config: Config): Carry;
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
@@ -419,6 +422,10 @@ export type Agents = {
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** Makes it an agent of `type`, keeping its identity and attention. Its new
+   * config is the type's defaults with whatever the old type carries and the
+   * new one adopts; returns what of that stayed behind. Refused mid-turn. */
+  retype(pubkey: string, type: string): Promise<readonly (keyof Carry)[]>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. A hosted agent is archived,
    * leaves its channels and is removed from its provider before this resolves.
@@ -695,6 +702,8 @@ type Runner = {
   /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
   readonly wrote: Set<string>;
+  /** Turns still counted as working, which a change of type waits out. */
+  working: number;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
@@ -1194,6 +1203,42 @@ export class AgentsService extends Service implements Agents {
     if (!agent || !remote || !origin || !binding)
       throw new Error("No such agent on this device");
     return { agent, remote, origin, binding };
+  }
+
+  async retype(pubkey: string, type: string) {
+    const identity = this.live(pubkey);
+    if (!this.native || !identity)
+      throw new Error("No such agent on this device");
+    const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
+    const kind = kinds.get(type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (type === identity.type) return [];
+    if (this.runners.get(pubkey)?.working)
+      throw new Error(
+        `${identity.name} is answering; change its type when it finishes`,
+      );
+    const record = this.recordOf(identity);
+    const carry = kinds.get(identity.type)?.carry?.(record.config) ?? {};
+    const { config } = kind.defaults();
+    const adopted = kind.adopt ? kind.adopt(carry, config) : config;
+    const kept = kind.carry?.(adopted) ?? {};
+    const dropped = (Object.keys(carry) as (keyof Carry)[]).filter(
+      (key) => carry[key] !== undefined && kept[key] !== carry[key],
+    );
+    await this.native.setType(pubkey, type);
+    // Its new type and config apply together, so neither type runs it with the
+    // other's settings; the list then confirms the type.
+    this.identities = this.identities.map((saved) =>
+      saved.pubkey === pubkey ? { ...saved, type } : saved,
+    );
+    try {
+      this.write({ ...record, config: adopted });
+    } catch (error) {
+      console.warn(`Agent ${identity.name} settings were not saved`, error);
+      this.update();
+    }
+    await this.refresh();
+    return dropped;
   }
 
   async remove(pubkey: string) {
@@ -1790,6 +1835,7 @@ export class AgentsService extends Service implements Agents {
         prior &&
           prior.name === identity.name &&
           prior.picture === identity.picture &&
+          prior.type === identity.type &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
@@ -1878,6 +1924,7 @@ export class AgentsService extends Service implements Agents {
       admitted: 0,
       seen: new Set(),
       wrote: new Set(),
+      working: 0,
       mayHold: true,
       epoch: 0,
     };
@@ -2263,10 +2310,12 @@ export class AgentsService extends Service implements Agents {
     let holds = 1;
     let outcome: WorkOutcome = { ok: true };
     const lifetime = runner.controller.signal;
+    runner.working++;
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       lifetime.removeEventListener("abort", abort);
+      runner.working--;
       for (const end of done) end();
     };
     const abort = () => {

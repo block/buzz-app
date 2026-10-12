@@ -32,6 +32,7 @@ import type {
 import type {
   Agent,
   Agents,
+  Carry,
   RegisteredAgentType,
   Team,
 } from "../../features/agents/service";
@@ -46,6 +47,7 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
@@ -179,6 +181,7 @@ export function AgentsPage({
           agents={agents}
           agent={building}
           type={typeOf(building)}
+          types={types}
           channels={channels}
           onRemoved={() => browse()}
         />
@@ -924,12 +927,14 @@ function AgentBuild({
   agents,
   agent,
   type,
+  types,
   channels,
   onRemoved,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
+  types: readonly RegisteredAgentType[];
   channels: readonly ChannelChoice[];
   onRemoved(): void;
 }) {
@@ -969,7 +974,14 @@ function AgentBuild({
         />
         <dl className={styles.facts}>
           <dt>Type</dt>
-          <dd>{type?.title ?? "Type unavailable"}</dd>
+          <dd>
+            <TypeField
+              agents={agents}
+              agent={agent}
+              type={type}
+              types={types}
+            />
+          </dd>
           <dt>Key</dt>
           <dd className="flex items-center gap-1">
             <code className="truncate">{formatPublicKey(agent.pubkey, 8)}</code>
@@ -1004,6 +1016,119 @@ function AgentBuild({
         />
       </section>
     </div>
+  );
+}
+
+const CARRIED: Record<keyof Carry, string> = {
+  instructions: "instructions",
+  workspace: "workspace",
+};
+
+/** The agent's type, which the owner can change between turns. */
+function TypeField({
+  agents,
+  agent,
+  type,
+  types,
+}: {
+  agents: Agents;
+  agent: Agent;
+  type: RegisteredAgentType | undefined;
+  types: readonly RegisteredAgentType[];
+}) {
+  const others = types.filter((item) => item.key !== agent.type);
+  const [open, setOpen] = useState(false);
+  const [next, setNext] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [dropped, setDropped] = useState<readonly (keyof Carry)[]>([]);
+  const chosen = others.find((item) => item.key === next) ?? others[0];
+  const change = async () => {
+    if (!chosen) return;
+    setPending(true);
+    setError("");
+    try {
+      setDropped(await agents.retype(agent.pubkey, chosen.key));
+      setOpen(false);
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <>
+      <span className="flex items-center gap-1">
+        {type?.title ?? "Type unavailable"}
+        {others.length > 0 && (
+          <Button
+            size="compact"
+            variant="ghost"
+            onClick={() => {
+              setError("");
+              setNext(others[0]?.key ?? "");
+              setOpen(true);
+            }}
+          >
+            Change
+          </Button>
+        )}
+      </span>
+      {dropped.length > 0 && (
+        <p role="status" className="m-0 mt-1 text-body-sm text-secondary">
+          Its {dropped.map((key) => CARRIED[key]).join(" and ")} stayed behind.
+        </p>
+      )}
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Change ${agent.name}'s type`}
+        description={`It keeps its key, name, picture and attention. ${
+          type
+            ? "Its instructions and workspace move if the new type has a place for them; its other settings start from the new type's defaults."
+            : "Without its current type its settings can't be read, so they start from the new type's defaults."
+        }`}
+        preventClose={pending}
+        actions={
+          <>
+            <Button onClick={() => setOpen(false)} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={pending}
+              disabled={!chosen}
+              onClick={() => void change()}
+            >
+              Change type
+            </Button>
+          </>
+        }
+      >
+        <Field label="New type">
+          <RadioGroup
+            value={chosen?.key ?? ""}
+            disabled={pending}
+            onValueChange={(value) => setNext(String(value))}
+          >
+            {others.map((item) => (
+              <Radio
+                key={item.key}
+                value={item.key}
+                variant="card"
+                label={item.title}
+                {...(item.description ? { description: item.description } : {})}
+              />
+            ))}
+          </RadioGroup>
+        </Field>
+        {error && (
+          <p role="alert" className="m-0 mt-3 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+      </Dialog>
+    </>
   );
 }
 

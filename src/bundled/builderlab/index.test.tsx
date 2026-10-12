@@ -66,6 +66,7 @@ function provideAgents(
     port: vi.fn(),
     rename: vi.fn(),
     setPicture: vi.fn(),
+    setType: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),

@@ -9,6 +9,7 @@ import type {
   Agent,
   Agents,
   AgentsSnapshot,
+  Carry,
   RegisteredAgentType,
   TeamChange,
 } from "../../features/agents/service";
@@ -68,7 +69,10 @@ const portable: PortableAgent[] = [
   },
 ];
 
-function setup(saved: Agent[], { shown = true } = {}) {
+function setup(
+  saved: Agent[],
+  { shown = true, more = [] as RegisteredAgentType[] } = {},
+) {
   let snapshot: AgentsSnapshot = {
     status: "ready",
     agents: saved,
@@ -102,7 +106,7 @@ function setup(saved: Agent[], { shown = true } = {}) {
     ),
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
-  const types = [type];
+  const types = [type, ...more];
   const agents = {
     types: () => types,
     snapshot: () => snapshot,
@@ -124,6 +128,7 @@ function setup(saved: Agent[], { shown = true } = {}) {
     portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
+    retype: vi.fn(async (): Promise<readonly (keyof Carry)[]> => []),
     remove: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
@@ -226,6 +231,40 @@ it("edits the picture from the build view and shows why a save failed", async ()
   );
   expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
+});
+
+it("changes the agent's type from the build view and says what stayed behind", async () => {
+  const user = userEvent.setup();
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    defaults: () => ({ config: {} }),
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [relay] });
+  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.keyboard("{Enter}");
+  const rail = screen.getByRole("complementary", { name: "Ada identity" });
+  agents.retype
+    .mockRejectedValueOnce(new Error("Ada is answering"))
+    .mockResolvedValueOnce(["workspace"]);
+  await user.click(within(rail).getByRole("button", { name: "Change" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Change Ada's type",
+  });
+  expect(within(dialog).getByRole("radio", { name: "Relay" })).toBeChecked();
+  await user.click(within(dialog).getByRole("button", { name: "Change type" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Ada is answering",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Change type" }));
+  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay");
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(rail).getByRole("status")).toHaveTextContent(
+    "Its workspace stayed behind.",
+  );
 });
 
 it("makes a new agent in the create dialog and goes straight to building it", async () => {

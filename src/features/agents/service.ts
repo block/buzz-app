@@ -209,6 +209,11 @@ export type Delivery<Config = unknown> = Readonly<{
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
+  /** The harness acknowledged this exact request. Not proof of model consumption. */
+  acknowledged?(): void;
+  /** A newer acknowledged request owns this turn's activity; hide this message's
+   * bubble without claiming success or changing the execution outcome. */
+  superseded?(): void;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
 /** A model with its effort levels, lowest first. */
@@ -1944,6 +1949,8 @@ export class AgentsService extends Service implements Agents {
             ...(team ? { team } : {}),
             signal,
             workingUntil: working.hold,
+            acknowledged: () => job.work?.started(),
+            superseded: () => job.work?.remove(),
             step: (tool: string, target?: string) =>
               job.work?.step(tool, target),
           }),

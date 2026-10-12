@@ -9,6 +9,14 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 
+export type ActivityReceipt = Readonly<{
+  /** Presentation destination; channel-shared sessions may handle several threads. */
+  activityScope?: string;
+  step?: (tool: string, target?: string) => void;
+  acknowledged?: () => void;
+  superseded?: () => void;
+}>;
+
 export type Spawn = (
   id: string,
   options?: HostProcessOptions,
@@ -152,6 +160,7 @@ export class ClaudeProcess {
         "--input-format",
         "stream-json",
         "--verbose",
+        "--replay-user-messages",
         "--permission-mode",
         "bypassPermissions",
         ...(launch.model ? ["--model", launch.model] : []),
@@ -258,7 +267,10 @@ export class ClaudeProcess {
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
-  send(text: string, { model, effort }: TurnPick = {}): Promise<Settled> {
+  send(
+    text: string,
+    { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
+  ): Promise<Settled> {
     if (!this.alive)
       return Promise.resolve({
         ok: false,
@@ -267,12 +279,15 @@ export class ClaudeProcess {
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    const uuid = crypto.randomUUID();
+    this.receipts.set(uuid, activity);
     this.pending++;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
     this.write({
       type: "user",
+      uuid,
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
@@ -363,6 +378,8 @@ export class ClaudeProcess {
   }
   private settle(settled: Settled) {
     this.pending = 0;
+    this.receipts.clear();
+    this.activeReceipts.clear();
     this.lastError = undefined;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
@@ -387,8 +404,11 @@ export class ClaudeProcess {
       this.handle(message);
     }
   }
-  /** Latest live step of the current turn, for display only. */
-  onStep: ((tool: string, target?: string) => void) | undefined;
+  // Replay acknowledgments are correlated by the UUID we supplied, never by
+  // prompt text or tool-result user messages. Only the latest acknowledged
+  // request gets steps; settling ends all requests, not just the latest one.
+  private readonly receipts = new Map<string, ActivityReceipt>();
+  private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
@@ -417,9 +437,29 @@ export class ClaudeProcess {
       if (message.state === "idle" && this.pending) this.done();
       return;
     }
+    if (
+      message.type === "user" &&
+      message.isReplay === true &&
+      typeof message.uuid === "string"
+    ) {
+      const receipt = this.receipts.get(message.uuid);
+      if (receipt) {
+        this.receipts.delete(message.uuid);
+        // Watches/timers have no message activity: they must not hide a mention.
+        if (receipt.step) {
+          const scope = receipt.activityScope ?? "conversation";
+          this.activeReceipts.get(scope)?.superseded?.();
+          this.activeReceipts.set(scope, receipt);
+          receipt.acknowledged?.();
+        }
+      }
+      return;
+    }
     if (message.type === "assistant") {
       const step = stepLabel(message);
-      if (step) this.onStep?.(step.tool, step.target);
+      if (step)
+        for (const receipt of this.activeReceipts.values())
+          receipt.step?.(step.tool, step.target);
       return;
     }
     if (message.type !== "result") return;

@@ -232,6 +232,8 @@ export class ClaudeRuntime {
     team,
     workingUntil,
     step,
+    acknowledged,
+    superseded,
   }: Delivery) {
     const settings = config(raw);
     // Claude runs commands as you, so only you and your agents can ask.
@@ -290,8 +292,15 @@ export class ClaudeRuntime {
     );
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
-      ...(step ? { step } : {}),
       fresh: async () => (await prompt(true)).text,
+      ...(trigger.type === "mention"
+        ? {
+            activityScope: threadReference(event)?.rootId ?? event.id,
+            ...(step ? { step } : {}),
+            ...(acknowledged ? { acknowledged } : {}),
+            ...(superseded ? { superseded } : {}),
+          }
+        : {}),
       pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     });
     // The turn outlives `run`, which the host is told so it shows it as working.

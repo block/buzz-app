@@ -167,6 +167,8 @@ export function fakeSpawn(known = new Set<string>()) {
         });
       }
       open++;
+      if (args.includes("--replay-user-messages"))
+        fake.emit({ ...message, isReplay: true, session_id: session });
       fake.emit({
         type: "assistant",
         session_id: session,

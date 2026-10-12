@@ -144,9 +144,43 @@ it("carries a verified mention through host handover into all three scopes witho
       "working",
     );
     expect(snapshot().records).toEqual([]);
+    const followup = message(
+      viewer,
+      channel,
+      "Follow-up",
+      Math.floor(Date.now() / 1000),
+      [
+        ["e", root.id, "", "root"],
+        ["e", root.id, "", "reply"],
+        ["p", agent.pubkey],
+      ],
+    );
+    live.receive([followup], { phase: "live", channelId: channel });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(messageActivity(snapshot(), channel, root.id)).toHaveLength(1);
+    expect(messageActivity(snapshot(), channel, followup.id)).toHaveLength(1);
+    const first = run.mock.calls[0]?.[0];
+    const second = run.mock.calls[1]?.[0];
+    // A harness acknowledgment changes presentation only; execution still waits
+    // for its own outcome. The same agent stays working in this thread/channel.
+    first.superseded();
+    second.acknowledged();
+    second.step("Read", "notes.txt");
+    expect(messageActivity(snapshot(), channel, root.id)).toEqual([]);
+    expect(messageActivity(snapshot(), channel, followup.id)[0]?.step).toEqual({
+      tool: "Read",
+      target: "notes.txt",
+    });
+    expect(workingAgents(snapshot(), channel)).toEqual([agent.pubkey]);
+    expect(threadWorkingAgents(snapshot(), [], channel, root.id)).toEqual([
+      agent.pubkey,
+    ]);
+    // Late steps/outcomes on the old request cannot bring its bubble back.
+    first.step("Edit", "old.txt");
+    expect(messageActivity(snapshot(), channel, root.id)).toEqual([]);
     finish({ ok: false, error: "Provider unavailable" });
     await vi.waitFor(() =>
-      expect(messageActivity(snapshot(), channel, root.id)[0]?.state).toBe(
+      expect(messageActivity(snapshot(), channel, followup.id)[0]?.state).toBe(
         "error",
       ),
     );

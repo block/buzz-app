@@ -1151,6 +1151,80 @@ it("saves nothing when native create fails", async () => {
   expect(storage.getItem("buzz.agents.v1")).toBeNull();
 });
 
+it("creates an agent with the config it was given, not its type's defaults, and sets its picture", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
+  const picture = "https://relay.example/media/pack.png";
+  const agent = await service.create({
+    type: "example/echo",
+    name: " Echo ",
+    picture,
+    config: { reply: "chosen" },
+  });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Echo",
+  );
+  expect(native.setPicture).toHaveBeenCalledExactlyOnceWith(bot, picture);
+  expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
+  expect(agent.config).toEqual({ reply: "chosen" });
+  expect(service.find(bot)).toMatchObject({
+    picture,
+    config: { reply: "chosen" },
+  });
+  // Everything but the config still starts from the type's defaults.
+  expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
+    "interest/default",
+    "watch/channel",
+  ]);
+  expect(storage.getItem("buzz.agents.v1")).toContain("chosen");
+});
+
+it("keeps a new agent whose picture could not be set", async () => {
+  const { service, native } = await setup();
+  native.setPicture.mockRejectedValueOnce(new Error("Could not write"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const agent = await service.create({
+    type: "example/echo",
+    name: "Echo",
+    picture: "https://relay.example/media/pack.png",
+    config: { reply: "chosen" },
+  });
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringContaining("picture was not saved"),
+    expect.any(Error),
+  );
+  warn.mockRestore();
+  expect(agent).toMatchObject({
+    pubkey: bot,
+    name: "Echo",
+    config: { reply: "chosen" },
+  });
+  expect(service.find(bot)).toMatchObject({ config: { reply: "chosen" } });
+  expect(agent.picture).toBeUndefined();
+  expect(service.find(bot)?.picture).toBeUndefined();
+  expect(service.snapshot().agents.map((item) => item.pubkey)).toEqual([bot]);
+});
+
+it("sets no picture and uses the type's defaults for a new agent given neither", async () => {
+  const { service, native } = await setup();
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  expect(native.setPicture).not.toHaveBeenCalled();
+  expect(agent.config).toEqual({ reply: "ok" });
+  expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
+});
+
+it("refuses a blank name before making anything", async () => {
+  const { service, native } = await setup();
+  await expect(
+    service.create({ type: "example/echo", name: "   " }),
+  ).rejects.toThrow("Name the agent");
+  expect(native.create).not.toHaveBeenCalled();
+  expect(service.snapshot().agents).toEqual([]);
+});
+
 it("returns the created agent after the community changes mid-create", async () => {
   const { service, native, connect } = await setup();
   const create = native.create.getMockImplementation();

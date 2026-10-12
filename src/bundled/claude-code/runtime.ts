@@ -461,6 +461,9 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            ...(entry.handle
+              ? { agent: { name: entry.handle.name, pubkey } }
+              : {}),
             instructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),

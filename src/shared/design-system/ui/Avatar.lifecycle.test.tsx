@@ -31,7 +31,7 @@ it("reveals completed cached artwork on mount without waiting for a load event",
     "data-loaded",
     "true",
   );
-  expect(view.container.querySelector("img")).not.toHaveAttribute(
+  expect(view.container.querySelector("img")).toHaveAttribute(
     "loading",
     "lazy",
   );

@@ -42,6 +42,7 @@ function AvatarArtwork({
         src={src}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
+        loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={() => setStatus("loaded")}

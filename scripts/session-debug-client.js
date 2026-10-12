@@ -808,6 +808,8 @@ async function poll() {
       render();
     }
   } catch (error) {
+    // Until a picked session loads, the picker names the one still on screen.
+    if (state?.file) $("session").value = state.file;
     setStatus("error", "Reconnecting…", error.message);
   } finally {
     pending = false;

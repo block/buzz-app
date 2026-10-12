@@ -275,6 +275,57 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   runtime.dispose();
 });
 
+it("names the agent in its system prompt, resuming idle sessions when it is renamed", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const mention = (id: string) => (id === "2" ? root : reply);
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (id: string, name: string) => {
+    // A rename reaches the runtime as a changed agent list.
+    runtime.sync([{ pubkey: self, name, config: DEFAULT_CONFIG } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event: mention(id) },
+      channelId: channel,
+      agent: { ...agent, name },
+      config: DEFAULT_CONFIG,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as Delivery);
+  };
+  const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
+    String(
+      (
+        process?.received.find(
+          (wire) =>
+            (wire.request as { subtype?: string } | undefined)?.subtype ===
+            "initialize",
+        )?.request as { appendSystemPrompt?: string } | undefined
+      )?.appendSystemPrompt,
+    );
+  await run("2", "Claude");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(system(first)).toContain(`You are Claude (pubkey ${self}).`);
+  await run("3", "Pollen");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(system(second)).toContain(`You are Pollen (pubkey ${self}).`);
+  runtime.dispose();
+});
+
 it("reads model ids and aliases as names", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");

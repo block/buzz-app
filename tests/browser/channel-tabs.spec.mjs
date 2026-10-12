@@ -215,13 +215,73 @@ test.describe("crowded content tabs", () => {
         .join(" "),
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
-    for (const id of ids.slice(1))
-      await row.getByRole("link", { name: id, exact: true }).click();
+    await row.getByRole("link", { name: "beta", exact: true }).click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
     const tabs = list.getByRole("tab");
+    const header = workspace.locator(":scope > header");
+    await expect(tabs).toHaveCount(1);
+    await settlePanelMotion(page);
+    await expect
+      .poll(() => list.evaluate((el) => el.scrollWidth > el.clientWidth))
+      .toBe(false);
+    const initialHeader = await header.boundingBox();
+    const initialTab = await tabs.first().boundingBox();
+    const expectTabPosition = async () => {
+      await expect
+        .poll(async () => (await tabs.last().boundingBox()).y)
+        .toBeCloseTo(initialTab.y, 1);
+      expect((await tabs.last().boundingBox()).height).toBeCloseTo(
+        initialTab.height,
+        1,
+      );
+      expect((await header.boundingBox()).height).toBeCloseTo(
+        initialHeader.height,
+        1,
+      );
+    };
+    for (const id of ids.slice(2))
+      await row.getByRole("link", { name: id, exact: true }).click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);
+    const activeClose = workspace.getByRole("button", {
+      name: "Close eta tab",
+      exact: true,
+    });
+    const inactiveClose = workspace.getByRole("button", {
+      name: "Close zeta tab",
+      exact: true,
+    });
+    const outside = main.getByRole("button", {
+      name: "Toggle tab pane",
+      exact: true,
+    });
+    const thumbColor = () =>
+      list.evaluate(
+        (el) =>
+          getComputedStyle(el, "::-webkit-scrollbar-thumb").backgroundColor,
+      );
+    await outside.hover();
+    await expect(activeClose).toHaveCSS("opacity", "1");
+    await expect(inactiveClose).toHaveCSS("opacity", "0");
+    await tabs.nth(4).hover();
+    await expect(inactiveClose).toHaveCSS("opacity", "1");
+    await expect(activeClose).toHaveCSS("opacity", "1");
+    await outside.hover();
+    await expect(inactiveClose).toHaveCSS("opacity", "0");
+    await expectTabPosition();
+    await expect.poll(thumbColor).toBe("rgba(0, 0, 0, 0)");
+    await list.hover();
+    await expect.poll(thumbColor).not.toBe("rgba(0, 0, 0, 0)");
+    await expectTabPosition();
+    const geometry = await list.evaluate((el) => ({
+      scrollbar: el.offsetHeight - el.clientHeight,
+      nativeWidth: getComputedStyle(el).scrollbarWidth,
+      trackHeight: getComputedStyle(el, "::-webkit-scrollbar").height,
+    }));
+    expect(geometry.scrollbar).toBeLessThanOrEqual(4);
+    expect(geometry.nativeWidth).toBe("auto");
+    expect(geometry.trackHeight).toBe("4px");
     await expect
       .poll(() => list.evaluate((el) => el.scrollWidth > el.clientWidth))
       .toBe(true);
@@ -230,10 +290,24 @@ test.describe("crowded content tabs", () => {
     await tabs.last().press("Home");
     await expect(tabs.first()).toBeFocused();
     await expect(tabs.first()).toBeInViewport();
+    await expect(
+      workspace.getByRole("button", { name: "Close Beta tab", exact: true }),
+    ).toHaveCSS("opacity", "1");
     await expect(list).toHaveJSProperty("scrollTop", 0);
+    await expectTabPosition();
     await tabs.first().press("End");
     await expect(tabs.last()).toBeFocused();
     await expect(tabs.last()).toBeInViewport();
+    await expect(list).toHaveJSProperty("scrollTop", 0);
+    await expectTabPosition();
+    // Keyboard focus must not keep the scrollbar visible after hover leaves.
+    await outside.hover();
+    await expect(tabs.last()).toBeFocused();
+    await expect.poll(thumbColor).toBe("rgba(0, 0, 0, 0)");
+    await expectTabPosition();
+    await list.hover();
+    await expect.poll(thumbColor).not.toBe("rgba(0, 0, 0, 0)");
+    await expectTabPosition();
     expect((await list.boundingBox()).height).toBeCloseTo(height, 1);
     await expect(tabs.last()).toHaveAccessibleName("eta");
     await tabs.last().press("Delete");

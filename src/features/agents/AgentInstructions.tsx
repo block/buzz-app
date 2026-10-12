@@ -60,14 +60,26 @@ function CardInstructions({
   const change = useRef(onChange);
   change.current = onChange;
   const edit = card?.edit;
+  // Leaving the editor returns focus to the button that opened it.
+  const opener = useRef<HTMLButtonElement>(null);
+  const returning = useRef(false);
+  useEffect(() => {
+    if (editing || !returning.current) return;
+    returning.current = false;
+    opener.current?.focus();
+  }, [editing]);
   useEffect(() => {
     if (!editing || !edit) return;
+    const leave = () => {
+      returning.current = true;
+      setEditing(false);
+    };
     edit({
       back: () => {
         change.current(before.current);
-        setEditing(false);
+        leave();
       },
-      done: () => setEditing(false),
+      done: leave,
     });
     return () => edit(null);
   }, [editing, edit]);
@@ -96,8 +108,8 @@ function CardInstructions({
       </span>
       <div className={styles.instructionAction}>
         <Button
+          ref={opener}
           variant="primary"
-          aria-label="Agent instructions"
           disabled={disabled}
           onClick={() => {
             before.current = value;

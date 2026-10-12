@@ -297,7 +297,8 @@ export type NewAgent = Readonly<{
   name: string;
   /** An HTTPS image URL. */
   picture?: string;
-  /** Its starting config, from the type's `Create`; else the type's defaults. */
+  /** Its starting config, from the type's `Create`; else the type's defaults.
+   * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
 }>;
 export type Agents = {
@@ -749,7 +750,10 @@ export class AgentsService extends Service implements Agents {
     if (remote) {
       const agent = await this.provision(type, remote, name.trim());
       if (!picture) return agent;
-      await this.save(agent.pubkey, { picture });
+      // It exists now, so a picture that fails to save does not fail it.
+      await this.save(agent.pubkey, { picture }).catch((error: unknown) =>
+        console.warn(`Agent ${agent.name} picture was not saved`, error),
+      );
       return this.find(agent.pubkey) ?? agent;
     }
     return this.add(

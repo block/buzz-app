@@ -116,18 +116,10 @@
 .collection .artwork {
   height: 9rem;
 }
-.collection:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-}
 .imageEditor {
   align-self: center;
   width: 50%;
   margin-block: auto;
-}
-/* biome-ignore lint/correctness/noUnknownPseudoClass: The shared inline avatar editor shows only its image panel here. */
-.imageEditor :global(.agent-inline-image-editor [role="tablist"]) {
-  display: none;
 }
 .options {
   display: grid;

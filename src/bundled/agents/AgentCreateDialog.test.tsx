@@ -2,7 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -147,6 +153,13 @@ it("creates with the name, a pack picture and the config from the type's view", 
   expect(onCreated).toHaveBeenCalledExactlyOnceWith(made);
 });
 
+it("opens on the name field", async () => {
+  const { dialog } = setup([echo]);
+  await waitFor(() =>
+    expect(within(dialog).getByLabelText("Name")).toHaveFocus(),
+  );
+});
+
 it("starts with a pack picture already chosen", async () => {
   const { agents, dialog, user } = setup([echo]);
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
@@ -231,7 +244,7 @@ const editNotes = async (
 ) => {
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(
-    within(dialog).getByRole("button", { name: "Agent instructions" }),
+    within(dialog).getByRole("button", { name: "Edit instructions" }),
   );
   return await within(dialog).findByRole("textbox", {
     name: "Agent instructions",

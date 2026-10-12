@@ -140,7 +140,7 @@ export function AgentsPage({
           description={snapshot.error ?? "Try again."}
         />
       );
-    if (!types.length && !snapshot.agents.length)
+    if (snapshot.status === "ready" && !types.length && !snapshot.agents.length)
       return (
         <EmptyState
           icon="✦"

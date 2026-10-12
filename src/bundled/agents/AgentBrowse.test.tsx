@@ -2,7 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import { createRelayReader } from "../../features/relay/reader";
@@ -147,4 +153,54 @@ it("shrinks over-budget pages and preserves Load more and explicit retry", async
     view.unmount();
     owned.dispose();
   }
+});
+
+it("starts over from the first page in another community", async () => {
+  const page = Array.from({ length: 200 }, (_, index) => ({
+    ...shared,
+    id: index.toString(16).padStart(64, "0"),
+    created_at: 300 - index,
+    tags: [
+      ["d", `first-${index}`],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({ display_name: `First ${index}` }),
+  }));
+  const first = vi.fn(async (filters: { until?: number }[]) =>
+    filters[0]?.until === undefined ? page : [],
+  );
+  const second = vi.fn().mockResolvedValue([shared]);
+  let snapshot = {
+    status: "ready",
+    generation: 1,
+    origin: "https://one.example",
+    session: { read: first, media: () => undefined },
+  };
+  const listeners = new Set<() => void>();
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as RelayData;
+  render(<AgentBrowse relay={relay} />);
+  await screen.findByText("First 0");
+  fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+  await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(2));
+  snapshot = {
+    status: "ready",
+    generation: 2,
+    origin: "https://two.example",
+    session: { read: second, media: () => undefined },
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(await screen.findByText("Shared helper")).toBeVisible();
+  expect(screen.queryByText("First 0")).not.toBeInTheDocument();
+  expect(second).toHaveBeenCalledExactlyOnceWith(
+    [{ kinds: [30175], limit: 200 }],
+    { signal: expect.any(AbortSignal) },
+  );
 });

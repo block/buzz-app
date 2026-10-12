@@ -1790,6 +1790,27 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
+it("keeps a hosted agent made without its picture when the picture fails to save", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.profile.mockRejectedValueOnce(new Error("provider down"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture: "https://example.test/sky.png",
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  expect(agent.picture).toBeUndefined();
+  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent Sky picture was not saved",
+    expect.any(Error),
+  );
+  warn.mockRestore();
+});
+
 it("renames a hosted agent through its provider and relists it; its settings are the provider's", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();

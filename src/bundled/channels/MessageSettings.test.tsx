@@ -45,9 +45,9 @@ it("saves new-thread placement, restores it, and follows another window", async 
   expect(choice()).toHaveTextContent("Side pane");
 });
 
-it("keeps unsaved thread placement effective and retries the same choice", async () => {
+it("keeps unsaved thread placement and recovery through remount, then retries the same choice", async () => {
   const user = userEvent.setup();
-  render(<MessageSettings active={() => true} />, {
+  const view = render(<MessageSettings active={() => true} />, {
     wrapper: ToastProvider,
   });
   const write = vi
@@ -61,6 +61,17 @@ it("keeps unsaved thread placement effective and retries the same choice", async
   expect(screen.getByRole("dialog")).toHaveTextContent(
     "Thread preference wasn’t saved",
   );
+  // The app keeps its toast host while the settings destination unmounts.
+  view.rerender(null);
+  view.rerender(<MessageSettings active={() => true} />);
+  expect(
+    screen.getByRole("combobox", { name: "Open threads in" }),
+  ).toHaveTextContent("Main pane");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Thread preference wasn’t saved",
+  );
+  // Re-enter through the preference before invoking its recovery action.
+  screen.getByRole("combobox", { name: "Open threads in" }).focus();
   write.mockRestore();
   await user.click(screen.getByRole("button", { name: "Retry saving" }));
   expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");

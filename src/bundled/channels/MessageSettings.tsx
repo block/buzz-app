@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   setThreadPlacementPreference,
   useThreadPlacementPreference,
@@ -12,8 +11,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 
 /** Registered by Messages; its settings presentation follows plugin lifetime. */
 export function MessageSettings({ active }: { active(): boolean }) {
-  const placement = useThreadPlacementPreference();
-  const [error, setError] = useState<string | null>(null);
+  const { placement, unsaved } = useThreadPlacementPreference();
   return (
     <section aria-label="Messages settings">
       <Header title="Messages" />
@@ -37,18 +35,21 @@ export function MessageSettings({ active }: { active(): boolean }) {
               ]}
               onValueChange={(value) => {
                 if (value === "main" || value === "side")
-                  setError(setThreadPlacementPreference(value));
+                  setThreadPlacementPreference(value);
               }}
             />
           }
         />
       </SettingsGroup>
-      {active() && error && (
-        <ToastNotice title="Thread preference wasn’t saved" description={error}>
+      {active() && unsaved && (
+        <ToastNotice
+          title="Thread preference wasn’t saved"
+          description="This choice is active, but could not be saved on this device. Try again."
+        >
           <Button
             type="button"
             size="sm"
-            onClick={() => setError(setThreadPlacementPreference(placement))}
+            onClick={() => setThreadPlacementPreference(placement)}
           >
             Retry saving
           </Button>

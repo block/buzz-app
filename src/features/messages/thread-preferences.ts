@@ -28,20 +28,21 @@ function subscribe(listener: () => void) {
   };
 }
 export function useThreadPlacementPreference() {
-  return useSyncExternalStore(subscribe, threadPlacementPreference);
+  const placement = useSyncExternalStore(subscribe, threadPlacementPreference);
+  // Saving the same active choice changes recovery state, not its placement.
+  const unsaved = useSyncExternalStore(
+    subscribe,
+    () => unsavedPreference !== undefined,
+  );
+  return { placement, unsaved };
 }
-export function setThreadPlacementPreference(
-  value: ThreadPlacement,
-): string | null {
-  let error: string | null = null;
+export function setThreadPlacementPreference(value: ThreadPlacement): void {
   unsavedPreference = value;
   try {
     localStorage.setItem(preferenceKey, value);
     unsavedPreference = undefined;
   } catch {
-    error =
-      "This choice is active, but could not be saved on this device. Try again.";
+    // Retain the active choice and its recovery state across settings remounts.
   }
   window.dispatchEvent(new Event(changedEvent));
-  return error;
 }

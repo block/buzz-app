@@ -14,6 +14,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Panels } from "../../features/panels/service";
+import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelCard } from "../../features/panels/PanelCard";
 import {
   BrowserIcon,
@@ -333,6 +334,42 @@ export function useConversationTabs({
         ?.focus({ preventScroll: true }),
     );
   };
+  const drag = useTabDrag({
+    visit,
+    movable: new Set(
+      tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
+    ),
+    order: new Set(tabState.tabs.map((tab) => tab.id)),
+    closedSideIndex:
+      mainPane &&
+      (!tabState.paneOpen || (rootTabIds.length === 0 && !drawer.side))
+        ? sideTabs.length
+        : undefined,
+    canMove: (id, pane) => {
+      const tab = tabState.tabs.find((item) => item.id === id);
+      return (
+        currentVisit() &&
+        tab?.kind === "thread" &&
+        (pane === "side" || (mainPane && tab.channelId === currentId))
+      );
+    },
+    move: (id, pane, index) => {
+      if (!currentVisit()) return;
+      const moving = tabState.tabs.find((tab) => tab.id === id);
+      const order = tabState.tabs.filter((tab) => tabPane(tab) === pane);
+      if (moving && tabPane(moving) === pane && order.indexOf(moving) === index)
+        return;
+      tabState.moveTab(id, pane, index);
+      setAnnouncement(`Moved to position ${index + 1} in the ${pane} pane.`);
+      requestAnimationFrame(() =>
+        document
+          .querySelector<HTMLElement>(
+            `[role="tab"][data-tab-value="${CSS.escape(id)}"]`,
+          )
+          ?.focus({ preventScroll: true }),
+      );
+    },
+  });
   const openConversationThread = (
     channelId: string,
     messageId: string,
@@ -481,6 +518,7 @@ export function useConversationTabs({
     openConversationLink,
     openConversationThread,
     announcement,
+    drag,
     mainItems: mainTabs.map(tabItem),
     selectedMain:
       mainTabs.find((tab) => tab.id === tabState.mainSelected)?.id ??

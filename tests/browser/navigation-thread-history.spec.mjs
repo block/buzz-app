@@ -282,6 +282,148 @@ for (const reading of [false, true]) {
   });
 }
 
+// Real pointer capture, hit testing and retained editor DOM are browser-only.
+test("dragging thread tabs reorders and crosses panes without losing the reply", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  for (const root of roots.slice(0, 2)) {
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      page.getByRole("complementary", { name: "Thread", exact: true }),
+    ).toBeVisible();
+  }
+  const side = page.locator("[data-panel-workspace]");
+  const main = page.locator("[data-main-workspace]");
+  const threadTabs = (host) =>
+    host.locator('[role="tab"][data-tab-value^="thread:"]');
+  const ids = await threadTabs(side).evaluateAll((tabs) =>
+    tabs.map((tab) => tab.dataset.tabValue),
+  );
+  const moving = () => page.locator(`[role="tab"][data-tab-value="${ids[1]}"]`);
+  const reply = page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .getByRole("textbox", { name: "Reply to thread", exact: true });
+  await reply.fill("Keep this reply");
+  const retained = await reply.elementHandle();
+  async function begin() {
+    const box = await moving().boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+  }
+  const first = await threadTabs(side).first().boundingBox();
+  await begin();
+  await page.mouse.move(first.x + 2, first.y + first.height / 2, { steps: 8 });
+  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
+  await expect(threadTabs(side)).toHaveCount(2); // no changes before release
+  await page.mouse.up();
+  await expect
+    .poll(() =>
+      threadTabs(side).evaluateAll((tabs) =>
+        tabs.map((tab) => tab.dataset.tabValue),
+      ),
+    )
+    .toEqual([ids[1], ids[0]]);
+
+  // The empty header beyond the compact tab strip accepts a transfer too.
+  const header = await main.locator("header").first().boundingBox();
+  await begin();
+  await page.mouse.move(
+    header.x + header.width / 2,
+    header.y + header.height / 2,
+    { steps: 8 },
+  );
+  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
+  await page.mouse.up();
+  await expect(threadTabs(main)).toHaveCount(1);
+  await expect(threadTabs(side)).toHaveCount(1);
+  expect(await retained.evaluate((editor) => editor.isConnected)).toBe(true);
+  await expect(
+    main.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveText("Keep this reply");
+
+  const destination = await threadTabs(side).first().boundingBox();
+  await begin();
+  await page.mouse.move(
+    destination.x + 2,
+    destination.y + destination.height / 2,
+    { steps: 8 },
+  );
+  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".buzz-tab-drag-insertion")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(threadTabs(main)).toHaveCount(1);
+  await expect(
+    main.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveText("Keep this reply");
+
+  // With the side pane closed there is no header to drop onto. Separating
+  // at the main workspace's right edge reveals it without creating a blank tab.
+  await main
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  await expect(side).toBeHidden();
+  const bounds = await main.boundingBox();
+  const closedHeader = await main.locator("header").first().boundingBox();
+  await begin();
+  // Even near the right edge, the full header remains an insertion target.
+  await page.mouse.move(
+    bounds.x + bounds.width - 4,
+    closedHeader.y + closedHeader.height / 2,
+    { steps: 8 },
+  );
+  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
+  await expect(page.locator(".buzz-tab-drag-edge")).toHaveCount(0);
+  await page.mouse.move(
+    bounds.x + bounds.width - 110,
+    bounds.y + bounds.height / 2,
+    { steps: 8 },
+  );
+  await expect(page.locator(".buzz-tab-drag-edge")).toBeVisible();
+  await expect(side).toBeHidden();
+  await page.mouse.up();
+  await expect(side).toBeVisible();
+  await expect(threadTabs(main)).toHaveCount(0);
+  await expect(threadTabs(side)).toHaveCount(2);
+  await expect(
+    side.getByRole("tab", { name: "New tab", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    side.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveText("Keep this reply");
+  expect(await retained.evaluate((editor) => editor.isConnected)).toBe(true);
+
+  // Moving the last side tab away also removes the pane, without toggling it.
+  for (let remaining = 2; remaining > 0; remaining--) {
+    await threadTabs(side).first().focus();
+    await page.keyboard.press("Alt+Shift+ArrowLeft");
+    await expect(threadTabs(side)).toHaveCount(remaining - 1);
+  }
+  await expect(side).toBeHidden();
+  const emptyBounds = await main.boundingBox();
+  await begin();
+  await page.mouse.move(
+    emptyBounds.x + emptyBounds.width - 4,
+    emptyBounds.y + emptyBounds.height / 2,
+    { steps: 8 },
+  );
+  await expect(page.locator(".buzz-tab-drag-edge")).toBeVisible();
+  await page.mouse.up();
+  await expect(side).toBeVisible();
+  await expect(threadTabs(side)).toHaveCount(1);
+  await expect(
+    side.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveText("Keep this reply");
+});
+
 // A malformed root hint crosses real navigation/reader/store/portal wiring;
 // only the verified message ancestry may replace selection, never an old editor.
 test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({

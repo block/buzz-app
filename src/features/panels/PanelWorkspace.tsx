@@ -17,6 +17,7 @@ import {
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
+import type { TabDragHost } from "./useTabDrag";
 
 type Item = {
   id: string;
@@ -63,7 +64,9 @@ export function PanelWorkspace({
   main = false,
   label = "Panel tabs",
   focusOnMount = true,
+  drag,
 }: {
+  drag?: TabDragHost | undefined;
   items: Item[];
   value: string;
   select(id: string): void;
@@ -207,7 +210,14 @@ export function PanelWorkspace({
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
       className={styles.workspace}
-      ref={root}
+      ref={(element) => {
+        root.current = element;
+        drag?.attach(element);
+      }}
+      onClickCapture={drag?.click}
+      onPointerDownCapture={(event) => {
+        drag?.begin(event);
+      }}
       onKeyDown={(event) => {
         if (
           event.key === "Escape" &&
@@ -236,6 +246,7 @@ export function PanelWorkspace({
               icon: tab.icon,
               panelId: panelId(tab.id),
               onMove: "move" in tab ? tab.move : undefined,
+              draggable: !!drag && "move" in tab && !!tab.move,
               onClose: tab.close
                 ? () => {
                     closingTab.current = tab.id;

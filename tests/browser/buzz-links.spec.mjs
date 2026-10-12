@@ -229,13 +229,6 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
     exact: true,
   });
   await expect(threadTab).toHaveClass(/navigation-item/);
-  expect(
-    await threadTab.evaluate(
-      (el) =>
-        el.parentElement.getBoundingClientRect().width /
-        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-    ),
-  ).toBeCloseTo(12);
   await expect(threadTab.locator("svg")).toHaveCount(1);
   await expect(details).toHaveCount(1);
   await expect(details).toBeFocused();

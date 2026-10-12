@@ -13,6 +13,7 @@ export type TabItem<Value extends string> = {
   panelId?: string;
   onClose?: (() => void) | undefined;
   /** Option/Alt+Shift+Arrow moves this tab one position; the caller places it. */
+  draggable?: boolean | undefined;
   onMove?: ((delta: -1 | 1) => void) | undefined;
 };
 
@@ -124,6 +125,7 @@ export function Tabs<Value extends string>({
                 (showSelection && item.value === value) || undefined
               }
               data-preview={item.value === previewValue || undefined}
+              data-draggable={item.draggable || undefined}
               data-tab-value={item.value}
             >
               {variant === "workspace" && item.value === arrivalValue ? (

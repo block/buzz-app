@@ -1317,6 +1317,7 @@ function ChannelWorkspace({
                 <div className={styles.mainWorkspace}>
                   <PanelWorkspace
                     main
+                    drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
                     value={secondary.selectedMain}
@@ -1462,6 +1463,7 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
+      {secondary.drag.feedback}
       {secondary.hosts}
       <p role="status" className="sr-only">
         {secondary.announcement}
@@ -1481,6 +1483,7 @@ function ChannelWorkspace({
               >
                 <PanelWorkspace
                   key={currentId}
+                  drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={
                     !membersOpen && (continuingVisit || !!routedThread)

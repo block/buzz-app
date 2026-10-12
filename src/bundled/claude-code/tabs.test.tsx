@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 
@@ -135,7 +136,11 @@ async function choose(label: string, option: string) {
 it("is an agent type on the desktop app", () => {
   expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
-  expect(type).toMatchObject({ id: "claude-code", title: "Claude" });
+  expect(type).toMatchObject({
+    id: "claude-code",
+    title: "Claude",
+    icon: ClaudeLogoIcon,
+  });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
   expect(
     type.adopt?.(

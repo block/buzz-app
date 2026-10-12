@@ -14,8 +14,6 @@ import type {
 } from "../../features/agents/service";
 import {
   CaretDownIcon,
-  ClaudeLogoIcon,
-  CodexLogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -33,14 +31,9 @@ import styles from "./AgentsPage.module.css";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** The type's mark, recognized from its key or title. */
+/** The type's registered mark, or the generic agent mark. */
 export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
-  const name = `${type?.key ?? ""} ${type?.title ?? ""}`.toLowerCase();
-  const Icon = name.includes("claude")
-    ? ClaudeLogoIcon
-    : name.includes("codex")
-      ? CodexLogoIcon
-      : RobotIcon;
+  const Icon = type?.icon ?? RobotIcon;
   return <Icon size={16} aria-hidden="true" />;
 }
 

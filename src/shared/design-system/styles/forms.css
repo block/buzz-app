@@ -113,6 +113,14 @@
     min-height: var(--size-control);
     cursor: pointer;
   }
+  .buzz-choice-leading {
+    display: flex;
+    flex: none;
+  }
+  .buzz-choice-content {
+    min-width: 0;
+    flex: 1;
+  }
   .buzz-choice[data-variant="card"] {
     padding: var(--space-4);
     border: 1px solid var(--border-standard);

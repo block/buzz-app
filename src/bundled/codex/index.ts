@@ -1,5 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
+import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { config, defaults, validWorkspace } from "./config";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
@@ -33,6 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.agents.register({
     id: "codex",
     title: "Codex",
+    icon: CodexLogoIcon,
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),

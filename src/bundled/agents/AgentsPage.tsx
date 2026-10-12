@@ -54,6 +54,7 @@ import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -1024,6 +1025,27 @@ const CARRIED: Record<keyof Carry, string> = {
   workspace: "workspace",
 };
 
+function AgentTypeChoice({
+  type,
+  variant = "default",
+}: {
+  type: RegisteredAgentType;
+  variant?: "default" | "card";
+}) {
+  const Icon = type.icon;
+  return (
+    <Radio
+      value={type.key}
+      variant={variant}
+      label={type.title}
+      leading={Icon ? <Icon size={32} /> : undefined}
+      {...(variant === "card" && type.description
+        ? { description: type.description }
+        : {})}
+    />
+  );
+}
+
 /** The agent's type, which the owner can change between turns. */
 function TypeField({
   agents,
@@ -1113,13 +1135,7 @@ function TypeField({
             onValueChange={(value) => setNext(String(value))}
           >
             {others.map((item) => (
-              <Radio
-                key={item.key}
-                value={item.key}
-                variant="card"
-                label={item.title}
-                {...(item.description ? { description: item.description } : {})}
-              />
+              <AgentTypeChoice key={item.key} type={item} variant="card" />
             ))}
           </RadioGroup>
         </Field>

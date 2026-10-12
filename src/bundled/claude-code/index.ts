@@ -3,6 +3,7 @@
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
+import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
 import { Create, createTabs } from "./tabs";
@@ -43,6 +44,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
+    icon: ClaudeLogoIcon,
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),

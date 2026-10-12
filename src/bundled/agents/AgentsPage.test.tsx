@@ -15,6 +15,7 @@ import type {
 } from "../../features/agents/service";
 import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
+import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentsPage } from "./AgentsPage";
 
 afterEach(cleanup);
@@ -86,6 +87,7 @@ function setup(
     revision: "1",
     id: "echo",
     title: "Echo",
+    icon: RobotIcon,
     description: "Says its line.",
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
@@ -241,6 +243,7 @@ it("dismisses or submits an agent type change from the build view", async () => 
     revision: "1",
     id: "relay",
     title: "Relay",
+    icon: PlugIcon,
     defaults: () => ({ config: {} }),
   } as unknown as RegisteredAgentType;
   const { agents } = setup([agent("Ada", 1)], { more: [relay] });
@@ -254,7 +257,11 @@ it("dismisses or submits an agent type change from the build view", async () => 
   const dialog = await screen.findByRole("dialog", {
     name: "Change Ada's type",
   });
-  expect(within(dialog).getByRole("radio", { name: "Relay" })).toBeChecked();
+  const relayChoice = within(dialog).getByRole("radio", { name: "Relay" });
+  expect(relayChoice).toBeChecked();
+  expect(
+    relayChoice.closest("label")?.querySelector("svg"),
+  ).toBeInTheDocument();
   await user.click(
     document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
   );
@@ -285,6 +292,11 @@ it("makes a new agent in the create dialog and goes straight to building it", as
   await user.click(screen.getByRole("button", { name: "New agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   expect(within(dialog).getByText("Echo")).toBeInTheDocument();
+  expect(
+    within(dialog)
+      .getByRole("button", { name: "Agent type: Echo" })
+      .querySelector("svg"),
+  ).toBeInTheDocument();
   await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(screen.getByRole("button", { name: "Create agent" }));

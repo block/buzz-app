@@ -18,12 +18,15 @@ export function RadioGroup<Value>({
 export function Radio({
   label,
   description,
+  leading,
   variant = "default",
   id,
   ...props
 }: Omit<ComponentProps<typeof BaseRadio.Root>, "className" | "children"> & {
   label: ReactNode;
   description?: ReactNode;
+  /** Decorative artwork shown before the label and description. */
+  leading?: ReactNode;
   variant?: "default" | "card";
 }) {
   const generatedId = useId();
@@ -46,7 +49,12 @@ export function Radio({
         >
           <BaseRadio.Indicator className="buzz-radio-indicator" />
         </BaseRadio.Root>
-        <span>
+        {leading && (
+          <span className="buzz-choice-leading" aria-hidden="true">
+            {leading}
+          </span>
+        )}
+        <span className="buzz-choice-content">
           <span id={`${controlId}-label`} className="buzz-choice-label">
             {label}
           </span>

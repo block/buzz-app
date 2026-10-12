@@ -1422,6 +1422,13 @@ OneDrive is a designer-approved custom brand mark: its complete outline is recre
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
 the shared icon gateway. It does not permit another general icon library.
 
+Agent-type provider marks follow the same single-owner path. Keep approved artwork
+in `icons/HarnessLogos.tsx` (with colocated raster assets when needed), record its
+provenance in `NOTICE.md`, and export it through `icons/index.ts` with custom-icon
+metadata. The registering agent type references that export once through
+`AgentType.icon`; host-owned selectors render the registered mark and never rebuild
+a provider-to-icon map from type IDs.
+
 ### Picker search and choices
 
 Mention and media pickers opt into `SearchField variant="capsule"`. Its shared

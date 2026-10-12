@@ -23,6 +23,7 @@ import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ComponentType } from "react";
+import type { DefinedIcon } from "../../shared/design-system/icons";
 import {
   createContributions,
   type Contribution,
@@ -295,6 +296,8 @@ export type AgentType<Config = unknown> = {
   id: string;
   title: string;
   description?: string;
+  /** Decorative design-system mark shown with this type in host-owned choices. */
+  icon?: DefinedIcon;
   /** A new agent's starting config and attention objects. */
   defaults(): Readonly<{
     config: Config;

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentType } from "../../features/agents/service";
+import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
 import { apply } from "./index";
 
@@ -41,6 +42,7 @@ it("registers only where the desktop app can run codex and base64", () => {
     id: "codex",
     title: "Codex",
     Create: expect.any(Function),
+    icon: CodexLogoIcon,
   });
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();

@@ -1,3 +1,4 @@
+import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import { useCallback, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type {
@@ -214,7 +215,7 @@ export function useChannelTabState(
       messageId: string,
       rootId: string,
       intent?: "reply" | "select",
-      pane: TabPane = "side",
+      pane: TabPane = threadPlacementPreference(),
     ) =>
       update((state) =>
         withThread(state, channelId, messageId, rootId, intent, pane),
@@ -255,7 +256,7 @@ export function useChannelTabState(
           requested,
           requested,
           "select",
-          "side",
+          threadPlacementPreference(),
         );
         return visible
           ? next
@@ -281,7 +282,7 @@ export function useChannelTabState(
             routed.messageId,
             routed.rootId,
             "select",
-            "side",
+            threadPlacementPreference(),
           );
         const saved = visits?.[visit];
         return saved

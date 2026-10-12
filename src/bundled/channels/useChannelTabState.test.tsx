@@ -10,7 +10,15 @@ import {
   useChannelTabState,
 } from "./useChannelTabState";
 
-afterEach(cleanup);
+import {
+  setThreadPlacementPreference,
+  threadPlacementPreference,
+} from "../../features/messages/thread-preferences";
+afterEach(() => {
+  cleanup();
+  setThreadPlacementPreference("side");
+  localStorage.clear();
+});
 
 test("page remount restores each channel's tabs, selection and closed pane", () => {
   const session = {} as RelaySession;
@@ -415,4 +423,26 @@ test("Back restores an empty side pane as hidden while retaining the later threa
   act(() => h.result.current.enterVisit("channel"));
   expect(h.result.current.paneOpen).toBe(false);
   expect(h.result.current.tabs).toHaveLength(1);
+});
+
+test("new ordinary and routed threads follow the device choice; existing tabs and moves do not", () => {
+  const session = {} as RelaySession;
+  const mounted = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => mounted.result.current.openThreadTab("alpha", "one", "one"));
+  expect(mounted.result.current.tabs[0]).toMatchObject({ pane: "side" });
+  act(() => setThreadPlacementPreference("main"));
+  act(() => mounted.result.current.openThreadTab("alpha", "two", "two"));
+  expect(mounted.result.current.tabs[1]).toMatchObject({ pane: "main" });
+  act(() => mounted.result.current.openThreadTab("alpha", "one", "one"));
+  expect(mounted.result.current.tabs[0]).toMatchObject({ pane: "side" });
+  act(() =>
+    mounted.result.current.enterVisit("link", {
+      channelId: "alpha",
+      messageId: "three",
+      rootId: "three",
+    }),
+  );
+  expect(mounted.result.current.tabs[2]).toMatchObject({ pane: "main" });
+  act(() => mounted.result.current.moveTab("thread:alpha:two", "side", 0));
+  expect(threadPlacementPreference()).toBe("main");
 });

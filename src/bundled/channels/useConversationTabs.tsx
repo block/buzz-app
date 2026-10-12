@@ -341,7 +341,14 @@ export function useConversationTabs({
   ) => {
     if (!currentVisit()) return;
     opening.current = undefined;
-    tabState.openThreadTab(channelId, messageId, rootId, intent);
+    // Flat sessions keep their side-only host; channels support both panes.
+    tabState.openThreadTab(
+      channelId,
+      messageId,
+      rootId,
+      intent,
+      mainPane ? undefined : "side",
+    );
   };
   const openConversationLink = (channelId: string, url: string) => {
     const connection = relay.snapshot();

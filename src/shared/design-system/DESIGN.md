@@ -1419,3 +1419,19 @@ recipe: toolbar destinations and More pages overflow retain button semantics.
 
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

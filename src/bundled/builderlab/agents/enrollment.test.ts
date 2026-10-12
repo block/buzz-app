@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createOAuthSession } from "../oauth/session";
+import { federatedFixture } from "../../../features/federated-identity/testing";
 import { deferred } from "../test-helpers";
 import { createEnrollment } from "./enrollment";
 import { enrollmentFixture } from "./enrollment-testing";
@@ -30,10 +30,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 async function fixture(kinds?: readonly number[]) {
-  const login = createOAuthSession(async () => ({
-    value: "secret",
-    account: { subject: "user", email: "a@example.com" },
-  }));
+  const { session: login } = federatedFixture();
   await login.signIn();
   const h = enrollmentFixture(login, "https://community.example", kinds);
   owners.push(h);
@@ -203,10 +200,7 @@ it.each(["receipt dismissal", "intent removal"])(
 it("keeps enrollment and deletion intent scoped to the verified account", async () => {
   const h = await fixture();
   h.enrollment.remember(h.enrollment.capture(), agent);
-  const other = createOAuthSession(async () => ({
-    value: "other-secret",
-    account: { subject: "other", email: "a@example.com" },
-  }));
+  const { session: other } = federatedFixture("other");
   await other.signIn();
   const enrollment = createEnrollment(h.relay, h.reader, other);
   expect(enrollment.pending([agent])).toEqual([]);

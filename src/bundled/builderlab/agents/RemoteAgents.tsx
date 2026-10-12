@@ -10,7 +10,10 @@ import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import { AlertDialog } from "../../../shared/design-system/ui/AlertDialog";
-import type { LoginSnapshot, OAuthSession } from "../oauth/session";
+import type {
+  LoginSnapshot,
+  FederatedSession,
+} from "../../../features/federated-identity/session";
 import {
   MAX_INSTRUCTIONS_LENGTH,
   type AgentClient,
@@ -26,14 +29,14 @@ export function RemoteAgents({
   enrollment,
 }: {
   client: AgentClient;
-  session: OAuthSession;
+  session: FederatedSession;
   active(): boolean;
   enrollment: AgentEnrollment;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   return login.status === "signed-in" ? (
     <AgentList
-      key={login.account?.subject}
+      key={login.account?.revision}
       client={client}
       account={login.account}
       active={active}

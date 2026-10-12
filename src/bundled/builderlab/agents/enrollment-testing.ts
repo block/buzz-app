@@ -8,13 +8,13 @@ import { relayPartition } from "../../../features/relay/partition";
 import type { RelaySnapshot } from "../../../features/relay/service";
 import type { ClientSnapshot } from "../../../features/communities/service";
 import type { OutgoingEvent } from "../../../features/relay/outbox";
-import type { OAuthSession } from "../oauth/session";
+import type { FederatedSession } from "../../../features/federated-identity/session";
 import { createEnrollment } from "./enrollment";
 import { deferred } from "../test-helpers";
 
 /** Real session/outbox/inventory; only the relay wire and device storage are controlled. */
 export function enrollmentFixture(
-  login: OAuthSession,
+  login: FederatedSession,
   selected: string | null = "https://community.example",
   kinds: readonly number[] = [30177, 5],
 ) {

@@ -1672,10 +1672,11 @@ async fn publish_acquired(
 pub(crate) async fn agent_control_snapshot_memory_write(
     state: tauri::State<'_, AgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
+    fi: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     id: String,
     entries: Vec<SnapshotMemoryEntry>,
 ) -> Result<MemoryWriteResult, String> {
-    snapshot_memory::restore(state.inner().clone(), identity, id, entries).await
+    snapshot_memory::restore(state.inner().clone(), identity, fi, id, entries).await
 }
 pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
 mod snapshot_memory;
@@ -1755,10 +1756,12 @@ pub(crate) async fn agent_security(
 pub(crate) async fn agent_control_team_sync(
     state: tauri::State<'_, AgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
+    fi: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     community: String,
     teams: std::collections::BTreeMap<String, String>,
 ) -> Result<ControlSnapshot, String> {
-    let (owner, heads) = crate::relay::current_team_members(identity.inner(), &community).await?;
+    let (owner, heads) =
+        crate::relay::current_team_members(identity.inner(), Some(fi.inner()), &community).await?;
     run(state.inner().clone(), move |host| {
         host.controller
             .sync_team_instructions(&community, &owner, &heads, &teams)?;
@@ -1771,6 +1774,7 @@ pub(crate) async fn agent_control_team_sync(
 pub(crate) async fn agent_control_team_export(
     state: tauri::State<'_, AgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
+    fi: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     team: buzz_agent_controller::TeamMeta,
     members: Vec<String>,
     community: String,
@@ -1808,9 +1812,13 @@ pub(crate) async fn agent_control_team_export(
     .await?;
     if level != "none" {
         for (member, (agent, community)) in snapshot.members.iter_mut().zip(targets) {
-            let listing =
-                crate::relay::agent::relay_agent_memories_read(identity.clone(), community, agent)
-                    .await?;
+            let listing = crate::relay::agent::relay_agent_memories_read(
+                identity.clone(),
+                fi.clone(),
+                community,
+                agent,
+            )
+            .await?;
             if listing["partial"].as_bool() != Some(false) {
                 return Err("Memory listing is incomplete; retry or export Team only".into());
             }

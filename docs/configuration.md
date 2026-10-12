@@ -11,7 +11,8 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_AGENT_ENV` | Native build: allowlisted multiline Databricks host/model/filter defaults. Runtime, OAuth/discovery and editor share one compiled floor. |
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native FI authority, SDK and protected transport descriptor; API/CLI contracts and attended acceptance remain pending. See below. |
+| `BUZZ_BUILDERLAB_URL` | Legacy frontend/native origin input retained during transition; does not enable migrated native login. Conflicts with FI. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -41,33 +42,50 @@ so later build defaults can take effect. Saved explicit settings remain explicit
 
 ## Builderlab URL build input
 
-Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
-the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+This legacy public URL input remains accepted by the existing frontend/native
+build loaders during transition. Process presence overrides repository-root
+`.env.local`, including an empty value. It grants the old exact network origin
+when FI is absent, but the migrated bundled plugins no longer use it for native
+sign-in or authenticated API calls. Use the FI descriptor below for native
+sign-in, and remove this input when configuring FI; nonempty conflicts fail the
+build. No deployment default is supplied.
 
-```sh
-BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
+## Federated identity build input
+
+`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is a public JSON descriptor supplied to
+Cargo through the build environment. It is validated and compiled into native
+code, with no runtime override or credential field:
+
+```json
+{
+  "version": 1,
+  "id": "example",
+  "identityOrigin": "https://identity.example",
+  "communityHosts": ["*.communities.example", "custom.example:8443"],
+  "adapterBase": "https://identity.example/nip-fa/",
+  "apiBasePath": "/api/goose/"
+}
 ```
 
-Vite uses its existing environment loader; the native plugin-manager build reads
-repository-root `.env.local` and process values using the native dotenv pattern.
-For desktop, supply the full URL in `.env.local` or the build process environment
-so both stages receive it. Vite's additional `.env` and mode-specific files do
-not configure native grants. Process values take precedence, including an
-explicit empty value. When unset or empty, login is unconfigured and no network
-origin is granted. The repository supplies no deployment default.
+The adapter must share the configured HTTPS identity origin. Standard `/v1/`
+route suffixes append to the adapter prefix. Community entries select exact
+host/port authorities or one-label wildcards on port 443; paths, credentials,
+query/fragment, trailing dots, and ambiguous/encoded URL forms are refused.
+When this descriptor is present, remove `BUZZ_BUILDERLAB_URL`,
+`BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS`, and
+`BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL`; conflicting build inputs fail.
 
-Any HTTPS host is supported, including an explicit port or deployment path. URL
-credentials, query parameters and fragments are rejected by the native build.
-The desktop's native plugin catalog supplies the effective manifest, granting
-only the configured URL's exact origin. Never put credentials in this input.
+The native session owner, shared SDK, Builderlab and native Hosted Communities
+consume this descriptor. NIP-11 governs assertion attachment on native HTTP,
+media, Git, and WebSocket paths; the mapping alone never requires sign-in.
+The release workflow reads the public repository variable of the same name;
+an empty value leaves FI unconfigured. No deployment endpoint is supplied here.
 
-The bundled Builderlab login consumes this public URL and appends `/api/goose`.
-
-Restart desktop development after changing this input so Vite and the native
-grant rebuild together; browser-only development needs a Vite restart. Production
-web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
-or the launched app's environment afterward cannot override it. Rebuild and
-redistribute to change a packaged value.
+Generic plugin API forwarding and CLI setup remain unavailable pending the
+same-origin NIP-FA extension, API authentication contract, and companion CLI
+required by the [implementation specification](federated-identity-spec.txt).
+A configured staging build still needs attended adapter, secure-store, and
+protected-transport acceptance before live use; see [identity](identity.md).
 
 ## Whole-video limit
 

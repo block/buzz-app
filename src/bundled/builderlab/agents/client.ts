@@ -1,6 +1,5 @@
 import type { Host, HostResponse } from "../../../features/host/service";
-import { oauthTarget, type Credential } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import type { FederatedSession } from "../../../features/federated-identity/session";
 import { clearRegistration, registrationIntent } from "./registration";
 
 export type RemoteAgent = Readonly<{
@@ -41,14 +40,17 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
 
 export function createAgentClient(
   host: Host,
-  session: OAuthSession,
+  session: FederatedSession,
   communityUrl: () => string | undefined,
 ) {
-  function check(credential: Credential, signal: AbortSignal) {
+  function check(
+    identity: ReturnType<FederatedSession["identity"]>,
+    signal: AbortSignal,
+  ) {
     signal.throwIfAborted();
     if (
       session.snapshot().status !== "signed-in" ||
-      session.credential() !== credential
+      session.identity() !== identity
     )
       throw new DOMException("Builderlab session changed.", "AbortError");
   }
@@ -58,31 +60,27 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = session.credential();
+    const identity = session.identity();
     let response: HostResponse;
     try {
-      response = await host.request({
-        url: `${oauthTarget()}/v3/beekeeper/${path}`,
+      response = await session.request({
+        path: `${identity.apiBasePath}v3/beekeeper/${path}`,
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "X-BB-Session-Credential": credential.value,
         },
         body: JSON.stringify(body),
       });
     } catch {
-      check(credential, signal);
+      check(identity, signal);
       throw new Error("Could not reach Builderlab. Try again.");
     }
-    check(credential, signal);
-    if (response.status === 401) {
-      session.signOut();
-      throw Object.assign(
-        new Error("Your Builderlab session expired. Sign in again."),
-        { status: 401 },
-      );
-    }
+    check(identity, signal);
+    if (response.status === 401)
+      throw Object.assign(new Error("Builderlab authorization was refused."), {
+        status: 401,
+      });
     if (response.status === 403)
       throw Object.assign(
         new Error("This Builderlab account cannot manage remote agents."),
@@ -145,10 +143,10 @@ export function createAgentClient(
         throw new Error(
           "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
         );
-      const { account } = session.credential();
+      const identity = session.identity();
       const intent = registrationIntent(
-        oauthTarget(),
-        account.subject,
+        identity.origin,
+        identity.revision,
         agentName,
       );
       let result: Record<string, unknown>;
@@ -220,7 +218,7 @@ export function createAgentClient(
       signal.throwIfAborted();
       if (!active())
         throw new DOMException("Builderlab card is inactive.", "AbortError");
-      const credential = session.credential();
+      const identity = session.identity();
       const community = communityUrl();
       if (!host.prepareRemoteAgentAuthorization)
         throw new Error(
@@ -230,7 +228,7 @@ export function createAgentClient(
         agent.pubkey,
         signal,
       );
-      check(credential, signal);
+      check(identity, signal);
       if (!active())
         throw new DOMException("Builderlab card is inactive.", "AbortError");
       if (communityUrl() !== community)

@@ -10,6 +10,7 @@ import { TemplateProvidersService } from "../features/channel-templates/provider
 import { IdentityNamesService } from "../features/identity-names/service";
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
+import { FederatedIdentityService } from "../features/federated-identity/service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
@@ -45,6 +46,7 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  const federatedIdentity = new FederatedIdentityService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
@@ -109,6 +111,7 @@ export function createServices() {
   let disposal: Promise<void> | undefined;
   return {
     identity,
+    federatedIdentity,
     agentControl,
     browser,
     notifications,

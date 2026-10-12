@@ -86,6 +86,8 @@ beforeEach(() => {
   preparedResponse = undefined;
   uploadResponse = () => ({ status: 500, body: "" });
   vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+    if (command === "relay_socket_connect") return "public";
+    if (command === "relay_socket_close") return;
     if (command === "identity_restore") return viewer.pubkey;
     if (command === "relay_sign") {
       expect(
@@ -426,6 +428,7 @@ it("authenticates live traffic with the native signer and verifies incoming chan
   const sockets: Socket[] = [];
   class Socket {
     readyState = 1;
+    onopen?: (event: Event) => unknown;
     onmessage?: (event: { data: string }) => Promise<void>;
     onclose?: () => void;
     sent: unknown[][] = [];
@@ -455,8 +458,10 @@ it("authenticates live traffic with the native signer and verifies incoming chan
   assert.exists(traffic);
   try {
     traffic.update(["channel"]);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0];
     assert.exists(socket);
+    socket.onopen?.(new Event("open"));
     expect(socket.url).toBe("wss://packaged.test");
     await socket.receive(["AUTH", "nonce"]);
     const proof = socket.sent.find(
@@ -1103,6 +1108,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
   const sockets: Socket[] = [];
   class Socket {
     readyState = 1;
+    onopen?: (event: Event) => unknown;
     onmessage?: (event: { data: string }) => Promise<void>;
     onclose?: () => void;
     sent: unknown[][] = [];
@@ -1150,6 +1156,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
   assert.exists(traffic);
   try {
     const authenticate = async (socket: Socket) => {
+      socket.onopen?.(new Event("open"));
       await socket.receive(["AUTH", "nonce"]);
       const proof = socket.sent.find(
         ([kind]) => kind === "AUTH",
@@ -1157,6 +1164,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
       await socket.receive(["OK", proof.id, true]);
     };
     traffic.observe?.(1);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const old = sockets[0];
     assert.exists(old);
     await authenticate(old);
@@ -1225,6 +1233,7 @@ it.each([
     const sockets: Socket[] = [];
     class Socket {
       readyState = 1;
+      onopen?: (event: Event) => unknown;
       onmessage?: (event: { data: string }) => Promise<void>;
       onclose?: () => void;
       sent: unknown[][] = [];
@@ -1277,8 +1286,10 @@ it.each([
       await vi.waitFor(() =>
         expect(captureState).toHaveBeenLastCalledWith("saving"),
       );
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
       const socket = sockets[0];
       assert.exists(socket);
+      socket.onopen?.(new Event("open"));
       await socket.receive(["AUTH", "nonce"]);
       const proof = socket.sent.find(
         ([kind]) => kind === "AUTH",

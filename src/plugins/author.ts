@@ -108,3 +108,9 @@ export type {
 } from "../features/agents/security";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
+
+export type {
+  FederatedIdentity,
+  SessionSnapshot,
+  AuthenticatedRequest,
+} from "../features/federated-identity/service";

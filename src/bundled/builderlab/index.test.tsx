@@ -1,22 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import { Agents2Service } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
-import { Agents2Page } from "../agents2/Agents2Page";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
-import { createOAuthSession } from "./oauth/session";
+import { federatedFixture } from "../../features/federated-identity/testing";
 import { enrollmentFixture } from "./agents/enrollment-testing";
-import { createNameProvider } from "../../features/identity-names/directory";
-import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -58,106 +55,15 @@ function provideAgents2(root: Context, relay: RelayData) {
   });
 }
 
-it.each([undefined, "", "http://builderlab.example"])(
-  "an unavailable desktop build (%s) shows setup guidance without login or an Agents2 type",
-  async (url) => {
-    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
-    const root = new Context();
-    const runtime = new PluginRuntime(root, async () => builderlab);
-    new HostService(root);
-    const cards = new SettingsCardsService(root);
-    const community = enrollmentFixture(
-      createOAuthSession(async () => {
-        throw new Error("unused");
-      }),
-      null,
-    );
-    root.provide("relay", community.relay);
-    root.provide("communityReader", community.reader);
-    const agents2 = provideAgents2(root, community.relay);
-    try {
-      runtime.reconcile([
-        {
-          manifest: { ...manifest, apiVersion: 1 },
-          source: "bundled",
-          revision: "bundled",
-          enabled: true,
-          previous: null,
-          reloadable: false,
-          error: null,
-        },
-      ]);
-      await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-      const card = cards.snapshot()[0];
-      if (!card) throw new Error("Missing Builderlab card");
-      const Card = card.component;
-      render(<Card active={() => true} />);
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /not configured|does not support/,
-      );
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
-      expect(native.invoke).not.toHaveBeenCalled();
-      expect(agents2.types()).toHaveLength(0);
-      cleanup();
-      render(<Agents2Page agents2={agents2} relay={community.relay} />);
-      expect(
-        await screen.findByText("Enable an agent type plugin to make one."),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "New agent" }),
-      ).not.toBeInTheDocument();
-    } finally {
-      cleanup();
-      await runtime.dispose();
-      await root.fiber.dispose();
-      await community.dispose();
-    }
-  },
-);
-
-it("binds login, list and creation to the plugin host and clears the session on disable/re-enable", async () => {
-  native.invoke.mockImplementation(async (command, input) => {
-    if (command === "oauth_callback_begin")
-      return {
-        id: "native-attempt-id",
-        callbackUrl: `http://127.0.0.1:12345${input.callbackPath}`,
-      };
-    if (command === "oauth_callback_wait")
-      return { parameters: [["code", "one-time"]] };
-    if (command === "oauth_callback_cancel") return;
-    if (command === "identity_restore") return community.viewer;
-    if (command === "identity_prepare_remote_agent_authorization")
-      return ["auth", community.viewer, "", "ef".repeat(64)];
-    if (command === "plugin_host_request")
-      return {
-        status: 200,
-        headers: {},
-        body: JSON.stringify(
-          input.request.url.endsWith("/exchange")
-            ? { session_credential: "private-token" }
-            : input.request.url.endsWith("/list-agents")
-              ? { status: 1, agents: [] }
-              : input.request.url.endsWith("/register-agent")
-                ? { status: 1, agent_id: "one", agent_pubkey: "ab".repeat(32) }
-                : input.request.url.endsWith("/attest-agent")
-                  ? { status: 1 }
-                  : {
-                      subject: "user",
-                      email: "a@example.com",
-                    },
-        ),
-      };
-    throw new Error(`Unexpected command ${command}`);
-  });
+it("shares login across plugin disable/re-enable while API management remains unavailable", async () => {
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
+  const fi = federatedFixture();
+  Object.defineProperty(fi.service, "apiAvailable", { value: false });
+  root.provide("federatedIdentity", fi.service);
   const cards = new SettingsCardsService(root);
-  const community = enrollmentFixture(
-    createOAuthSession(async () => {
-      throw new Error("unused");
-    }),
-  );
+  const community = enrollmentFixture(fi.session);
   root.provide("relay", community.relay);
   root.provide("communityReader", community.reader);
   const agents2 = provideAgents2(root, community.relay);
@@ -176,133 +82,33 @@ it("binds login, list and creation to the plugin host and clears the session on 
     expect(agents2.types()).toMatchObject([
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
-    expect(agents2.types()[0]?.defaults()).toEqual({ config: {} });
-    const picker = render(
-      <Agents2Page agents2={agents2} relay={community.relay} />,
-    );
-    const [newAgent] = await screen.findAllByRole("button", {
-      name: "New agent",
-    });
-    if (!newAgent) throw new Error("Missing New agent button");
-    await userEvent.setup().click(newAgent);
-    expect(
-      screen.getByRole("radio", { name: /Builderlab/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("TBD")).toBeInTheDocument();
-    picker.unmount();
     const card = cards.snapshot()[0];
-    expect(card?.group).toBe("Integrations");
-    if (!card) throw new Error("Missing Builderlab login card");
+    assert.exists(card);
     const Card = card.component;
     const mounted = render(<Card active={() => true} />);
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Sign in with Builderlab" }));
+      .click(screen.getByRole("button", { name: "Sign in" }));
     expect(
       await screen.findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();
     expect(
-      await screen.findByText("No remote agents yet."),
+      screen.getByText(/Remote agent management is unavailable/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Signed in as a@example.com.",
-    );
-    expect(document.body).not.toHaveTextContent("private-token");
-    expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
-      id: "native-attempt-id",
-    });
-    const requests = native.invoke.mock.calls
-      .filter(([command]) => command === "plugin_host_request")
-      .map(([, input]) => input);
-    expect(requests).toHaveLength(3);
-    expect(
-      requests.every(
-        (input) =>
-          input.id === "block.builderlab" && input.revision === "bundled",
-      ),
-    ).toBe(true);
-    // Prove the account login supplies this consumer's credential through the real plugin wiring.
-    expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
-      "private-token",
-    );
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByRole("textbox", { name: "Agent name" }),
-      "Helper",
-    );
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
-    expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
-    expect(
-      await screen.findByText("Registration confirmed in this community."),
-    ).toBeInTheDocument();
-    expect(community.events).toHaveLength(1);
-    expect(community.events[0]).toMatchObject({
-      pubkey: community.viewer,
-      kind: 30177,
-      content: JSON.stringify({
-        name: "Helper",
-        parallelism: 1,
-        respond_to: "owner-only",
-      }),
-    });
-    expect(community.events[0]?.tags).toContainEqual(["d", "ab".repeat(32)]);
-    const relaySession = community.relay.snapshot().session;
-    const names = createNameProvider({
-      id: "agents",
-      resolve: resolveIdentityNames,
-    });
-    expect(
-      names.scope({
-        agentLibrary: relaySession.agentLibrary,
-        profiles: relaySession.profiles,
-        viewer: community.viewer,
-        relayUrl: "https://community.example",
-      })("ab".repeat(32)),
-    ).toEqual({ name: "Helper" });
-    expect(
-      community.relay.snapshot().session.agentChoices.snapshot().selectable,
-    ).toEqual([{ pubkey: "ab".repeat(32), name: "Helper", managed: false }]);
-    expect(native.invoke).toHaveBeenCalledWith(
-      "identity_prepare_remote_agent_authorization",
-      { owner: community.viewer, agentPubkey: "ab".repeat(32) },
-    );
-    const mutations = native.invoke.mock.calls
-      .filter(
-        ([command, input]) =>
-          command === "plugin_host_request" &&
-          /\/(register|attest)-agent$/.test(input.request.url),
-      )
-      .map(([, input]) => input);
-    expect(mutations).toHaveLength(2);
-    expect(JSON.parse(mutations[1].request.body).community_url).toBe(
-      "wss://community.example",
-    );
-    expect(
-      mutations.every(
-        (input) =>
-          input.id === "block.builderlab" && input.revision === "bundled",
-      ),
-    ).toBe(true);
-    await act(async () => {
-      runtime.reconcile([]);
-    });
+    expect(fi.request).not.toHaveBeenCalled();
+    await act(async () => runtime.reconcile([]));
     expect(cards.snapshot()).toHaveLength(0);
     expect(agents2.types()).toHaveLength(0);
-    expect(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
-    ).toBeEnabled();
+    expect(fi.service.signOut).not.toHaveBeenCalled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    expect(agents2.types()).toMatchObject([
-      { key: "block.builderlab/builderlab", title: "Builderlab" },
-    ]);
     const fresh = cards.snapshot()[0];
-    expect(fresh).not.toBe(card);
-    if (!fresh) throw new Error("Missing reactivated Builderlab login card");
-    const FreshCard = fresh.component;
-    render(<FreshCard active={() => true} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
+    assert.exists(fresh);
+    const Fresh = fresh.component;
+    render(<Fresh active={() => true} />);
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(native.invoke).not.toHaveBeenCalled();
   } finally {
     cleanup();
     await runtime.dispose();

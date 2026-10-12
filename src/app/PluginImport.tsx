@@ -22,6 +22,10 @@ function hostGrants(manifest: PluginManifest): string[] {
     ...(manifest.host?.networkOrigins ?? []).map(
       (origin) => `HTTPS origin: ${origin}`,
     ),
+    ...(manifest.host?.federatedIdentity?.operations ?? []).map(
+      (operation) =>
+        `Federated authority ${manifest.host?.federatedIdentity?.authority}: ${operation.method} ${operation.path}`,
+    ),
     ...(manifest.host?.processes ?? []).map(
       (process) =>
         `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])} and any further arguments · stdin, full user access`,

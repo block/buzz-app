@@ -1,5 +1,6 @@
 //! Purpose-bound agent operations. Never return key material or unscoped plaintext.
 use super::{origin, send, Result};
+use crate::federated_identity::FederatedIdentity;
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, Mac};
@@ -317,6 +318,7 @@ pub(crate) fn slug(s: &str) -> bool {
 #[tauri::command]
 pub(crate) async fn relay_agent_memories_read(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     agent: String,
 ) -> Result<Value> {
@@ -334,7 +336,15 @@ pub(crate) async fn relay_agent_memories_read(
         json!([{"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":256}]).to_string();
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        send(host.inner(), url, "POST", Some(body), true, 2 * 1024 * 1024),
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            2 * 1024 * 1024,
+        ),
     )
     .await
     .map_err(|_| "Memory read failed")??;

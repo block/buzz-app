@@ -1,4 +1,5 @@
 use super::*;
+use crate::federated_identity::FederatedIdentity;
 use serde_json::Value;
 
 const KIT_TAG: &str = "buzz-channel-kit-v1";
@@ -369,6 +370,7 @@ pub(crate) async fn relay_kit_sign(
 /// retain protection for imports whose catalog save has not completed yet.
 pub(crate) async fn current_team_members(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     community: &str,
 ) -> Result<(
     String,
@@ -377,6 +379,7 @@ pub(crate) async fn current_team_members(
     let owner = host.viewer().await?;
     let response = send(
         host,
+        fi,
         request_url(community, "/query", "POST")?,
         "POST",
         Some(

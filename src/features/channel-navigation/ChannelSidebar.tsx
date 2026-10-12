@@ -21,6 +21,8 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { SidebarFrame } from "./SidebarFrame";
+import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../federated-identity/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuGroup,
@@ -88,6 +90,7 @@ import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
 type Props = {
+  federatedIdentity?: FederatedIdentity;
   relay: RelayData;
   navigator: Navigation;
   providers: TemplateProviders;
@@ -132,7 +135,14 @@ export function ChannelSidebar(props: Props) {
                   : (connection.error ?? "Choose a community to see channels.")}
               </p>
               {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
+                <>
+                  <CommunitySignIn
+                    identity={props.federatedIdentity}
+                    error={connection.error}
+                    retry={props.relay.retry}
+                  />
+                  <Button onClick={props.relay.retry}>Retry channels</Button>
+                </>
               )}
             </div>
           </SidebarFrame>
@@ -195,6 +205,7 @@ function ReadySidebar({
   meEnabled = false,
   cached,
   connectionError,
+  federatedIdentity,
   scope,
   viewer,
 }: Props & {
@@ -1230,10 +1241,15 @@ function ReadySidebar({
             )}
           </SidebarUnread>
           {cached && connectionError && (
-            <p className={styles.preferenceNotice} role="status">
-              Offline · Showing saved conversations.
+            <div className={styles.preferenceNotice}>
+              <p role="status">Offline · Showing saved conversations.</p>
+              <CommunitySignIn
+                identity={federatedIdentity}
+                error={connectionError}
+                retry={relay.retry}
+              />
               <Button onClick={relay.retry}>Retry connection</Button>
-            </p>
+            </div>
           )}
           {preferences.sortErrors?.map(({ group, mode, error }) => (
             <div key={group} className={styles.preferenceNotice} role="alert">

@@ -35,6 +35,7 @@ jobs:
     env:
       CI: "true"
       CARGO_TERM_COLOR: always
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
       # Public verification inputs; the native build and plugins.updater must match.
       BUZZ_UPDATER_PUBLIC_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDQjQ2RDZFMUEwOERFMTEKUldRUjNnZ2FibTIwTE10QkVaMzFyYkZlY0R4ajhmbFBjdncvNVRCYnNpSm9kaFNBaHQzemZlZHkK
       BUZZ_UPDATER_ENDPOINT: https://github.com/block/buzz-app/releases/download/preview-feed/latest.json
@@ -284,6 +285,8 @@ jobs:
   windows:
     if: github.repository == 'block/buzz-app' && (inputs.candidates || (github.ref == 'refs/heads/main' && !inputs.promote_version))
     name: Windows x64 installer (unsigned)
+    env:
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
     runs-on: windows-2025
     timeout-minutes: 120
     defaults:
@@ -374,6 +377,7 @@ jobs:
         shell: bash
     env:
       APPIMAGE_EXTRACT_AND_RUN: "1"
+      BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
     steps:
       - name: Install build and packaging dependencies
         run: |

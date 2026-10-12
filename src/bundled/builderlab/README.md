@@ -1,21 +1,20 @@
 # Builderlab
 
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
-With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
+With a configured native federated authority, it also registers
 `block.builderlab/builderlab` in Agents2's new-agent type picker.
 This type has empty configuration and no execution handler yet; existing remote
 agents remain in Settings until the later migration.
 
-- `oauth/` owns browser handoff, code exchange, account verification, and the
-  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
-  `session.credential()` provides access to it. The session handles cancellation,
-  sign-out, and disposal.
-- `login/` owns the login experience: pending state, cancellation, retry, email
-  display, and sign-out.
-- `agents/` lists the signed-in account's remote agents beneath login. Requests
-  reuse the OAuth credential through native host HTTP; sign-out and navigation
-  discard late results. Existing catalog agents are not automatically registered
-  into Buzz communities.
+- Shared [`federated-identity`](../../features/federated-identity/) owns the
+  public login projection and UI. Native Rust owns browser handoff, exchange,
+  verification, secure persistence, and cancellation. Plugins receive no token.
+- `agents/` consumes scoped `federatedIdentity.request()` and public session
+  revision. API controls are unavailable until the same-origin NIP-FA extension
+  and API authentication contract are agreed. Sign-out and navigation discard
+  late results. Existing catalog agents are not automatically registered into
+  Buzz communities. Existing operation behavior below is retained for that API
+  contract; it is not claimed as enabled by an adapter-only login.
   Creation registers a name, then attests its key using the host's existing
   owner authorization. When a community is selected, attestation includes its
   WebSocket URL to enroll with Beekeeper; Personal space omits it. An unattested
@@ -69,18 +68,16 @@ Deletion follow-ups requiring shared relay/outbox support:
   needed to compensate late arrival. Unknown registration receipts are retained
   because the shared outbox cannot safely retire them, and still consume a slot.
 
-The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
-as its server address and appends `/api/goose`.
+The native authority uses the public
+[`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG`](../../../docs/configuration.md#federated-identity-build-input)
+build descriptor. Standard NIP-FA routes preserve its adapter prefix. Native
+sign-in uses `return_to` and S256 handoff, with verification through `/v1/session`.
+The API client uses the descriptor's relative API prefix without upstream headers.
 
-On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
-`product=builderlab` to the shared native
-[`oauth_callback` module](../../../src-tauri/src/oauth_callback/README.md).
-Native code inserts a loopback `redirect_uri` address, opens the browser, and returns
-callback parameters to the plugin. Native code generates and validates OAuth
-state; the plugin also uses a random callback path.
-
-Each attempt generates a random PKCE verifier held only in memory, sending its
-SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
-posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
-verifies the returned session credential with `/v1/auth/me` using the
-`X-BB-Session-Credential` header. These requests use the shared host transport.
+The former plugin `oauth/browser.test.ts` and `oauth/session.test.ts` credential
+coverage moved to native `federated_identity` protocol/storage/lifecycle tests and
+`oauth_callback` real loopback tests. Shared `Login.test.tsx` owns pending,
+cancel/retry, optional email, and plugin unmount behavior. Shared service tests
+exercise Cordis registration/disposal and stale native events. Agent client,
+enrollment, and RemoteAgents tests retain their operation/idempotency contracts.
+Generic proxy and Buzz-managed CLI acceptance remain explicitly deferred.

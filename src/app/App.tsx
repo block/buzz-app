@@ -185,6 +185,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             ) : (
               <ChannelSidebar
+                federatedIdentity={services.federatedIdentity}
                 relay={services.relay}
                 navigator={services.navigation}
                 providers={services.channelTemplates}

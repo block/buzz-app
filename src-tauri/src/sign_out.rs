@@ -787,6 +787,8 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
     let pairing = app.state::<crate::pairing::Pairing>().inner().clone();
     // Close the signer and any pairing that already holds a copy of the key.
     let close = || {
+        app.state::<crate::federated_identity::FederatedIdentity>()
+            .close();
         identity.close();
         pairing.close();
     };

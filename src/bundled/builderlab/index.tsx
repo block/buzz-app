@@ -1,44 +1,34 @@
 import { communityDestination } from "../../features/communities/destination";
 import type { PluginModule } from "../../plugins/api";
-import { Login } from "./login/Login";
-import {
-  browserCredential,
-  browserLoginAvailable,
-  oauthTarget,
-} from "./oauth/browser";
-import { createOAuthSession } from "./oauth/session";
+import { Login } from "../../features/federated-identity/Login";
+import { createFederatedSession } from "../../features/federated-identity/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
 
 export const inject = [
   "host",
+  "federatedIdentity",
   "settingsCards",
   "relay",
   "communityReader",
   "agents2",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  let unavailable = "";
-  try {
-    oauthTarget();
-  } catch (error) {
-    unavailable =
-      error instanceof Error
-        ? error.message
-        : "Builderlab sign-in is unavailable.";
-  }
-  if (!unavailable)
+  const session = createFederatedSession(ctx.federatedIdentity);
+  let registered = false;
+  const registerType = () => {
+    if (registered || !session.available()) return;
+    registered = true;
     ctx.agents2.register({
       id: "builderlab",
       title: "Builderlab",
-      description: "TBD",
+      description: "Builderlab remote agents",
       defaults: () => ({ config: {} }),
     });
-  const session = createOAuthSession((signal) =>
-    browserCredential(ctx.host, signal),
-  );
-  ctx.effect(() => () => session.dispose());
+  };
+  registerType();
+  ctx.effect(() => session.subscribe(registerType));
   const agents = createAgentClient(ctx.host, session, () => {
     const selected = ctx.communityReader.snapshot().selected;
     return selected
@@ -54,20 +44,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <>
         <Login
           session={session}
-          available={browserLoginAvailable() && !unavailable}
-          unavailableReason={
-            browserLoginAvailable()
-              ? unavailable
-              : "Open the Buzz desktop app to sign in with Builderlab."
-          }
+          available={true}
+          unavailableReason="Federated sign-in is not configured for this Buzz build."
           active={active}
         />
-        <RemoteAgents
-          client={agents}
-          session={session}
-          enrollment={enrollment}
-          active={active}
-        />
+        {ctx.federatedIdentity.apiAvailable ? (
+          <RemoteAgents
+            client={agents}
+            session={session}
+            enrollment={enrollment}
+            active={active}
+          />
+        ) : (
+          <p role="status" className="text-body-sm text-secondary">
+            Remote agent management is unavailable until the identity API
+            contract is enabled.
+          </p>
+        )}
       </>
     ),
   });

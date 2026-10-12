@@ -110,6 +110,7 @@ async fn current_target(
 pub(super) async fn restore(
     owner: AgentHost,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
+    fi: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     id: String,
     entries: Vec<SnapshotMemoryEntry>,
 ) -> Result<MemoryWriteResult> {
@@ -138,6 +139,7 @@ pub(super) async fn restore(
     let community = profile.url.trim_end_matches("/events").to_owned();
     let previous = crate::relay::agent::relay_agent_memories_read(
         identity.clone(),
+        fi.clone(),
         community.clone(),
         profile.pubkey.clone(),
     )
@@ -174,6 +176,7 @@ pub(super) async fn restore(
             profile_http::publish_memory(&client, &profile, &key, event).await?;
             let listing = crate::relay::agent::relay_agent_memories_read(
                 identity.clone(),
+                fi.clone(),
                 community.clone(),
                 profile.pubkey.clone(),
             )

@@ -1,5 +1,9 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
+use crate::federated_identity::{
+    assertion::{Authorization, HEADER},
+    FederatedIdentity,
+};
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
@@ -152,16 +156,26 @@ pub(crate) struct WorkflowCursor {
 #[tauri::command]
 pub(crate) async fn relay_workflow_runs(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
 ) -> Result<RelayResponse> {
     let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(host.inner(), url, "GET", None, true, 1024 * 1024).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "GET",
+        None,
+        true,
+        1024 * 1024,
+    )
+    .await
 }
 
 /// A Buzz git repository on this community: `<origin>/git/<owner hex>/<name>`.
-fn git_repository(community: &str, repository: &str) -> Result<Url> {
+pub(crate) fn git_repository(community: &str, repository: &str) -> Result<Url> {
     let origin = origin(community)?;
     let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
     let segments: Vec<_> = url.path().split('/').skip(1).collect();
@@ -199,10 +213,18 @@ fn git_repository(community: &str, repository: &str) -> Result<Url> {
 #[tauri::command]
 pub(crate) async fn relay_git_authorization(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     repository: String,
 ) -> Result<String> {
     let url = git_repository(&community, &repository)?;
+    let assertion = evidence(host.inner(), Some(fi.inner()), &url).await?;
+    let proof = git_authorization(host.inner(), &url).await?;
+    admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
+    Ok(proof)
+}
+
+pub(crate) async fn git_authorization(host: &IdentityHost, url: &Url) -> Result<String> {
     let auth = host
         .sign(EventTemplate {
             kind: 27235,
@@ -549,6 +571,7 @@ pub(crate) async fn relay_sign_read_state(
 #[tauri::command]
 pub(crate) async fn relay_publish_read_state(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
 ) -> Result<RelayResponse> {
@@ -558,7 +581,16 @@ pub(crate) async fn relay_publish_read_state(
         return Err("Invalid read-state event".into());
     }
     host.decode_read_state(vec![event]).await?;
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -654,6 +686,7 @@ fn client() -> Result<&'static reqwest::Client> {
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     path: String,
     method: String,
@@ -696,6 +729,7 @@ pub(crate) async fn relay_http(
     }
     send(
         host.inner(),
+        Some(fi.inner()),
         url,
         &method,
         body,
@@ -705,14 +739,41 @@ pub(crate) async fn relay_http(
     .await
 }
 
+async fn evidence(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: &Url,
+) -> Result<Option<Authorization>> {
+    match fi {
+        Some(fi) => fi.assertion_for_relay(host, url).await.map(Some),
+        None => Ok(None),
+    }
+}
+async fn admit(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
+) -> Result<()> {
+    if let (Some(fi), Some(assertion)) = (fi, assertion) {
+        fi.admit_authorization(host, assertion).await?;
+    }
+    Ok(())
+}
+
 async fn send(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     method: &str,
     body: Option<String>,
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
+    let assertion = if authenticated {
+        evidence(host, fi, &url).await?
+    } else {
+        None
+    };
     let mut request = client()?.request(
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
         url.clone(),
@@ -760,12 +821,31 @@ async fn send(
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
+    admit(host, fi, assertion.as_ref()).await?;
+    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
     // Never replay a write after a transport error: it may already have reached the relay.
     let response = request
         .send()
         .await
         .map_err(|_| "Relay request could not be confirmed")?;
-    read_response(response, response_limit).await
+    if response.status() == 401 {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion
+                .as_ref()
+                .and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
+            fi.reject_assertion(assertion).await;
+        }
+    }
+    let response = read_response(response, response_limit).await?;
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
+        fi.admit_response(host, assertion, mutation).await?;
+    }
+    Ok(response)
 }
 
 async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {
@@ -988,6 +1068,7 @@ pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn relay_upload<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
+    fi: tauri::State<'_, FederatedIdentity>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
     spools: tauri::State<'_, Spools>,
@@ -1010,10 +1091,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
         let (spool, mut cancelled) = spools.take(id)?;
         process_spool(
             host.inner(),
+            Some(fi.inner()),
             url,
             spool,
-            header("x-buzz-content-type"),
-            header("x-buzz-preparation"),
+            (header("x-buzz-content-type"), header("x-buzz-preparation")),
             progress,
             &mut cancelled,
         )
@@ -1027,10 +1108,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
 
 async fn process_spool(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     spool: upload_spool::Spool,
-    kind: Option<&str>,
-    preparation: Option<&str>,
+    (kind, preparation): (Option<&str>, Option<&str>),
     progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
@@ -1072,7 +1153,7 @@ async fn process_spool(
             .map_err(|_| "Upload hashing could not complete")??
     };
     tokio::select! {
-        result = upload_file(host, url, kind, path, hash, progress) => result,
+        result = upload_file(host, fi, url, kind, path, hash, progress) => result,
         _ = &mut *cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -1144,12 +1225,14 @@ fn file_chunks(
 
 async fn upload_file(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     kind: Option<&str>,
     path: std::path::PathBuf,
     (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
+    let assertion = evidence(host, fi, &url).await?;
     validate_upload_size(size)?;
     let kind = kind
         .filter(|kind| valid_type(kind))
@@ -1164,8 +1247,12 @@ async fn upload_file(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    let response = client()?
-        .put(url)
+    admit(host, fi, assertion.as_ref()).await?;
+    let mut request = client()?.put(url);
+    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
+    let response = request
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth)
         .header("Content-Type", kind)
@@ -1183,7 +1270,21 @@ async fn upload_file(
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;
-    read_response(response, 8192).await
+    if response.status() == 401 {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion
+                .as_ref()
+                .and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
+            fi.reject_assertion(assertion).await;
+        }
+    }
+    let response = read_response(response, 8192).await?;
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.admit_response(host, assertion, true).await?;
+    }
+    Ok(response)
 }
 
 /// Largest whole-file media response buffered in memory: the relay's document
@@ -1216,12 +1317,17 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
 ) {
     use tauri::Manager as _;
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
+    let fi = ctx
+        .app_handle()
+        .state::<FederatedIdentity>()
+        .inner()
+        .clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
             Ok((url, Some((start, end)))) => {
-                media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
+                media_blocks::read(&host, Some(&fi), &url, start, end, WHOLE_VIDEO_MAX).await
             }
-            Ok((url, None)) => fetch_media(&host, url, None).await,
+            Ok((url, None)) => fetch_media(&host, Some(&fi), url, None).await,
             Err(status) => Err(status),
         };
         responder.respond(response.unwrap_or_else(|status| {
@@ -1553,10 +1659,11 @@ fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
 pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
 ) -> Result<()> {
     let url = download_target(&source).ok_or("Invalid media URL")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Could not fetch image")?;
     if !response
@@ -1579,6 +1686,7 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
     name: String,
 ) -> Result<()> {
@@ -1589,7 +1697,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Media download failed")?;
     let body = response.into_body();
@@ -1604,6 +1712,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn media_snapshot_read(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
     max_bytes: usize,
 ) -> Result<Vec<u8>> {
@@ -1611,7 +1720,7 @@ pub(crate) async fn media_snapshot_read(
         return Err("Invalid snapshot size limit".into());
     }
     let url = download_target(&source).ok_or("Invalid media URL")?;
-    fetch_media_bounded(host.inner(), url, None, max_bytes)
+    fetch_media_bounded(host.inner(), Some(fi.inner()), url, None, max_bytes)
         .await
         .map(tauri::http::Response::into_body)
         .map_err(|status| format!("Snapshot media read failed ({status})"))
@@ -1674,24 +1783,42 @@ fn media_range(value: &str) -> Option<(u64, u64)> {
 
 async fn fetch_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    fetch_media_bounded(host, url, range, MAX_MEDIA).await
+    fetch_media_bounded(host, fi, url, range, MAX_MEDIA).await
 }
 
 async fn fetch_media_bounded(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
     max_bytes: usize,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    buffer_media(send_media(host, url, range.as_deref()).await?, max_bytes).await
+    let assertion = evidence(host, fi, &url).await.map_err(|_| 401u16)?;
+    let operation = async {
+        buffer_media(
+            send_media(host, fi, assertion.as_ref(), url, range.as_deref()).await?,
+            max_bytes,
+        )
+        .await
+    };
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.during_authorization(host, assertion, operation)
+            .await
+            .map_err(|_| 401u16)?
+    } else {
+        operation.await
+    }
 }
 
 /// One freshly signed upstream GET; only a 200 or 206 is returned.
 async fn send_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
     url: Url,
     range: Option<&str>,
 ) -> std::result::Result<reqwest::Response, u16> {
@@ -1707,8 +1834,21 @@ async fn send_media(
     if let Some(range) = range {
         request = request.header("Range", range);
     }
+    admit(host, fi, assertion).await.map_err(|_| 401u16)?;
+    if let Some(header) = assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
     let upstream = request.send().await.map_err(|_| 502u16)?;
+    admit(host, fi, assertion).await.map_err(|_| 401u16)?;
     let status = upstream.status().as_u16();
+    if status == 401 {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion.and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
+            fi.reject_assertion(assertion).await;
+        }
+    }
     if !matches!(status, 200 | 206) {
         return Err(status);
     }

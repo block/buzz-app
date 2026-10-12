@@ -10,8 +10,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { HostRequest, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
+import type { HostResponse } from "../../../features/host/service";
+import { federatedFixture } from "../../../features/federated-identity/testing";
+import type { AuthenticatedRequest } from "../../../features/federated-identity/service";
 import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 import { RemoteAgents } from "./RemoteAgents";
@@ -56,20 +57,19 @@ async function fixture(
   kinds?: readonly number[],
 ) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-  const session = createOAuthSession(async () => ({
-    value: "secret",
-    account: { subject: "user", email: "a@example.com" },
-  }));
+  const { session, request } = federatedFixture();
   await session.signIn();
   const community = enrollmentFixture(session, selected, kinds);
   enrollments.push(community);
-  const request = vi.fn(async (_input: HostRequest) => response([row]));
+  request.mockImplementation(async (_input: AuthenticatedRequest) =>
+    response([row]),
+  );
   const authorize = vi.fn(
     async () => ["auth", community.viewer, "", "ef".repeat(64)] as const,
   );
   const client = createAgentClient(
     {
-      request,
+      request: vi.fn(),
       runCommand: vi.fn(),
       prepareRemoteAgentAuthorization: authorize,
     },
@@ -132,7 +132,7 @@ it("confirms deletion, waits for the relay, and keeps a failed backend deletion 
   let deleted = false;
   let attempts = 0;
   h.request.mockImplementation(async (input) => {
-    if (!input.url.endsWith("/delete-agent"))
+    if (!input.path.endsWith("/delete-agent"))
       return response(deleted ? [] : [row]);
     attempts++;
     if (attempts === 1) return response([], 503);
@@ -246,7 +246,9 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     .setup()
     .click(screen.getByRole("button", { name: "Refresh agents" }));
   expect(await screen.findByText("No remote agents yet.")).toBeInTheDocument();
-  act(() => h.session.signOut());
+  await act(async () => {
+    await h.session.signOut();
+  });
   expect(
     screen.queryByRole("region", { name: "Remote agents" }),
   ).not.toBeInTheDocument();
@@ -262,7 +264,7 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
     status: 3,
   };
   h.request.mockImplementation(async (input) => {
-    if (input.url.endsWith("/update-agent")) {
+    if (input.path.endsWith("/update-agent")) {
       instructions = JSON.parse(input.body ?? "{}").agent_instructions;
       return { status: 200, headers: {}, body: "{}" };
     }
@@ -296,7 +298,9 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
   });
   expect(restored).toHaveValue("Original instructions.");
   expect(
-    h.request.mock.calls.every(([input]) => input.url.endsWith("/list-agents")),
+    h.request.mock.calls.every(([input]) =>
+      input.path.endsWith("/list-agents"),
+    ),
   ).toBe(true);
   await user.clear(restored);
   await user.type(restored, "   ");
@@ -317,7 +321,7 @@ it("edits listed instructions, preserves a dirty draft across refresh, cancels a
   ).toHaveValue("");
   expect(
     h.request.mock.calls.filter(([input]) =>
-      input.url.endsWith("/update-agent"),
+      input.path.endsWith("/update-agent"),
     ),
   ).toHaveLength(1);
   expect(h.community.publish).not.toHaveBeenCalled();
@@ -346,7 +350,9 @@ it.each(["new login", "deletion"])(
       );
       await waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
       if (cause === "new login") {
-        act(() => h.session.signOut());
+        await act(async () => {
+          await h.session.signOut();
+        });
         await act(async () => h.session.signIn());
         await screen.findByRole("button", { name: "Edit" });
         await act(async () => held.resolve(response([], 503)));
@@ -421,7 +427,10 @@ it.each(["sign-out", "unmount"])(
     const held = deferred<HostResponse>();
     h.request.mockReturnValue(held.promise);
     const mounted = render(<RemoteAgents {...h} active={() => true} />);
-    if (action === "sign-out") act(() => h.session.signOut());
+    if (action === "sign-out")
+      await act(async () => {
+        await h.session.signOut();
+      });
     else mounted.unmount();
     await act(async () => held.resolve(response([row])));
     expect(screen.queryByText("Helper · Active")).not.toBeInTheDocument();
@@ -519,7 +528,7 @@ it("creates with instructions, locks controls through setup and retries a failed
     await screen.findByRole("button", { name: "Edit" });
     expect(
       h.request.mock.calls.filter(([input]) =>
-        input.url.endsWith("/register-agent"),
+        input.path.endsWith("/register-agent"),
       ),
     ).toHaveLength(1);
     expect(update).toHaveBeenCalledTimes(2);
@@ -637,7 +646,7 @@ it.each(["Active", "Revoked"])(
     }
     expect(
       h.request.mock.calls.every(([input]) =>
-        input.url.endsWith("/list-agents"),
+        input.path.endsWith("/list-agents"),
       ),
     ).toBe(true);
     expect(h.authorize).not.toHaveBeenCalled();
@@ -727,7 +736,7 @@ it.each(["attestation", "enrollment storage"])(
       );
       expect(
         h.request.mock.calls.filter(([input]) =>
-          input.url.endsWith("/register-agent"),
+          input.path.endsWith("/register-agent"),
         ),
       ).toHaveLength(1);
     } finally {
@@ -747,7 +756,9 @@ it("does not attest or show a held registration after sign-out", async () => {
     "Another",
   );
   await user.click(screen.getByRole("button", { name: "Create agent" }));
-  act(() => h.session.signOut());
+  await act(async () => {
+    await h.session.signOut();
+  });
   await act(async () =>
     held.resolve({
       status: 200,

@@ -4,8 +4,7 @@ import type { EventData } from "../../../features/relay/events";
 import type { Outbox } from "../../../features/relay/outbox";
 import type { RelayData } from "../../../features/relay/service";
 import { relayPartition } from "../../../features/relay/partition";
-import { oauthTarget } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import type { FederatedSession } from "../../../features/federated-identity/session";
 import type { AgentClient, RemoteAgent } from "./client";
 
 const PREFIX = "buzz.builderlab.enrollment.v1:";
@@ -15,12 +14,12 @@ const DELETION_PREFIX = "buzz.builderlab.deletion.v1:";
 export function createEnrollment(
   relay: RelayData,
   community: CommunityReader,
-  login: OAuthSession,
+  login: FederatedSession,
 ) {
   function deletionKey(pubkey: string) {
     return (
       DELETION_PREFIX +
-      JSON.stringify([oauthTarget(), login.credential().account.subject]) +
+      JSON.stringify([login.identity().origin, login.identity().revision]) +
       ":" +
       pubkey
     );
@@ -37,16 +36,16 @@ export function createEnrollment(
     const url = communityDestination(selected.selected).url;
     const viewer = selected.viewer;
     if (!viewer) throw new Error("Community identity is unavailable. Retry.");
-    const credential = login.credential();
+    const accountIdentity = login.identity();
     return {
       url,
       viewer,
-      credential,
+      accountIdentity,
       key:
         PREFIX +
         JSON.stringify([
-          oauthTarget(),
-          credential.account.subject,
+          login.identity().origin,
+          accountIdentity.revision,
           url,
           viewer,
         ]),
@@ -76,7 +75,7 @@ export function createEnrollment(
     const connection = relay.snapshot();
     return (
       selected?.key === context.key &&
-      selected.credential === context.credential &&
+      selected.accountIdentity === context.accountIdentity &&
       connection.session === context.connection.session &&
       connection.generation === context.connection.generation &&
       connection.status === "ready"
@@ -276,13 +275,13 @@ export function createEnrollment(
       signal: AbortSignal,
       active: () => boolean,
     ) {
-      const credential = login.credential();
+      const accountIdentity = login.identity();
       const context = capture(5);
       const allowed = () =>
         !signal.aborted &&
         active() &&
         login.snapshot().status === "signed-in" &&
-        login.credential() === credential &&
+        login.identity() === accountIdentity &&
         current(context);
       const check = () => {
         signal.throwIfAborted();

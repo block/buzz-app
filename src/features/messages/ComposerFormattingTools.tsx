@@ -111,32 +111,8 @@ export function ComposerFormattingTools({
   );
   return (
     <div className={styles.tools} data-formatting-open={open || undefined}>
-      <motion.div
-        className={styles.ingress}
-        hidden={open}
-        inert={open}
-        initial={false}
-        animate={{ opacity: open ? 0 : 1, x: open && !instant ? -12 : 0 }}
-        transition={transition}
-      >
-        {children}
-        <AnimatePresence initial={false}>
-          {!open && (
-            <ToolGroup
-              key="toggle"
-              className={styles.fixed}
-              initial={instant ? false : { x: -8, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: instant ? 0 : -8, opacity: 0 }}
-              transition={transition}
-            >
-              {formatToggle}
-            </ToolGroup>
-          )}
-        </AnimatePresence>
-      </motion.div>
       <AnimatePresence mode="popLayout" initial={false}>
-        {open && (
+        {open ? (
           <ToolGroup
             key="formatting"
             className={styles.expanded}
@@ -220,6 +196,26 @@ export function ComposerFormattingTools({
                   );
                 })}
               </fieldset>
+            </motion.div>
+          </ToolGroup>
+        ) : (
+          <ToolGroup
+            key="ingress"
+            className={styles.ingress}
+            initial={instant ? false : { opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: instant ? 0 : -12 }}
+            transition={transition}
+          >
+            {children}
+            <motion.div
+              className={styles.fixed}
+              initial={instant ? false : { x: -8, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: instant ? 0 : -8, opacity: 0 }}
+              transition={transition}
+            >
+              {formatToggle}
             </motion.div>
           </ToolGroup>
         )}

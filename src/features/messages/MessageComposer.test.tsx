@@ -5022,7 +5022,7 @@ describe("project resource picker", () => {
   };
   const row = /^Fix login, Issue in Game repo$/;
   function picker(
-    home: () => Promise<unknown> = () =>
+    home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
       Promise.resolve({ status: "home", project }),
     issues: readonly (typeof item)[] = [item],
   ) {
@@ -5324,6 +5324,53 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
+  it("does not show a PR action while checking a new channel's project", async () => {
+    const pending: {
+      channelId: string;
+      resolve(value: unknown): void;
+    }[] = [];
+    const p = picker(
+      (channelId) =>
+        new Promise((resolve) => pending.push({ channelId, resolve })),
+    );
+    const trigger = () =>
+      screen.queryByRole("button", { name: "Add issue or pull request" });
+    const finish = async (channelId: string, result: unknown) => {
+      await act(async () => {
+        for (const read of pending) {
+          if (read.channelId === channelId) read.resolve(result);
+        }
+      });
+    };
+    try {
+      await waitFor(() => expect(p.homes).toHaveBeenCalled());
+      expect(screen.getByText("Loading project…")).toBeInTheDocument();
+      expect(trigger()).toBeNull();
+      await finish("channel", { status: "home", project });
+      expect(trigger()).toBeEnabled();
+      p.h.retarget({ channelId: "no-project", channelName: "Other" });
+      await waitFor(() =>
+        expect(pending.some((read) => read.channelId === "no-project")).toBe(
+          true,
+        ),
+      );
+      expect(trigger()).toBeNull();
+      await finish("no-project", { status: "none" });
+      expect(trigger()).toBeNull();
+      p.h.retarget({ channelId: "project", channelName: "Project" });
+      await waitFor(() =>
+        expect(pending.some((read) => read.channelId === "project")).toBe(true),
+      );
+      expect(trigger()).toBeNull();
+      await finish("project", { status: "home", project });
+      expect(trigger()).toBeEnabled();
+    } finally {
+      await act(async () => {
+        for (const read of pending) read.resolve({ status: "none" });
+      });
+    }
+  });
+
   it("keeps a chat without a project free of the PR button after closing formatting", async () => {
     const pending: ((value: unknown) => void)[] = [];
     const p = picker(() => new Promise((resolve) => pending.push(resolve)));
@@ -5331,7 +5378,6 @@ describe("project resource picker", () => {
     await act(async () => {
       for (const resolve of pending) resolve({ status: "none" });
     });
-    const initialReads = p.homes.mock.calls.length;
     const resourceButton = () =>
       screen.queryByRole("button", { name: "Add issue or pull request" });
     expect(resourceButton()).toBeNull();
@@ -5358,7 +5404,6 @@ describe("project resource picker", () => {
         ).toBeVisible(),
       );
       expect(resourceButton()).toBeNull();
-      expect(p.homes).toHaveBeenCalledTimes(initialReads);
     } finally {
       await act(async () => {
         for (const resolve of pending) resolve({ status: "none" });

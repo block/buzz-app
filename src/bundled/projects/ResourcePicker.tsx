@@ -233,9 +233,15 @@ export function ResourcePicker({
         }
       }}
     >
+      {home === "loading" && (
+        <span role="status" className="sr-only">
+          Loading project…
+        </span>
+      )}
       <fieldset
         ref={controls}
         disabled={disabled}
+        hidden={home === "loading"}
         className={styles.controls}
         aria-label="Issue and pull request controls"
       >
@@ -262,11 +268,6 @@ export function ResourcePicker({
             />
           }
         />
-        {home === "loading" && (
-          <span role="status" className="sr-only">
-            Loading project…
-          </span>
-        )}
         <PopoverPopup
           side="top"
           sideOffset={4}

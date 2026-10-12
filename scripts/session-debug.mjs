@@ -35,28 +35,22 @@ async function* files(root) {
     else if (e.isFile() && e.name.endsWith(".jsonl")) yield join(root, e.name);
   }
 }
-// The text of each message delivered to the agent as a user turn.
-function deliveries(records) {
-  return records.flatMap((r) => {
+export function ownsThread(records, id) {
+  return records.some((r) => {
     const message =
       r.type === "response_item" && r.payload?.role === "user"
         ? r.payload
         : r.type === "user"
           ? r.message
           : null;
-    if (!message) return [];
-    return [
+    if (!message) return false;
+    const body =
       typeof message.content === "string"
         ? message.content
         : (message.content ?? [])
             .filter((b) => b.type === "text" || b.type === "input_text")
             .map((b) => b.text)
-            .join("\n"),
-    ];
-  });
-}
-export function ownsThread(records, id) {
-  return deliveries(records).some((body) => {
+            .join("\n");
     // Inspect the delivery envelope, not quoted history or tool output.
     for (const m of body.matchAll(/<context>\s*([^<]+)\s*<\/context>/g)) {
       try {
@@ -71,7 +65,6 @@ export function ownsThread(records, id) {
 }
 // The agent a session belongs to, from the identity line its harness puts in
 // the system or developer prompt: the latest one, in case it was renamed.
-// Without one, the agent is whoever every @mention delivered to it mentions.
 export function agentOf(records) {
   let agent;
   for (const r of records) {
@@ -88,29 +81,7 @@ export function agentOf(records) {
       if (m) agent = { name: m[1], pubkey: m[2] };
     }
   }
-  return agent ?? mentioned(records);
-}
-function mentioned(records) {
-  let common;
-  const names = new Map();
-  for (const body of deliveries(records))
-    for (const [, event] of body.matchAll(
-      /<buzz-event type="@mention">([\s\S]*?)<\/buzz-event>/g,
-    )) {
-      const list = /^Parsed: .*mentions=\[(.*)\]\s*$/m.exec(event)?.[1];
-      if (!list) continue;
-      const here = new Set();
-      for (const [, name, pubkey] of list.matchAll(
-        /(?:([^,[\]]+?) \()?([a-f0-9]{64})\)?/g,
-      )) {
-        here.add(pubkey);
-        if (name) names.set(pubkey, name.trim());
-      }
-      common = common ? common.intersection(here) : here;
-    }
-  if (common?.size !== 1) return null;
-  const [pubkey] = common;
-  return names.has(pubkey) ? { name: names.get(pubkey), pubkey } : null;
+  return agent ?? null;
 }
 export async function createInspector({
   target,

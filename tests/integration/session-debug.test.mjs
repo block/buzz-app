@@ -485,28 +485,6 @@ test("reads the agent from a Claude prompt snapshot, the latest name winning", (
   assert.equal(agentOf([user(1, `You are Mallory (pubkey ${pubkey}).`)]), null);
 });
 
-test("without an identity line, names the agent every @mention delivered to it mentions", () => {
-  const agent = "e".repeat(64),
-    alice = "f".repeat(64);
-  const mention = (mentions) =>
-    user(
-      1,
-      `<buzz-event type="@mention">\nEvent ID: ${id}\nContent: hi\nParsed: root=${id}, mentions=[${mentions}]\n</buzz-event>`,
-    );
-  assert.deepEqual(
-    agentOf([
-      mention(`Alice Smith (${alice}), claude00 (${agent})`),
-      mention(`claude00 (${agent})`),
-    ]),
-    { name: "claude00", pubkey: agent },
-  );
-  // Two agents mentioned together every time stay unnamed rather than guessed.
-  assert.equal(
-    agentOf([mention(`Alice Smith (${alice}), claude00 (${agent})`)]),
-    null,
-  );
-});
-
 test("historical response views never pair a tool with its later result", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "session-boundary-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

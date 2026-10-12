@@ -57,10 +57,21 @@ export function localAgentsNative(): AgentsNative {
       identities = [identity];
       return identity;
     },
+    portable: unsupported,
+    port: unsupported,
+    setPicture: unsupported,
+    media: unsupported,
     rename: unsupported,
     remove: unsupported,
     forget: unsupported,
-    publish: unsupported,
+    publish: async (pubkey, event) => ({
+      ...event,
+      tags: event.tags?.map((tag) => [...tag]) ?? [],
+      pubkey,
+      id: crypto.randomUUID(),
+      sig: "",
+      created_at: Math.floor(Date.now() / 1000),
+    }),
     query: async () => [],
     upload: unsupported,
     remember: unsupported,
@@ -109,9 +120,11 @@ export const localAgentPlugin: BundledPlugin = {
         )
           return;
         creating = true;
-        void ctx.agents.create({
-          type: "fixture.local-agent/tester",
-          name: "Local tester",
+        queueMicrotask(() => {
+          void ctx.agents.create({
+            type: "fixture.local-agent/tester",
+            name: "Local tester",
+          });
         });
       };
       const stopRelay = ctx.relay.subscribe(ensure),

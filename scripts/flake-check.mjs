@@ -29,25 +29,27 @@ export function classify(file) {
   return undefined;
 }
 
-// New-side line ranges of a -U0 diff. A pure deletion has no new lines and
-// attaches to the line before it (0 at the top of the file).
+// Line ranges of a -U0 diff: the new-side lines each hunk writes and the
+// old-side lines it removes (empty, end < start, for a pure insertion). A pure
+// deletion writes no lines and attaches to the line before it (0 at the top of
+// the file); `removed` keeps what it took out, since that line cannot tell.
 export function hunkRanges(diff) {
-  return [...diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)].map(
-    ([, start, count = "1"]) => ({
-      start: Number(start),
-      end: Number(start) + Math.max(Number(count), 1) - 1,
-    }),
-  );
+  return [
+    ...diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm),
+  ].map(([, oldStart, oldCount = "1", start, count = "1"]) => ({
+    start: Number(start),
+    end: Number(start) + Math.max(Number(count), 1) - 1,
+    removed: {
+      start: Number(oldStart),
+      end: Number(oldStart) + Number(oldCount) - 1,
+    },
+  }));
 }
 
-// Bodies of the listed tests: the lines of each `test`/`it` call, from its
-// first line to its closing parenthesis, keyed by the line the runner listed.
-// Runners only report a call-site line, which may sit inside the call
-// (`it.each([…])(` lists at the second parenthesis), so each listed line is
-// owned by the enclosing test call. `describe` groups and hooks are not
-// bodies; tests registered through a wrapper have no enclosing call and leave
-// their lines to the whole-file rule.
-export function testBodies(source, lang, lines) {
+// Line spans of every `test`/`it` call, from its first line to its closing
+// parenthesis. `describe` groups and hooks are not calls; tests registered
+// through a wrapper have no enclosing call.
+export function testCalls(source, lang) {
   const lineAt = (offset) => source.slice(0, offset).split("\n").length;
   const names = (callee) =>
     callee.type === "Identifier"
@@ -76,6 +78,16 @@ export function testBodies(source, lang, lines) {
     for (const child of Object.values(node)) visit(child);
   };
   visit(parseAst(source, { lang }));
+  return calls;
+}
+
+// Bodies of the listed tests: their calls, keyed by the line the runner
+// listed. Runners only report a call-site line, which may sit inside the call
+// (`it.each([…])(` lists at the second parenthesis), so each listed line is
+// owned by the enclosing test call; a listed line outside every call leaves
+// its lines to the whole-file rule.
+export function testBodies(source, lang, lines) {
+  const calls = testCalls(source, lang);
   const bodies = new Map();
   for (const line of [...lines].sort((a, b) => a - b)) {
     const call = calls.find(({ start, end }) => start <= line && line <= end);
@@ -84,21 +96,39 @@ export function testBodies(source, lang, lines) {
   return [...bodies.values()].sort((a, b) => a.start - b.start);
 }
 
+// The calls owning every line of a range, or undefined once a line lies
+// outside them all.
+function owners(calls, { start, end }) {
+  const found = [];
+  for (let line = start; line <= end; ) {
+    const call = calls.find((c) => c.start <= line && line <= c.end);
+    if (!call) return undefined;
+    found.push(call);
+    line = call.end + 1;
+  }
+  return found;
+}
+
 // A hunk whose every line lies in a test body selects those tests. A changed
 // line outside every body (imports, helpers, hooks or constants before,
 // between or after tests) can change every test, so it, a new file, or a file
-// with no listed tests selects the whole file.
-export function selectTests(ranges, bodies, { added = false } = {}) {
+// with no listed tests selects the whole file. Removed lines are judged by the
+// old file's calls (`previous`): a deletion attaches to its preceding line,
+// which belongs to the test before a removed hook, not to the hook.
+export function selectTests(
+  ranges,
+  bodies,
+  { added = false, previous = [] } = {},
+) {
   if (added) return { whole: true, reason: "new file" };
   if (bodies.length === 0) return { whole: true, reason: "no tests listed" };
   const selected = new Set();
-  for (const { start, end } of ranges) {
-    for (let line = start; line <= end; ) {
-      const body = bodies.find((b) => b.start <= line && line <= b.end);
-      if (!body) return { whole: true, reason: "shared code changed" };
-      selected.add(body.line);
-      line = body.end + 1;
-    }
+  for (const { start, end, removed } of ranges) {
+    if (!owners(previous, removed))
+      return { whole: true, reason: "shared code removed" };
+    const current = owners(bodies, { start, end });
+    if (!current) return { whole: true, reason: "shared code changed" };
+    for (const body of current) selected.add(body.line);
   }
   return { lines: [...selected].sort((a, b) => a - b) };
 }
@@ -219,7 +249,12 @@ function select(base = "HEAD^1", head = "HEAD") {
       const selection = selectTests(
         hunkRanges(git("diff", "-U0", "--no-color", base, head, "--", file)),
         testBodies(readFileSync(`${root}${file}`, "utf8"), lang, starts),
-        { added: added.has(file) },
+        {
+          added: added.has(file),
+          previous: added.has(file)
+            ? []
+            : testCalls(git("show", `${base}:${file}`), lang),
+        },
       );
       let entries;
       let note;

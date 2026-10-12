@@ -7,7 +7,15 @@ import {
   repeatableLines,
   selectTests,
   testBodies,
+  testCalls,
 } from "../../scripts/flake-check.mjs";
+
+// A hunk writing new-side lines start..end; by default it removed nothing.
+const hunk = (start, end, removed = { start: start + 1, end: start }) => ({
+  start,
+  end,
+  removed,
+});
 
 test("classification follows the Vitest include globs and the Playwright spec directory", () => {
   for (const file of [
@@ -36,7 +44,7 @@ test("classification follows the Vitest include globs and the Playwright spec di
     assert.equal(classify(file), undefined, file);
 });
 
-test("-U0 hunks map to new-side ranges, with deletions attached to the preceding line", () => {
+test("-U0 hunks map to new-side ranges, with deletions attached to the preceding line and their old-side lines kept", () => {
   const diff = [
     "diff --git a/x.test.ts b/x.test.ts",
     "--- a/x.test.ts",
@@ -56,10 +64,10 @@ test("-U0 hunks map to new-side ranges, with deletions attached to the preceding
     "",
   ].join("\n");
   assert.deepEqual(hunkRanges(diff), [
-    { start: 1, end: 1 },
-    { start: 13, end: 15 },
-    { start: 33, end: 33 },
-    { start: 0, end: 0 },
+    { start: 1, end: 1, removed: { start: 1, end: 1 } },
+    { start: 13, end: 15, removed: { start: 12, end: 11 } },
+    { start: 33, end: 33, removed: { start: 30, end: 31 } },
+    { start: 0, end: 0, removed: { start: 1, end: 3 } },
   ]);
   assert.deepEqual(hunkRanges(""), []);
 });
@@ -106,23 +114,23 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
   ]);
   const select = (ranges) => selectTests(ranges, bodies);
   // Inside a body, including its closing line, selects only that test.
-  assert.deepEqual(select([{ start: 7, end: 7 }]), { lines: [6] });
-  assert.deepEqual(select([{ start: 21, end: 21 }]), { lines: [19] });
-  assert.deepEqual(select([{ start: 23, end: 24 }]), { lines: [22] });
+  assert.deepEqual(select([hunk(7, 7)]), { lines: [6] });
+  assert.deepEqual(select([hunk(21, 21)]), { lines: [19] });
+  assert.deepEqual(select([hunk(23, 24)]), { lines: [22] });
   // A helper between tests, a hook inside the group, and a hook after the
   // last test are shared code.
-  for (const range of [
-    { start: 10, end: 10 },
-    { start: 14, end: 14 },
-    { start: 27, end: 27 },
-    { start: 2, end: 2 },
-  ])
+  for (const range of [hunk(10, 10), hunk(14, 14), hunk(27, 27), hunk(2, 2)])
     assert.deepEqual(select([range]), {
       whole: true,
       reason: "shared code changed",
     });
   // A test the runner lists outside any `test`/`it` call has no body.
   assert.deepEqual(testBodies(source, "tsx", [10]), []);
+  assert.deepEqual(testCalls(source, "tsx"), [
+    { start: 6, end: 8 },
+    { start: 16, end: 21 },
+    { start: 22, end: 24 },
+  ]);
   // Playwright: `test.describe` is a group, `test.beforeEach` a hook.
   const spec = [
     'import { test } from "@playwright/test";',
@@ -147,76 +155,122 @@ test("hunks inside tests select those tests; shared code, new or unlisted files 
     { start: 25, end: 37, line: 25 },
     { start: 38, end: 52, line: 40 },
   ];
+  // The old file had the same tests, with a hook between the last two.
+  const previous = [
+    { start: 10, end: 22 },
+    { start: 25, end: 37 },
+    { start: 41, end: 55 },
+  ];
+  const select = (ranges, options) =>
+    selectTests(ranges, bodies, { previous, ...options });
   // Edit inside one test, including its first and last lines.
-  assert.deepEqual(selectTests([{ start: 12, end: 14 }], bodies), {
-    lines: [10],
-  });
-  assert.deepEqual(selectTests([{ start: 10, end: 10 }], bodies), {
-    lines: [10],
-  });
-  assert.deepEqual(selectTests([{ start: 22, end: 22 }], bodies), {
-    lines: [10],
-  });
+  assert.deepEqual(select([hunk(12, 14)]), { lines: [10] });
+  assert.deepEqual(select([hunk(10, 10)]), { lines: [10] });
+  assert.deepEqual(select([hunk(22, 22)]), { lines: [10] });
   // A hunk across two adjacent bodies selects both, by their listed lines.
-  assert.deepEqual(selectTests([{ start: 36, end: 39 }], bodies), {
-    lines: [25, 40],
-  });
+  assert.deepEqual(select([hunk(36, 39)]), { lines: [25, 40] });
   // A hunk that also covers the gap between tests, or lines after the last
   // test, touches shared code.
-  assert.deepEqual(selectTests([{ start: 22, end: 25 }], bodies), {
-    whole: true,
-    reason: "shared code changed",
-  });
-  assert.deepEqual(selectTests([{ start: 52, end: 53 }], bodies), {
-    whole: true,
-    reason: "shared code changed",
-  });
-  assert.deepEqual(selectTests([{ start: 400, end: 405 }], bodies), {
-    whole: true,
-    reason: "shared code changed",
-  });
+  for (const range of [hunk(22, 25), hunk(52, 53), hunk(400, 405)])
+    assert.deepEqual(select([range]), {
+      whole: true,
+      reason: "shared code changed",
+    });
   // Several hunks accumulate distinct tests in file order.
-  assert.deepEqual(
-    selectTests(
-      [
-        { start: 41, end: 41 },
-        { start: 11, end: 11 },
-        { start: 12, end: 12 },
-      ],
-      bodies,
-    ),
-    { lines: [10, 40] },
-  );
-  // Deletion inside a test attaches to that test; deletion at the top of the
-  // file (line 0) and edits before the first test fall back to the whole file.
-  assert.deepEqual(selectTests([{ start: 30, end: 30 }], bodies), {
+  assert.deepEqual(select([hunk(41, 41), hunk(11, 11), hunk(12, 12)]), {
+    lines: [10, 40],
+  });
+  // Replacing lines inside a test, or deleting some of them (attached to the
+  // preceding line), selects that test when the old lines were its own.
+  assert.deepEqual(select([hunk(30, 31, { start: 30, end: 32 })]), {
     lines: [25],
   });
-  assert.deepEqual(selectTests([{ start: 0, end: 0 }], bodies), {
+  assert.deepEqual(select([hunk(30, 30, { start: 31, end: 32 })]), {
+    lines: [25],
+  });
+  // Deleting the hook that followed the second test attaches to that test's
+  // closing line, but the removed lines were never a test's.
+  assert.deepEqual(select([hunk(37, 37, { start: 38, end: 40 })]), {
+    whole: true,
+    reason: "shared code removed",
+  });
+  // Deletion at the top of the file (line 0) and edits before the first test
+  // fall back to the whole file.
+  assert.deepEqual(select([hunk(0, 0, { start: 1, end: 1 })]), {
+    whole: true,
+    reason: "shared code removed",
+  });
+  assert.deepEqual(select([hunk(12, 12), hunk(3, 3)]), {
     whole: true,
     reason: "shared code changed",
   });
-  assert.deepEqual(
-    selectTests(
-      [
-        { start: 12, end: 12 },
-        { start: 3, end: 3 },
-      ],
-      bodies,
-    ),
-    { whole: true, reason: "shared code changed" },
-  );
-  assert.deepEqual(
-    selectTests([{ start: 12, end: 12 }], bodies, { added: true }),
-    {
-      whole: true,
-      reason: "new file",
-    },
-  );
-  assert.deepEqual(selectTests([{ start: 12, end: 12 }], []), {
+  assert.deepEqual(select([hunk(12, 12)], { added: true }), {
+    whole: true,
+    reason: "new file",
+  });
+  assert.deepEqual(selectTests([hunk(12, 12)], []), {
     whole: true,
     reason: "no tests listed",
   });
+  // Without old-side calls, every removal is shared code.
+  assert.deepEqual(
+    selectTests([hunk(30, 30, { start: 31, end: 32 })], bodies),
+    {
+      whole: true,
+      reason: "shared code removed",
+    },
+  );
+});
+
+test("deleting a shared hook after a test selects the whole file through a real diff", () => {
+  const lines = [
+    'import { afterEach, describe, expect, it } from "vitest";',
+    'describe("group", () => {',
+    '  it("a", () => {',
+    "    expect(1).toBe(1);",
+    "  });",
+    "  afterEach(() => {",
+    "    cleanup();",
+    "  });",
+    '  it("b", () => {',
+    "    expect(2).toBe(2);",
+    "  });",
+    "});",
+    "",
+  ];
+  const previous = testCalls(lines.join("\n"), "ts");
+  assert.deepEqual(previous, [
+    { start: 3, end: 5 },
+    { start: 9, end: 11 },
+  ]);
+  // `git diff -U0` for removing lines 6-8: the hunk attaches to line 5, the
+  // closing line of test a, which the old-side range shows was not the hook's.
+  const hookDiff = [
+    "@@ -6,3 +5,0 @@",
+    "-  afterEach(() => {",
+    "-    cleanup();",
+    "-  });",
+    "",
+  ].join("\n");
+  assert.deepEqual(
+    selectTests(
+      hunkRanges(hookDiff),
+      testBodies(lines.toSpliced(5, 3).join("\n"), "ts", [3, 6]),
+      { previous },
+    ),
+    { whole: true, reason: "shared code removed" },
+  );
+  // Removing test b's assertion (old line 10) attaches to its first line and
+  // selects only test b.
+  const bodyDiff = ["@@ -10 +9,0 @@", "-    expect(2).toBe(2);", ""].join("\n");
+  assert.deepEqual(
+    selectTests(
+      hunkRanges(bodyDiff),
+      testBodies(lines.toSpliced(9, 1).join("\n"), "ts", [3, 9]),
+      { previous },
+    ),
+    { lines: [9] },
+  );
 });
 
 test("journeys tagged for special projects or platforms are never repeated", () => {

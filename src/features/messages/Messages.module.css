@@ -391,6 +391,7 @@
   min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  scroll-margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);
 }
 /* Clip the pixels, not the focusable link's outside keyboard outline. */

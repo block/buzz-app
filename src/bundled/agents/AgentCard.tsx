@@ -51,7 +51,11 @@ export function AgentCard({
   const animated = agentAvatars.some((avatar) => avatar.url === agent.picture);
   return (
     <div {...props} className={styles.card}>
-      <span className={styles.portrait} data-animated={animated || undefined}>
+      <span
+        className={styles.portrait}
+        data-animated={animated || undefined}
+        aria-hidden="true"
+      >
         <AgentPortrait agent={agent} community={community} />
       </span>
       <span className={styles.name}>{agent.name}</span>

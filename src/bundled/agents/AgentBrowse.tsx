@@ -11,6 +11,7 @@ import { ReadError } from "../../features/relay/errors";
 import type { EventData } from "../../features/relay/events";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -21,18 +22,35 @@ const pageSize = 200;
 
 export function AgentBrowse({ relay }: { relay: RelayData }) {
   const connection = useRelayConnection(relay);
+  if (connection.status !== "ready")
+    return <p>Connect to a community to browse shared agents.</p>;
+  // A new session (another community) starts over from the first page.
+  return (
+    <SharedAgentList
+      key={connection.generation}
+      session={connection.session}
+      community={connection.origin}
+    />
+  );
+}
+
+function SharedAgentList({
+  session,
+  community,
+}: {
+  session: RelaySession;
+  community: string | undefined;
+}) {
   const [events, setEvents] = useState<readonly EventData[]>([]);
   const [cursor, setCursor] = useState<{ until: number; before_id: string }>();
   const [more, setMore] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [selected, setSelected] = useState<SharedAgent>();
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const { session, status } = connection;
   // biome-ignore lint/correctness/useExhaustiveDependencies: An explicit retry reruns this finite read.
   useEffect(() => {
-    if (status !== "ready") return;
     const controller = new AbortController();
     setLoading(true);
     setError(false);
@@ -72,9 +90,7 @@ export function AgentBrowse({ relay }: { relay: RelayData }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [session, status, cursor, attempt]);
-  if (status !== "ready")
-    return <p>Connect to a community to browse shared agents.</p>;
+  }, [session, cursor, attempt]);
   const agents = sharedAgents(events);
   return (
     <div className="flex flex-col gap-section-gap">
@@ -95,7 +111,7 @@ export function AgentBrowse({ relay }: { relay: RelayData }) {
           <AgentCard
             key={agent.id}
             agent={agent}
-            community={connection.origin}
+            community={community}
             detail={agent.model || "Shared agent"}
             icon={<ModelIcon model={agent.model} />}
           >

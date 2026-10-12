@@ -1,10 +1,8 @@
-import { motion, useReducedMotion } from "motion/react";
 import { createPortal } from "react-dom";
 import { Popover } from "@base-ui/react/popover";
 import { useEffect, useLayoutEffect, useId, useRef, useState } from "react";
 import {
   CloudUploadIcon,
-  CircleNotchIcon,
   PencilSimpleIcon,
   PlusIcon,
   LinkIcon,
@@ -31,6 +29,8 @@ import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 type Props = {
   triggerStyle?: "dotted-squircle";
   inlinePicker?: boolean;
+  /** Offers only an uploaded image, not an emoji avatar. */
+  imageOnly?: boolean;
   triggerLabel?: string;
   actionTarget?: HTMLElement | null | undefined;
   value: string;
@@ -263,59 +263,6 @@ export function AvatarEditor(props: Props) {
   );
 }
 
-export function InlineAvatarImageEditor(
-  props: Props & { previewLayoutId?: string },
-) {
-  const [uploading, setUploading] = useState(false);
-  const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
-  const preview = useAvatarPreview(
-    draftPreview?.picture ?? props.value,
-    props.community,
-  );
-  const reducedMotion = useReducedMotion();
-  const callback = useRef(props.onBusyChange);
-  callback.current = props.onBusyChange;
-  useEffect(() => {
-    callback.current?.(true);
-    return () => callback.current?.(false);
-  }, []);
-  return (
-    <div className="agent-inline-image-editor space-y-4">
-      <motion.div
-        {...(props.previewLayoutId ? { layoutId: props.previewLayoutId } : {})}
-        className={styles.inlinePreview}
-        data-avatar-shape="squircle"
-        data-empty={!preview}
-        transition={{
-          duration: reducedMotion ? 0 : 0.24,
-          ease: [0.22, 1, 0.36, 1],
-        }}
-      >
-        {uploading ? (
-          <span role="status" aria-label="Uploading avatar">
-            <CircleNotchIcon
-              size={28}
-              className="motion-safe:animate-spin"
-              aria-hidden="true"
-            />
-          </span>
-        ) : preview ? (
-          <img src={preview} alt="Avatar preview" />
-        ) : (
-          <PlusIcon size={28} aria-hidden="true" />
-        )}
-      </motion.div>
-      <AvatarDraft
-        {...props}
-        imageOnly
-        onUploadBusyChange={setUploading}
-        done={props.onChange}
-        onPreview={setDraftPreview}
-      />
-    </div>
-  );
-}
-
 function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
@@ -335,7 +282,6 @@ function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
 }
 
 function AvatarDraft({
-  onUploadBusyChange,
   actionTarget,
   inlinePicker,
   imageOnly = false,
@@ -345,8 +291,6 @@ function AvatarDraft({
   disabled = false,
   done,
 }: Props & {
-  onUploadBusyChange?: (busy: boolean) => void;
-  imageOnly?: boolean;
   done(value: string): void;
   onPreview(value: DraftPreview | null): void;
 }) {
@@ -377,9 +321,6 @@ function AvatarDraft({
   const [pulse, setPulse] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    onUploadBusyChange?.(busy);
-  }, [busy, onUploadBusyChange]);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   useEffect(() => {
@@ -444,6 +385,110 @@ function AvatarDraft({
     </Button>
   );
 
+  const renderPanel = (tab: string) =>
+    tab === "image" ? (
+      <div className={styles.imagePanel}>
+        <button
+          type="button"
+          className={styles.dropzone}
+          disabled={disabled || busy || !community}
+          onClick={() => input.current?.click()}
+        >
+          <CloudUploadIcon size={24} aria-hidden="true" />
+          <span>
+            {busy
+              ? "Uploading…"
+              : dragging
+                ? "Drop image here"
+                : "Drop or browse"}
+          </span>
+        </button>
+        <input
+          ref={input}
+          type="file"
+          className="sr-only"
+          tabIndex={-1}
+          aria-label="Upload an image"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif"
+          disabled={disabled || busy || !community}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void upload(async () => file);
+          }}
+        />
+        <Field
+          label="Picture URL (optional)"
+          labelVisibility="hidden"
+          error={pictureError}
+        >
+          <InputGroup leading={<LinkIcon size={18} aria-hidden="true" />}>
+            <Input
+              type="url"
+              placeholder="Paste an image URL"
+              maxLength={2048}
+              disabled={disabled || busy}
+              value={picture}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!disabled && !busy && !pictureError) done(picture);
+                }
+              }}
+              onChange={(event) => {
+                setPicture(event.target.value);
+                setError("");
+              }}
+            />
+          </InputGroup>
+        </Field>
+      </div>
+    ) : tab === "emoji" ? (
+      <div className={styles.emojiPanel}>
+        <AvatarEmojiPicker
+          disabled={disabled || busy}
+          onSelect={(value, animate) => {
+            setEmoji(value);
+            setPulse((current) => (animate ? current + 1 : 0));
+          }}
+        />
+      </div>
+    ) : (
+      <div className={styles.backgroundPanel}>
+        {customColorOpen ? (
+          <AvatarCustomColor
+            color={color}
+            disabled={disabled || busy}
+            onChange={setColor}
+            onClose={() => setCustomColorOpen(false)}
+          />
+        ) : (
+          <fieldset className={styles.swatches} aria-label="Avatar background">
+            {colors.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                className={styles.swatch}
+                aria-label={`Use ${swatch} background`}
+                aria-pressed={color.toUpperCase() === swatch}
+                disabled={disabled || busy}
+                style={{ backgroundColor: swatch }}
+                onClick={() => setColor(swatch)}
+              />
+            ))}
+            <button
+              ref={customColorTrigger}
+              type="button"
+              className={styles.customColor}
+              aria-label="Custom background color"
+              aria-pressed={!colors.includes(color.toUpperCase())}
+              disabled={disabled || busy}
+              onClick={() => setCustomColorOpen(true)}
+            />
+          </fieldset>
+        )}
+      </div>
+    );
   return (
     <div className={styles.panelViewport} style={{ height: panelHeight }}>
       <fieldset
@@ -486,139 +531,29 @@ function AvatarDraft({
           }
         }}
       >
-        <Tabs
-          value={mode}
-          label="Avatar source"
-          variant="panel"
-          items={
-            imageOnly
-              ? [{ value: "image", label: "Image" }]
-              : [
-                  { value: "image", label: "Image" },
-                  { value: "emoji", label: "Emoji" },
-                  { value: "background", label: "Background" },
-                ]
-          }
-          onValueChange={(next) => {
-            if (!busy && !disabled) {
-              setMode(next);
-              setCustomColorOpen(false);
-              setError("");
-            }
-          }}
-          renderPanel={(tab) =>
-            tab === "image" ? (
-              <div className={styles.imagePanel}>
-                <button
-                  type="button"
-                  className={styles.dropzone}
-                  disabled={disabled || busy || !community}
-                  onClick={() => input.current?.click()}
-                >
-                  <CloudUploadIcon size={24} aria-hidden="true" />
-                  <span>
-                    {busy && !imageOnly
-                      ? "Uploading…"
-                      : dragging
-                        ? "Drop image here"
-                        : "Drop or browse"}
-                  </span>
-                </button>
-                <input
-                  ref={input}
-                  type="file"
-                  className="sr-only"
-                  tabIndex={-1}
-                  aria-label="Upload an image"
-                  accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif"
-                  disabled={disabled || busy || !community}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (file) void upload(async () => file);
-                  }}
-                />
-                <Field
-                  label="Picture URL (optional)"
-                  labelVisibility="hidden"
-                  error={pictureError}
-                >
-                  <InputGroup
-                    leading={<LinkIcon size={18} aria-hidden="true" />}
-                  >
-                    <Input
-                      type="url"
-                      placeholder="Paste an image URL"
-                      maxLength={2048}
-                      disabled={disabled || busy}
-                      value={picture}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          if (!disabled && !busy && !pictureError)
-                            done(picture);
-                        }
-                      }}
-                      onChange={(event) => {
-                        setPicture(event.target.value);
-                        setError("");
-                      }}
-                    />
-                  </InputGroup>
-                </Field>
-              </div>
-            ) : tab === "emoji" ? (
-              <div className={styles.emojiPanel}>
-                <AvatarEmojiPicker
-                  disabled={disabled || busy}
-                  onSelect={(value, animate) => {
-                    setEmoji(value);
-                    setPulse((current) => (animate ? current + 1 : 0));
-                  }}
-                />
-              </div>
-            ) : (
-              <div className={styles.backgroundPanel}>
-                {customColorOpen ? (
-                  <AvatarCustomColor
-                    color={color}
-                    disabled={disabled || busy}
-                    onChange={setColor}
-                    onClose={() => setCustomColorOpen(false)}
-                  />
-                ) : (
-                  <fieldset
-                    className={styles.swatches}
-                    aria-label="Avatar background"
-                  >
-                    {colors.map((swatch) => (
-                      <button
-                        key={swatch}
-                        type="button"
-                        className={styles.swatch}
-                        aria-label={`Use ${swatch} background`}
-                        aria-pressed={color.toUpperCase() === swatch}
-                        disabled={disabled || busy}
-                        style={{ backgroundColor: swatch }}
-                        onClick={() => setColor(swatch)}
-                      />
-                    ))}
-                    <button
-                      ref={customColorTrigger}
-                      type="button"
-                      className={styles.customColor}
-                      aria-label="Custom background color"
-                      aria-pressed={!colors.includes(color.toUpperCase())}
-                      disabled={disabled || busy}
-                      onClick={() => setCustomColorOpen(true)}
-                    />
-                  </fieldset>
-                )}
-              </div>
-            )
-          }
-        />
-        {busy && !imageOnly && (
+        {imageOnly ? (
+          renderPanel("image")
+        ) : (
+          <Tabs
+            value={mode}
+            label="Avatar source"
+            variant="panel"
+            items={[
+              { value: "image", label: "Image" },
+              { value: "emoji", label: "Emoji" },
+              { value: "background", label: "Background" },
+            ]}
+            onValueChange={(next) => {
+              if (!busy && !disabled) {
+                setMode(next);
+                setCustomColorOpen(false);
+                setError("");
+              }
+            }}
+            renderPanel={renderPanel}
+          />
+        )}
+        {busy && (
           <p role="status" className="text-body-sm">
             Uploading avatar…
           </p>

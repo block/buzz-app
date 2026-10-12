@@ -6,7 +6,6 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -22,6 +21,7 @@ import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
 import { Button } from "../../shared/design-system/ui/Button";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { CloudUploadIcon } from "../../shared/design-system/icons";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import styles from "./AgentCreate.module.css";
@@ -40,6 +40,7 @@ export function AgentCreateHeader({
   avatarNavigationRef,
   avatarActionTarget,
   onAvatarActiveChange,
+  nameRef,
 }: {
   name: string;
   picture?: string | undefined;
@@ -57,6 +58,7 @@ export function AgentCreateHeader({
   avatarNavigationRef?: Ref<{ back(): void }>;
   avatarActionTarget?: HTMLElement | null;
   onAvatarActiveChange?: (active: boolean) => void;
+  nameRef?: Ref<HTMLInputElement>;
 }) {
   const preview = useAvatarPreview(picture ?? "", community);
   const [view, setView] = useState("selected");
@@ -82,25 +84,6 @@ export function AgentCreateHeader({
         avatar: members[Math.floor(Math.random() * members.length)],
       };
     }),
-  );
-  // Hot updates preserve the open dialog's random choices; retire removed assets.
-  const currentRepresentatives = useMemo(
-    () =>
-      avatarPacks.map((pack) => {
-        const members = agentAvatars.filter(
-          (avatar) => avatar.collectionId === pack.id,
-        );
-        const previous = representatives.find(
-          (item) => item.id === pack.id,
-        )?.avatar;
-        return {
-          ...pack,
-          avatar:
-            members.find((avatar) => avatar.id === previous?.id) ??
-            members[Math.floor(Math.random() * members.length)],
-        };
-      }),
-    [representatives],
   );
   useLayoutEffect(() => {
     if (previousView.current !== view)
@@ -149,6 +132,7 @@ export function AgentCreateHeader({
       layoutId={avatar.id}
       transition={transition}
       className={styles.artwork}
+      aria-hidden="true"
     >
       <PackedAgentAvatar avatar={avatar} />
     </motion.div>
@@ -229,9 +213,8 @@ export function AgentCreateHeader({
                 </motion.div>
               ) : view === "collections" ? (
                 <div className={styles.collections}>
-                  {currentRepresentatives.map((pack) => (
-                    <button
-                      type="button"
+                  {representatives.map((pack) => (
+                    <SurfaceButton
                       className={styles.collection}
                       key={pack.id}
                       disabled={disabled}
@@ -241,23 +224,23 @@ export function AgentCreateHeader({
                         ? artwork(selected)
                         : pack.avatar && artwork(pack.avatar)}
                       <span>{pack.label}</span>
-                    </button>
+                    </SurfaceButton>
                   ))}
-                  <button
-                    type="button"
+                  <SurfaceButton
                     className={styles.collection}
                     disabled={disabled}
                     onClick={() => setView("image")}
                   >
                     <CloudUploadIcon size={48} aria-hidden="true" />
                     <span>Use image</span>
-                  </button>
+                  </SurfaceButton>
                 </div>
               ) : view === "image" ? (
                 <div className={styles.imageEditor}>
                   <AvatarEditor
                     triggerStyle="dotted-squircle"
                     inlinePicker
+                    imageOnly
                     actionTarget={avatarActionTarget}
                     shape="squircle"
                     value={selected ? "" : (picture ?? "")}
@@ -266,7 +249,8 @@ export function AgentCreateHeader({
                     disabled={disabled}
                     onBusyChange={onBusyChange}
                     onChange={(value) => {
-                      onChange({ picture: value });
+                      // Done with no image keeps the avatar it had.
+                      if (value) onChange({ picture: value });
                       setView("selected");
                     }}
                   />
@@ -284,8 +268,7 @@ export function AgentCreateHeader({
                   }
                 >
                   {choices.map((avatar) => (
-                    <button
-                      type="button"
+                    <SurfaceButton
                       key={avatar.id}
                       className={styles.option}
                       aria-label={avatar.label}
@@ -296,7 +279,7 @@ export function AgentCreateHeader({
                       }}
                     >
                       {artwork(avatar)}
-                    </button>
+                    </SurfaceButton>
                   ))}
                 </fieldset>
               )}
@@ -322,6 +305,7 @@ export function AgentCreateHeader({
         >
           <Field label="Name" labelVisibility="hidden">
             <Input
+              ref={nameRef}
               appearance="title"
               disabled={disabled}
               placeholder="Agent name"

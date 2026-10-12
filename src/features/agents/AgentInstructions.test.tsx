@@ -55,7 +55,7 @@ function inCard(ui: React.ReactElement) {
 }
 
 const open = (user: ReturnType<typeof userEvent.setup>) =>
-  user.click(screen.getByRole("button", { name: "Agent instructions" }));
+  user.click(screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }));
 
 it("is a plain labelled field outside the card", async () => {
   const user = userEvent.setup();
@@ -64,7 +64,7 @@ it("is a plain labelled field outside the card", async () => {
   expect(field).toHaveValue("Be kind.");
   expect(field).toHaveAccessibleDescription("Added to every session.");
   expect(
-    screen.queryByRole("button", { name: "Agent instructions" }),
+    screen.queryByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).not.toBeInTheDocument();
   await user.type(field, " Really.");
   expect(field).toHaveValue("Be kind. Really.");
@@ -78,7 +78,7 @@ it("disables the plain field", () => {
 it("shows examples and 'Add instructions' in the card while empty", () => {
   const { edit } = inCard(<Harness />);
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toHaveTextContent("Add instructions");
   expect(screen.getByText(/Help me plan my week/)).toBeInTheDocument();
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -88,7 +88,7 @@ it("shows examples and 'Add instructions' in the card while empty", () => {
 it("treats whitespace alone as empty", () => {
   inCard(<Harness initial={"  \n "} />);
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toHaveTextContent("Add instructions");
   expect(screen.getByText(/Help me plan my week/)).toBeInTheDocument();
 });
@@ -98,14 +98,14 @@ it("shows a preview and 'Edit instructions' in the card once set", () => {
   expect(screen.getByText("Triage my inbox.")).toBeInTheDocument();
   expect(screen.queryByText(/Help me plan my week/)).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toHaveTextContent("Edit instructions");
 });
 
 it("disables the card's entry button", () => {
   inCard(<Harness disabled />);
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toBeDisabled();
 });
 
@@ -117,7 +117,7 @@ it("opens an editor over the card and registers Back and Done", async () => {
   expect(editor).toHaveValue("Triage.");
   expect(editor).toHaveFocus();
   expect(
-    screen.queryByRole("button", { name: "Agent instructions" }),
+    screen.queryByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).not.toBeInTheDocument();
   expect(edit).toHaveBeenCalledTimes(1);
   expect(current()).toEqual({
@@ -137,7 +137,7 @@ it("keeps the new text on Done", async () => {
   act(() => current()?.done());
   expect(screen.getByText("Triage. Then summarize.")).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toHaveTextContent("Edit instructions");
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
@@ -155,6 +155,9 @@ it("restores the text from when editing began on Back", async () => {
   expect(onChange).toHaveBeenLastCalledWith("Triage.");
   expect(screen.getByText("Triage.")).toBeInTheDocument();
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Edit instructions" }),
+  ).toHaveFocus();
 });
 
 it("returns to the examples on Back after instructions were typed from empty", async () => {
@@ -167,7 +170,7 @@ it("returns to the examples on Back after instructions were typed from empty", a
   );
   act(() => current()?.back());
   expect(
-    screen.getByRole("button", { name: "Agent instructions" }),
+    screen.getByRole("button", { name: /^(Add|Edit) instructions$/ }),
   ).toHaveTextContent("Add instructions");
   expect(screen.queryByText("Something new")).not.toBeInTheDocument();
 });

@@ -80,6 +80,7 @@ export function AgentCreateDialog({
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
   const avatarNavigation = useRef<{ back(): void }>(null);
+  const nameField = useRef<HTMLInputElement>(null);
   const form = useId();
   const card = useMemo(() => ({ corner, edit: setEditing }), [corner]);
   const Create = type?.Create;
@@ -123,6 +124,7 @@ export function AgentCreateDialog({
       }}
       title="Create agent"
       size="wide"
+      initialFocus={nameField}
       bodyLayout="flex"
       // A started draft only closes from the close button.
       dismissOnOutsideClick={!dirty}
@@ -184,6 +186,7 @@ export function AgentCreateDialog({
               setDirty(true);
               setError("");
             }}
+            nameRef={nameField}
             cornerRef={setCorner}
             corner={
               types.length > 1 ? (

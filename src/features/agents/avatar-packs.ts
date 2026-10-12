@@ -25,20 +25,3 @@ export function randomAgentAvatar() {
   if (!avatar) throw new Error("Bundled avatar catalog is empty");
   return avatar;
 }
-
-/** Retired pack choices in an open create draft should not become broken images. */
-export function isRetiredAgentAvatar(picture: string): boolean {
-  if (agentAvatars.some((avatar) => avatar.url === picture)) return false;
-  try {
-    const url = new URL(picture);
-    const bundled = new URL(agentAvatars[0]?.url ?? "");
-    return (
-      url.origin === bundled.origin &&
-      /^\/avatars\/[^/]+\/poster\/(pollies|fuzzies|gloopies)\//.test(
-        url.pathname,
-      )
-    );
-  } catch {
-    return false;
-  }
-}

@@ -47,6 +47,7 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  ArrowsClockwiseIcon,
   CopyIcon,
   DotsThreeIcon,
   PlusIcon,
@@ -376,13 +377,7 @@ function ProviderSubmenu({
   onSelect(key: string): void;
 }) {
   const check = () => {
-    for (const { provider } of types)
-      if (provider)
-        try {
-          void Promise.resolve(provider.check()).catch(() => {});
-        } catch {
-          // A failed contribution does not prevent the remaining health checks.
-        }
+    for (const { provider } of types) if (provider) checkProvider(provider);
   };
   return (
     <MenuSubmenu>
@@ -413,6 +408,14 @@ function ProviderSubmenu({
       </MenuSubmenuPopup>
     </MenuSubmenu>
   );
+}
+
+function checkProvider(provider: NonNullable<RegisteredAgentType["provider"]>) {
+  try {
+    void Promise.resolve(provider.check()).catch(() => {});
+  } catch {
+    // A failed contribution does not break host-owned provider controls.
+  }
 }
 
 function ProviderIcon({ type }: { type: RegisteredAgentType }) {
@@ -564,6 +567,17 @@ function ManagedProviderDialog({
       dismissOnOutsideClick
       preventClose={!!state.blocking}
       finalFocus={() => finalFocus.current}
+      headerActions={
+        <IconButton
+          aria-label="Check again"
+          title="Check again"
+          size="sm"
+          disabled={state.readiness === "checking" || !!state.blocking}
+          aria-busy={state.readiness === "checking" || undefined}
+          icon={<ArrowsClockwiseIcon size={16} aria-hidden="true" />}
+          onClick={() => checkProvider(provider)}
+        />
+      }
     >
       <Body />
     </Dialog>

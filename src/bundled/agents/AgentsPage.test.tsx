@@ -336,12 +336,23 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     fireEvent.click(echo);
     const dialog = await screen.findByRole("dialog", { name: "Echo" });
     expect(within(dialog).getByText("Echo controls")).toBeVisible();
+    const refresh = within(dialog).getByRole("button", { name: "Check again" });
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    expect(
+      within(dialog.querySelector("header") as HTMLElement).getAllByRole(
+        "button",
+      ),
+    ).toEqual([refresh, close]);
+    const checks = echoProvider.check.mock.calls.length;
+    await user.click(refresh);
+    expect(echoProvider.check).toHaveBeenCalledTimes(checks + 1);
+    act(() => echoProvider.set({ readiness: "checking" }));
+    expect(refresh).toBeDisabled();
     act(() => echoProvider.set({ readiness: "ready", blocking: true }));
     await user.keyboard("{Escape}");
     expect(dialog).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("button", { name: "Close" }),
-    ).toBeDisabled();
+    expect(refresh).toBeDisabled();
+    expect(close).toBeDisabled();
     act(() => echoProvider.set({ readiness: "ready" }));
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,

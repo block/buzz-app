@@ -262,7 +262,7 @@ it("preserves native behavior for invalid defaults and keeps explicit agent mode
   );
 });
 
-it("keeps focus on sign-in while it runs and on the same button after cancel", async () => {
+it("keeps focus on sign-in while it runs and restores it after cancel", async () => {
   const Setup = providerSetup(installed({ loggedIn: false }).type);
   render(<Setup />);
   const user = userEvent.setup();
@@ -276,9 +276,8 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   );
   const cancel = screen.getByRole("button", { name: "Cancel" });
   await user.click(cancel);
-  await waitFor(() => expect(cancel).toHaveTextContent("Check again"));
-  expect(cancel).toHaveFocus();
-  expect(cancel).not.toHaveAttribute("disabled");
+  await waitFor(() => expect(cancel).not.toBeInTheDocument());
+  expect(signIn).toHaveFocus();
 });
 
 it("saves settings as one config", async () => {

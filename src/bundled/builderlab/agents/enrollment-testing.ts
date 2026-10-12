@@ -75,6 +75,7 @@ export function enrollmentFixture(
     status: "ready",
     generation: 1,
     viewer,
+    origin: "https://community.example",
     scope: relayPartition("https://community.example", viewer),
     session: owner.session,
   };

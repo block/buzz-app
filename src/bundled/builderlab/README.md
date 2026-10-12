@@ -3,8 +3,31 @@
 The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
-This type has empty configuration and no execution handler yet; existing remote
-agents remain in Settings until the later migration.
+`adapter-type/` connects this hosted type to Beekeeper: provision registers the
+agent, activation submits the owner proof and community supplied by Agents, and
+removal deletes the provider runtime. Agents owns unfinished setup recovery and
+the runtime-tagged community registration; the provider keeps the key and runs
+the agent even while Buzz is closed. On desktop, Create agent and confirmed
+deletion start browser sign-in when needed, then continue the action. Both share
+an existing Settings sign-in attempt; a failed or canceled login leaves the
+action available for retry. Settings still provides sign-in and sign-out.
+Canceling an action's wait does not cancel a shared login; disabling the plugin
+or closing Buzz cancels it.
+The agent's Instructions tab reads its current instructions from Builderlab and
+saves changes directly to the provider. Loading and saving use the same login;
+failed saves keep the draft, and switching accounts requires the original
+account before saving. Empty instructions can be saved to clear them.
+Profile updates remain TODO and report an unsupported-operation error.
+
+The adapter retains the provider agent ID, server, verified account subject and
+provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.
+No credentials or owner proofs are saved. These records survive restart and
+deletion so retries can confirm an already-missing runtime without assuming
+absence from another account's list. Registration retains its replay UUID until
+Agents has saved unfinished setup and begins activation, or provider deletion
+is confirmed. On another device, removal resolves the ID from the signed-in
+account's list; an unknown key is refused. Existing Settings-created
+agents are not migrated into this type.
 
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;

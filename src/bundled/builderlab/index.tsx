@@ -10,6 +10,7 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
+import { builderlabType } from "./adapter-type";
 
 export const inject = [
   "host",
@@ -28,16 +29,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  if (!unavailable)
-    ctx.agents.register({
-      id: "builderlab",
-      title: "Builderlab",
-      description: "TBD",
-      defaults: () => ({ config: {} }),
-    });
-  const session = createOAuthSession((signal) =>
-    browserCredential(ctx.host, signal),
-  );
+  const session = createOAuthSession((signal) => {
+    if (!browserLoginAvailable())
+      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
+    return browserCredential(ctx.host, signal);
+  });
   ctx.effect(() => () => session.dispose());
   const agents = createAgentClient(ctx.host, session, () => {
     const selected = ctx.communityReader.snapshot().selected;
@@ -45,6 +41,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? communityDestination(selected).url.replace(/^https:/, "wss:")
       : undefined;
   });
+  if (!unavailable) ctx.agents.register(builderlabType(agents, session));
   const enrollment = createEnrollment(ctx.relay, ctx.communityReader, session);
   ctx.settingsCards.register({
     id: "login",

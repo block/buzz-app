@@ -86,6 +86,19 @@ function setup(saved: Agent[], { shown = true } = {}) {
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
     tabs: [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }],
+    Create: ({
+      config,
+      onChange,
+    }: {
+      config: { reply: string };
+      onChange(config: { reply: string }): void;
+    }) => (
+      <input
+        aria-label="Reply"
+        value={config.reply}
+        onChange={(event) => onChange({ reply: event.target.value })}
+      />
+    ),
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type];
@@ -214,16 +227,20 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("makes a new agent in the side panel and goes straight to building it", async () => {
+it("makes a new agent in the create dialog and goes straight to building it", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "New agent" }));
-  const form = screen.getByRole("form", { name: "New agent" });
-  expect(within(form).getByText("Says its line.")).toBeInTheDocument();
-  await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expect(within(dialog).getByText("Echo")).toBeInTheDocument();
+  await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
   expect(agents.create).toHaveBeenCalledWith({
     type: "test/echo",
     name: "Nova",
+    picture: expect.stringMatching(/^https:\/\//),
+    config: { reply: "Hi there" },
   });
   expect(await screen.findByRole("tab", { name: "Attention" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
@@ -233,8 +250,9 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)], { shown: false });
   await user.click(screen.getByRole("button", { name: "New agent" }));
-  const form = screen.getByRole("form", { name: "New agent" });
-  await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
   expect(
     await screen.findByRole("listbox", { name: "Agents" }),
@@ -262,56 +280,55 @@ it("saves a rename on Enter and discards it on Escape", async () => {
   });
 });
 
-it("brings over an earlier agent as the chosen type and drops it from the list", async () => {
+it("imports an earlier agent as the chosen type and shows it in Your agents", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("button", { name: "Bring over" }));
-  const list = await screen.findByRole("list", {
-    name: "Agents to bring over",
-  });
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const list = await screen.findByRole("region", { name: "Agents to import" });
   expect(
     within(list).getByText(/Buzz 1\.0 harness agent · npub/),
   ).toBeInTheDocument();
   expect(within(list).getByText(/Buzz 0\.X · npub/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Bring over Bea" }));
+  await user.click(screen.getByRole("button", { name: "Import Bea" }));
   expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
     pubkey: "b".repeat(64),
     type: "test/echo",
   });
-  expect(within(list).queryByText("Bea")).not.toBeInTheDocument();
-  expect(within(list).getByText("Ada")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
-it("brings over agents only as a type that runs here", async () => {
+it("imports agents only as a type that runs here", async () => {
   const user = userEvent.setup();
-  const { types } = setup([]);
+  const { agents, types } = setup([]);
   types.push({
     ...types[0],
     key: "test/cloud",
     title: "Cloud",
     remote: {},
   } as unknown as RegisteredAgentType);
-  await user.click(screen.getByRole("button", { name: "Bring over" }));
-  await screen.findByRole("button", { name: "Bring over Ada" });
-  expect(screen.getByRole("radio", { name: "Echo" })).toBeInTheDocument();
-  expect(
-    screen.queryByRole("radio", { name: "Cloud" }),
-  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const importAda = await screen.findByRole("button", { name: "Import Ada" });
+  expect(screen.queryByLabelText("Import as")).not.toBeInTheDocument();
+  await user.click(importAda);
+  expect(agents.port).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "test/echo" }),
+  );
 });
 
-it("shows why bringing an agent over failed and keeps it listed", async () => {
+it("shows why importing an agent failed and keeps it listed", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
-  await user.click(screen.getByRole("button", { name: "Bring over" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Bring over Ada" }),
-  );
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(await screen.findByRole("button", { name: "Import Ada" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Keychain access was denied",
   );
-  expect(screen.getByRole("button", { name: "Bring over Ada" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
 });
 
 it("makes a team of chosen agents and lists it with its members", async () => {

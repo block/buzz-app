@@ -424,6 +424,87 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
   ).toHaveText("Keep this reply");
 });
 
+// Native frontmost hit testing and pointer capture across history navigation
+// cannot be established in jsdom. Keep both regressions on actual pane wiring.
+for (const scenario of ["narrow overlay", "same-channel history"]) {
+  test(`thread dragging respects ${scenario}`, async ({ page, app }) => {
+    await open(page, app);
+    const roots = app.histories
+      .get("primary/alpha")
+      .filter((row) => row.content.startsWith("Thread root"));
+    const side = page.locator("[data-panel-workspace]");
+    const main = page.locator("[data-main-workspace]");
+    const tabs = (host) =>
+      host.locator('[role="tab"][data-tab-value^="thread:"]');
+    for (const root of roots.slice(0, 2)) {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      await expect(
+        side.getByRole("complementary", { name: "Thread", exact: true }),
+      ).toBeVisible();
+    }
+    const ids = await tabs(side).evaluateAll((rows) =>
+      rows.map((row) => row.dataset.tabValue),
+    );
+    if (scenario === "narrow overlay") {
+      await page.setViewportSize({ width: 800, height: 700 });
+      // Establish the overlay, not just a small viewport that might stack panes.
+      await expect
+        .poll(async () => {
+          const a = await main.boundingBox(),
+            b = await side.boundingBox();
+          return !!a && !!b && b.x < a.x + a.width && a.y < b.y + b.height;
+        })
+        .toBe(true);
+    }
+    const source = await tabs(side).nth(1).boundingBox();
+    const destination = await tabs(side).first().boundingBox();
+    await page.mouse.move(
+      source.x + source.width / 2,
+      source.y + source.height / 2,
+    );
+    await page.mouse.down();
+    try {
+      await page.mouse.move(
+        destination.x + 2,
+        destination.y + destination.height / 2,
+        { steps: 8 },
+      );
+      await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
+      if (scenario === "same-channel history") {
+        await page.goBack();
+        await expect(
+          side
+            .getByRole("complementary", { name: "Thread", exact: true })
+            .getByText("Thread root 0", { exact: true }),
+        ).toBeVisible();
+        await expect(page.locator(".buzz-tab-drag-insertion")).toHaveCount(0);
+        await expect(page.locator("html")).not.toHaveAttribute(
+          "data-tab-dragging",
+          "",
+        );
+      }
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(tabs(main)).toHaveCount(0);
+    await expect
+      .poll(() =>
+        tabs(side).evaluateAll((rows) =>
+          rows.map((row) => row.dataset.tabValue),
+        ),
+      )
+      .toEqual(scenario === "narrow overlay" ? [ids[1], ids[0]] : ids);
+    if (scenario === "same-channel history") {
+      await expect(
+        side.locator('[role="tab"][aria-selected="true"]'),
+      ).toHaveAttribute("data-tab-value", ids[0]);
+    }
+  });
+}
+
 // A malformed root hint crosses real navigation/reader/store/portal wiring;
 // only the verified message ancestry may replace selection, never an old editor.
 test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({

@@ -312,6 +312,7 @@ function SessionWork({
     extensions,
     leadingIds: [],
     continuingVisit: continuing.current,
+    navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
     conversationIcon: (item) => {

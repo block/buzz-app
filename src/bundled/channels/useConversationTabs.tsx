@@ -51,6 +51,7 @@ export function useConversationTabs({
   extensions,
   leadingIds,
   continuingVisit,
+  navigationSignal,
   isLive,
   openLink,
   fallbackFocus,
@@ -73,6 +74,7 @@ export function useConversationTabs({
   extensions?: ConversationExtensions | undefined;
   leadingIds: string[];
   continuingVisit: boolean;
+  navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
   openLink(url: string): boolean;
   fallbackFocus?: RefObject<HTMLElement | null>;
@@ -336,6 +338,7 @@ export function useConversationTabs({
   };
   const drag = useTabDrag({
     visit,
+    navigationSignal,
     movable: new Set(
       tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
     ),

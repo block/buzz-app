@@ -68,6 +68,7 @@ function DragPreview({ store }: { store: ReturnType<typeof createFeedback> }) {
 /** Title-only Panel Swap gesture. The conversation owner alone commits moves. */
 export function useTabDrag({
   visit,
+  navigationSignal,
   movable,
   order,
   closedSideIndex,
@@ -75,6 +76,8 @@ export function useTabDrag({
   move,
 }: {
   visit: object;
+  /** Navigation owns cancellation even between visits in the same channel. */
+  navigationSignal?: AbortSignal | undefined;
   movable: ReadonlySet<string>;
   order: ReadonlySet<string>;
   /** Append an edge drop to the retained side inventory when it is closed. */
@@ -102,11 +105,20 @@ export function useTabDrag({
         host.getClientRects().length > 0
       );
     }
-    function target(active: Gesture, x: number, y: number): Target | undefined {
+    function target(
+      active: Gesture,
+      x: number,
+      y: number,
+      front?: HTMLElement,
+    ): Target | undefined {
       const main = hosts.current.get("main");
       const side = hosts.current.get("side");
       for (const [pane, host] of hosts.current) {
-        if (!visible(host) || !latest.current.canMove(active.id, pane))
+        if (
+          (front && host !== front) ||
+          !visible(host) ||
+          !latest.current.canMove(active.id, pane)
+        )
           continue;
         const list = host.querySelector<HTMLElement>('[role="tablist"]');
         // The direct header is the pane's semantic chrome, not a nested
@@ -195,9 +207,19 @@ export function useTabDrag({
       }
       // A long strip scrolls while held near its visible edges. One animation
       // frame loop exists only during a drag, never while the workspace is idle.
+      // Overlay panes can cover a still-visible main header. Real hit testing
+      // chooses the frontmost host; whitespace outside hosts keeps tolerance.
+      const hit = document.elementFromPoint(point.x, point.y);
+      const front = [...hosts.current.values()].find((host) =>
+        host.contains(hit),
+      );
       let scrolling = false;
       for (const [pane, host] of hosts.current) {
-        if (!visible(host) || !latest.current.canMove(active.id, pane))
+        if (
+          (front && host !== front) ||
+          !visible(host) ||
+          !latest.current.canMove(active.id, pane)
+        )
           continue;
         const list = host.querySelector<HTMLElement>('[role="tablist"]');
         if (!list) continue;
@@ -215,7 +237,7 @@ export function useTabDrag({
         if (direction) list.scrollLeft += direction * 8;
         scrolling ||= previous !== list.scrollLeft;
       }
-      active.target = target(active, point.x, point.y);
+      active.target = target(active, point.x, point.y, front);
       setPaint({
         label: active.label,
         ghost: {
@@ -292,6 +314,7 @@ export function useTabDrag({
       finish(true);
     }
     const blur = () => finish(true);
+    navigationSignal?.addEventListener("abort", blur);
     document.addEventListener("pointermove", pointerMove, { passive: false });
     document.addEventListener("pointerup", pointerUp);
     document.addEventListener("pointercancel", pointerCancel);
@@ -308,8 +331,9 @@ export function useTabDrag({
       document.removeEventListener("keydown", cancelKey, true);
       window.removeEventListener("blur", blur);
       window.removeEventListener("resize", blur);
+      navigationSignal?.removeEventListener("abort", blur);
     };
-  }, [visit, setPaint]);
+  }, [visit, navigationSignal, setPaint]);
   function host(pane: DragPane): TabDragHost {
     return {
       attach(element) {
@@ -319,6 +343,7 @@ export function useTabDrag({
       begin(event) {
         suppressClick.current = false;
         if (
+          navigationSignal?.aborted ||
           event.button !== 0 ||
           !event.isPrimary ||
           event.pointerType === "touch"

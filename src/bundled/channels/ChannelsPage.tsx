@@ -665,6 +665,7 @@ function ChannelWorkspace({
     onRetryNavigation: () => void navigator?.retry(),
     onOpenDrawer: () => setSettings(undefined),
     continuingVisit,
+    navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
     openLink: (url) => openLink(url, true),
     fallbackFocus: settingsTrigger,

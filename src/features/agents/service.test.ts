@@ -567,7 +567,7 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
   expect(await published(native, 7)).toHaveLength(4);
 });
 
-it("treats a reply to something the agent published as addressed", async () => {
+it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   run.mockImplementationOnce(async ({ agent }) => {
@@ -575,10 +575,24 @@ it("treats a reply to something the agent published as addressed", async () => {
   });
   emit({ events: [event("m", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  // The publish above returned event p1.
-  emit({ events: [event("r", { tags: [["e", "p1".padEnd(64, "0")]] })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].trigger.type).toBe("mention");
+  // The publish above returned event p1, which the relay sends back.
+  const root = "p1".padEnd(64, "0");
+  const reply = (id: string, patch: Partial<RelayEvent> = {}) =>
+    event(id, {
+      ...patch,
+      tags: [["h", channel], ["e", root, "", "reply"], ...(patch.tags ?? [])],
+    });
+  emit({ events: [event("p1", { pubkey: bot, content: "hi" })] });
+  emit({ events: [reply("quiet")] });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  emit({ events: [reply("watched", { content: "deploy" })] });
+  emit({ events: [reply("named", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls.slice(1).map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+    "mention",
+  ]);
 });
 
 it("passes the model and effort its owner asked for, and no other", async () => {

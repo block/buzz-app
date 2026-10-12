@@ -26,7 +26,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,
    session scope, and instructions, then **Save**.
-4. Mentions and replies are automatic; **Attention** also lets you add event
+4. Mentions are automatic; **Attention** also lets you add event
    watches. In a channel you can write to, select the agent from the `@` picker
    and add it to the channel if prompted. Send: `@Codex Test create hello.txt containing
    hello in the workspace, read it back, and report what you found`. Use the

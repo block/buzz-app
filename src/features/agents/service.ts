@@ -118,8 +118,7 @@ export type AgentHandle = Readonly<{
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
 }>;
 export type Trigger =
-  /** Directly addressed: a chat message that mentions the agent or replies to
-   * something it wrote. */
+  /** Directly addressed: a chat message that mentions the agent. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
@@ -410,7 +409,7 @@ type Runner = {
   running: boolean;
   windowStart: number;
   admitted: number;
-  /** Events seen, and events it wrote (so replies to it are addressed). */
+  /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
   readonly wrote: Set<string>;
   /** Whether native may hold the agent for this copy; true at first, since
@@ -1123,7 +1122,8 @@ export class AgentsService extends Service implements Agents {
       for (const event of batch.events) {
         if (runner.seen.has(event.id)) continue;
         bounded(runner.seen, event.id);
-        // An agent never hears itself; its own events make replies addressed.
+        // An agent never hears itself; its own events keep reactions to them
+        // from its watches.
         if (event.pubkey === agent.pubkey) {
           bounded(runner.wrote, event.id);
           continue;
@@ -1139,7 +1139,7 @@ export class AgentsService extends Service implements Agents {
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // reply to it enough, two agents replying to each other would never stop. The
+    // watch enough, two agents replying to each other would never stop. The
     // claimed owner only narrows this; the type verifies it before answering.
     if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
       return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)

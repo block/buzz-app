@@ -1,8 +1,13 @@
-// Browse: the agents this community's members have shared, read-only. The
-// catalog is read a page at a time; an over-budget page is retried smaller.
-import { useEffect, useRef, useState } from "react";
+// Browse: the agents this community's members have shared, each importable
+// as a new agent. The catalog is read a page at a time; an over-budget page is
+// retried smaller.
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 import {
   type SharedAgent,
   sharedAgents,
@@ -14,13 +19,31 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { formatPublicKey } from "../../shared/identity/public-key";
-import { AgentCard } from "./AgentCard";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Select } from "../../shared/design-system/ui/Select";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import {
+  canonicalPublicKey,
+  formatPublicKey,
+} from "../../shared/identity/public-key";
+import { AgentCard, AgentPortrait } from "./AgentCard";
 import cardStyles from "./AgentCard.module.css";
+import styles from "./AgentBrowse.module.css";
 
 const pageSize = 200;
 
-export function AgentBrowse({ relay }: { relay: RelayData }) {
+type Importing = Readonly<{
+  agents: Agents;
+  /** The types an import can be, which run on this computer. */
+  types: readonly RegisteredAgentType[];
+  onImported(): void;
+}>;
+
+export function AgentBrowse({
+  relay,
+  ...importing
+}: Importing & { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   if (connection.status !== "ready")
     return <p>Connect to a community to browse shared agents.</p>;
@@ -30,6 +53,7 @@ export function AgentBrowse({ relay }: { relay: RelayData }) {
       key={connection.generation}
       session={connection.session}
       community={connection.origin}
+      {...importing}
     />
   );
 }
@@ -37,7 +61,8 @@ export function AgentBrowse({ relay }: { relay: RelayData }) {
 function SharedAgentList({
   session,
   community,
-}: {
+  ...importing
+}: Importing & {
   session: RelaySession;
   community: string | undefined;
 }) {
@@ -148,20 +173,179 @@ function SharedAgentList({
           if (!open) setSelected(undefined);
         }}
         title={selected?.name ?? "Shared agent"}
+        description="Import makes it your own new agent, with this name, picture and instructions. The model is yours to choose after."
+        size="wide"
         finalFocus={trigger}
+        actions={
+          selected && (
+            <ImportShared
+              key={selected.id}
+              shared={selected}
+              {...importing}
+              onImported={() => {
+                setSelected(undefined);
+                importing.onImported();
+              }}
+            />
+          )
+        }
       >
         {selected && (
-          <div className="flex flex-col gap-4">
-            {selected.model && <p>{selected.model}</p>}
-            <p className="text-body-sm text-secondary break-all">
-              Shared by {formatPublicKey(selected.owner) ?? selected.owner}
-            </p>
-            <p className="whitespace-pre-wrap">
-              {selected.instructions || "No instructions included."}
-            </p>
-          </div>
+          <SharedAgentDetails
+            agent={selected}
+            session={session}
+            community={community}
+          />
         )}
       </Dialog>
+    </div>
+  );
+}
+
+function SharedAgentDetails({
+  agent,
+  session,
+  community,
+}: {
+  agent: SharedAgent;
+  session: RelaySession;
+  community: string | undefined;
+}) {
+  return (
+    <div className={styles.details}>
+      <div className={styles.identity}>
+        <span className={styles.portrait} aria-hidden="true">
+          <AgentPortrait agent={agent} community={community} />
+        </span>
+        <dl className={styles.facts}>
+          <dt>Model</dt>
+          <dd className={styles.fact}>
+            <ModelIcon model={agent.model} />
+            {agent.model || "Not given"}
+          </dd>
+          <dt>Shared by</dt>
+          <dd>
+            <Sharer
+              pubkey={agent.owner}
+              session={session}
+              community={community}
+            />
+          </dd>
+        </dl>
+      </div>
+      <section className={styles.instructions} aria-label="Instructions">
+        {agent.instructions || "No instructions included."}
+      </section>
+    </div>
+  );
+}
+
+/** Who shared it, by their profile; the key itself is a hover away. */
+function Sharer({
+  pubkey,
+  session,
+  community,
+}: {
+  pubkey: string;
+  session: RelaySession;
+  community: string | undefined;
+}) {
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  useEffect(() => {
+    void session.profiles.ensure([pubkey]).catch(() => {});
+  }, [session, pubkey]);
+  const profile = profiles.get(pubkey);
+  const picture = useAvatarPreview(profile?.picture ?? "", community);
+  const npub = canonicalPublicKey(pubkey) ?? pubkey;
+  const name =
+    profile && !profile.nameIsFallback
+      ? profile.name
+      : (formatPublicKey(pubkey) ?? pubkey);
+  return (
+    <Tooltip content={npub} delay={300}>
+      <span
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the key in the tooltip.
+        tabIndex={0}
+        className={styles.fact}
+      >
+        <Avatar src={picture} alt="" fallback={name} size="small" />
+        <span className="truncate">{name}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Imports the shared agent as a new agent of the chosen type, through the
+ * same path that imports an earlier system's agents. */
+function ImportShared({
+  shared,
+  agents,
+  types,
+  onImported,
+}: Importing & { shared: SharedAgent }) {
+  const [type, setType] = useState(types[0]?.key ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const chosen = types.find((item) => item.key === type) ?? types[0];
+  if (!chosen)
+    return (
+      <p className="m-0 text-body-sm text-secondary">
+        Enable an agent type plugin to import agents.
+      </p>
+    );
+  const run = async () => {
+    setPending(true);
+    setError("");
+    try {
+      await agents.port({
+        source: "shared",
+        type: chosen.key,
+        name: shared.name,
+        ...(shared.picture ? { picture: shared.picture } : {}),
+        instructions: shared.instructions,
+      });
+      onImported();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setPending(false);
+    }
+  };
+  return (
+    <div className={styles.import}>
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      {types.length > 1 && (
+        <Select
+          label="Import as"
+          value={chosen.key}
+          disabled={pending}
+          groups={[
+            {
+              label: "Agent types",
+              options: types.map((item) => ({
+                value: item.key,
+                label: item.title,
+              })),
+            },
+          ]}
+          onValueChange={setType}
+        />
+      )}
+      <Button
+        variant="primary"
+        loading={pending}
+        disabled={pending}
+        onClick={() => void run()}
+      >
+        Import
+      </Button>
     </div>
   );
 }

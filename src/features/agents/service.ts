@@ -294,6 +294,19 @@ export type AgentsSnapshot = Readonly<{
 }>;
 export type { Carry, Team };
 export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
+/** What `port` imports: an identity an earlier agent system saved on this
+ * machine, or an agent a community member shared. */
+export type PortInput = Readonly<
+  | { source: PortSource; pubkey: string; type: string }
+  | {
+      source: "shared";
+      type: string;
+      name: string;
+      /** An HTTPS image URL. */
+      picture?: string;
+      instructions?: string;
+    }
+>;
 export type NewAgent = Readonly<{
   type: string;
   name: string;
@@ -322,12 +335,11 @@ export type Agents = {
   /** Identities earlier agent systems saved on this machine that are not
    * Agents yet. */
   portable(): Promise<PortableAgents>;
-  /** Takes one over as an agent of `type` in the selected community, keeping its
-   * key, name and picture, and whatever of its instructions and workspace the
-   * type adopts. Its other settings stay behind. */
-  port(
-    input: Readonly<{ source: PortSource; pubkey: string; type: string }>,
-  ): Promise<Agent>;
+  /** Imports one as an agent of `type` in the selected community: an identity
+   * from `portable` keeps its key, name and picture, and a shared agent gets a
+   * new key with its name and picture. Either keeps whatever of its
+   * instructions and workspace the type adopts; its other settings stay behind. */
+  port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. A hosted agent is archived,
@@ -843,13 +855,26 @@ export class AgentsService extends Service implements Agents {
     };
   }
 
-  async port({
-    source,
-    pubkey,
-    type,
-  }: Readonly<{ source: PortSource; pubkey: string; type: string }>) {
-    return this.add(type, (native, destination, owner) =>
-      native.port(source, pubkey, destination, owner, type),
+  async port(input: PortInput) {
+    const { type } = input;
+    if (input.source !== "shared") {
+      const { source, pubkey } = input;
+      return this.add(type, (native, destination, owner) =>
+        native.port(source, pubkey, destination, owner, type),
+      );
+    }
+    const name = input.name.trim();
+    if (!name) throw new Error("Name the agent");
+    const { picture, instructions } = input;
+    // A shared agent has no key to keep; it is a new identity that carries
+    // what was shared, as a brought-over one does.
+    return this.add(
+      type,
+      async (native, destination, owner) => ({
+        agent: await native.create(destination, owner, type, name),
+        ...(instructions?.trim() ? { carry: { instructions } } : {}),
+      }),
+      { picture },
     );
   }
 

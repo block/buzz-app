@@ -125,14 +125,12 @@ const recoveryListeners = new WeakMap<
   RelaySession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
-// Only undelivered preparation failures need replay. The saved draft and
-// attachment store remain the owners of the actual recovered content.
-const missedPreparation = new WeakMap<
-  RelaySession,
-  Map<string, RecoveredSend>
->();
-function takeMissedPreparation(session: RelaySession, key: string) {
-  const byKey = missedPreparation.get(session);
+// A recovery that no mounted composer consumed replays on remount. Only the
+// unpersisted parts need it: the pick snapshot and a preparation failure. The
+// saved draft and attachment store remain the owners of the recovered content.
+const missedRecovery = new WeakMap<RelaySession, Map<string, RecoveredSend>>();
+function takeMissedRecovery(session: RelaySession, key: string) {
+  const byKey = missedRecovery.get(session);
   const recovered = byKey?.get(key);
   byKey?.delete(key);
   return recovered;
@@ -142,16 +140,14 @@ function notifyRecovered(
   key: string,
   recovered: RecoveredSend,
 ) {
-  const listeners = recoveryListeners.get(session)?.get(key);
-  if (recovered.preparationError !== undefined) {
-    let byKey = missedPreparation.get(session);
-    if (!byKey) {
-      byKey = new Map();
-      missedPreparation.set(session, byKey);
-    }
-    byKey.set(key, recovered);
+  let byKey = missedRecovery.get(session);
+  if (!byKey) {
+    byKey = new Map();
+    missedRecovery.set(session, byKey);
   }
-  for (const listener of listeners ?? []) listener(recovered);
+  byKey.set(key, recovered);
+  for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
+    listener(recovered);
 }
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
@@ -665,7 +661,7 @@ function Composer({
       deferredRecovery.current?.picks,
     );
     if (!editingDraft && deferredRecovery.current) {
-      takeMissedPreparation(session, recoveryKey);
+      takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
       deferredRecovery.current = undefined;
     }
@@ -675,7 +671,7 @@ function Composer({
     if (editing.target) deferredRecovery.current = recovered;
     reconcileDraft(recovered.draft, recovered.picks);
     if (!editing.target) {
-      takeMissedPreparation(session, recoveryKey);
+      takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(recovered.preparationError));
     }
   });
@@ -686,11 +682,11 @@ function Composer({
     // Recovery may have completed between unmount and this subscription. Replay
     // only if its saved caption still owns the draft; never attach an old error
     // to a replacement written while the composer was away.
-    const missed = missedPreparation.get(session)?.get(recoveryKey);
+    const missed = missedRecovery.get(session)?.get(recoveryKey);
     if (missed) {
       if (viewRevision(scope, draftKey) === JSON.stringify(missed.draft))
         receiveRecovery(missed);
-      else takeMissedPreparation(session, recoveryKey);
+      else takeMissedRecovery(session, recoveryKey);
     }
     return stop;
   }, [session, recoveryKey, scope, draftKey]);

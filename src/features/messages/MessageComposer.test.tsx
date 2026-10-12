@@ -1225,7 +1225,9 @@ it("restores a failed background upload into the composer with Desktop's toast",
   );
 });
 
-it.each([false, true])(
+// Remounting after the failure covers the usual leave-and-return case: the
+// recovery lands with no mounted listener and must wait for the composer.
+it.each(["never", "before the failure", "after the failure"])(
   "restores the model and effort picks of a failed background upload (remounted: %s)",
   async (remounted) => {
     // Snapshots are stable, as the service's are.
@@ -1292,8 +1294,8 @@ it.each([false, true])(
     await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
 
     let container = h.container;
-    if (remounted) {
-      h.unmount();
+    if (remounted !== "never") h.unmount();
+    const remount = () => {
       container = render(
         <AgentsContext.Provider value={agents}>
           <MessageComposer
@@ -1306,10 +1308,12 @@ it.each([false, true])(
         </AgentsContext.Provider>,
         { wrapper: ToastProvider },
       ).container;
-    }
+    };
+    if (remounted === "before the failure") remount();
     await act(async () => {
       h.uploadCalls[0]?.result.reject(new Error("offline"));
     });
+    if (remounted === "after the failure") remount();
     const input = () => within(container).getByRole("textbox");
     await waitFor(() => expect(input()).toHaveValue("think hard@Honey "));
     expect(within(container).getByText("tuned.txt")).toBeVisible();

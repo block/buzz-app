@@ -316,8 +316,11 @@ test("message activity opens a grouped preview and profile Activity without losi
   publish(keys[0], 20002, "", typingTags, resumedAt);
   publish(keys[1], 20002, "", typingTags, resumedAt);
   await expect(threadIndicator).toHaveCount(0);
+  // The tab title may be the loaded message preview, not literally "Thread".
   await page
-    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .locator('[data-panel-workspace] [data-tab-value="thread"]')
+    .locator("..")
+    .getByRole("button", { name: /^Close .+ tab$/ })
     .click();
   publish(human, 9, "Unread reply while agents work", typingTags, resumedAt);
   await expect(summary).toHaveAccessibleName(/Observed unread replies/);

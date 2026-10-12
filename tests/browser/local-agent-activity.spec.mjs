@@ -259,8 +259,11 @@ test("opens an active message's empty thread without losing its activity preview
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(preview).toHaveCount(0);
+  // The tab title may be the loaded message preview, not literally "Thread".
   await page
-    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .locator('[data-panel-workspace] [data-tab-value="thread"]')
+    .locator("..")
+    .getByRole("button", { name: /^Close .+ tab$/ })
     .click();
   await expect(thread).toHaveCount(0);
   await trigger.focus();
@@ -325,10 +328,11 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
           .filter((a) => a.effect.getTiming().iterations !== Infinity)
           .map((a) => a.finished),
       );
-      element.addEventListener("animationstart", (event) => {
-        if (event.animationName === "buzz-leave")
-          for (const a of element.getAnimations()) a.pause();
-      });
+    });
+    // Hold the actual exit animation before its first frame, rather than racing
+    // a delayed animationstart event on a busy runner. Release in finally.
+    const exitGate = await page.addStyleTag({
+      content: "[data-leaving] { animation-play-state: paused !important; }",
     });
     const popup = page.getByRole("dialog", {
       name: "Agent activity",
@@ -360,11 +364,7 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
         await section.evaluate((e) => e.contains(document.activeElement)),
       ).toBe(false);
     } finally {
-      await section
-        .evaluate((e) => {
-          for (const a of e.getAnimations()) a.finish();
-        })
-        .catch(() => {});
+      await exitGate.evaluate((element) => element.remove());
     }
     await expect(section).toHaveCount(0);
   });

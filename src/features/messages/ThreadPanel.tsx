@@ -1009,9 +1009,13 @@ function ThreadMessages({
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
         correctScrollTop(
           element,
-          previous.anchor.element.getBoundingClientRect().top -
-            element.getBoundingClientRect().top -
-            previous.anchor.top,
+          // WebKit quantizes scrollTop. Round the correction instead of letting
+          // tiny negative fractions lose a whole pixel on every animation frame.
+          Math.round(
+            previous.anchor.element.getBoundingClientRect().top -
+              element.getBoundingClientRect().top -
+              previous.anchor.top,
+          ),
         );
       }
       // Exact-history restoration must start from this corrected geometry,

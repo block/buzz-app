@@ -261,7 +261,9 @@ test("opens an active message's empty thread without losing its activity preview
   await expect(preview).toHaveCount(0);
   // The tab title may be the loaded message preview, not literally "Thread".
   await page
-    .locator('[data-panel-workspace] [data-tab-value="thread"]')
+    .locator(
+      '[data-panel-workspace] :is([data-tab-value="thread"], [data-tab-value^="thread:"])[aria-selected="true"]',
+    )
     .locator("..")
     .getByRole("button", { name: /^Close .+ tab$/ })
     .click();

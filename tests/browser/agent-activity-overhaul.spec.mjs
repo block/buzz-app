@@ -318,7 +318,9 @@ test("message activity opens a grouped preview and profile Activity without losi
   await expect(threadIndicator).toHaveCount(0);
   // The tab title may be the loaded message preview, not literally "Thread".
   await page
-    .locator('[data-panel-workspace] [data-tab-value="thread"]')
+    .locator(
+      '[data-panel-workspace] :is([data-tab-value="thread"], [data-tab-value^="thread:"])[aria-selected="true"]',
+    )
     .locator("..")
     .getByRole("button", { name: /^Close .+ tab$/ })
     .click();

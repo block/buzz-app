@@ -52,6 +52,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
+import { FieldButton } from "../../shared/design-system/ui/FieldButton";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -1079,6 +1080,7 @@ function TypeField({
   types: readonly RegisteredAgentType[];
 }) {
   const others = types.filter((item) => item.key !== agent.type);
+  const TypeIcon = type?.icon;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [dropped, setDropped] = useState<readonly (keyof Carry)[]>([]);
@@ -1113,41 +1115,39 @@ function TypeField({
       setPending(false);
     }
   };
+  const value = (
+    <span className="flex min-w-0 items-center gap-2">
+      {TypeIcon && <TypeIcon size={20} aria-hidden="true" />}
+      {type?.title ?? "Type unavailable"}
+    </span>
+  );
   return (
     <>
-      <span className="flex items-center gap-1">
-        {type?.title ?? "Type unavailable"}
-        {others.length > 0 && (
-          <MenuRoot
-            onOpenChange={(open) => {
-              if (open) setError("");
-            }}
-          >
-            <MenuTrigger
-              render={
-                <Button
-                  size="compact"
-                  variant="ghost"
-                  loading={pending}
-                  disabled={pending}
-                >
-                  Change
-                </Button>
-              }
-            />
-            <MenuPopup>
-              <MenuRadioGroup
-                value={agent.type}
-                onValueChange={(next) => choose(String(next))}
-              >
-                {types.map((item) => (
-                  <AgentTypeChoice key={item.key} type={item} variant="menu" />
-                ))}
-              </MenuRadioGroup>
-            </MenuPopup>
-          </MenuRoot>
-        )}
-      </span>
+      {others.length > 0 ? (
+        <MenuRoot
+          onOpenChange={(open) => {
+            if (open) setError("");
+          }}
+        >
+          <MenuTrigger
+            aria-label={`Change type from ${type?.title ?? "unavailable type"}`}
+            disabled={pending}
+            render={<FieldButton aria-busy={pending}>{value}</FieldButton>}
+          />
+          <MenuPopup>
+            <MenuRadioGroup
+              value={agent.type}
+              onValueChange={(next) => choose(String(next))}
+            >
+              {types.map((item) => (
+                <AgentTypeChoice key={item.key} type={item} variant="menu" />
+              ))}
+            </MenuRadioGroup>
+          </MenuPopup>
+        </MenuRoot>
+      ) : (
+        value
+      )}
       {error && !migration && (
         <p role="alert" className="m-0 mt-1 text-body-sm text-danger">
           {error}

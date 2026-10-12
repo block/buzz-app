@@ -273,7 +273,11 @@ it("changes an agent type from the build view and reports failures", async () =>
   agents.retype
     .mockRejectedValueOnce(new Error("Ada is answering"))
     .mockResolvedValueOnce(["workspace"]);
-  await user.click(within(rail).getByRole("button", { name: "Change" }));
+  const typeTrigger = within(rail).getByRole("button", {
+    name: "Change type from Echo",
+  });
+  expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
+  await user.click(typeTrigger);
   const menu = await screen.findByRole("menu");
   const currentChoice = within(menu).getByRole("menuitemradio", {
     name: "Echo",

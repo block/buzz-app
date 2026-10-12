@@ -55,6 +55,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ...(workspace !== defaults.workspace && { workspace }),
       };
     },
+    describeMigration: (saved) => {
+      const { model, effort, scope } = config(saved);
+      return [
+        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+        {
+          id: "thinking",
+          label: "Thinking",
+          isOverride: Boolean(effort),
+        },
+        {
+          id: "sessions",
+          label: "Sessions",
+          isOverride: scope !== defaults.scope,
+          unchangedKey: scope,
+        },
+      ];
+    },
+    migrationNotice: (target) =>
+      `Codex keeps its sessions if you switch back. ${target} uses its own sessions with the Buzz conversation, not Codex's. Replies already sent to Buzz remain, but Codex background commands stop.`,
     summary: (agent) => config(agent.config).model || "Codex",
     tabs: [
       { id: "codex", title: "Codex", component: CodexTab },

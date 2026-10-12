@@ -89,6 +89,8 @@ function setup(
     title: "Echo",
     icon: RobotIcon,
     description: "Says its line.",
+    migrationNotice: (target: string) =>
+      `Echo keeps its sessions if you switch back; ${target} starts separately.`,
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
@@ -130,6 +132,25 @@ function setup(
     portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
+    previewRetype: vi.fn(
+      () =>
+        ({
+          moved: [],
+          dropped: ["workspace"],
+          settings: [
+            {
+              id: "model",
+              label: "Model",
+              outcome: "reset",
+            },
+            {
+              id: "thinking",
+              label: "Thinking",
+              outcome: "dropped",
+            },
+          ],
+        }) as const,
+    ),
     retype: vi.fn(async (): Promise<readonly (keyof Carry)[]> => []),
     remove: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
@@ -235,7 +256,7 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("dismisses or submits an agent type change from the build view", async () => {
+it("changes an agent type from the build view and reports failures", async () => {
   const user = userEvent.setup();
   const relay = {
     key: "test/relay",
@@ -254,35 +275,47 @@ it("dismisses or submits an agent type change from the build view", async () => 
     .mockRejectedValueOnce(new Error("Ada is answering"))
     .mockResolvedValueOnce(["workspace"]);
   await user.click(within(rail).getByRole("button", { name: "Change" }));
+  const menu = await screen.findByRole("menu");
+  const currentChoice = within(menu).getByRole("menuitemradio", {
+    name: "Echo",
+  });
+  const relayChoice = within(menu).getByRole("menuitemradio", {
+    name: "Relay",
+  });
+  expect(currentChoice).toBeChecked();
+  expect(relayChoice).not.toBeChecked();
+  expect(relayChoice.querySelector("svg")).toBeInTheDocument();
+  await user.click(relayChoice);
   const dialog = await screen.findByRole("dialog", {
-    name: "Change Ada's type",
+    name: "Move Ada to Relay?",
   });
-  const relayChoice = within(dialog).getByRole("radio", { name: "Relay" });
-  expect(relayChoice).toBeChecked();
-  expect(
-    relayChoice.closest("label")?.querySelector("svg"),
-  ).toBeInTheDocument();
-  await user.click(
-    document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
+  expect(agents.retype).not.toHaveBeenCalled();
+  expect(within(dialog).queryByText("Instructions")).toBeNull();
+  expect(within(dialog).getByText("Workspace").parentElement).toHaveTextContent(
+    "WorkspaceDropped",
   );
-  expect(screen.queryByRole("dialog")).toBeNull();
-  await user.click(within(rail).getByRole("button", { name: "Change" }));
-  const reopenedDialog = await screen.findByRole("dialog", {
-    name: "Change Ada's type",
-  });
-  await user.click(
-    within(reopenedDialog).getByRole("button", { name: "Change type" }),
+  expect(within(dialog).getByText("Model").parentElement).toHaveTextContent(
+    "ModelResets",
   );
-  expect(await within(reopenedDialog).findByRole("alert")).toHaveTextContent(
+  expect(within(dialog).getByText("Thinking").parentElement).toHaveTextContent(
+    "ThinkingDropped",
+  );
+  expect(dialog).toHaveTextContent(
+    "Echo keeps its sessions if you switch back; Relay starts separately.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Move to Relay" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Ada is answering",
   );
   await user.click(
-    within(reopenedDialog).getByRole("button", { name: "Change type" }),
+    within(dialog).getByRole("button", { name: "Move to Relay" }),
   );
   expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay");
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(within(rail).getByRole("status")).toHaveTextContent(
-    "Its workspace stayed behind.",
+    "Dropped: Workspace.",
   );
 });
 

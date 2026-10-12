@@ -75,6 +75,39 @@ it("adopts and carries an agent's instructions and workspace, nothing else", () 
   expect(
     type?.carry?.({ instructions: "Triage.", workspace: "/work/code" }),
   ).toEqual({ instructions: "Triage.", workspace: "/work/code" });
+  expect(type?.describeMigration?.(saved)).toEqual([
+    { id: "model", label: "Model", isOverride: false },
+    { id: "thinking", label: "Thinking", isOverride: false },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: false,
+      unchangedKey: "thread",
+    },
+  ]);
+  expect(
+    type?.describeMigration?.({
+      ...(saved as object),
+      model: "gpt-5",
+      effort: "high",
+      scope: "channel",
+    }),
+  ).toEqual([
+    { id: "model", label: "Model", isOverride: true },
+    { id: "thinking", label: "Thinking", isOverride: true },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: true,
+      unchangedKey: "channel",
+    },
+  ]);
+  expect(type?.migrationNotice?.("Claude Code")).toContain(
+    "Replies already sent to Buzz remain",
+  );
+  expect(type?.migrationNotice?.("Claude Code")).toContain(
+    "Codex background commands stop",
+  );
 });
 
 it("stops agents that stop running even when the agent list could not be read", () => {

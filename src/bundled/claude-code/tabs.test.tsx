@@ -162,6 +162,33 @@ it("is an agent type on the desktop app", () => {
       scope: "channel",
     }),
   ).toEqual({ instructions: "Triage.", workspace: "~/code" });
+  expect(type.describeMigration?.(DEFAULT_CONFIG)).toEqual([
+    { id: "model", label: "Model", isOverride: false },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: false,
+      unchangedKey: "thread",
+    },
+  ]);
+  expect(
+    type.describeMigration?.({
+      ...DEFAULT_CONFIG,
+      model: "opus",
+      scope: "channel",
+    }),
+  ).toEqual([
+    { id: "model", label: "Model", isOverride: true },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: true,
+      unchangedKey: "channel",
+    },
+  ]);
+  expect(type.migrationNotice?.("Codex")).toBe(
+    "Claude Code keeps its sessions if you switch back. Codex uses its own sessions with the Buzz conversation, not Claude Code's.",
+  );
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );

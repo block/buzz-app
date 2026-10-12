@@ -184,6 +184,8 @@ test("radio and checkbox labels change the actual form values while disabled cho
             label="Dark"
             description="Use the dark palette"
             leading={<span data-testid="dark-mark">◆</span>}
+            indicator="hidden"
+            variant="card"
           />
           <Radio value="unavailable" label="Unavailable" disabled />
         </RadioGroup>

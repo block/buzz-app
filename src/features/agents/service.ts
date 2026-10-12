@@ -282,6 +282,13 @@ export type Delivery<Config = unknown> = Readonly<{
   current(): boolean;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
+export type AgentMigrationSetting = Readonly<{
+  id: string;
+  label: string;
+  isOverride: boolean;
+  /** Matching keys mean this override has the same effect after migration. */
+  unchangedKey?: string;
+}>;
 /** A model with its effort levels, lowest first. */
 export type Model = Readonly<{
   id: string;
@@ -309,6 +316,11 @@ export type AgentType<Config = unknown> = {
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
+  /** Describes harness settings for a type-change preview. Rendered labels
+   * never determine migration behavior. */
+  describeMigration?(config: Config): readonly AgentMigrationSetting[];
+  /** Brief session or runtime consequences of leaving this type. */
+  migrationNotice?(targetTitle: string): string;
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
@@ -365,6 +377,15 @@ export type RemoteAgentType = Readonly<{
   ): Promise<void>;
 }>;
 export type RegisteredAgentType = Contribution<AgentType>;
+export type RetypePreview = Readonly<{
+  moved: readonly (keyof Carry)[];
+  dropped: readonly (keyof Carry)[];
+  settings: readonly Readonly<{
+    id: string;
+    label: string;
+    outcome: "reset" | "dropped";
+  }>[];
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** The selected community's agents, while it is connected. */
@@ -425,6 +446,9 @@ export type Agents = {
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** Previews the transferable settings the same migration used by `retype`
+   * will move or drop, without changing the agent. */
+  previewRetype(pubkey: string, type: string): RetypePreview;
   /** Makes it an agent of `type`, keeping its identity and attention. Its new
    * config is the type's defaults with whatever the old type carries and the
    * new one adopts; returns what of that stayed behind. Refused mid-turn. */
@@ -1220,13 +1244,10 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         `${identity.name} is answering; change its type when it finishes`,
       );
-    const record = this.recordOf(identity);
-    const carry = kinds.get(identity.type)?.carry?.(record.config) ?? {};
-    const { config } = kind.defaults();
-    const adopted = kind.adopt ? kind.adopt(carry, config) : config;
-    const kept = kind.carry?.(adopted) ?? {};
-    const dropped = (Object.keys(carry) as (keyof Carry)[]).filter(
-      (key) => carry[key] !== undefined && kept[key] !== carry[key],
+    const { record, adopted, preview } = this.retypePlan(
+      identity,
+      kinds.get(identity.type),
+      kind,
     );
     await this.native.setType(pubkey, type);
     // Its new type and config apply together, so neither type runs it with the
@@ -1241,7 +1262,18 @@ export class AgentsService extends Service implements Agents {
       this.update();
     }
     await this.refresh();
-    return dropped;
+    return preview.dropped;
+  }
+
+  previewRetype(pubkey: string, type: string): RetypePreview {
+    const identity = this.live(pubkey);
+    if (!this.native || !identity)
+      throw new Error("No such agent on this device");
+    const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
+    const kind = kinds.get(type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (type === identity.type) return { moved: [], dropped: [], settings: [] };
+    return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
   async remove(pubkey: string) {
@@ -1548,6 +1580,54 @@ export class AgentsService extends Service implements Agents {
         console.warn(`Agent type ${type} has invalid defaults`, error);
       }
     return this.records[pubkey] ?? blank(pubkey);
+  }
+  private retypePlan(
+    identity: AgentIdentity,
+    source: RegisteredAgentType | undefined,
+    kind: RegisteredAgentType,
+  ) {
+    const record = this.recordOf(identity);
+    const carry = source?.carry?.(record.config) ?? {};
+    const { config } = kind.defaults();
+    const adopted = kind.adopt ? kind.adopt(carry, config) : config;
+    const kept = kind.carry?.(adopted) ?? {};
+    const keys = (Object.keys(carry) as (keyof Carry)[]).filter(
+      (key) => carry[key] !== undefined,
+    );
+    const moved = keys.filter((key) => kept[key] === carry[key]);
+    const dropped = keys.filter((key) => kept[key] !== carry[key]);
+    const destinationSettings = new Map(
+      kind.describeMigration?.(adopted).map((setting) => [setting.id, setting]),
+    );
+    const settings =
+      source
+        ?.describeMigration?.(record.config)
+        .filter((setting) => setting.isOverride)
+        .flatMap((setting) => {
+          const next = destinationSettings.get(setting.id);
+          if (
+            next &&
+            setting.unchangedKey !== undefined &&
+            setting.unchangedKey === next.unchangedKey
+          )
+            return [];
+          return [
+            {
+              id: setting.id,
+              label: setting.label,
+              outcome: next ? ("reset" as const) : ("dropped" as const),
+            },
+          ];
+        }) ?? [];
+    return {
+      record,
+      adopted,
+      preview: {
+        moved,
+        dropped,
+        settings,
+      },
+    };
   }
   private view(identity: AgentIdentity, record: AgentRecord): Agent {
     return Object.freeze({

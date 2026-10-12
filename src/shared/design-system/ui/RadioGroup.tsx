@@ -19,6 +19,7 @@ export function Radio({
   label,
   description,
   leading,
+  indicator = "visible",
   variant = "default",
   id,
   ...props
@@ -27,6 +28,8 @@ export function Radio({
   description?: ReactNode;
   /** Decorative artwork shown before the label and description. */
   leading?: ReactNode;
+  /** Hide the circle when another persistent selection affordance is present. */
+  indicator?: "visible" | "hidden";
   variant?: "default" | "card";
 }) {
   const generatedId = useId();
@@ -34,7 +37,12 @@ export function Radio({
   const descriptionId = `${controlId}-description`;
   return (
     <BaseField.Item>
-      <label className="buzz-choice" data-variant={variant} htmlFor={controlId}>
+      <label
+        className="buzz-choice"
+        data-indicator={indicator}
+        data-variant={variant}
+        htmlFor={controlId}
+      >
         <BaseRadio.Root
           {...props}
           id={controlId}

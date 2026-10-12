@@ -61,6 +61,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
       };
     },
+    describeMigration: (saved) => {
+      const { model, scope } = config(saved);
+      return [
+        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+        {
+          id: "sessions",
+          label: "Sessions",
+          isOverride: scope !== DEFAULT_CONFIG.scope,
+          unchangedKey: scope,
+        },
+      ];
+    },
+    migrationNotice: (target) =>
+      `Claude keeps its sessions if you switch back. ${target} uses its own sessions with the Buzz conversation, not Claude's.`,
     summary: (agent) => config(agent.config).model || "Claude",
     tabs: [
       { id: "claude", title: "Claude", component: ClaudeTab },

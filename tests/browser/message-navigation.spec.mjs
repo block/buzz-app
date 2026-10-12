@@ -1096,7 +1096,9 @@ liveTest(
     ).toBeVisible();
     await expect(region).toHaveAttribute("tabindex", "0");
     await page
-      .getByRole("button", { name: "Close Thread tab", exact: true })
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+      )
       .focus();
     await page.keyboard.press("Tab");
     await expect(region).toBeFocused();

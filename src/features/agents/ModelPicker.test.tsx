@@ -134,8 +134,31 @@ it("uses a dropdown to pick listed models when custom entry is disabled", async 
   expect(control().tagName).toBe("BUTTON");
   expect(control()).toHaveTextContent("Default model");
   await user.click(control());
+  expect(
+    screen.queryByRole("option", { name: "Custom model" }),
+  ).not.toBeInTheDocument();
   await user.click(await screen.findByRole("option", { name: /Opus/ }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
+});
+
+it("starts custom entry from an explicit menu option", async () => {
+  const { onChange, user } = setup("opus");
+  await user.click(input());
+  const custom = await screen.findByRole("option", { name: "Custom model" });
+  expect(custom).toHaveAccessibleDescription("Enter a model ID");
+  await user.click(custom);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input()).toHaveValue("");
+  expect(input()).toHaveFocus();
+  await user.click(input());
+  expect(screen.getByRole("option", { name: "Custom model" })).toBeVisible();
+  await user.tab();
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input()).toHaveValue("Opus");
+  await user.click(input());
+  await user.click(await screen.findByRole("option", { name: "Custom model" }));
+  await user.type(input(), "claude-custom-1{Enter}");
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("claude-custom-1");
 });
 
 it("offers a typed ID that matches nothing as a custom model", async () => {

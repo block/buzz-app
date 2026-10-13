@@ -17,6 +17,12 @@ export type ModelChoice = Readonly<{
   description?: string | undefined;
 }>;
 
+const CUSTOM_MODEL_ACTION: ModelChoice = {
+  id: "\0custom-model",
+  label: "Custom model",
+  description: "Enter a model ID",
+};
+
 /** Recognizes the vendor from a model's ID or name. */
 export function ModelIcon({ model }: { model: string }) {
   const name = model.toLowerCase();
@@ -56,6 +62,7 @@ export function ModelPicker({
 }) {
   const [query, setQuery] = useState<string | null>(null);
   const highlighted = useRef<ModelChoice | null>(null);
+  const enteringCustomModel = useRef(false);
   const control = useRef<HTMLDivElement>(null);
   const measure = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState(0);
@@ -76,12 +83,13 @@ export function ModelPicker({
     items.push({ id: custom, label: custom, description: "Custom model" });
   const shown =
     query === null
-      ? items
+      ? [...items]
       : items.filter((model) =>
           `${model.label} ${model.id}`
             .toLowerCase()
             .includes(query.toLowerCase()),
         );
+  if (allowCustomModel && !query?.trim()) shown.push(CUSTOM_MODEL_ACTION);
   const selected = items.find((model) => model.id === value) ?? fallback;
   const text = query ?? selected.label;
   useLayoutEffect(() => {
@@ -95,11 +103,17 @@ export function ModelPicker({
   }, [compact]);
   const commit = () => {
     if (query === null) return;
+    if (enteringCustomModel.current && !query.trim()) {
+      enteringCustomModel.current = false;
+      setQuery(null);
+      return;
+    }
     const match = items.find(
       (model) => model.id === query || model.label === query,
     );
     if (match) onChange(match.id);
     else if (allowCustomModel) onChange(query.trim());
+    enteringCustomModel.current = false;
     setQuery(null);
   };
   if (!allowCustomModel)
@@ -161,9 +175,21 @@ export function ModelPicker({
             queueMicrotask(() =>
               control.current?.querySelector("input")?.select(),
             );
-          if (!open && details.reason === "escape-key") setQuery(null);
+          if (!open && details.reason === "escape-key") {
+            enteringCustomModel.current = false;
+            setQuery(null);
+          }
         }}
         onValueChange={(model) => {
+          if (model?.id === CUSTOM_MODEL_ACTION.id) {
+            enteringCustomModel.current = true;
+            setQuery("");
+            queueMicrotask(() =>
+              control.current?.querySelector("input")?.focus(),
+            );
+            return;
+          }
+          enteringCustomModel.current = false;
           if (model) onChange(model.id);
           setQuery(null);
         }}

@@ -285,6 +285,40 @@ test.describe("Berd-style Me organization", () => {
     await page.screenshot({
       path: test.info().outputPath("after-light-text-2x.png"),
     });
+    await page.setViewportSize({ width: 760, height: 900 });
+    // Browser fixtures have no native model provider. ComposerModels renders
+    // the same toolbar IconButton as Send, so this adds its exact fixed-width
+    // footprint while the formatting strip remains the flexible scroll owner.
+    await page.evaluate(() => {
+      const send = document.querySelector(
+        'form[aria-label="Send a message to Alpha"] button[aria-label="Send message"]',
+      );
+      if (!(send instanceof HTMLButtonElement))
+        throw new Error("Missing send control");
+      const model = send.cloneNode(true);
+      model.setAttribute("aria-label", "Model footprint probe");
+      send.before(model);
+    });
+    await expectHorizontalTools();
+    const formBox = await composer.evaluate((element) =>
+      element.closest("form").getBoundingClientRect().toJSON(),
+    );
+    const modelBox = await page
+      .getByRole("button", { name: "Model footprint probe", exact: true })
+      .boundingBox();
+    const sendBox = await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .boundingBox();
+    expect(modelBox).toBeTruthy();
+    expect(sendBox).toBeTruthy();
+    expect(modelBox.x).toBeGreaterThanOrEqual(formBox.x);
+    expect(sendBox.x + sendBox.width).toBeLessThanOrEqual(
+      formBox.x + formBox.width,
+    );
+    expect(sendBox.x - modelBox.x).toBeGreaterThan(modelBox.width / 2);
+    await page.screenshot({
+      path: test.info().outputPath("after-narrow-text-2x.png"),
+    });
   });
 });
 

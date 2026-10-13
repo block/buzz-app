@@ -455,9 +455,16 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
 
   // Moving the last side tab away also removes the pane, without toggling it.
   for (let remaining = 2; remaining > 0; remaining--) {
-    await threadTabs(side).first().focus();
+    const moving = threadTabs(side).first();
+    const id = await moving.getAttribute("data-tab-value");
+    await moving.focus();
     await page.keyboard.press("Alt+Shift+ArrowLeft");
     await expect(threadTabs(side)).toHaveCount(remaining - 1);
+    // The move restores focus on the next frame. Finish that handoff before
+    // focusing another tab, or the previous move can steal the next keypress.
+    await expect(
+      main.locator(`[role="tab"][data-tab-value="${id}"]`),
+    ).toBeFocused();
   }
   await expect(side).toBeHidden();
   const emptyBounds = await main.boundingBox();

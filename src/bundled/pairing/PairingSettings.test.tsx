@@ -313,16 +313,15 @@ it("copies the pairing code shown in the current QR", async () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy pairing code" }));
   });
   expect(writeText).toHaveBeenLastCalledWith("nostrpair://second");
-  expect(screen.getByRole("alert").textContent).toContain(
-    "Couldn’t copy the pairing code",
-  );
+  expect(
+    screen.getByRole("button", { name: "Couldn’t copy. Try again" }),
+  ).toBeTruthy();
 
   status = { phase: "code", code: "123456", codeEntry: true };
   await act(async () => {
     await vi.advanceTimersByTimeAsync(400);
   });
-  expect(screen.queryByRole("button", { name: /Cop/ })).toBeNull();
-  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: /cop/i })).toBeNull();
 });
 
 it("rejects a legacy mismatch and requires explicit retry", async () => {

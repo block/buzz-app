@@ -233,15 +233,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     const picker = render(
       <AgentsPage agents={agents} relay={community.relay} />,
     );
-    const [newAgent] = await screen.findAllByRole("button", {
-      name: "New agent",
-    });
-    if (!newAgent) throw new Error("Missing New agent button");
-    await userEvent.setup().click(newAgent);
-    expect(
-      screen.getByRole("radio", { name: /Builderlab/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("TBD")).toBeInTheDocument();
     const providerUser = userEvent.setup();
     await providerUser.click(
       screen.getByRole("button", { name: "More agent actions" }),

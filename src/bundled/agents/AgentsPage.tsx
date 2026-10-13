@@ -78,11 +78,8 @@ import {
   MenuSubmenuTrigger,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { Radio } from "../../shared/design-system/ui/RadioGroup";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -356,10 +353,7 @@ export function AgentsPage({
                     }
                   />
                   <MenuPopup align="end">
-                    <ProviderSubmenu
-                      types={types}
-                      onSelect={setProviderKey}
-                    />
+                    <ProviderSubmenu types={types} onSelect={setProviderKey} />
                     <MenuItem onClick={openTeams} disabled={side === "teams"}>
                       Teams
                     </MenuItem>

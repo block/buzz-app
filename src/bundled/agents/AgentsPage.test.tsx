@@ -607,11 +607,8 @@ it("makes a new agent in the create dialog and goes straight to building it", as
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "New agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
-  expect(within(dialog).getByText("Echo")).toBeInTheDocument();
   expect(
-    within(dialog)
-      .getByRole("button", { name: "Agent type: Echo" })
-      .querySelector("svg"),
+    within(dialog).getByText("Echo").closest("span")?.querySelector("svg"),
   ).toBeInTheDocument();
   await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");

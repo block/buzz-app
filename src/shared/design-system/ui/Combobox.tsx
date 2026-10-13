@@ -127,19 +127,33 @@ function Popup({
 function Item({
   children,
   description,
+  label,
   ...props
 }: Omit<ComponentProps<typeof BaseCombobox.Item>, "className" | "render"> & {
   description?: ReactNode;
+  /** Stable accessible name when a visual description is also present. */
+  label?: string;
 }) {
+  const descriptionId = useId();
+  const describedBy = [
+    props["aria-describedby"],
+    description ? descriptionId : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <BaseCombobox.Item
       {...props}
+      aria-label={label ?? props["aria-label"]}
+      aria-describedby={describedBy || undefined}
       className="buzz-select-option buzz-combobox-option"
     >
       <span className="buzz-combobox-item-content">
         <span>{children}</span>
         {description && (
-          <span className="text-body-sm text-subtle">{description}</span>
+          <span id={descriptionId} className="text-body-sm text-subtle">
+            {description}
+          </span>
         )}
       </span>
       <BaseCombobox.ItemIndicator

@@ -33,6 +33,7 @@ export function ModelPicker({
   models,
   value,
   defaultLabel,
+  defaultDescription,
   onChange,
   loading = false,
   disabled = false,
@@ -42,6 +43,7 @@ export function ModelPicker({
   models: readonly ModelChoice[];
   value: string;
   defaultLabel: string;
+  defaultDescription?: string;
   onChange(value: string): void;
   loading?: boolean;
   disabled?: boolean;
@@ -52,7 +54,11 @@ export function ModelPicker({
   const highlighted = useRef<ModelChoice | null>(null);
   const measure = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState(0);
-  const fallback: ModelChoice = { id: "", label: defaultLabel };
+  const fallback: ModelChoice = {
+    id: "",
+    label: defaultLabel,
+    description: defaultDescription,
+  };
   const items: ModelChoice[] = [fallback, ...models];
   if (value && !items.some((model) => model.id === value))
     items.push({ id: value, label: value, description: "Custom model" });
@@ -156,6 +162,7 @@ export function ModelPicker({
               <Combobox.Item
                 key={model.id || "default"}
                 value={model}
+                label={model.label}
                 description={model.description}
               >
                 <span className="flex items-center gap-2">

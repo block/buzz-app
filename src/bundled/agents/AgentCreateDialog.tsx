@@ -12,10 +12,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import {
-  CaretDownIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { CaretDownIcon, RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {

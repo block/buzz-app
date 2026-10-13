@@ -1120,13 +1120,13 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  const replyCount = snapshot.replies.length;
-  // Only the reader's signed exhaustion evidence makes a count complete.
-  const repliesComplete =
-    !!snapshot.complete && snapshot.status === "ready" && !snapshot.error;
+  // The relay's thread summary, the same total the channel's reply link shows.
+  // Without one, never call a thread empty while it loads or shows replies
+  // (a just-sent reply, or a root opened without its channel summary).
+  const replyCount = snapshot.root?.replyCount ?? 0;
   const replyLabel = replyCount
-    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}${repliesComplete ? "" : " loaded"}`
-    : repliesComplete
+    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
+    : snapshot.status === "ready" && !snapshot.replies.length
       ? "No replies yet"
       : "Replies";
   const showOlderPageStatus =

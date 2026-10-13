@@ -39,9 +39,6 @@ export type ThreadSnapshot = Readonly<{
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
   limited: boolean;
-  /** Signed reverse-window bounds proved no older replies remain. Only a
-   * successful strict read sets it; interruptions and resets clear it. */
-  complete?: boolean;
   /** Older pages are demand-loaded; forward is the legacy bounded walk. */
   direction?: "older" | "forward";
   /** The in-flight or failed read, distinct from the traversal direction. */
@@ -133,7 +130,6 @@ export function createThreadView({
     error: undefined,
     canLoadMore: false,
     limited: false,
-    complete: false,
   });
   const listeners = new Set<() => void>();
   function related<T extends EventData>(
@@ -280,7 +276,6 @@ export function createThreadView({
         status: "error",
         limited: true,
         canLoadMore: false,
-        complete: false,
         error:
           "Thread view exceeded its memory limit. Refresh to read from the beginning.",
       });
@@ -322,7 +317,6 @@ export function createThreadView({
       status: "idle",
       canLoadMore: false,
       limited: false,
-      complete: false,
       error: canAccess()
         ? "Thread read interrupted. Refresh to continue."
         : "This channel is no longer available.",
@@ -491,13 +485,10 @@ export function createThreadView({
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
-    // Every read withdraws exhaustion evidence; only its own successful
-    // signed window can restore it. Failures and early exits leave it false.
     publishStatus({
       status: "loading",
       error: undefined,
       readKind: replace ? "refresh" : "older",
-      complete: false,
     });
     try {
       if (exact && replace) {
@@ -506,15 +497,14 @@ export function createThreadView({
         if (!active()) return;
         if (revision === selectionRevision && result !== "selected") {
           targetStatus = "unavailable";
-          // Target availability says nothing about the retained window's bounds.
-          publish({ status: "ready" });
+          publish({ status: "ready", canLoadMore: false });
           return;
         }
         if (revision === selectionRevision) {
           targetStatus = "ready";
           publish();
           if (snapshot.targetStatus !== "ready") {
-            publish({ status: "ready" });
+            publish({ status: "ready", canLoadMore: false });
             return;
           }
         }
@@ -703,7 +693,6 @@ export function createThreadView({
         direction: mode === "older" ? "older" : "forward",
         canLoadMore: more && pages < MAX_PAGES,
         limited: more && pages >= MAX_PAGES,
-        complete: mode === "older" && !more,
       });
     } catch (error) {
       if (active()) {

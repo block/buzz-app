@@ -1115,15 +1115,14 @@ Read-only connections keep the existing composer capability notice; missing/revo
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.
 
-A labelled divider separates the original message from replies, including “No
-replies yet” when signed thread bounds confirm an empty result. Complete signed
-windows show the reply count; partial or legacy history says “replies loaded”
-(or “Replies” when none are loaded yet). Counts include collapsed descendants.
+A labelled divider separates the original message from replies. It shows the
+relay's thread summary total, the same count as the channel's reply link,
+including collapsed descendants. Without a summary it says “No replies yet” once
+the thread has loaded none, otherwise “Replies” (while loading, for a just-sent
+reply the summary has not counted yet, or a root opened without its summary).
 The first reply always shows its author, even when it matches the original.
 The original has no day divider above it; its byline already names the day.
-Agent-addressed messages retain their date when expanded. Only a successful
-signed window read marks the count complete; interruptions, access purges and
-exact-target refreshes that read no bounds keep it labelled as loaded.
+Agent-addressed messages retain their date when expanded.
 Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
@@ -1136,8 +1135,8 @@ when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice. Sessions remain inline.
 Retry appears only after a failed read; there is no routine Refresh control. Names
-are optional shared background enrichment. For partial or legacy history, the panel
-describes **replies loaded**, not visible rows or complete history.
+are optional shared background enrichment. The panel describes **replies loaded**,
+not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 

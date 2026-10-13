@@ -562,15 +562,26 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
-it("separates the original from replies without presenting incomplete history as empty or complete", () => {
+it("separates the original from replies with the relay's reply total", () => {
   const h = messagesHarness();
-  h.snapshot.complete = true;
+  h.snapshot.root = { ...row, replyCount: 0 };
+  h.snapshot.status = "loading";
+  h.render();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  h.snapshot.status = "ready";
   h.render();
   expect(screen.getByText("No replies yet")).toBeVisible();
 
+  // A just-sent reply can arrive before the relay's summary counts it.
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  const divider = screen.getByText("1 reply");
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+
+  // The total comes from the summary, not from the replies loaded so far.
+  h.snapshot.root = { ...row, replyCount: 11 };
+  h.render();
+  const divider = screen.getByText("11 replies");
   const root = screen.getByText("root");
   const reply = screen.getByText("first reply");
   expect(
@@ -580,42 +591,14 @@ it("separates the original from replies without presenting incomplete history as
     divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 
-  h.snapshot.replies = [
-    ...h.snapshot.replies,
-    { ...row, id: "nested", content: "nested reply", replyParentId: "reply" },
-  ];
+  h.snapshot.root = { ...row, replyCount: 1 };
   h.render();
-  expect(screen.getByText("2 replies")).toBeVisible();
-
-  // Exhaustion comes only from the reader's evidence, never from a missing
-  // continuation, direction or target state.
-  for (const partial of [
-    { complete: false },
-    { complete: undefined },
-    { status: "loading" as const },
-    { status: "error" as const, error: "Unable to load replies" },
-  ]) {
-    Object.assign(
-      h.snapshot,
-      { complete: true, status: "ready", error: undefined },
-      partial,
-    );
-    h.render();
-    expect(screen.getByText("2 replies loaded")).toBeVisible();
-  }
-
-  h.snapshot.complete = false;
-  h.snapshot.replies = [];
-  h.render();
-  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
-  expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  expect(screen.getByText("1 reply")).toBeVisible();
 
   h.snapshot.root = undefined;
   h.render();
   expect(screen.getByText("Original message unavailable.")).toBeVisible();
-  expect(
-    screen.queryByText("Replies", { exact: true }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
 });
 
 it("keeps older-page loading quiet and retry between root and replies", () => {

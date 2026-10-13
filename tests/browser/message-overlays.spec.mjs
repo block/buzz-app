@@ -544,6 +544,15 @@ test("comment actions revealed while the drawer slides realign when it settles",
     .getByRole("button", { name: "Hide comments", exact: true })
     .click();
   await expect(drawer).toBeHidden();
+  // The role hides at once, but the closing slide runs on. Reopening before it
+  // ends reverses that slide from near the open position, so let it finish.
+  await expect
+    .poll(() =>
+      page
+        .locator('aside[aria-label="Media comments"]')
+        .evaluate((node) => node.getAnimations().length),
+    )
+    .toBe(0);
   // Hold the opening slide early in its transform transition, once it exists.
   await page.evaluate(() => {
     window.drawerHeld = new Promise((resolve) => {

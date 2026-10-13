@@ -56,14 +56,17 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   page,
   app,
 }) => {
+  // Hidden profile settings also read the session, so fail every opening read
+  // and count only those made by Retry.
+  let failing = true;
   let requests = 0;
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
   });
   await page.route("**/api/relay/primary/session", async (route) => {
+    if (failing) return route.fulfill({ json: {} });
     requests++;
-    if (requests === 1) return route.fulfill({ json: {} });
     await held;
     return route.continue();
   });
@@ -82,8 +85,9 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   const main = page.getByRole("main");
   try {
     await retry.focus();
+    failing = false;
     await retry.press("Enter");
-    await expect.poll(() => requests, { timeout: 1500 }).toBe(2);
+    await expect.poll(() => requests, { timeout: 1500 }).toBe(1);
     await expect(retry).toHaveCount(0);
     await expect(main).toBeFocused();
   } finally {

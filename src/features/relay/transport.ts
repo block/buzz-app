@@ -725,7 +725,12 @@ export async function connectBrokerTransport(
               signal,
             });
             if (!result.ok)
-              throw new Error(`Local decoder failed (HTTP ${result.status})`);
+              // A 5xx is the host being unavailable; a 4xx rejects these events.
+              throw new ReadError(
+                result.status >= 500 ? "unavailable" : "invalid-response",
+                `Local decoder failed (HTTP ${result.status})`,
+                result.status,
+              );
             return result.json();
           },
         }

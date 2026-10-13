@@ -166,7 +166,9 @@ function LiveSessions({
             pendingDraft.startsWith("me:")
           }
           standalone
-          focusRequest={navigation?.signal ?? 1}
+          focusRequest={
+            navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
+          }
           key={pendingDraft ?? newSection ?? "unfiled"}
           resumeDraftKey={pendingDraft}
           sectionId={
@@ -309,9 +311,9 @@ function SessionWork({
     scope,
     channels,
     extensions,
-    personalWorkspace: true,
     leadingIds: [],
     continuingVisit: continuing.current,
+    navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
     conversationIcon: (item) => {
@@ -444,13 +446,12 @@ function SessionWork({
                   data-tab-pane-toggle=""
                   size="toolbar"
                   aria-label="Toggle tab pane"
-                  title="Open tab pane"
-                  aria-expanded={false}
+                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
+                  aria-expanded={!!showingPanel}
                   icon={<SidebarRightIcon size="1rem" />}
-                  onClick={() => {
-                    tabState.setPaneOpen(true);
-                    if (!hasTabs) secondary.addTab();
-                  }}
+                  disabled={!hasLocalPanel}
+                  focusableWhenDisabled
+                  onClick={() => tabState.setPaneOpen(!showingPanel)}
                 />
               </span>
             )}
@@ -558,11 +559,25 @@ function SessionWork({
               className={channelStyles.retainedPanel}
               hidden={!!companion && !showingPanel}
             >
+              {secondary.drag.feedback}
+              {secondary.hosts}
               <PanelWorkspace
+                drag={secondary.drag.side}
+                actions={
+                  <IconButton
+                    data-tab-pane-toggle=""
+                    data-highlight-expanded="false"
+                    variant="subtle"
+                    size="toolbar"
+                    aria-label="Toggle tab pane"
+                    title="Close tab pane"
+                    aria-expanded={true}
+                    onClick={secondary.closePane}
+                    icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
+                  />
+                }
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}
-                add={secondary.addTab}
-                closePane={secondary.closePane}
                 items={secondary.items}
                 focusOnMount={continuing.current}
               />

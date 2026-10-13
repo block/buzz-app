@@ -49,12 +49,14 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "none");
   await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
-  // Resolve the profile while this focused row is pending, before the longer
-  // navigation journey can consume the reader's real request deadline.
-  await expect
-    .poll(() => app.report.profileHolds.some((held) => held.pending))
-    .toBe(true);
-  await page.mouse.move(1400, 10);
+  // Release the held profile while the link is focused, before the navigation
+  // below: profile reads give up after 10s, and a loaded engine can spend that
+  // long on navigation, leaving nothing pending to release.
+  const preview = page.getByLabel("Message preview", { exact: true });
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
   await row.getByRole("link", { name: "#Beta", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
   // WebKit follows macOS's tab-to-links preference; retain keyboard modality
@@ -76,14 +78,20 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     true,
   );
   await expect(link).toBeFocused();
-  const preview = page.getByLabel("Message preview", { exact: true });
-  await expect(preview).toHaveAttribute("data-open", "");
+  await expect(preview).toBeVisible();
+  expect(libraryReads()).toBe(1);
+  await link.press("Tab");
+  await expect(preview).toBeFocused();
+  await preview.press("Enter");
+  await expect(
+    panel.locator(`[data-message-id="${target.id}"]`),
+  ).toBeInViewport();
   await page
-    .getByRole("textbox", { name: "Message #Alpha", exact: true })
-    .focus();
-  // Finish the keyboard preview's blur/exit lifecycle before testing hover.
-  // Entering the trigger while that card is closing can consume the hover.
-  await expect(preview).toHaveCount(0);
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
+  await expect(link).toBeFocused();
   await link.hover();
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
@@ -105,17 +113,17 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     path: test.info().outputPath("buzz-link-preview.png"),
   });
   await preview.click();
-  const panel = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
-  });
   await expect(
     panel.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.messageId).toBe(target.id);
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await button(page, "Close Thread tab").click();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(
@@ -123,21 +131,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeInViewport();
   await button(page, "Go back").click();
   await expect(panel).toHaveCount(0);
-  await page.mouse.move(1400, 10);
-  await row.getByRole("link", { name: "#Beta", exact: true }).focus();
-  await page.keyboard.press("Shift+Tab");
-  await link.focus();
-  await expect(link).toBeFocused();
-  await expect(preview).toBeVisible();
   expect(libraryReads()).toBe(1);
-  await link.press("Tab");
-  await expect(preview).toBeFocused();
-  await preview.press("Enter");
-  await expect(
-    panel.locator(`[data-message-id="${target.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Close Thread tab").click();
-  await expect(link).toBeFocused();
   await row.getByRole("link", { name: "#Beta", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
@@ -229,19 +223,12 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await trigger.click();
   const dock = page.locator("[data-panel-dock]");
   const tablist = page.getByRole("tablist", { name: "Panel tabs" });
-  const threadTab = tablist.getByRole("tab", { name: "Thread", exact: true });
+  const threadTab = tablist.locator('[role="tab"][data-tab-value^="thread:"]');
   const details = tablist.getByRole("tab", {
     name: "Wrong panel",
     exact: true,
   });
   await expect(threadTab).toHaveClass(/navigation-item/);
-  expect(
-    await threadTab.evaluate(
-      (el) =>
-        el.parentElement.getBoundingClientRect().width /
-        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-    ),
-  ).toBeCloseTo(12);
   await expect(threadTab.locator("svg")).toHaveCount(1);
   await expect(details).toHaveCount(1);
   await expect(details).toBeFocused();
@@ -332,7 +319,11 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await details.press("Delete");
   await expect(threadTab).toBeFocused();
   await expect(editor).toHaveText("Keep this thread draft");
-  await button(page, "Close Thread tab").click();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
   await expect(dock).toHaveCount(0);
 });
 

@@ -410,6 +410,68 @@ test("a consumed native Close request cannot close another workspace", () => {
   expect(screen.getAllByRole("tab", { name: "Ada" })).toHaveLength(2);
 });
 
+const cycleTab = (shiftKey = false, target: Element = document.body) =>
+  fireEvent.keyDown(target, { key: "Tab", ctrlKey: true, shiftKey });
+
+test("Ctrl+Tab and Ctrl+Shift+Tab cycle tabs, wrapping, including local details", async () => {
+  visibleWorkspace();
+  const user = userEvent.setup();
+  render(<Fixture />);
+  await user.click(tab("Ada"));
+  await user.click(screen.getByRole("button", { name: "Open log" }));
+  await user.click(tab("Thread"));
+  const selected = () =>
+    within(tabs()).getByRole("tab", { selected: true }).textContent;
+  expect(selected()).toBe("Thread");
+  cycleTab();
+  expect(selected()).toBe("Ada");
+  cycleTab();
+  expect(selected()).toBe("Harness log");
+  cycleTab();
+  expect(selected()).toBe("Thread");
+  cycleTab(true);
+  expect(selected()).toBe("Harness log");
+  cycleTab(true);
+  expect(selected()).toBe("Ada");
+});
+
+test("Ctrl+Tab wins over an editor's Tab handling and leaves plain Tab alone", () => {
+  visibleWorkspace();
+  render(<Fixture />);
+  const draft = screen.getByRole("textbox", { name: "Thread draft" });
+  const editor = vi.fn();
+  draft.addEventListener("keydown", editor);
+  draft.focus();
+  expect(cycleTab(false, draft)).toBe(false);
+  expect(editor).not.toHaveBeenCalled();
+  expect(tab("Ada")).toHaveAttribute("aria-selected", "true");
+  expect(fireEvent.keyDown(tab("Ada"), { key: "Tab" })).toBe(true);
+  expect(
+    fireEvent.keyDown(tab("Ada"), { key: "Tab", ctrlKey: true, metaKey: true }),
+  ).toBe(true);
+  expect(tab("Ada")).toHaveAttribute("aria-selected", "true");
+});
+
+test("Ctrl+Tab does not switch tabs behind a modal or with a single tab", () => {
+  visibleWorkspace();
+  const view = render(
+    <>
+      <dialog open aria-label="Dialog" />
+      <Fixture />
+    </>,
+  );
+  expect(cycleTab()).toBe(true);
+  expect(tab("Thread")).toHaveAttribute("aria-selected", "true");
+  view.rerender(
+    <PanelWorkspace
+      value="one"
+      select={() => {}}
+      items={[{ id: "one", label: "One", content: null }]}
+    />,
+  );
+  expect(cycleTab()).toBe(true);
+});
+
 test("background tab selection does not take focus from a modal", () => {
   const view = render(
     <>

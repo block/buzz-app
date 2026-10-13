@@ -154,21 +154,26 @@ export function PanelWorkspace({
       .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
   ]);
   const active = tabs.find((tab) => tab.id === selected);
+  const choose = (id: string) => {
+    const local = owned.find((tab) => tab.id === id);
+    setLocalSelection(local?.id);
+    select(local?.owner ?? id);
+  };
   useLayoutEffect(() => {
-    const close = (event: Event) => {
+    // With two tab hosts, the one containing focus owns Close and Ctrl+Tab.
+    const owns = () => {
       const element = root.current;
-      if (
-        event.defaultPrevented ||
-        !active?.close ||
-        !element?.isConnected ||
-        // With two tab hosts, the one containing focus owns Close.
+      return (
+        !!element?.isConnected &&
         (document.activeElement?.closest(
           "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main ? null : element)) !== element ||
-        element.closest('[hidden], [inert], [aria-hidden="true"]') ||
-        !element.getClientRects().length
-      )
-        return;
+        ) ?? (main ? null : element)) === element &&
+        !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+        !!element.getClientRects().length
+      );
+    };
+    const close = (event: Event) => {
+      if (event.defaultPrevented || !active?.close || !owns()) return;
       event.preventDefault();
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
@@ -177,8 +182,39 @@ export function PanelWorkspace({
         active.close?.();
       });
     };
+    // Ctrl+Tab is literal Control on every platform, so it is not a
+    // registered shortcut (`mod` is Command on Apple platforms).
+    const cycle = (event: KeyboardEvent) => {
+      const modal = document.querySelector('dialog[open], [aria-modal="true"]');
+      if (
+        event.key !== "Tab" ||
+        !event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        event.defaultPrevented ||
+        tabs.length < 2 ||
+        (modal && !modal.contains(root.current)) ||
+        !owns()
+      )
+        return;
+      // Capture beats editors that accept completions on Tab.
+      event.preventDefault();
+      event.stopPropagation();
+      const index = tabs.findIndex((tab) => tab.id === selected);
+      const next =
+        tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
+      if (!next) return;
+      // Like a browser, land in the next tab's content rather than the strip.
+      focusContent.current = true;
+      flushSync(() => choose(next.id));
+    };
     window.addEventListener("buzz:close-active-tab", close);
-    return () => window.removeEventListener("buzz:close-active-tab", close);
+    window.addEventListener("keydown", cycle, true);
+    return () => {
+      window.removeEventListener("buzz:close-active-tab", close);
+      window.removeEventListener("keydown", cycle, true);
+    };
   });
   const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
@@ -280,9 +316,7 @@ export function PanelWorkspace({
             onValueChange={(id) => {
               focusContent.current = pointerTab.current;
               pointerTab.current = false;
-              const local = owned.find((tab) => tab.id === id);
-              setLocalSelection(local?.id);
-              select(local?.owner ?? id);
+              choose(id);
             }}
           />
         }

@@ -866,7 +866,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
-        name: await sessionName(agent, request.conversation),
+        name: sessionName(agent, request.conversation),
       });
       const context = await this.history(request, signal);
       signal.throwIfAborted();

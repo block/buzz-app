@@ -43,29 +43,24 @@ export function sessionTitle(agentName: string, conversation: Conversation) {
   return `Buzz #${conversation.name.replace(/\s+/g, " ").slice(0, 100)}${conversation.root ? ` · thread ${conversation.root.slice(0, 8)}` : ""} · ${agentName}`;
 }
 /** Names the agent's conversation in its thread names, so its threads can be
- * found from any build of the app, each of which saves its own bindings. */
-export async function sessionTag(
+ * found from any build of the app, each of which saves its own bindings. A
+ * 64-bit FNV-1a hash: stable and synchronous, so naming a thread does not
+ * reorder concurrent turn starts. */
+export function sessionTag(
   agentPubkey: string,
   conversation: Pick<Conversation, "channelId" | "root">,
 ) {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      JSON.stringify([
-        agentPubkey,
-        conversation.channelId,
-        conversation.root ?? "channel",
-      ]),
-    ),
-  );
-  const hex = [...new Uint8Array(digest).slice(0, 8)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-  return `buzz:${hex}`;
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(
+    JSON.stringify([
+      agentPubkey,
+      conversation.channelId,
+      conversation.root ?? "channel",
+    ]),
+  ))
+    hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  return `buzz:${hash.toString(16).padStart(16, "0")}`;
 }
-export async function sessionName(
-  agent: AgentHandle,
-  conversation: Conversation,
-) {
-  return `${sessionTitle(agent.name, conversation)} · ${await sessionTag(agent.pubkey, conversation)}`;
+export function sessionName(agent: AgentHandle, conversation: Conversation) {
+  return `${sessionTitle(agent.name, conversation)} · ${sessionTag(agent.pubkey, conversation)}`;
 }

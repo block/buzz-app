@@ -266,7 +266,7 @@ async function findThreads(rpc: AppServer, lookup: Lookup): Promise<Found[]> {
     name: lookup.name ?? lookup.channelId,
     ...(lookup.root ? { root: lookup.root } : {}),
   };
-  const tag = await sessionTag(lookup.agent.pubkey, conversation);
+  const tag = sessionTag(lookup.agent.pubkey, conversation);
   const title = sessionTitle(lookup.agent.name, conversation);
   const found = new Map<string, Found>();
   for (const [term, legacy, named] of [

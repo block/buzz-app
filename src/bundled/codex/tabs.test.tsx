@@ -450,7 +450,7 @@ it("sets the conversation the profile was opened from apart from the recent ones
 
 it("finds the thread's Codex thread another build of the app started", async () => {
   const root = "f".repeat(64);
-  const tag = await sessionTag("a".repeat(64), { channelId: "channel", root });
+  const tag = sessionTag("a".repeat(64), { channelId: "channel", root });
   const f = fixture(
     {},
     (threadId) => ({

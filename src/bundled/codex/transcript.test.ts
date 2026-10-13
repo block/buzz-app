@@ -230,7 +230,7 @@ it("reads the latest turns oldest first and closes its app-server", async () => 
 });
 
 it("merges the threads other builds started, found by tag or by their earlier name", async () => {
-  const tag = await sessionTag(agent.pubkey, lookup);
+  const tag = sessionTag(agent.pubkey, lookup);
   const title = `Buzz #dev · thread ${root.slice(0, 8)} · Sol`;
   const threads = [
     { id: "tagged", name: `Renamed · ${tag}`, updatedAt: 3 },

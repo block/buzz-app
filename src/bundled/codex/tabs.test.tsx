@@ -460,7 +460,7 @@ it("sets the conversation the profile was opened from apart from the recent ones
   ).toHaveLength(2);
 });
 
-it("brings an open transcript's tab back, and closes it when the profile is opened from elsewhere", async () => {
+it("brings an open transcript's tab back, and closes it for good when the profile is opened from elsewhere", async () => {
   const root = "e".repeat(64);
   const f = fixture(
     {
@@ -513,6 +513,13 @@ it("brings an open transcript's tab back, and closes it when the profile is open
   view.rerender(<Panel conversation={{ channelId: "channel" }} />);
   expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
   expect(tab("Sol")).toHaveAttribute("aria-selected", "true");
+  // Back in the first conversation, it stays closed until viewed again.
+  view.rerender(
+    <Panel conversation={{ channelId: "channel", rootId: root }} />,
+  );
+  expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
 });
 
 it("finds the thread's Codex thread another build of the app started", async () => {

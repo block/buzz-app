@@ -90,6 +90,9 @@ export function useOpenTranscript<T>(
     ? `${conversation.channelId}/${conversation.rootId ?? ""}`
     : "";
   const [shown, setShown] = useState<{ place: string; row: T }>();
+  // Forgotten, not just hidden: returning to the first conversation must not
+  // reopen it unasked.
+  if (shown && shown.place !== place) setShown(undefined);
   const tabs = usePanelTabHost();
   return {
     open: shown?.place === place ? shown.row : undefined,

@@ -131,9 +131,11 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
     { start: 16, end: 21 },
     { start: 22, end: 24 },
   ]);
-  // Playwright: `test.describe` is a group, `test.beforeEach` a hook.
+  // Playwright: `test.use` is configuration, `test.describe` a group and
+  // `test.beforeEach` a hook; none is a test call, listed or not.
   const spec = [
     'import { test } from "@playwright/test";',
+    "test.use({ viewport: { width: 800, height: 600 } });",
     'test.describe("suite", () => {',
     "  test.beforeEach(async ({ page }) => {",
     '    await page.goto("/");',
@@ -144,8 +146,9 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
     "});",
     "",
   ].join("\n");
-  assert.deepEqual(testBodies(spec, "js", [6]), [
-    { start: 6, end: 8, line: 6 },
+  assert.deepEqual(testCalls(spec, "js"), [{ start: 7, end: 9 }]);
+  assert.deepEqual(testBodies(spec, "js", [7]), [
+    { start: 7, end: 9, line: 7 },
   ]);
 });
 
@@ -222,8 +225,10 @@ test("hunks inside tests select those tests; shared code, new or unlisted files 
   );
 });
 
-test("deleting a shared hook after a test selects the whole file through a real diff", () => {
-  const lines = [
+// A Vitest hook and a Playwright namespaced hook, each directly after test a
+// (lines 3-5) and before test b (lines 9-11) with no blank line between.
+const hookSources = {
+  ts: [
     'import { afterEach, describe, expect, it } from "vitest";',
     'describe("group", () => {',
     '  it("a", () => {',
@@ -237,41 +242,59 @@ test("deleting a shared hook after a test selects the whole file through a real 
     "  });",
     "});",
     "",
-  ];
-  const previous = testCalls(lines.join("\n"), "ts");
-  assert.deepEqual(previous, [
-    { start: 3, end: 5 },
-    { start: 9, end: 11 },
-  ]);
-  // `git diff -U0` for removing lines 6-8: the hunk attaches to line 5, the
-  // closing line of test a, which the old-side range shows was not the hook's.
-  const hookDiff = [
-    "@@ -6,3 +5,0 @@",
-    "-  afterEach(() => {",
-    "-    cleanup();",
-    "-  });",
+  ],
+  js: [
+    'import { expect, test } from "@playwright/test";',
+    'test.describe("suite", () => {',
+    '  test("a", async ({ page }) => {',
+    "    await expect(page).toHaveTitle(/a/);",
+    "  });",
+    "  test.afterEach(async ({ page }) => {",
+    "    await page.close();",
+    "  });",
+    '  test("b", async ({ page }) => {',
+    "    await expect(page).toHaveTitle(/b/);",
+    "  });",
+    "});",
     "",
-  ].join("\n");
-  assert.deepEqual(
-    selectTests(
-      hunkRanges(hookDiff),
-      testBodies(lines.toSpliced(5, 3).join("\n"), "ts", [3, 6]),
-      { previous },
-    ),
-    { whole: true, reason: "shared code removed" },
-  );
-  // Removing test b's assertion (old line 10) attaches to its first line and
-  // selects only test b.
-  const bodyDiff = ["@@ -10 +9,0 @@", "-    expect(2).toBe(2);", ""].join("\n");
-  assert.deepEqual(
-    selectTests(
-      hunkRanges(bodyDiff),
-      testBodies(lines.toSpliced(9, 1).join("\n"), "ts", [3, 9]),
-      { previous },
-    ),
-    { lines: [9] },
-  );
-});
+  ],
+};
+
+for (const [lang, lines] of Object.entries(hookSources))
+  test(`deleting a shared hook after a test selects the whole file through a real diff (${lang})`, () => {
+    const previous = testCalls(lines.join("\n"), lang);
+    assert.deepEqual(previous, [
+      { start: 3, end: 5 },
+      { start: 9, end: 11 },
+    ]);
+    // `git diff -U0` for removing lines 6-8: the hunk attaches to line 5, the
+    // closing line of test a, which the old-side range shows was not the
+    // hook's.
+    const hookDiff = [
+      "@@ -6,3 +5,0 @@",
+      ...lines.slice(5, 8).map((line) => `-${line}`),
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      selectTests(
+        hunkRanges(hookDiff),
+        testBodies(lines.toSpliced(5, 3).join("\n"), lang, [3, 6]),
+        { previous },
+      ),
+      { whole: true, reason: "shared code removed" },
+    );
+    // Removing test b's assertion (old line 10) attaches to its first line and
+    // selects only test b.
+    const bodyDiff = ["@@ -10 +9,0 @@", `-${lines[9]}`, ""].join("\n");
+    assert.deepEqual(
+      selectTests(
+        hunkRanges(bodyDiff),
+        testBodies(lines.toSpliced(9, 1).join("\n"), lang, [3, 9]),
+        { previous },
+      ),
+      { lines: [9] },
+    );
+  });
 
 test("journeys tagged for special projects or platforms are never repeated", () => {
   assert.deepEqual(

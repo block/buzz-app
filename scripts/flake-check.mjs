@@ -46,9 +46,25 @@ export function hunkRanges(diff) {
   }));
 }
 
-// Line spans of every `test`/`it` call, from its first line to its closing
-// parenthesis. `describe` groups and hooks are not calls; tests registered
-// through a wrapper have no enclosing call.
+// Members that keep a `test`/`it` chain a test declaration. Anything else on
+// the chain is a group (`describe`), a hook (`test.beforeEach`), configuration
+// (`test.use`) or a harness object that happens to be named `test`.
+const declaring = [
+  "only",
+  "skip",
+  "fixme",
+  "fails",
+  "todo",
+  "concurrent",
+  "sequential",
+  "each",
+  "for",
+  "runIf",
+  "skipIf",
+];
+
+// Line spans of every test declaration, from its first line to its closing
+// parenthesis. Tests registered through a wrapper have no enclosing call.
 export function testCalls(source, lang) {
   const lineAt = (offset) => source.slice(0, offset).split("\n").length;
   const names = (callee) =>
@@ -70,7 +86,7 @@ export function testCalls(source, lang) {
     if (
       chain &&
       ["test", "it"].includes(chain[0]) &&
-      !chain.includes("describe")
+      chain.slice(1).every((member) => declaring.includes(member))
     ) {
       calls.push({ start: lineAt(node.start), end: lineAt(node.end - 1) });
       return;

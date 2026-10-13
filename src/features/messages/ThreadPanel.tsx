@@ -1475,7 +1475,7 @@ function ThreadLoading() {
           media="(prefers-reduced-motion: reduce)"
           srcSet="/buzz-mark.svg"
         />
-        <img src="/buzz-loading-mark.svg" alt="" width="48" height="48" />
+        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
       </picture>
       <span className="sr-only">Loading thread…</span>
     </div>

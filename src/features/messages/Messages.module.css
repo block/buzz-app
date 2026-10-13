@@ -668,6 +668,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 /* Fills whichever thread area is waiting. The mark waits one state change
    before appearing, so a thread that loads at once never flashes it. */
 .threadLoading {
+  container-type: size;
   flex: 1;
   display: grid;
   place-items: center;
@@ -679,9 +680,17 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: absolute;
   inset: 0;
 }
+/* The mark scales with the waiting area: a side pane and a full main pane
+   both read it as the thread's placeholder, not a stray icon. */
 .threadLoading picture {
   display: block;
+  width: clamp(5rem, 24cqmin, 10rem);
   line-height: 0;
+}
+.threadLoading img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 :root[data-color-mode="dark"] .threadLoading picture {
   filter: invert(1);

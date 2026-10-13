@@ -1192,6 +1192,10 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   await expect(service.retype(bot, "other/relay")).rejects.toThrow(
     "provider is already changing",
   );
+  await expect(
+    service.save(bot, { config: { reply: "Lost edit" } }),
+  ).rejects.toThrow("provider is already changing");
+  await service.save(bot, { attentionEnabled: true });
   emit({ events: [mention("m2")], channelId: channel });
   await settle();
   expect(other).not.toHaveBeenCalled();
@@ -1203,6 +1207,7 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
     type: "other/relay",
     config: { prompt: "Reviewed target", model: "large" },
     attention,
+    attentionEnabled: true,
   });
   // The new type answers from now on.
   await vi.waitFor(() => expect(other).toHaveBeenCalledOnce());

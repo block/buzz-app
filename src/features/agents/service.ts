@@ -1185,6 +1185,8 @@ export class AgentsService extends Service implements Agents {
     if (!identity)
       return this.exclusive(pubkey, () => this.saveHosted(pubkey, change));
     if (!this.native) throw new Error("No such agent on this device");
+    if (change.config !== undefined && this.runners.get(pubkey)?.transitioning)
+      throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     let record = this.recordOf(identity);
@@ -1315,17 +1317,17 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           `${identity.name} is answering; change its type when it finishes`,
         );
-      const { record, adopted, preview } = this.retypePlan(
+      const { adopted, preview } = this.retypePlan(
         identity,
         kinds.get(identity.type),
         kind,
       );
-      const nextRecord = {
-        ...record,
-        config: change ? change.config : adopted,
-      };
       await this.native.setType(pubkey, type);
       try {
+        const nextRecord = {
+          ...this.recordOf(identity),
+          config: change ? change.config : adopted,
+        };
         const records = { ...this.records, [pubkey]: nextRecord };
         writeRecords(this.storage, records);
         // Publish the in-memory pair only after its config is durable.

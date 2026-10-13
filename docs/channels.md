@@ -1115,6 +1115,16 @@ Read-only connections keep the existing composer capability notice; missing/revo
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.
 
+A labelled divider separates the original message from replies, including “No
+replies yet” when signed thread bounds confirm an empty result. Complete signed
+windows show the reply count; partial or legacy history says “replies loaded”
+(or “Replies” when none are loaded yet). Counts include collapsed descendants.
+The first reply always shows its author, even when it matches the original.
+The original has no day divider above it; its byline already names the day.
+Agent-addressed messages retain their date when expanded. An unresolved linked
+reply keeps the count labelled as loaded, even if its refresh returns ready.
+Replies show a day divider only when their day differs from the previous row.
+
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
 closed and expand one level at a time; once opened, they stay open for the lifetime
@@ -1125,8 +1135,8 @@ when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice. Sessions remain inline.
 Retry appears only after a failed read; there is no routine Refresh control. Names
-are optional shared background enrichment. The panel describes **replies loaded**,
-not visible rows or complete history.
+are optional shared background enrichment. For partial or legacy history, the panel
+describes **replies loaded**, not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 

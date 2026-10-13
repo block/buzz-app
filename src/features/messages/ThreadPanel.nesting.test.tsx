@@ -239,24 +239,27 @@ it("does not silently retarget a deleted parent to the root", () => {
   ).toBeEnabled();
 });
 
-it("groups the first same-author reply with the root but respects the time window", () => {
+it("starts replies with a full author header and only groups replies within the time window", () => {
   const h = setup();
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "continuation",
-  );
-  h.update([{ ...row("parent", "root"), createdAt: 301 }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "continuation",
-  );
-  h.update([{ ...row("parent", "root"), createdAt: 302 }]);
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
     "data-layout",
     "thread",
   );
-  h.update([{ ...row("parent", "root"), authorId: "b".repeat(64) }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+  h.update([row("parent", "root"), { ...row("peer", "root"), createdAt: 301 }]);
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
+    "data-layout",
+    "continuation",
+  );
+  h.update([row("parent", "root"), { ...row("peer", "root"), createdAt: 302 }]);
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+  h.update([
+    row("parent", "root"),
+    { ...row("peer", "root"), authorId: "b".repeat(64) },
+  ]);
+  expect(screen.getByText("peer").closest("article")).toHaveAttribute(
     "data-layout",
     "thread",
   );
@@ -385,7 +388,7 @@ it("groups same-parent siblings but restores the author after an expanded branch
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
     "data-layout",
-    "continuation",
+    "thread",
   );
   expect(screen.getByText("child").closest("article")).toHaveAttribute(
     "data-layout",

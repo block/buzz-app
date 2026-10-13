@@ -562,6 +562,75 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("separates the original from replies without presenting incomplete history as empty or complete", () => {
+  const h = messagesHarness();
+  h.snapshot.direction = "older";
+  h.render();
+  expect(screen.getByText("No replies yet")).toBeVisible();
+
+  h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
+  h.render();
+  const divider = screen.getByText("1 reply");
+  const root = screen.getByText("root");
+  const reply = screen.getByText("first reply");
+  expect(
+    root.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  h.snapshot.replies = [
+    ...h.snapshot.replies,
+    { ...row, id: "nested", content: "nested reply", replyParentId: "reply" },
+  ];
+  h.render();
+  expect(screen.getByText("2 replies")).toBeVisible();
+
+  for (const partial of [
+    { status: "loading" as const },
+    { status: "error" as const, error: "Unable to load replies" },
+    { canLoadMore: true },
+    { limited: true },
+    { direction: "forward" as const },
+    { targetStatus: "unavailable" as const },
+    { targetStatus: "loading" as const },
+    { targetStatus: "error" as const },
+  ]) {
+    Object.assign(
+      h.snapshot,
+      {
+        direction: "older",
+        status: "ready",
+        error: undefined,
+        canLoadMore: false,
+        limited: false,
+        targetStatus: undefined,
+      },
+      partial,
+    );
+    h.render();
+    expect(screen.getByText("2 replies loaded")).toBeVisible();
+  }
+
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  expect(screen.getByText("2 replies")).toBeVisible();
+
+  h.snapshot.targetStatus = "unavailable";
+  h.snapshot.replies = [];
+  h.render();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+
+  h.snapshot.root = undefined;
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+});
+
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";

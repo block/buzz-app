@@ -82,7 +82,10 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  margin: var(--space-3) 0;
+  /* Place the line space-6 from adjacent message content: subtract half the
+     label's line box and the neighbouring .message row padding. */
+  margin: calc(var(--space-6) - var(--space-2) - var(--space-half)) 0
+    calc(var(--space-6) - var(--space-2) - var(--space-3) - var(--space-half));
 }
 .day::before,
 .day::after {
@@ -608,7 +611,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-1h);
 }
 .day span {
-  padding: var(--space-1h) var(--space-3);
+  padding: 0 var(--space-3);
 }
 .threadUnread {
   width: 0.5rem;
@@ -673,7 +676,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-panel-inset);
+  /* Narrower than the channel feed's panel inset; aligns with the composer. */
+  padding: 0 var(--space-4);
+  /* The original starts space-4 below the header, less its .message padding. */
+  padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
   /* Scrollable end padding, not a fixed strip above the composer. */
   padding-bottom: var(--space-3);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
@@ -687,7 +693,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistory[data-positioning] > [role="status"] {
   position: absolute;
   inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
+  inset-inline: var(--space-4);
   color: var(--text-subtle);
 }
 .threadHistoryPageStatus {

@@ -1,3 +1,4 @@
+import type { IfcContext } from "../ifc/context";
 import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
@@ -170,6 +171,7 @@ export interface ReadTransport {
     signal?: AbortSignal,
     requestId?: string,
     priority?: "foreground" | "background",
+    ifc?: IfcContext,
   ): Promise<RelayEvent[]>;
   /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
   media(url: string, size?: "small"): string | undefined;
@@ -195,7 +197,12 @@ export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
   /** The host authenticates and sends exact bytes without exposing credentials to JS. */
-  request(url: string, body: string, signal?: AbortSignal): Promise<Response>;
+  request(
+    url: string,
+    body: string,
+    signal?: AbortSignal,
+    ifc?: IfcContext,
+  ): Promise<Response>;
   /** Native hosts sign and send `PUT /upload` for these exact bytes. */
   upload?(file: File, signal: AbortSignal): Promise<Response>;
   /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
@@ -1226,7 +1233,13 @@ export async function connectSignedTransport(
         );
       },
     },
-    query: (filters, signal, requestId = "read", priority = "foreground") =>
+    query: (
+      filters,
+      signal,
+      requestId = "read",
+      priority = "foreground",
+      ifc,
+    ) =>
       measureQuery(httpOrigin, priority, async (sized) => {
         const result = await signedPost(
           signer,
@@ -1237,6 +1250,8 @@ export async function connectSignedTransport(
           requestId,
           principal().api,
           priority,
+          false,
+          ifc,
         );
         if (!result.ok) {
           const failure = await readApiFailure(result);
@@ -1267,6 +1282,7 @@ async function signedPost(
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
   optionalPresence = false,
+  ifc?: IfcContext,
 ) {
   const dispatch = (request: () => Promise<Response>) =>
     optionalPresence
@@ -1278,7 +1294,9 @@ async function signedPost(
     return dispatch(() => {
       signal?.throwIfAborted();
       return profiling.measureAsync("http.fetch", id, () =>
-        signer.request(url, body, signal),
+        ifc
+          ? signer.request(url, body, signal, ifc)
+          : signer.request(url, body, signal),
       );
     });
   });

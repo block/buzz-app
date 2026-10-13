@@ -3,6 +3,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
+import historyReadFilter from "../ifc/history-read-filter.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -19,6 +20,8 @@ import {
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
+import { createRelayReader } from "./reader";
+import type { IfcContext } from "../ifc/context";
 import { createRelaySession } from "./session";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
@@ -45,6 +48,7 @@ type Request = {
   path: string;
   method: string;
   body: string | null;
+  ifc?: IfcContext;
 };
 let discovery: Record<string, unknown> = {};
 let respond: (
@@ -2180,4 +2184,35 @@ it("cancellation during ingress prevents further chunks and final upload", async
       .mock.calls.filter(([command]) => command === "relay_upload_chunk"),
   ).toHaveLength(1);
   expect(uploads).toHaveLength(0);
+});
+
+it("carries an IFC audit through the normal read scheduler to relay_http", async () => {
+  const channel = historyReadFilter[0]?.["#h"][0];
+  assert(channel);
+  const incoming = message(viewer, channel, "history", 1700000000);
+  respond = () => ({ body: [incoming] });
+  const transport = await connectNativeTransport(community);
+  const owner = createRelayReader(transport);
+  const ifc = { agent: viewer.pubkey, trigger: incoming };
+  try {
+    expect(
+      await owner.reader.read(
+        [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+        { ifc },
+      ),
+    ).toEqual([incoming]);
+    expect(requests.find((request) => request.path === "/query")).toMatchObject(
+      {
+        ifc,
+        body: JSON.stringify(historyReadFilter),
+      },
+    );
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.every(([command]) => command !== "app_agent_read_history"),
+    ).toBe(true);
+  } finally {
+    owner.dispose();
+  }
 });

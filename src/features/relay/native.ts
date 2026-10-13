@@ -1,3 +1,4 @@
+import type { IfcContext } from "../ifc/context";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -100,6 +101,7 @@ export async function nativeRelayRequest(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  ifc?: IfcContext,
 ): Promise<Response> {
   const bounded = AbortSignal.any([
     ...(signal ? [signal] : []),
@@ -115,6 +117,7 @@ export async function nativeRelayRequest(
     path,
     method: body === undefined ? "GET" : "POST",
     body: body === undefined ? null : JSON.stringify(body),
+    ...(ifc ? { ifc } : {}),
   });
   // IPC cannot abort reqwest. Retain the shared admission slot until native work
   // settles (bounded by its timeout), then reject any obsolete result.
@@ -295,7 +298,7 @@ export function nativeRelaySigner(community: string): Signer {
         }),
       );
     },
-    request(url, body, signal) {
+    request(url, body, signal, ifc) {
       const target = new URL(url);
       if (target.origin !== origin || target.search || target.hash)
         throw new Error("Relay request changed community");
@@ -304,6 +307,7 @@ export function nativeRelaySigner(community: string): Signer {
         target.pathname,
         JSON.parse(body),
         signal,
+        ifc,
       );
     },
     upload: (file, signal) => nativeUpload(origin, file, signal),

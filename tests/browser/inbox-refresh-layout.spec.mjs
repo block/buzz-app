@@ -193,4 +193,27 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
     0,
   );
+  const filters = inbox.getByRole("button", {
+    name: "Inbox filters",
+    exact: true,
+  });
+  await filters.click();
+  const menu = page.getByRole("menu", { name: "Inbox filters" });
+  await menu
+    .getByRole("menuitemcheckbox", { name: "Inbox", exact: true })
+    .click();
+  await menu
+    .getByRole("menuitemradio", { name: "Mentions", exact: true })
+    .click();
+  await filters.click();
+  await menu
+    .getByRole("menuitemcheckbox", { name: "People", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(filters).toHaveText("Mentions · Inbox and archived · Agents");
+  await expect
+    .poll(() =>
+      filters.evaluate((element) => element.getBoundingClientRect().right),
+    )
+    .toBeLessThanOrEqual(390);
 });

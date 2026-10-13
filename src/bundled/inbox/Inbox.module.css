@@ -15,6 +15,11 @@
   align-items: center;
 }
 
+.filterSummary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .refreshStatus {
   min-width: 0;
   overflow: hidden;

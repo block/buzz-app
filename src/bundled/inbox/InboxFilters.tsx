@@ -1,4 +1,5 @@
 import { useId, type Ref } from "react";
+import styles from "./Inbox.module.css";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -78,8 +79,10 @@ export function InboxFilters({
           aria-label="Inbox filters"
           aria-describedby={selectionId}
           render={
-            <Button size="sm" variant="ghost">
-              <span id={selectionId}>{summary}</span>
+            <Button size="sm" variant="ghost" style={{ maxWidth: "100%" }}>
+              <span id={selectionId} className={styles.filterSummary}>
+                {summary}
+              </span>
               <CaretDownIcon size="1rem" />
             </Button>
           }

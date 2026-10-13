@@ -389,25 +389,27 @@ export class ClaudeRuntime {
       channel,
       signal,
     );
-    // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) => {
-      const turn = await this.turn(
-        entry,
-        agent.pubkey,
-        event,
-        channel,
-        topLevel,
-        fresh,
-      );
-      return {
-        key: turn.key,
-        text: this.review(
-          entry,
-          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
-        ),
-      };
-    };
+    // Frozen with the policy: a scope change while this waits must not move
+    // its prompt to another conversation than the one it is delivered to.
     const key = this.key(entry, agent.pubkey, event, channel, topLevel);
+    // `fresh` is for a session that has been shown nothing yet.
+    const prompt = async (fresh: boolean) =>
+      this.review(
+        entry,
+        turnPrompt({
+          ...(await this.turn(
+            entry,
+            agent.pubkey,
+            event,
+            channel,
+            key,
+            topLevel,
+            fresh,
+          )),
+          agent: agent.pubkey,
+          label: "@mention",
+        }),
+      );
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
@@ -417,7 +419,7 @@ export class ClaudeRuntime {
     let delivered!: Promise<Settled>;
     const handed = (async () => {
       await wait;
-      const { text } = await prompt(false);
+      const text = await prompt(false);
       // A conversation's tools default to its thread; a session shared by
       // several threads is told which to reply in instead.
       entry.contexts.set(
@@ -430,7 +432,7 @@ export class ClaudeRuntime {
       );
       delivered = entry.sessions.deliver(key, text, event.created_at, {
         steer: steerPrompt(text),
-        fresh: async () => (await prompt(true)).text,
+        fresh: () => prompt(true),
         activityScope: topLevel
           ? channel
           : (threadReference(event)?.rootId ?? event.id),
@@ -444,12 +446,16 @@ export class ClaudeRuntime {
       () => delivered,
       (error: unknown): Settled => ({ ok: false, error: String(error) }),
     );
-    entry.policies.set(key, {
+    const policy = {
       topLevel,
       handed: handed.catch(() => undefined),
       settled: Promise.all([same ? prior.settled : undefined, done]).then(
         () => undefined,
       ),
+    };
+    entry.policies.set(key, policy);
+    void policy.settled.then(() => {
+      if (entry.policies.get(key) === policy) entry.policies.delete(key);
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
@@ -632,6 +638,7 @@ export class ClaudeRuntime {
     self: string,
     event: EventData,
     channelId: string,
+    key: string,
     topLevel: boolean,
     fresh = false,
   ) {
@@ -641,8 +648,8 @@ export class ClaudeRuntime {
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
-    const scope = entry.config.scope;
-    const key = this.key(entry, self, event, channelId, topLevel);
+    // The conversation it was admitted to, not the scope as it is now.
+    const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel))

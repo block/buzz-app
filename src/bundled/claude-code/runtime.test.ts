@@ -42,7 +42,7 @@ function setup(
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
-    /** Channels filed in the owner's Me, which makes the owner the viewer. */
+    /** Channels filed in the owner's Me; the owner is the viewer. */
     me?: Set<string>;
   }> = {},
 ) {
@@ -75,17 +75,14 @@ function setup(
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
     mePlacement: {
-      snapshot: () => ({ status: "ready" }),
+      state: { status: "ready" } as { status: string; error?: string },
+      snapshot: () => session.mePlacement.state,
       refresh: vi.fn(async () => {}),
       has: (id: string) => !!options.me?.has(id),
     },
   };
   const relay = {
-    snapshot: () => ({
-      status: "ready",
-      session,
-      ...(options.me ? { viewer: alice } : {}),
-    }),
+    snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = {
@@ -164,6 +161,7 @@ function setup(
   return {
     runtime,
     deliver,
+    placement: session.mePlacement,
     published,
     claudes,
     fake,
@@ -1154,6 +1152,36 @@ async function send(claude: FakeClaude | undefined, id: string, args: object) {
   )?.response?.mcp_response?.result;
 }
 
+it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+  const mention = (id: string) =>
+    message(id, `@Claude ${id}`, {
+      created_at: 100 + Number(id),
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const { deliver, placement, published, claudes, workingUntil } = setup([]);
+  placement.state = { status: "error", error: "Recipe read failed" };
+  await expect(
+    deliver({ type: "mention", event: mention("1") }),
+  ).rejects.toThrow(
+    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+  );
+  await flush(10);
+  expect(placement.refresh).toHaveBeenCalledOnce();
+  expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
+  expect(workingUntil).not.toHaveBeenCalled();
+  expect(published).toEqual([]);
+  placement.state = { status: "ready" };
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  const prompts = claudes().flatMap((process) => process.prompts);
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
+  expect(workingUntil).toHaveBeenCalledOnce();
+});
+
 it("continues an owner's Me chat as one channel session posted at the top level", async () => {
   const earlier = message("1", "Earlier in the chat");
   const first = message("2", "@Claude first", {
@@ -1221,7 +1249,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+it("finishes a Me turn under its policy when the chat is shared mid-turn, and keeps the next turn's conversation while it waits", async () => {
   const mention = (id: string) =>
     message(id, `@Claude ${id}`, {
       created_at: 100 + Number(id),
@@ -1253,12 +1281,19 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   await flush(10);
   // It waits for the Me turn rather than steering into it.
   expect(claude?.prompts).toHaveLength(1);
+  // Admitted to the channel's conversation, it is told so even if the agent
+  // is moved to thread scope meanwhile.
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   await send(claude, "call-1", { text: "Still top level" });
   claude?.finish();
   await flush(10);
-  expect(claude?.prompts).toHaveLength(2);
-  expect(claude?.prompts[1]).toContain(`pass \`reply: "${mention("2").id}"\``);
-  await send(claude, "call-2", { text: "Threaded", reply: mention("2").id });
+  const next = claudes().flatMap((process) => process.prompts)[1] ?? "";
+  expect(next).toContain(`pass \`reply: "${mention("2").id}"\``);
+  await send(
+    claudes().find((process) => process.prompts.includes(next)),
+    "call-2",
+    { text: "Threaded", reply: mention("2").id },
+  );
   expect(published.map((event) => event.tags)).toEqual([
     [["h", channel]],
     [

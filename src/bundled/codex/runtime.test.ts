@@ -219,9 +219,12 @@ function fixture(
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
+  // The owner's view, with no channel filed in Me unless a test does so.
+  const personal = new Set<string>();
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
+    viewer: owner,
     session: {
       workflowAuthority: undefined as string | undefined,
       profiles: {
@@ -236,6 +239,12 @@ function fixture(
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
         }),
+      },
+      mePlacement: {
+        state: { status: "ready" } as { status: string; error?: string },
+        snapshot: () => snapshot.session.mePlacement.state,
+        refresh: vi.fn(async () => {}),
+        has: (id: string) => personal.has(id),
       },
     },
   };
@@ -443,6 +452,7 @@ function fixture(
     complete,
     interrupt,
     snapshot,
+    personal,
     exits,
   };
 }
@@ -2380,18 +2390,10 @@ describe("programs", () => {
   });
 });
 
-/** Files the fixture's channel in its owner's Me; `personal` is mutable. */
+/** Files the fixture's channel in its owner's Me. */
 function inMe(f: ReturnType<typeof fixture>) {
-  const personal = new Set(["channel"]);
-  Object.assign(f.snapshot, { viewer: owner });
-  Object.assign(f.snapshot.session, {
-    mePlacement: {
-      snapshot: () => ({ status: "ready" }),
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => personal.has(id),
-    },
-  });
-  return personal;
+  f.personal.add("channel");
+  return f.personal;
 }
 const inputText = (wire: Wire | undefined) =>
   JSON.stringify((wire?.params as { input?: unknown } | undefined)?.input);
@@ -2499,6 +2501,26 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
       ["e", root, "", "reply"],
     ],
   ]);
+});
+
+it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+  const f = fixture();
+  const placement = f.snapshot.session.mePlacement;
+  placement.state = { status: "error", error: "Recipe read failed" };
+  await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
+    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+  );
+  expect(placement.refresh).toHaveBeenCalledOnce();
+  expect(f.starts()).toEqual([]);
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
+  placement.state = { status: "ready" };
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
 
 it("keeps Messages routing for a channel filed in someone else's Me", async () => {

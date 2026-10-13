@@ -4,8 +4,9 @@ import type { RelayData } from "../relay/service";
  * channel-scoped conversation that posts at channel top level. Only the
  * owner's own placement in the agent's community counts; another member's
  * filing never does, and DMs keep their own routing. An unreadable placement
- * is unknown, not Messages, so the turn fails rather than guess. Callers
- * freeze the answer for the turn it admits. */
+ * is unknown, not Messages, so the turn fails rather than guess, in Messages
+ * channels too: its activity says why, and the next mention reads it again.
+ * Callers freeze the answer for the turn it admits. */
 export async function meChat(
   relay: () => RelayData | undefined,
   owner: string,
@@ -32,10 +33,12 @@ export async function meChat(
     after.scope !== scope ||
     after.viewer !== owner
   )
-    throw new Error("The community changed");
+    throw new Error(
+      "The community changed before this was answered. Try again.",
+    );
   if (status() !== "ready")
     throw new Error(
-      placement.snapshot().error ?? "Your Me chats could not be read",
+      `Couldn't read your Me chats to tell where to answer (${placement.snapshot().error ?? "not loaded"}). Try again.`,
     );
   return placement.has(channelId);
 }

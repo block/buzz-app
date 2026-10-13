@@ -7,6 +7,7 @@ import {
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
+import { Select } from "../../shared/design-system/ui/Select";
 import styles from "./AgentControls.module.css";
 
 export type ModelChoice = Readonly<{
@@ -101,6 +102,34 @@ export function ModelPicker({
     else if (allowCustomModel) onChange(query.trim());
     setQuery(null);
   };
+  if (!allowCustomModel)
+    return (
+      <div className={compact ? styles.compactModel : undefined}>
+        <Select
+          label="Model"
+          value={selected.id}
+          valueLabel={selected.label}
+          valueTitle={selected.label}
+          leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
+          variant={compact ? "compact" : "field"}
+          align={compact ? "end" : "start"}
+          groups={[
+            {
+              label: "",
+              options: items.map((model) => ({
+                value: model.id,
+                label: model.label,
+                description: model.description,
+                leading: <ModelIcon model={`${model.id} ${model.label}`} />,
+              })),
+            },
+          ]}
+          disabled={disabled || loading}
+          description={compact ? undefined : description}
+          onValueChange={onChange}
+        />
+      </div>
+    );
   return (
     <div ref={control} className={compact ? styles.compactModel : undefined}>
       {compact && (
@@ -154,9 +183,7 @@ export function ModelPicker({
           description={compact ? undefined : description}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           appearance={compact ? "chip" : "field"}
-          placeholder={
-            allowCustomModel ? "Choose or enter a model" : "Choose a model"
-          }
+          placeholder="Choose or enter a model"
           style={
             compact
               ? { width: width ? `${Math.ceil(width) + 2}px` : "12ch" }
@@ -177,11 +204,7 @@ export function ModelPicker({
         />
         <Combobox.Popup
           className={styles.modelOptions}
-          empty={
-            allowCustomModel
-              ? "Type a model ID to use a custom model."
-              : "No matching models."
-          }
+          empty="Type a model ID to use a custom model."
         >
           <Combobox.List>
             {(model: ModelChoice) => (

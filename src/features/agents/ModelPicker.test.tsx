@@ -44,8 +44,8 @@ function setup(
   return { onChange, view, user: userEvent.setup() };
 }
 
-const input = () =>
-  screen.getByRole<HTMLInputElement>("combobox", { name: "Model" });
+const control = () => screen.getByRole("combobox", { name: "Model" });
+const input = () => control() as HTMLInputElement;
 
 it("shows the default's label when no model is chosen", () => {
   setup("");
@@ -120,40 +120,22 @@ it.each([true, false])(
   "shows a saved unlisted value as unavailable when custom entry is %s",
   async (allowCustomModel) => {
     const { user } = setup("claude-old-1", { allowCustomModel });
-    expect(input()).toHaveValue("claude-old-1");
-    await user.click(input());
+    if (allowCustomModel) expect(input()).toHaveValue("claude-old-1");
+    else expect(control()).toHaveTextContent("claude-old-1");
+    await user.click(control());
     const option = await screen.findByRole("option", { name: /claude-old-1/ });
     expect(option).toHaveTextContent("Unavailable model");
     expect(option).toHaveAttribute("aria-selected", "true");
   },
 );
 
-it("filters and picks listed models when custom entry is disabled", async () => {
+it("uses a dropdown to pick listed models when custom entry is disabled", async () => {
   const { onChange, user } = setup("", { allowCustomModel: false });
-  await user.clear(input());
-  await user.type(input(), "Op");
-  expect(screen.queryByRole("option", { name: /Sonnet/ })).toBeNull();
+  expect(control().tagName).toBe("BUTTON");
+  expect(control()).toHaveTextContent("Default model");
+  await user.click(control());
   await user.click(await screen.findByRole("option", { name: /Opus/ }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
-});
-
-it("restores the selection after an unmatched Enter in catalog-only mode", async () => {
-  const { onChange, user } = setup("", { allowCustomModel: false });
-  await user.clear(input());
-  await user.type(input(), "zzz-unlisted");
-  expect(await screen.findByText("No matching models.")).toBeVisible();
-  await user.keyboard("{Enter}");
-  expect(onChange).not.toHaveBeenCalled();
-  expect(input()).toHaveValue("Default model");
-});
-
-it("restores the selection after unmatched text loses focus in catalog-only mode", async () => {
-  const { onChange, user } = setup("opus", { allowCustomModel: false });
-  await user.clear(input());
-  await user.type(input(), "zzz-unlisted");
-  await user.tab();
-  expect(onChange).not.toHaveBeenCalled();
-  expect(input()).toHaveValue("Opus");
 });
 
 it("offers a typed ID that matches nothing as a custom model", async () => {

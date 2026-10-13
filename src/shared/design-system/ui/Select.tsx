@@ -10,6 +10,8 @@ export type SelectGroup = {
     value: string;
     label: string;
     description?: ReactNode;
+    /** Decorative identity artwork shown before the option's text. */
+    leading?: ReactNode;
     disabled?: boolean;
   }[];
 };
@@ -30,6 +32,7 @@ export function Select({
   placeholder,
   valueLabel,
   valueTitle,
+  leading,
   align = "start",
 }: {
   label: string;
@@ -42,6 +45,8 @@ export function Select({
   /** Compact display text; option labels retain their full meaning. */
   valueLabel?: string;
   valueTitle?: string;
+  /** Decorative identity artwork shown before the selected value. */
+  leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact";
@@ -83,13 +88,20 @@ export function Select({
             data-buzz-ui=""
             className="buzz-input buzz-select-trigger"
           >
-            <BaseSelect.Value
-              className="buzz-select-value"
-              placeholder={selectedValue === null ? placeholder : undefined}
-              data-placeholder={selectedValue === null ? "" : undefined}
-            >
-              {valueLabel}
-            </BaseSelect.Value>
+            <span className="buzz-select-value-content">
+              {leading && (
+                <span className="buzz-select-leading" aria-hidden="true">
+                  {leading}
+                </span>
+              )}
+              <BaseSelect.Value
+                className="buzz-select-value"
+                placeholder={selectedValue === null ? placeholder : undefined}
+                data-placeholder={selectedValue === null ? "" : undefined}
+              >
+                {valueLabel}
+              </BaseSelect.Value>
+            </span>
             <BaseSelect.Icon>
               <CaretDownIcon
                 size={16}
@@ -109,21 +121,30 @@ export function Select({
                 variant={variant === "compact" ? "outline" : "ghost"}
                 size={variant === "compact" ? "sm" : "md"}
               >
-                <BaseSelect.Value
-                  className={
-                    variant === "compact" ? "buzz-select-value" : undefined
-                  }
-                  title={
-                    variant === "compact"
-                      ? (valueTitle ??
-                        items.find((item) => item.value === value)?.label)
-                      : undefined
-                  }
-                  placeholder={selectedValue === null ? placeholder : undefined}
-                  data-placeholder={selectedValue === null ? "" : undefined}
-                >
-                  {valueLabel}
-                </BaseSelect.Value>
+                <span className="buzz-select-value-content">
+                  {leading && (
+                    <span className="buzz-select-leading" aria-hidden="true">
+                      {leading}
+                    </span>
+                  )}
+                  <BaseSelect.Value
+                    className={
+                      variant === "compact" ? "buzz-select-value" : undefined
+                    }
+                    title={
+                      variant === "compact"
+                        ? (valueTitle ??
+                          items.find((item) => item.value === value)?.label)
+                        : undefined
+                    }
+                    placeholder={
+                      selectedValue === null ? placeholder : undefined
+                    }
+                    data-placeholder={selectedValue === null ? "" : undefined}
+                  >
+                    {valueLabel}
+                  </BaseSelect.Value>
+                </span>
                 <BaseSelect.Icon>
                   <CaretDownIcon
                     size={14}
@@ -168,18 +189,28 @@ export function Select({
                           }
                           className="buzz-select-option"
                         >
-                          <span className="buzz-select-option-content">
-                            <BaseSelect.ItemText>
-                              {option.label}
-                            </BaseSelect.ItemText>
-                            {option.description && (
+                          <span className="buzz-select-option-main">
+                            {option.leading && (
                               <span
-                                id={descriptionId}
-                                className="buzz-select-option-description text-body-sm text-subtle"
+                                className="buzz-select-leading"
+                                aria-hidden="true"
                               >
-                                {option.description}
+                                {option.leading}
                               </span>
                             )}
+                            <span className="buzz-select-option-content">
+                              <BaseSelect.ItemText>
+                                {option.label}
+                              </BaseSelect.ItemText>
+                              {option.description && (
+                                <span
+                                  id={descriptionId}
+                                  className="buzz-select-option-description text-body-sm text-subtle"
+                                >
+                                  {option.description}
+                                </span>
+                              )}
+                            </span>
                           </span>
                           <BaseSelect.ItemIndicator
                             className="buzz-select-indicator"

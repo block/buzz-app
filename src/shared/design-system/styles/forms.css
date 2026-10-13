@@ -214,6 +214,17 @@
     text-align: start;
     cursor: pointer;
   }
+  .buzz-select-value-content {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+    gap: var(--space-row-gap);
+  }
+  .buzz-select-leading {
+    display: flex;
+    flex: none;
+  }
   .buzz-select-value {
     min-width: 0;
     overflow-wrap: anywhere;
@@ -244,7 +255,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .buzz-select[data-variant="compact"] .buzz-select-value + span {
+  .buzz-select[data-variant="compact"] .buzz-select-value-content + span {
     display: flex;
     flex-shrink: 0;
   }

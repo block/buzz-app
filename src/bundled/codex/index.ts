@@ -46,7 +46,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
-  } = createTabs(providerController, runtime);
+  } = createTabs(providerController, runtime, start);
   ctx.agents.register({
     id: "codex",
     title: "Codex",

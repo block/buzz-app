@@ -15,6 +15,8 @@ export const HOST_SHORTCUT_ORDER = {
   textSizeReset: 60,
   search: 70,
   settings: 80,
+  nextTab: 82,
+  previousTab: 84,
   close: 85,
   reload: 90,
 } as const;
@@ -88,7 +90,8 @@ export function registerAppShortcuts(
       run: () => window.location.reload(),
     }),
   );
-  // macOS owns Close in its native menu; browser builds keep browser shortcuts.
+  // macOS owns Close and tab switching in its native menu; browser builds keep
+  // browser shortcuts.
   if (isTauri() && !isApplePlatform(navigator.platform)) {
     remove.push(
       shortcuts.registerHost({
@@ -107,6 +110,29 @@ export function registerAppShortcuts(
           );
         },
       }),
+      ...(
+        [
+          ["next-tab", "Show next tab", HOST_SHORTCUT_ORDER.nextTab, false],
+          [
+            "previous-tab",
+            "Show previous tab",
+            HOST_SHORTCUT_ORDER.previousTab,
+            true,
+          ],
+        ] as const
+      ).map(([id, title, order, shift]) =>
+        shortcuts.registerHost({
+          id,
+          title,
+          binding: { key: "Tab", mod: true, shift },
+          order,
+          allowInEditable: true,
+          repeat: true,
+          run: () => {
+            window.dispatchEvent(new Event(`buzz:${id}`, { cancelable: true }));
+          },
+        }),
+      ),
     );
   }
   return () => {

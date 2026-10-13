@@ -782,7 +782,7 @@ it("refuses close and quit chords only in the desktop build", async () => {
     for (const key of ["q", "w"]) {
       fireEvent.keyDown(capture(title), { key, metaKey: true });
       expect(screen.getByRole("alert")).toHaveTextContent(
-        `⌘${key.toUpperCase()} is reserved for closing tabs or the window and quitting Buzz. Try another.`,
+        `⌘${key.toUpperCase()} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
       );
     }
     expect(h.bindings.snapshot().overrides).toEqual({});

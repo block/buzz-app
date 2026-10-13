@@ -220,7 +220,11 @@ it.each([
     const h = harness(platform);
     try {
       expect(
-        h.shortcuts.hostSnapshot().some(({ id }) => id === "close-tab"),
+        h.shortcuts
+          .hostSnapshot()
+          .some(({ id }) =>
+            ["close-tab", "next-tab", "previous-tab"].includes(id),
+          ),
       ).toBe(false);
       expect(press().defaultPrevented).toBe(false);
       expect(
@@ -257,6 +261,35 @@ it("respects IME/editor guards, exact modifiers, Alt+F4 and registration disposa
     expect(press().defaultPrevented).toBe(false);
     expect(close).not.toHaveBeenCalled();
   } finally {
+    await h.dispose();
+  }
+});
+
+it("Win32 Ctrl+Tab and Ctrl+Shift+Tab request the next and previous tab, even while typing", async () => {
+  const h = harness();
+  const requests: string[] = [];
+  const record = (event: Event) => requests.push(event.type);
+  window.addEventListener("buzz:next-tab", record);
+  window.addEventListener("buzz:previous-tab", record);
+  const input = document.createElement("input");
+  document.body.append(input);
+  try {
+    input.focus();
+    expect(press(input, { key: "Tab" }).defaultPrevented).toBe(true);
+    press(input, { key: "Tab", shiftKey: true });
+    press(input, { key: "Tab", repeat: true });
+    expect(requests).toEqual([
+      "buzz:next-tab",
+      "buzz:previous-tab",
+      "buzz:next-tab",
+    ]);
+    expect(press(input, { key: "Tab", ctrlKey: false }).defaultPrevented).toBe(
+      false,
+    );
+    expect(requests).toHaveLength(3);
+  } finally {
+    window.removeEventListener("buzz:next-tab", record);
+    window.removeEventListener("buzz:previous-tab", record);
     await h.dispose();
   }
 });

@@ -160,7 +160,7 @@ export function PanelWorkspace({
     select(local?.owner ?? id);
   };
   useLayoutEffect(() => {
-    // With two tab hosts, the one containing focus owns Close and Ctrl+Tab.
+    // With two tab hosts, the one containing focus owns Close and tab switching.
     const owns = () => {
       const element = root.current;
       return (
@@ -182,38 +182,27 @@ export function PanelWorkspace({
         active.close?.();
       });
     };
-    // Ctrl+Tab is literal Control on every platform, so it is not a
-    // registered shortcut (`mod` is Command on Apple platforms).
-    const cycle = (event: KeyboardEvent) => {
-      const modal = document.querySelector('dialog[open], [aria-modal="true"]');
-      if (
-        event.key !== "Tab" ||
-        !event.ctrlKey ||
-        event.metaKey ||
-        event.altKey ||
-        event.isComposing ||
-        event.defaultPrevented ||
-        tabs.length < 2 ||
-        (modal && !modal.contains(root.current)) ||
-        !owns()
-      )
-        return;
-      // Capture beats editors that accept completions on Tab.
+    // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
+    const step = (delta: -1 | 1) => (event: Event) => {
+      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
       event.preventDefault();
-      event.stopPropagation();
       const index = tabs.findIndex((tab) => tab.id === selected);
-      const next =
-        tabs[(index + (event.shiftKey ? -1 : 1) + tabs.length) % tabs.length];
-      if (!next) return;
+      const target = tabs[(index + delta + tabs.length) % tabs.length];
+      if (!target) return;
       // Like a browser, land in the next tab's content rather than the strip.
       focusContent.current = true;
-      flushSync(() => choose(next.id));
+      // Commit before a held accelerator's next request reads the selection.
+      flushSync(() => choose(target.id));
     };
+    const showNext = step(1);
+    const showPrevious = step(-1);
     window.addEventListener("buzz:close-active-tab", close);
-    window.addEventListener("keydown", cycle, true);
+    window.addEventListener("buzz:next-tab", showNext);
+    window.addEventListener("buzz:previous-tab", showPrevious);
     return () => {
       window.removeEventListener("buzz:close-active-tab", close);
-      window.removeEventListener("keydown", cycle, true);
+      window.removeEventListener("buzz:next-tab", showNext);
+      window.removeEventListener("buzz:previous-tab", showPrevious);
     };
   });
   const previous = useRef<string>(focusOnMount ? undefined : selected);

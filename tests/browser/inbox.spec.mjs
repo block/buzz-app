@@ -257,7 +257,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       const bounds = element.getBoundingClientRect();
       const controls = [
         ...element.querySelectorAll(
-          '[role="combobox"], [aria-label="Inbox filters"], [aria-label="Unread only"]',
+          '[aria-label="Inbox filters"], [aria-label="Unread only"]',
         ),
       ].map((control) => {
         const { left, right, top, bottom } = control.getBoundingClientRect();
@@ -271,14 +271,14 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
         controls,
       };
     });
-    expect(layout.controls.length).toBe(3);
+    expect(layout.controls.length).toBe(2);
     for (const control of layout.controls) {
       expect(control.left).toBeGreaterThanOrEqual(layout.left);
       expect(control.right).toBeLessThanOrEqual(layout.right);
       expect(control.top).toBeGreaterThanOrEqual(layout.top);
       expect(control.bottom).toBeLessThanOrEqual(layout.bottom);
     }
-    // Show, filters and Unread only remain usable when the toolbar wraps.
+    // The consolidated filter and Unread only remain usable when the toolbar wraps.
 
     const opener = mentionRow.getByRole("button", { name: /^Open / });
     const dot = opener.getByRole("img", { name: "Unread", exact: true });

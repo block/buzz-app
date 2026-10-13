@@ -306,6 +306,9 @@ function MemoryAccordion({
   entry: MemoryEntry;
   showTimestamp: boolean;
 }) {
+  // The shared Accordion cannot place an independent menu over each trigger
+  // or wrap the whole item in a context-menu target. Putting the menu inside
+  // its button would create nested controls, so this item owns its disclosure.
   const [open, setOpen] = useState(false);
   const contentId = useId();
   const reducedMotion = useReducedMotion();

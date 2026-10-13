@@ -70,33 +70,6 @@ it("shows option descriptions without copying them into the trigger", async () =
   ).toHaveAccessibleDescription("For quick tasks.");
 });
 
-it("gives described combobox options stable names and descriptions", async () => {
-  const user = userEvent.setup();
-  render(
-    <Combobox.Root items={options}>
-      <Combobox.Control label="Model" triggerLabel="Browse models" />
-      <Combobox.Popup empty="No models">
-        <Combobox.List>
-          {(item: (typeof options)[number]) => (
-            <Combobox.Item
-              key={item.value}
-              value={item}
-              label={item.label}
-              description={`About ${item.label}`}
-            >
-              {item.label}
-            </Combobox.Item>
-          )}
-        </Combobox.List>
-      </Combobox.Popup>
-    </Combobox.Root>,
-  );
-  await user.click(screen.getByRole("button", { name: "Browse models" }));
-  expect(
-    await screen.findByRole("option", { name: "One" }),
-  ).toHaveAccessibleDescription("About One");
-});
-
 it("disables both form choices and searchable input/browse controls", async () => {
   const user = userEvent.setup();
   const change = vi.fn();

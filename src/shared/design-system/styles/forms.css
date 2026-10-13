@@ -107,20 +107,11 @@
     gap: var(--space-3);
   }
   .buzz-choice {
-    position: relative;
     display: flex;
     align-items: center;
     gap: var(--space-3);
     min-height: var(--size-control);
     cursor: pointer;
-  }
-  .buzz-choice-leading {
-    display: flex;
-    flex: none;
-  }
-  .buzz-choice-content {
-    min-width: 0;
-    flex: 1;
   }
   .buzz-choice[data-variant="card"] {
     padding: var(--space-4);
@@ -179,22 +170,6 @@
       .buzz-radio,
       .buzz-checkbox
     ):focus-visible {
-    outline: 2px solid var(--border-focus);
-    outline-offset: 2px;
-  }
-  .buzz-choice[data-indicator="hidden"] .buzz-radio {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
-  }
-  html[data-keyboard-navigation]
-    .buzz-choice[data-indicator="hidden"]:has(.buzz-radio:focus-visible) {
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }

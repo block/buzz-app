@@ -18,18 +18,12 @@ export function RadioGroup<Value>({
 export function Radio({
   label,
   description,
-  leading,
-  indicator = "visible",
   variant = "default",
   id,
   ...props
 }: Omit<ComponentProps<typeof BaseRadio.Root>, "className" | "children"> & {
   label: ReactNode;
   description?: ReactNode;
-  /** Decorative artwork shown before the label and description. */
-  leading?: ReactNode;
-  /** Hide the circle when another persistent selection affordance is present. */
-  indicator?: "visible" | "hidden";
   variant?: "default" | "card";
 }) {
   const generatedId = useId();
@@ -37,12 +31,7 @@ export function Radio({
   const descriptionId = `${controlId}-description`;
   return (
     <BaseField.Item>
-      <label
-        className="buzz-choice"
-        data-indicator={indicator}
-        data-variant={variant}
-        htmlFor={controlId}
-      >
+      <label className="buzz-choice" data-variant={variant} htmlFor={controlId}>
         <BaseRadio.Root
           {...props}
           id={controlId}
@@ -57,12 +46,7 @@ export function Radio({
         >
           <BaseRadio.Indicator className="buzz-radio-indicator" />
         </BaseRadio.Root>
-        {leading && (
-          <span className="buzz-choice-leading" aria-hidden="true">
-            {leading}
-          </span>
-        )}
-        <span className="buzz-choice-content">
+        <span>
           <span id={`${controlId}-label`} className="buzz-choice-label">
             {label}
           </span>

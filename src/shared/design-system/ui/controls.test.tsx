@@ -179,14 +179,7 @@ test("radio and checkbox labels change the actual form values while disabled cho
       <Field label="Color mode">
         <RadioGroup name="mode" defaultValue="light">
           <Radio value="light" label="Light" />
-          <Radio
-            value="dark"
-            label="Dark"
-            description="Use the dark palette"
-            leading={<span data-testid="dark-mark">◆</span>}
-            indicator="hidden"
-            variant="card"
-          />
+          <Radio value="dark" label="Dark" />
           <Radio value="unavailable" label="Unavailable" disabled />
         </RadioGroup>
       </Field>
@@ -194,13 +187,7 @@ test("radio and checkbox labels change the actual form values while disabled cho
     </form>,
   );
   await user.click(screen.getByText("Dark"));
-  const dark = screen.getByRole("radio", { name: "Dark" });
-  expect(dark).toBeChecked();
-  expect(dark).toHaveAccessibleDescription("Use the dark palette");
-  expect(screen.getByTestId("dark-mark").parentElement).toHaveAttribute(
-    "aria-hidden",
-    "true",
-  );
+  expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
   await user.keyboard("{ArrowUp}");
   expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
   await user.click(screen.getByText("Unavailable"));

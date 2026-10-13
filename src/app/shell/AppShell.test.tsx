@@ -112,6 +112,138 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(row()).not.toHaveAttribute("aria-current");
 });
 
+it("lets a plugin page hide and show the shell sidebar", async () => {
+  const current = createServices();
+  services = current;
+  const pages: RegisteredPage[] = [
+    {
+      id: "main",
+      key: "example.plugin/main",
+      pluginId: "example.plugin",
+      revision: "1",
+      title: "Beacon",
+      component: () => null,
+      primary: true,
+    },
+  ];
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="example.plugin/main"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+
+  const navigation = document.getElementById("shell-navigation");
+  expect(
+    within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+      "button",
+      { name: "Beacon" },
+    ),
+  ).toBeInTheDocument();
+  expect(navigation).toHaveAttribute("data-sidebar-collapsible");
+  await userEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+  expect(navigation).toHaveAttribute("aria-hidden", "true");
+  expect(navigation).toHaveAttribute("inert");
+  expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  expect(
+    screen.queryByRole("navigation", { name: "Pages" }),
+  ).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+  expect(navigation).toHaveAttribute("aria-hidden", "false");
+  expect(navigation).not.toHaveAttribute("inert");
+  expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(
+    within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+      "button",
+      { name: "Beacon" },
+    ),
+  ).toBeInTheDocument();
+});
+
+it("does not make a non-primary plugin page's sidebar collapsible", () => {
+  const current = createServices();
+  services = current;
+  const pages: RegisteredPage[] = [
+    {
+      id: "secondary",
+      key: "example.plugin/secondary",
+      pluginId: "example.plugin",
+      revision: "1",
+      title: "Secondary",
+      component: () => null,
+      primary: false,
+    },
+  ];
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="example.plugin/secondary"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+
+  expect(document.getElementById("shell-navigation")).not.toHaveAttribute(
+    "data-sidebar-collapsible",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Hide sidebar" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps built-in sidebar controls available before page contributions load", () => {
+  const current = createServices();
+  services = current;
+  const pages: RegisteredPage[] = [];
+  const shell = (selected: string) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected={selected}
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const { rerender } = render(shell("buzz.channels/channels"));
+  expect(
+    screen.getByRole("button", { name: "Hide Channel sidebar" }),
+  ).toHaveAttribute("aria-expanded", "true");
+
+  rerender(shell("buzz.me/me"));
+  expect(
+    screen.getByRole("button", { name: "Hide Me sidebar" }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
+
 it("shows a primary plugin page's declared icon beside its nav label", () => {
   const current = createServices();
   services = current;

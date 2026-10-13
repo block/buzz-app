@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentType } from "../../features/agents/service";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
+import { CodexProvider } from "./tabs";
 import { apply } from "./index";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -39,7 +40,9 @@ function applied() {
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
+  const check = vi.spyOn(CodexProvider.prototype, "check").mockResolvedValue();
   const type = applied();
+  expect(check).not.toHaveBeenCalled();
   expect(type).toMatchObject({
     id: "codex",
     title: "Codex",

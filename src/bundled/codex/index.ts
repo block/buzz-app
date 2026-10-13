@@ -32,7 +32,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
-  void providerController.check();
   sync();
   ctx.effect(() => () => {
     offAgents();

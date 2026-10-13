@@ -5,6 +5,7 @@ import {
 import type { ComposerSnapshot } from "../messages/mention-draft";
 import { scanMarkdown } from "../relay/message-content";
 import type { ComposerInputElement } from "../messages/composer-dom";
+import { readSendKeystroke } from "../messages/send-keystroke";
 import { createPortal } from "react-dom";
 import { useCompletionPosition } from "./useCompletionPosition";
 import {
@@ -286,7 +287,16 @@ function OwnedCompletion({
         current.current.editor.invalidate();
         return true;
       }
-      if (event.altKey || event.ctrlKey || event.metaKey) return false;
+      if (event.altKey || event.ctrlKey || event.metaKey) {
+        // When ⌘/Ctrl+Enter is the send key, a displayed choice must still not
+        // fall through to sending. Only plain Enter and Tab accept a choice.
+        if (count && readSendKeystroke(event.nativeEvent).sends) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+        return false;
+      }
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
       if (!active()) {

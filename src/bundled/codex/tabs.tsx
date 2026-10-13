@@ -1,6 +1,12 @@
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
 // and its part of the New agent dialog.
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
@@ -97,14 +103,14 @@ function CodexSignIn({
   const active = useRef<
     { cancelled: boolean; process?: Awaited<ReturnType<Spawn>> } | undefined
   >(undefined);
-  const cancel = () => {
+  const cancel = useCallback(() => {
     const job = active.current;
     if (job) {
       job.cancelled = true;
       void job.process?.kill();
     }
-  };
-  useEffect(() => cancel, []);
+  }, []);
+  useEffect(() => cancel, [cancel]);
   const login = async () => {
     if (active.current) return;
     const job: { cancelled: boolean; process?: Awaited<ReturnType<Spawn>> } = {

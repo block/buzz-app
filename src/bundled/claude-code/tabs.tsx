@@ -258,20 +258,22 @@ function ClaudeSetupPanel({
         </pre>
       )}
       {state.running === "login" && (
-        <div
-          className="flex items-end gap-2"
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || !code.trim() || disabled) return;
-            event.preventDefault();
-            void setup.answer(code);
-            setCode("");
-          }}
-        >
+        <div className="flex items-end gap-2">
           <Field
             label="Sign-in code"
             description="If the browser shows a code to paste, enter it here."
           >
-            <Input disabled={disabled} value={code} onValueChange={setCode} />
+            <Input
+              disabled={disabled}
+              value={code}
+              onValueChange={setCode}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !code.trim() || disabled) return;
+                event.preventDefault();
+                void setup.answer(code);
+                setCode("");
+              }}
+            />
           </Field>
           <Button
             disabled={disabled || !code.trim()}

@@ -320,7 +320,8 @@ it("keeps a custom model and instructions in settings", async () => {
 
 it("shows sign-in instead of discovering models when Claude is signed out", async () => {
   const { type, spawn } = installed({ loggedIn: false });
-  const Model = type.CreateModel!;
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
   render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
   const signIn = await screen.findByRole("button", { name: "Sign in" });
   expect(screen.queryByText(/needs you to sign in/)).not.toBeInTheDocument();

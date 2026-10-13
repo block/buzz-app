@@ -25,6 +25,7 @@ import type {
   ChannelMessage,
   ChannelSummary,
 } from "../relay/contracts";
+import { formatPublicKey } from "../../shared/identity/public-key";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -84,6 +85,7 @@ vi.mock("./MessageComposer", () => ({
     personalConversation,
     activityClickOpensPanel,
     disabled,
+    placeholder,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -93,6 +95,7 @@ vi.mock("./MessageComposer", () => ({
       data-personal={personalConversation}
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
+      data-placeholder={placeholder}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -121,6 +124,7 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 2,
 };
+const viewer = "c".repeat(64);
 function ordinaryNavigation() {
   return {
     entryId: "thread-visit",
@@ -188,6 +192,7 @@ function messagesHarness(
     .mockImplementation(makeView);
   const ensure = vi.fn(async () => {});
   const session = {
+    viewer,
     thread,
     profiles: { ensure },
     agentChoices: createAgentLibrary(undefined).queries,
@@ -799,6 +804,34 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
 });
+it.each([
+  {
+    author: "another user",
+    root: row,
+    placeholder: `Reply in thread to ${formatPublicKey(row.authorId)}`,
+  },
+  {
+    author: "the viewer",
+    root: { ...row, authorId: viewer },
+    placeholder: "Reply in thread",
+  },
+  {
+    author: "a workflow the viewer owns",
+    root: { ...row, workflowOwnerId: viewer },
+    placeholder: "Reply in thread",
+  },
+])(
+  "names the root author in the composer placeholder unless it is $author",
+  ({ root, placeholder }) => {
+    const h = messagesHarness();
+    h.snapshot.root = root;
+    h.render();
+    expect(screen.getByRole("region", { name: "Composer" })).toHaveAttribute(
+      "data-placeholder",
+      placeholder,
+    );
+  },
+);
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },

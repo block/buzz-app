@@ -22,7 +22,6 @@ import type {
   RegisteredAgentType,
   TeamChange,
 } from "../../features/agents/service";
-import { AgentSettingsDisclosure } from "../../features/agents/AgentSettingsDisclosure";
 import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -155,16 +154,15 @@ function setup(
           );
         }}
       >
-        <AgentSettingsDisclosure host={settingsHost} dirty>
-          <p>Provider settings</p>
-          <label>
-            Reply
-            <input
-              value={reply}
-              onChange={(event) => setReply(event.target.value)}
-            />
-          </label>
-        </AgentSettingsDisclosure>
+        {settingsHost.typeControl?.(true)}
+        <p>Provider settings</p>
+        <label>
+          Reply
+          <input
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+          />
+        </label>
         {error && <p role="alert">{error}</p>}
         <button type="submit" disabled={!pendingSave}>
           Save
@@ -337,7 +335,6 @@ it("opens the build view with the type's tabs and the app's Attention tab", asyn
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
   expect(tabs).toEqual(["Settings", "Reply", "Attention"]);
-  expect(screen.getByText("Echo")).toBeInTheDocument();
   expect(
     within(
       screen.getByRole("complementary", { name: "Ada identity" }),
@@ -598,7 +595,7 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("saves a reviewed provider change without collapsing settings", async () => {
+it("saves a reviewed provider change with the destination settings", async () => {
   const user = userEvent.setup();
   const RelaySettings = ({
     agent,
@@ -617,17 +614,14 @@ it("saves a reviewed provider change without collapsing settings", async () => {
           );
         }}
       >
-        {settingsHost && (
-          <AgentSettingsDisclosure host={settingsHost}>
-            <label>
-              Endpoint
-              <input
-                value={endpoint}
-                onChange={(event) => setEndpoint(event.target.value)}
-              />
-            </label>
-          </AgentSettingsDisclosure>
-        )}
+        {settingsHost?.typeControl?.(false)}
+        <label>
+          Endpoint
+          <input
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+          />
+        </label>
         {error && <p role="alert">{error}</p>}
         <button type="submit">Save</button>
       </form>
@@ -661,7 +655,6 @@ it("saves a reviewed provider change without collapsing settings", async () => {
     within(rail).queryByRole("button", { name: "Change provider from Echo" }),
   ).not.toBeInTheDocument();
   agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
-  await user.click(screen.getByRole("button", { name: "Customize" }));
   const typeTrigger = screen.getByRole("button", {
     name: "Change provider from Echo",
   });
@@ -711,7 +704,6 @@ it("saves a reviewed provider change without collapsing settings", async () => {
   expect(
     screen.getByRole("button", { name: "Change provider from Relay" }),
   ).toBeVisible();
-  expect(screen.getAllByText("Relay")).toHaveLength(2);
   expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("textbox", { name: "Reply" }),
@@ -734,10 +726,6 @@ it("saves a reviewed provider change without collapsing settings", async () => {
   expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay", {
     config: { endpoint: "wss://custom.example" },
   });
-  expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
   expect(
     screen.getByRole("button", { name: "Change provider from Relay" }),
   ).toBeVisible();

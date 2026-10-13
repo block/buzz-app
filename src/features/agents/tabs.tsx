@@ -5,7 +5,6 @@
 import { useState, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
-import { AgentSettingsDisclosure } from "./AgentSettingsDisclosure";
 import type {
   Agent,
   AgentSettingsHost,
@@ -105,7 +104,7 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
         void save();
       }}
     >
-      <AgentSettingsDisclosure host={host} />
+      {host.typeControl?.(false)}
       {error && (
         <p role="alert" className="buzz-field-error">
           {error}

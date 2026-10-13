@@ -150,17 +150,10 @@ export type AgentChange<Config = unknown> = Readonly<{
 /** What a type's read-only peek receives. */
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
 export type AgentSettingsHost = Readonly<{
-  title: string;
-  icon?: DefinedIcon;
   /** A labelled Type control supplied only by the Agents build view. */
   typeControl?: (dirty: boolean) => ReactNode;
   /** Host-owned type change committed with the target type's settings draft. */
   pendingSave?: (config?: unknown) => Promise<void>;
-  /** Host-owned disclosure state when its lifetime spans provider tabs. */
-  disclosure?: Readonly<{
-    expanded: boolean;
-    onExpandedChange(expanded: boolean): void;
-  }>;
 }>;
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */

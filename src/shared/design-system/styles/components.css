@@ -1502,44 +1502,11 @@
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
   }
-  .buzz-accordion[data-variant="settings"] {
-    --accordion-settings-inset: var(--space-4);
-    container-type: inline-size;
-    margin: 0;
-    border: 1px solid var(--border-standard);
-    border-radius: var(--radius-container);
-    background: var(--surface-panel);
-  }
-  .buzz-accordion-settings-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    min-width: 0;
-  }
-  .buzz-accordion-settings-summary {
-    min-width: 0;
-    padding-inline: var(--accordion-settings-inset);
-  }
-  .buzz-accordion-settings-trigger {
-    --interaction-hover: var(--interaction-row-hover);
-    align-self: center;
-    min-height: 0;
-    margin-inline-end: var(--accordion-settings-inset);
-  }
-  .buzz-accordion[data-variant="settings"] .buzz-accordion-panel {
-    padding: var(--space-4) var(--accordion-settings-inset);
-    border-block-start: 1px solid var(--border-standard);
-  }
   .buzz-accordion[data-variant="navigation"] .buzz-accordion-trigger {
     padding: var(--space-1) var(--space-2);
   }
   .buzz-accordion[data-variant="navigation"] .buzz-accordion-panel {
     padding: var(--space-1) 0 var(--space-1) var(--space-4);
-  }
-  @container (max-width: 24rem) {
-    .buzz-accordion[data-variant="settings"] {
-      --accordion-settings-inset: var(--space-3);
-    }
   }
 }
 

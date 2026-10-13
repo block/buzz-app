@@ -702,13 +702,12 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Accordion",
     purpose: "Reveal related content without leaving the page.",
     behavior:
-      "Base UI owns expansion, keyboard activation, and panel semantics; keepMounted preserves local form state while collapsed; the settings trigger is prominent when collapsed and subtle when expanded.",
+      "Base UI owns expansion, keyboard activation, and panel semantics; keepMounted preserves local form state while collapsed.",
     variants: [
       "default",
       "form",
       "navigation",
       "activity",
-      "settings summary row",
       "controlled expansion",
     ],
     status: "proposed",

@@ -1308,8 +1308,6 @@ function AgentBuild({
           type={settingsType}
           channels={channels}
           settingsHost={{
-            title: settingsType?.title ?? "Type unavailable",
-            ...(settingsType?.icon ? { icon: settingsType.icon } : {}),
             ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
             ...(canRetype
               ? {

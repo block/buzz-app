@@ -17,17 +17,7 @@ export function AgentTabs(props: {
   channels: readonly ChannelChoice[];
   settingsHost: AgentSettingsHost;
 }) {
-  const [settingsExpanded, setSettingsExpanded] = useState(false);
-  const sections = agentSections({
-    ...props,
-    settingsHost: {
-      ...props.settingsHost,
-      disclosure: {
-        expanded: settingsExpanded,
-        onExpandedChange: setSettingsExpanded,
-      },
-    },
-  });
+  const sections = agentSections(props);
   const [tab, setTab] = useState<string>(sections[0]?.value ?? "");
   const selected =
     sections.find((section) => section.value === tab) ?? sections.at(-1);

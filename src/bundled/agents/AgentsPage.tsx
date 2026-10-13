@@ -24,12 +24,12 @@ import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
   OldTeam,
   PortableAgent,
-  PortableAgents,
   PortSource,
 } from "../../features/agents/native";
 import type {
   Agent,
   Agents,
+  FoundAgents,
   RegisteredAgentType,
   Team,
   TeamPort,
@@ -1054,9 +1054,11 @@ function teamPortNote({
   imported,
   failed,
   elsewhere,
+  foreign,
   teamError,
 }: TeamPort) {
-  if (!failed.length && !elsewhere.length && !teamError) return "";
+  if (!failed.length && !elsewhere.length && !foreign.length && !teamError)
+    return "";
   const came = imported.map((agent) => agent.name).join(", ");
   return [
     teamError
@@ -1067,6 +1069,8 @@ function teamPortNote({
     ),
     elsewhere.length &&
       `Kept out: ${elsewhere.join(", ")}, in another community.`,
+    foreign.length &&
+      `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -1085,7 +1089,7 @@ function ImportAgents({
   onImported(): void;
   onPendingChange(pending: boolean): void;
 }) {
-  const [found, setFound] = useState<PortableAgents>();
+  const [found, setFound] = useState<FoundAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState("");
@@ -1154,7 +1158,7 @@ function ImportAgents({
       onPendingChange(false);
     }
   };
-  const listed = new Set(found?.agents.map((agent) => agent.pubkey));
+  const yours = new Set(found?.here);
   if (!types.length)
     return (
       <p className="m-0 text-body-sm text-secondary">
@@ -1211,8 +1215,8 @@ function ImportAgents({
               <InlineHeader title="Teams" />
               <ul className={styles.portList}>
                 {found.teams.map((team) => {
-                  const here = team.members.filter(
-                    (member) => !listed.has(member.pubkey),
+                  const here = team.members.filter((member) =>
+                    yours.has(member.pubkey),
                   ).length;
                   return (
                     <li key={team.id} className={styles.portRow}>

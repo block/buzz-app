@@ -748,9 +748,9 @@ it.each([9, 40002])(
   },
 );
 
-it("requests a small profile image without downsizing message attachments", () => {
+it("loads small profile images eagerly without downsizing message attachments", () => {
   const media = vi.fn((url: string) => url);
-  renderToStaticMarkup(
+  const html = renderToStaticMarkup(
     <MessageRow
       row={{
         ...row,
@@ -768,6 +768,12 @@ it("requests a small profile image without downsizing message attachments", () =
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+  const document = new DOMParser().parseFromString(html, "text/html");
+  expect(
+    document
+      .querySelector('img[src="https://image.test/avatar.png"]')
+      ?.getAttribute("loading"),
+  ).toBe("eager");
 });
 
 it("renders generic file attachments as download cards", () => {

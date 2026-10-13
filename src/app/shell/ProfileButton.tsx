@@ -181,6 +181,7 @@ export function ProfileButton({
   const avatar = (
     <Avatar
       src={picture}
+      loading="eager"
       alt=""
       fallback={name}
       fallbackContent={displayName ? undefined : <UserIcon size={19} />}

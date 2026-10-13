@@ -1,7 +1,7 @@
 import "../styles/avatar-shape.css";
 import "../styles/avatar-status.css";
 import { Avatar as BaseAvatar } from "@base-ui/react/avatar";
-import { useEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 type AvatarSize = "compact" | "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
@@ -9,32 +9,34 @@ type ImageStatus = "loading" | "loaded" | "failed";
 function AvatarArtwork({
   src,
   fallback,
+  loading,
 }: {
   src: string;
   fallback: ReactNode;
+  loading: "eager" | "lazy";
 }) {
+  const image = useRef<HTMLImageElement>(null);
   const [status, setStatus] = useState<ImageStatus>("loading");
-  const [showFallback, setShowFallback] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setShowFallback(true), 150);
-    return () => window.clearTimeout(timer);
+  useLayoutEffect(() => {
+    // A cached image can be ready before this instance receives its load event.
+    if (image.current?.complete && image.current.naturalWidth > 0)
+      setStatus("loaded");
   }, []);
   if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
   return (
     <>
       <img
+        ref={image}
         src={src}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
-        loading="lazy"
+        loading={loading}
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={() => setStatus("loaded")}
         onError={() => setStatus("failed")}
       />
-      {status === "loading" && showFallback ? (
-        <span aria-hidden="true">{fallback}</span>
-      ) : null}
+      {status === "loading" ? <span aria-hidden="true">{fallback}</span> : null}
     </>
   );
 }
@@ -47,6 +49,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  loading = "lazy",
 }: {
   src?: string | null | undefined;
   alt: string;
@@ -55,6 +58,7 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  loading?: "eager" | "lazy";
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
@@ -77,7 +81,12 @@ export function Avatar({
         aria-hidden={!alt || undefined}
       >
         {src ? (
-          <AvatarArtwork key={src} src={src} fallback={content} />
+          <AvatarArtwork
+            key={src}
+            src={src}
+            fallback={content}
+            loading={loading}
+          />
         ) : (
           <span aria-hidden="true">{content}</span>
         )}

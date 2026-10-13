@@ -485,6 +485,7 @@ function MessageRowContent({
               <>
                 <Avatar
                   src={picture}
+                  loading="eager"
                   alt=""
                   fallback={name}
                   size={compactAvatar ? "small" : "fill"}
@@ -503,6 +504,7 @@ function MessageRowContent({
           <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
             <Avatar
               src={picture}
+              loading="eager"
               alt={
                 presence === "unknown"
                   ? ""

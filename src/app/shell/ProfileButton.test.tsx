@@ -421,6 +421,10 @@ it("shows the selected community name and authenticated avatar without saving a 
       "src",
       "/community-media?url=https%3A%2F%2Fcommunity.test%2Fmedia%2Favatar.png",
     );
+    expect(button.querySelector("img")).toHaveAttribute("loading", "eager");
+    expect(
+      screen.getByRole("menu", { name: "Community name" }).querySelector("img"),
+    ).toHaveAttribute("loading", "eager");
     act(() => {
       profiles = new Map([[viewer, { name: "Updated name" }]]);
       for (const listener of listeners) listener();

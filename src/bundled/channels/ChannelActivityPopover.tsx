@@ -201,6 +201,7 @@ export function ChannelActivityPopover({
     useRef<
       NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
     >(null);
+  const pressedOpen = useRef(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!open || !activeAgents.length) return;
@@ -270,6 +271,16 @@ export function ChannelActivityPopover({
             return;
           }
         }
+        // A queued hover dismissal must not close a newer keyboard/touch opening.
+        if (
+          !next &&
+          details.reason === "trigger-hover" &&
+          pressedOpen.current
+        ) {
+          details.cancel();
+          return;
+        }
+        pressedOpen.current = next && details.reason === "trigger-press";
         setOpen(next);
         if (next) setNow(Date.now());
         if (next && items.length)

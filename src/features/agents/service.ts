@@ -166,6 +166,14 @@ export type AgentCreateProps<Config = unknown> = {
   onChange(config: Config): void;
   disabled: boolean;
 };
+export type AgentCreateModelMenuProps<Config = unknown> =
+  AgentCreateProps<Config> & {
+    /** Opens Create's host-owned model-ID dialog after its menu closes. */
+    requestCustomModel(
+      initialValue: string,
+      onChange: (model: string) => void,
+    ): void;
+  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
@@ -345,6 +353,10 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Model rows contributed to this type's submenu in the New agent dialog. */
+  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
+  /** Non-default model detail appended to this type's New agent trigger. */
+  createModelLabel?(config: Config): string | undefined;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;

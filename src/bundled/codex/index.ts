@@ -39,10 +39,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     providerController.dispose();
     runtime.dispose();
   });
-  const { Create, ProviderDialogBody, SettingsTab } = createTabs(
-    providerController,
-    runtime,
-  );
+  const {
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    ProviderDialogBody,
+    SettingsTab,
+  } = createTabs(providerController, runtime);
   ctx.agents.register({
     id: "codex",
     title: "Codex",
@@ -51,6 +54,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
     Create,
+    CreateModelMenu,
+    createModelLabel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

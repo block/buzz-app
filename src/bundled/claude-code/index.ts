@@ -46,11 +46,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const { Create, ProviderDialogBody, SettingsTab } = createTabs({
-    setup,
-    defaults: providerDefaults,
-    runtime,
-  });
+  const {
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    ProviderDialogBody,
+    SettingsTab,
+  } = createTabs({ setup, defaults: providerDefaults, runtime });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
@@ -59,6 +61,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
+    CreateModelMenu,
+    createModelLabel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

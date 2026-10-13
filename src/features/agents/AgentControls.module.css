@@ -1,11 +1,3 @@
-/* A compact model choice keeps a steady frame sized to its text. */
-.compactModel {
-  position: relative;
-  display: flex;
-  justify-content: flex-end;
-  max-width: 100%;
-}
-
 /* Instructions in the New agent card: a preview that opens into an editor. */
 .instructionEntry {
   position: relative;

@@ -491,10 +491,13 @@ export function createThreadView({
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
+    // Every read withdraws exhaustion evidence; only its own successful
+    // signed window can restore it. Failures and early exits leave it false.
     publishStatus({
       status: "loading",
       error: undefined,
       readKind: replace ? "refresh" : "older",
+      complete: false,
     });
     try {
       if (exact && replace) {
@@ -503,16 +506,15 @@ export function createThreadView({
         if (!active()) return;
         if (revision === selectionRevision && result !== "selected") {
           targetStatus = "unavailable";
-          // Target availability says nothing about the retained window's bounds,
-          // but the hidden target makes the visible count incomplete.
-          publish({ status: "ready", complete: false });
+          // Target availability says nothing about the retained window's bounds.
+          publish({ status: "ready" });
           return;
         }
         if (revision === selectionRevision) {
           targetStatus = "ready";
           publish();
           if (snapshot.targetStatus !== "ready") {
-            publish({ status: "ready", complete: false });
+            publish({ status: "ready" });
             return;
           }
         }
@@ -560,7 +562,7 @@ export function createThreadView({
           rootUnavailable = true;
           cursor = undefined;
           pages = 0;
-          publish({ canLoadMore: false, complete: false });
+          publish({ canLoadMore: false });
           throw new Error("The original thread message is unavailable.");
         }
         if (!retain(union(remote, related(root)))) return;
@@ -652,7 +654,7 @@ export function createThreadView({
           rootUnavailable = true;
           cursor = undefined;
           pages = 0;
-          publish({ canLoadMore: false, complete: false });
+          publish({ canLoadMore: false });
           throw new Error("The original thread message is unavailable.");
         }
         // Count traversal rows before presentation filtering. The bridge may return

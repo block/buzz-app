@@ -346,6 +346,30 @@ it("keeps partial history incomplete after an unrelated access purge, exact-targ
     complete: false,
   });
 });
+it("withdraws completeness when a repair read fails, including after a later retarget", async () => {
+  const selected = reply(3);
+  let failing = false;
+  const h = await setup((filter) => {
+    if (filter.ids) return filter.ids.includes(root.id) ? [root] : [selected];
+    if (!filter.thread_window) return [];
+    if (failing) throw new Error("repair failed");
+    return [selected, bounds(filter)];
+  });
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", complete: true });
+
+  failing = true;
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({ status: "error", complete: false });
+  expect(await h.view.retarget(selected.id, new AbortController().signal)).toBe(
+    "selected",
+  );
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    targetStatus: "ready",
+    complete: false,
+  });
+});
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

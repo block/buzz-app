@@ -22,21 +22,27 @@ export function AgentInstructions({
   disabled,
   onChange,
   description,
+  creation = false,
 }: {
   value: string;
   disabled: boolean;
   onChange(value: string): void;
   description?: string | undefined;
+  creation?: boolean;
 }) {
   const card = useCreateCard();
   if (!card)
     return (
-      <Field label="Instructions" description={description}>
+      <Field
+        label={creation ? "Describe what I should do" : "Instructions"}
+        description={description}
+      >
         <Textarea
+          surface={creation ? "panel" : "inset"}
           rows={8}
           value={value}
           disabled={disabled}
-          placeholder={PLACEHOLDER}
+          placeholder={creation ? EXAMPLES[0] : PLACEHOLDER}
           onChange={(event) => onChange(event.target.value)}
         />
       </Field>

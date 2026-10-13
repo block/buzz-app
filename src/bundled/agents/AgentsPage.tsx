@@ -1,18 +1,10 @@
-// The Agents page, in three tabs: Your agents, Import and Browse.
-// - Your agents: every agent as a card. Selecting one (click, or arrow keys)
-//   opens its peek beside the grid without leaving it; Enter or a double-click
-//   builds: the identity rail on the left, the type's tabs and the app's
-//   Attention tab on the right. The New agent tile opens the create dialog.
-// - Import: identities earlier agent systems saved on this machine.
-// - Browse: agents shared in the community.
+// Agents and teams, with creation, import and marketplace entry from New agent.
 import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
-  type RefObject,
 } from "react";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
@@ -20,7 +12,6 @@ import { AgentBrowse } from "./AgentBrowse";
 import { AgentCard, AgentPortrait } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { AgentTabs } from "./AgentTabs";
-import { useAgentSettingsHost } from "./AgentSettingsHost";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
 import { AgentDelete } from "../../features/agents/AgentManage";
@@ -41,17 +32,12 @@ import type {
 import { useRelayConnection } from "../../features/relay/react";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { RelayData } from "../../features/relay/service";
-import type { Navigation } from "../../features/navigation/controller";
-import type { PageNavigation } from "../../features/navigation/service";
-import {
-  ContributionBoundary,
-  contributionKey,
-} from "../../features/conversation/ContributionBoundary";
 import {
   ArrowLeftIcon,
-  CircleNotchIcon,
   CopyIcon,
   DotsThreeIcon,
+  DownloadIcon,
+  StorefrontIcon,
   PlusIcon,
   RobotIcon,
   XIcon,
@@ -63,17 +49,13 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Input } from "../../shared/design-system/ui/Input";
 import {
-  MenuPopup,
-  MenuIcon,
-  MenuItem,
   MenuRoot,
-  MenuSubmenu,
-  MenuSubmenuPopup,
-  MenuSubmenuTrigger,
   MenuTrigger,
+  MenuPopup,
+  MenuItem,
 } from "../../shared/design-system/ui/Menu";
+import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -84,7 +66,6 @@ import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
-import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -93,7 +74,6 @@ type Frame =
   | {
       view: "browse";
       selected?: string;
-      side?: "teams";
     }
   | { view: "build"; pubkey: string };
 
@@ -109,23 +89,18 @@ function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
   }
 }
 
-type Tab = "yours" | "import" | "browse";
+type Tab = "yours" | "teams";
 const TABS = [
   { value: "yours", label: "Your agents", panelId: "agents-yours" },
-  { value: "import", label: "Import", panelId: "agents-import" },
-  { value: "browse", label: "Browse", panelId: "agents-browse" },
+  { value: "teams", label: "Your teams", panelId: "agents-teams" },
 ] as const;
 
 export function AgentsPage({
   agents,
   relay,
-  navigation,
-  navigator,
 }: {
   agents: Agents;
   relay: RelayData;
-  navigation?: PageNavigation;
-  navigator?: Navigation;
 }) {
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
@@ -135,40 +110,16 @@ export function AgentsPage({
   const [tab, setTab] = useState<Tab>("yours");
   const [frame, setFrame] = useState<Frame>({ view: "browse" });
   const [creating, setCreating] = useState(false);
-  const [localProviderKey, setLocalProviderKey] = useState<string>();
-  const routed = !!navigation && !!navigator;
-  const providerKey = routed
-    ? agentProviderRoute(
-        navigation.target.kind === "page"
-          ? navigation.target.route?.params
-          : undefined,
-      )
-    : localProviderKey;
-  const setProviderKey = (provider?: string, replace = false) => {
-    if (!navigation || !navigator) {
-      setLocalProviderKey(provider);
-      return;
-    }
-    if (
-      navigation.signal.aborted ||
-      navigation.target.kind !== "page" ||
-      navigation.target.pluginId !== "buzz.agents" ||
-      navigation.target.pageId !== "agents" ||
-      navigator.snapshot().entry.id !== navigation.entryId
-    )
-      return;
-    const target = agentProviderTarget(navigation.target, provider);
-    void (replace
-      ? navigator.open(target, { replace: true })
-      : navigator.open(target));
-  };
+  const [flow, setFlow] = useState<"import" | "browse">();
+  const newAgentButton = useRef<HTMLButtonElement>(null);
+  const newAgentLabel = useRef<HTMLSpanElement>(null);
+  const [importing, setImporting] = useState(false);
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const building = frame.view === "build" ? find(frame.pubkey) : undefined;
   const selected = frame.view === "browse" ? find(frame.selected) : undefined;
-  const side = frame.view === "browse" ? frame.side : undefined;
   const browse = (selected?: string) =>
     setFrame(selected ? { view: "browse", selected } : { view: "browse" });
   const build = (pubkey: string) => {
@@ -177,11 +128,60 @@ export function AgentsPage({
     if (agent?.place !== "elsewhere" && !agent?.unfinished)
       setFrame({ view: "build", pubkey });
   };
-  const ready = types.length > 0 && snapshot.status === "ready";
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
-  const openTeams = () => setFrame({ view: "browse", side: "teams" });
-  const more = useRef<HTMLButtonElement>(null);
+  const returnToAgents = () => {
+    setFlow(undefined);
+    setTab("yours");
+  };
+
+  const toolbarAction = snapshot.agents.length > 0 || tab === "teams";
+  const newAgentMenu = (
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          toolbarAction ? (
+            <NewAgentTile
+              ref={newAgentButton}
+              variant="button"
+              disabled={snapshot.status !== "ready"}
+            />
+          ) : (
+            <NewAgentTile
+              ref={newAgentButton}
+              labelRef={newAgentLabel}
+              fullWidth
+              disabled={snapshot.status !== "ready"}
+            />
+          )
+        }
+      />
+      <MenuPopup
+        anchor={toolbarAction ? newAgentButton : newAgentLabel}
+        align={toolbarAction ? "end" : "center"}
+      >
+        <MenuItem disabled={!types.length} onClick={() => setCreating(true)}>
+          <PlusIcon size={16} aria-hidden="true" /> Create a new agent
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            browse();
+            setFlow("import");
+          }}
+        >
+          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            browse();
+            setFlow("browse");
+          }}
+        >
+          <StorefrontIcon size={16} aria-hidden="true" /> Browse the marketplace
+        </MenuItem>
+      </MenuPopup>
+    </MenuRoot>
+  );
 
   const yours = (() => {
     if (snapshot.status === "unavailable")
@@ -200,29 +200,15 @@ export function AgentsPage({
           description={snapshot.error ?? "Try again."}
         />
       );
-    if (snapshot.status === "ready" && !types.length && !snapshot.agents.length)
-      return (
-        <EmptyState
-          icon="✦"
-          title="No agents yet"
-          description="Enable an agent type plugin to make one."
-        />
-      );
     return (
       <Inventory
+        service={agents}
         agents={snapshot.agents}
         selected={selected?.pubkey}
         typeOf={typeOf}
         onSelect={browse}
         onBuild={build}
-        newAgent={
-          types.length > 0 && (
-            <NewAgentTile
-              disabled={snapshot.status !== "ready"}
-              onClick={() => setCreating(true)}
-            />
-          )
-        }
+        newAgent={!toolbarAction && newAgentMenu}
       />
     );
   })();
@@ -235,7 +221,6 @@ export function AgentsPage({
           agents={agents}
           agent={building}
           type={typeOf(building)}
-          types={types}
           channels={channels}
           memories={
             connection.status === "ready"
@@ -246,14 +231,7 @@ export function AgentsPage({
         />
       );
     const panel =
-      tab !== "yours" ? undefined : side === "teams" ? (
-        <Teams
-          agents={agents}
-          saved={snapshot.agents.filter((agent) => agent.place === "here")}
-          teams={snapshot.teams}
-          onClose={() => browse()}
-        />
-      ) : selected ? (
+      tab !== "yours" ? undefined : selected ? (
         <AgentPeek
           key={selected.pubkey}
           agents={agents}
@@ -268,13 +246,16 @@ export function AgentsPage({
       <div className={styles.browse} data-side={panel ? "" : undefined}>
         <div className={styles.inventory}>
           <div className={styles.content}>
-            <Tabs
-              variant="panel"
-              label="Agent tabs"
-              value={tab}
-              onValueChange={setTab}
-              items={TABS}
-            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Tabs
+                variant="panel"
+                label="Agent tabs"
+                value={tab}
+                onValueChange={setTab}
+                items={TABS}
+              />
+              {toolbarAction && newAgentMenu}
+            </div>
             <section
               id={`agents-${tab}`}
               role="tabpanel"
@@ -282,18 +263,13 @@ export function AgentsPage({
             >
               {tab === "yours" ? (
                 yours
-              ) : tab === "import" ? (
-                <ImportAgents
-                  agents={agents}
-                  types={runnable}
-                  onImported={() => setTab("yours")}
-                />
               ) : (
-                <AgentBrowse
-                  relay={relay}
+                <Teams
                   agents={agents}
-                  types={runnable}
-                  onImported={() => setTab("yours")}
+                  saved={snapshot.agents.filter(
+                    (agent) => agent.place === "here",
+                  )}
+                  teams={snapshot.teams}
                 />
               )}
             </section>
@@ -341,33 +317,39 @@ export function AgentsPage({
                 />
               )
             }
-            actions={
-              !building && tab === "yours" && ready ? (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={
-                      <IconButton
-                        ref={more}
-                        aria-label="More agent actions"
-                        title="More agent actions"
-                        size="sm"
-                        icon={<DotsThreeIcon size={16} aria-hidden="true" />}
-                      />
-                    }
-                  />
-                  <MenuPopup align="end">
-                    <ProviderSubmenu types={types} onSelect={setProviderKey} />
-                    <MenuItem onClick={openTeams} disabled={side === "teams"}>
-                      Teams
-                    </MenuItem>
-                  </MenuPopup>
-                </MenuRoot>
-              ) : undefined
-            }
           />
           <div className="min-h-0 flex-1">{body}</div>
         </div>
       </FullPageSurface>
+      {flow && (
+        <Dialog
+          open
+          title={flow === "import" ? "Import an agent" : "Marketplace"}
+          size="wide"
+          height="stable"
+          preventClose={importing}
+          finalFocus={newAgentButton}
+          onOpenChange={(open) => {
+            if (!open) setFlow(undefined);
+          }}
+        >
+          {flow === "import" ? (
+            <ImportAgents
+              agents={agents}
+              types={runnable}
+              onImported={returnToAgents}
+              onPendingChange={setImporting}
+            />
+          ) : (
+            <AgentBrowse
+              relay={relay}
+              agents={agents}
+              types={runnable}
+              onImported={returnToAgents}
+            />
+          )}
+        </Dialog>
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}
@@ -383,230 +365,14 @@ export function AgentsPage({
           }}
         />
       )}
-      {providerKey && (
-        <ProviderDialog
-          type={types.find((type) => type.key === providerKey)}
-          finalFocus={more}
-          onClose={() => setProviderKey(undefined, true)}
-        />
-      )}
     </div>
   );
 }
 
-/** A quick device-wide health view. Controls stay in each provider's dialog. */
-function ProviderSubmenu({
-  types,
-  onSelect,
-}: {
-  types: readonly RegisteredAgentType[];
-  onSelect(key: string): void;
-}) {
-  const check = () => {
-    for (const { provider } of types) if (provider) checkProvider(provider);
-  };
-  return (
-    <MenuSubmenu>
-      <MenuSubmenuTrigger onFocus={check} onPointerEnter={check}>
-        Provider settings
-      </MenuSubmenuTrigger>
-      <MenuSubmenuPopup aria-label="Provider settings">
-        {types.map((type) => {
-          const fallback = (
-            <MenuItem aria-label={`${type.title}, unavailable`} disabled>
-              <ProviderIcon type={type} />
-              {type.title}
-            </MenuItem>
-          );
-          return (
-            <ContributionBoundary key={type.key} fallback={fallback}>
-              <ProviderMenuItem
-                type={type}
-                onSelect={() => onSelect(type.key)}
-              />
-            </ContributionBoundary>
-          );
-        })}
-      </MenuSubmenuPopup>
-    </MenuSubmenu>
-  );
-}
-
-function checkProvider(provider: NonNullable<RegisteredAgentType["provider"]>) {
-  try {
-    void Promise.resolve(provider.check()).catch(() => {});
-  } catch {
-    // A failed contribution does not break host-owned provider controls.
-  }
-}
-
-function ProviderIcon({ type }: { type: RegisteredAgentType }) {
-  const Icon = type.icon;
-  return Icon ? (
-    <MenuIcon>
-      <Icon size={17} />
-    </MenuIcon>
-  ) : null;
-}
-
-function ProviderMenuItem({
-  type,
-  onSelect,
-}: {
-  type: RegisteredAgentType;
-  onSelect(): void;
-}) {
-  const provider = type.provider;
-  if (!provider)
-    return (
-      <MenuItem aria-label={`${type.title}, unavailable`} disabled>
-        <ProviderIcon type={type} />
-        {type.title}
-      </MenuItem>
-    );
-  return (
-    <ProviderHealthMenuItem
-      type={type}
-      provider={provider}
-      onSelect={onSelect}
-    />
-  );
-}
-
-function ProviderHealthMenuItem({
-  type,
-  provider,
-  onSelect,
-}: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
-  onSelect(): void;
-}) {
-  const state = useSyncExternalStore(
-    provider.subscribe,
-    provider.snapshot,
-    provider.snapshot,
-  );
-  const checking = state.readiness === "checking";
-  const label =
-    state.readiness === "attention"
-      ? (state.attentionLabel ?? `Set up ${type.title}`)
-      : type.title;
-  const select = () => {
-    if (state.readiness === "attention") {
-      const action = provider.attentionAction;
-      if (action)
-        try {
-          action();
-          return;
-        } catch {
-          // Fall back to the provider's recovery guidance.
-        }
-    }
-    onSelect();
-  };
-  return (
-    <MenuItem
-      aria-label={`${label}, ${state.readiness}`}
-      aria-busy={checking || undefined}
-      onClick={select}
-      disabled={checking}
-    >
-      {checking ? (
-        <MenuIcon>
-          <CircleNotchIcon
-            size={17}
-            aria-hidden="true"
-            className="motion-safe:animate-spin"
-          />
-        </MenuIcon>
-      ) : (
-        <ProviderIcon type={type} />
-      )}
-      {label}
-    </MenuItem>
-  );
-}
-
-function ProviderDialog({
-  type,
-  finalFocus,
-  onClose,
-}: {
-  type: RegisteredAgentType | undefined;
-  finalFocus: RefObject<HTMLButtonElement | null>;
-  onClose(): void;
-}) {
-  const provider = type?.provider;
-  if (!type || !provider) return null;
-  return (
-    <ContributionBoundary
-      key={contributionKey(type)}
-      fallback={
-        <Dialog
-          open
-          onOpenChange={(open) => !open && onClose()}
-          title={type.title}
-          dismissOnOutsideClick
-          finalFocus={() => finalFocus.current}
-        >
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            Provider controls are unavailable.
-          </p>
-        </Dialog>
-      }
-    >
-      <ManagedProviderDialog
-        type={type}
-        provider={provider}
-        finalFocus={finalFocus}
-        onClose={onClose}
-      />
-    </ContributionBoundary>
-  );
-}
-
-function ManagedProviderDialog({
-  type,
-  provider,
-  finalFocus,
-  onClose,
-}: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
-  finalFocus: RefObject<HTMLButtonElement | null>;
-  onClose(): void;
-}) {
-  const state = useSyncExternalStore(
-    provider.subscribe,
-    provider.snapshot,
-    provider.snapshot,
-  );
-  const Icon = type.icon;
-  const Body = provider.DialogBody;
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title={
-        <span className="flex items-center gap-2">
-          {Icon && <Icon size={22} aria-hidden="true" />}
-          {type.title}
-        </span>
-      }
-      headerGap="compact"
-      dismissOnOutsideClick
-      preventClose={!!state.blocking}
-      finalFocus={() => finalFocus.current}
-    >
-      <Body onClose={onClose} />
-    </Dialog>
-  );
-}
-
-/** The grid as one listbox: a single tab stop, arrows move the selection. The
+/** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
+  service,
   agents,
   selected,
   typeOf,
@@ -614,6 +380,7 @@ function Inventory({
   onBuild,
   newAgent,
 }: {
+  service: Agents;
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
@@ -628,6 +395,11 @@ function Inventory({
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
       : 1;
   const onKeyDown = (event: KeyboardEvent) => {
+    if (
+      !(event.target instanceof HTMLElement) ||
+      event.target.getAttribute("role") !== "listitem"
+    )
+      return;
     const last = agents.length - 1;
     const from = index < 0 ? -1 : index;
     const step: Record<string, number> = {
@@ -657,31 +429,47 @@ function Inventory({
     event.preventDefault();
     onSelect(agents[next]?.pubkey);
     grid.current
-      ?.querySelectorAll<HTMLElement>('[role="option"]')
+      ?.querySelectorAll<HTMLElement>('[role="listitem"]')
       [next]?.focus();
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
       {newAgent}
       {agents.length > 0 && (
-        <div
-          role="listbox"
-          aria-label="Agents"
-          className="contents"
-          onKeyDown={onKeyDown}
-        >
+        <ul aria-label="Agents" className="contents" onKeyDown={onKeyDown}>
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
             return (
-              <AgentCard
+              <InventoryCard
+                service={service}
+                type={type}
+                onBuild={() => onBuild(agent.pubkey)}
+                onRemoved={() => onSelect()}
                 key={agent.pubkey}
-                role="option"
-                aria-selected={active}
+                role="listitem"
+                aria-label={agent.name}
+                data-selected={active}
                 tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
                 data-unavailable={type ? undefined : ""}
-                onClick={() => onSelect(active ? undefined : agent.pubkey)}
-                onDoubleClick={() => onBuild(agent.pubkey)}
+                onClick={(event) => {
+                  if (
+                    event.currentTarget.contains(event.target as Node) &&
+                    !(event.target as Element).closest(
+                      "[data-card-control], button, input",
+                    )
+                  )
+                    onSelect(active ? undefined : agent.pubkey);
+                }}
+                onDoubleClick={(event) => {
+                  if (
+                    event.currentTarget.contains(event.target as Node) &&
+                    !(event.target as Element).closest(
+                      "[data-card-control], button, input",
+                    )
+                  )
+                    onBuild(agent.pubkey);
+                }}
                 agent={agent}
                 community={agent.relay || undefined}
                 icon={<TypeIcon type={type} />}
@@ -689,9 +477,109 @@ function Inventory({
               />
             );
           })}
-        </div>
+        </ul>
       )}
     </div>
+  );
+}
+
+/** Card edits use the same type-owned field and service as creation/settings. */
+function InventoryCard({
+  service,
+  type,
+  onBuild,
+  onRemoved,
+  ...props
+}: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
+  agent: Agent;
+  service: Agents;
+  type: RegisteredAgentType | undefined;
+  onBuild(): void;
+  onRemoved(): void;
+}) {
+  const agent = props.agent;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const editable = agent.place !== "elsewhere" && !agent.unfinished;
+  const Model = editable ? type?.CreateModel : undefined;
+  const save = async (config: unknown) => {
+    setSaving(true);
+    setError("");
+    try {
+      await service.save(agent.pubkey, { config });
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const menu = (remove?: () => void) => (
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          <IconButton
+            aria-label={`Actions for ${agent.name}`}
+            size="sm"
+            icon={<DotsThreeIcon size={16} />}
+          />
+        }
+      />
+      <MenuPopup align="end">
+        {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+        <MenuItem
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(agent.pubkey)
+              .catch((reason) => setError(message(reason)));
+          }}
+        >
+          Copy public key
+        </MenuItem>
+        {remove && (
+          <MenuItem tone="danger" onClick={remove}>
+            Delete agent
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </MenuRoot>
+  );
+  return (
+    <AgentCard
+      {...props}
+      icon={Model ? undefined : props.icon}
+      detail={Model ? undefined : props.detail}
+      menu={
+        agent.place === "elsewhere" ? (
+          menu()
+        ) : (
+          <AgentDelete
+            agents={service}
+            agent={agent}
+            onRemoved={onRemoved}
+            trigger={menu}
+          />
+        )
+      }
+    >
+      <div
+        data-card-control=""
+        className="flex min-w-0 max-w-full flex-col items-center gap-2"
+      >
+        {Model && (
+          <Model
+            config={agent.config}
+            modelAppearance="subtle"
+            disabled={saving}
+            onChange={(config) => void save(config)}
+          />
+        )}
+        {error && (
+          <span role="alert" className="text-body-sm text-danger">
+            {error}
+          </span>
+        )}
+      </div>
+    </AgentCard>
   );
 }
 
@@ -861,10 +749,12 @@ function ImportAgents({
   agents,
   types,
   onImported,
+  onPendingChange,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
   onImported(): void;
+  onPendingChange(pending: boolean): void;
 }) {
   const [found, setFound] = useState<PortableAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
@@ -888,6 +778,7 @@ function ImportAgents({
   const port = async (agent: PortableAgent) => {
     if (!chosen || pending) return;
     setPending(agent.pubkey);
+    onPendingChange(true);
     setError("");
     try {
       await agents.port({
@@ -907,6 +798,7 @@ function ImportAgents({
       setError(message(reason));
     } finally {
       setPending(undefined);
+      onPendingChange(false);
     }
   };
   if (!types.length)
@@ -1018,12 +910,10 @@ function Teams({
   agents,
   saved,
   teams,
-  onClose,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   teams: readonly Team[];
-  onClose(): void;
 }) {
   // A team's id while it is edited, or "new" for one being made.
   const [editing, setEditing] = useState<string>();
@@ -1040,11 +930,7 @@ function Teams({
     );
   const names = new Map(saved.map((agent) => [agent.pubkey, agent.name]));
   return (
-    <section className={styles.sideBody} aria-label="Teams">
-      <SideHeader
-        title={<h3 className="m-0 text-heading">Teams</h3>}
-        onClose={onClose}
-      />
+    <section className="grid gap-5" aria-label="Teams">
       <p className="m-0 text-body-sm text-secondary">
         Each member is told who its teammates are, and follows the team's
         instructions after its own.
@@ -1215,7 +1101,6 @@ function AgentBuild({
   agents,
   agent,
   type,
-  types,
   channels,
   memories,
   onRemoved,
@@ -1223,14 +1108,12 @@ function AgentBuild({
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
   channels: readonly ChannelChoice[];
   memories: AgentMemories | undefined;
   onRemoved(): void;
 }) {
   const [copied, setCopied] = useState(false);
   const [pictureError, setPictureError] = useState("");
-  const settings = useAgentSettingsHost({ agents, agent, type, types });
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
@@ -1264,6 +1147,8 @@ function AgentBuild({
           onSave={(name) => agents.save(agent.pubkey, { name })}
         />
         <dl className={styles.facts}>
+          <dt>Type</dt>
+          <dd>{type?.title ?? "Type unavailable"}</dd>
           <dt>Key</dt>
           <dd className="flex items-center gap-1">
             <code className="truncate">{formatPublicKey(agent.pubkey, 8)}</code>
@@ -1292,8 +1177,8 @@ function AgentBuild({
         )}
         <AgentTabs
           agents={agents}
-          agent={settings.agent}
-          type={settings.type}
+          agent={agent}
+          type={type}
           channels={channels}
           settingsHost={settings.settingsHost}
           memories={memories}

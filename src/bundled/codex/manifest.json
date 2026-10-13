@@ -4,6 +4,7 @@
   "apiVersion": 1,
   "host": {
     "processes": [
+      { "id": "login", "program": "codex", "args": ["login"] },
       {
         "id": "workspace",
         "program": "pwd"

@@ -30,10 +30,11 @@ const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
 });
 
 function setup(read: () => Promise<MemoryListing>) {
-  const memories = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
+  const owner = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
   return {
-    memories: memories.capability,
-    ...render(<MemoryPanel agent={agent} memories={memories.capability} />, {
+    owner,
+    memories: owner.capability,
+    ...render(<MemoryPanel agent={agent} memories={owner.capability} />, {
       wrapper: ToastProvider,
     }),
   };
@@ -284,14 +285,39 @@ it("shows nothing to read without a session", () => {
   expect(screen.getByText("Memory isn't available here.")).toBeInTheDocument();
 });
 
-it("holds no memory view once it has read", async () => {
-  const { memories } = setup(async () => ({
+it("clears displayed plaintext when its session invalidates the view", async () => {
+  const user = userEvent.setup();
+  const { owner } = setup(async () => ({
     entries: [entry("core", "I am Ada.")],
     partial: false,
   }));
   await screen.findByText("I am Ada.");
-  // The session allows four views at once; the open panel holds none.
-  const views = Array.from({ length: 4 }, () => memories.open(pubkey));
-  expect(views).toHaveLength(4);
+  const trigger = screen.getByRole("button", { name: "core" });
+  await user.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+  owner.clear();
+
+  expect(await screen.findByText("Memory isn't loaded.")).toBeInTheDocument();
+  expect(screen.queryByText("I am Ada.")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "core" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Actions for core" }),
+  ).not.toBeInTheDocument();
+});
+
+it("holds one revocable memory view until the panel unmounts", async () => {
+  const { memories, unmount } = setup(async () => ({
+    entries: [entry("core", "I am Ada.")],
+    partial: false,
+  }));
+  await screen.findByText("I am Ada.");
+  // The panel retains one of the session's four views while it retains text.
+  const views = Array.from({ length: 3 }, () => memories.open(pubkey));
+  expect(() => memories.open(pubkey)).toThrow("Memory views unavailable");
   for (const view of views) view.dispose();
+  unmount();
+  expect(() => memories.open(pubkey)).not.toThrow();
 });

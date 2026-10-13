@@ -63,8 +63,8 @@ const MARKDOWN: Components = {
   img: ({ alt }) => alt ?? null,
 };
 
-/** Reads once per open or refresh, and gives the view back as soon as it has
- * read: the session allows only a few at once, and runs draw on the same pool. */
+/** Keeps the view for exactly as long as its plaintext is rendered, so session
+ * invalidation can revoke the React copy as well as the service snapshot. */
 function useMemory(memories: AgentMemories | undefined, pubkey: string) {
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -83,21 +83,29 @@ function useMemory(memories: AgentMemories | undefined, pubkey: string) {
       return;
     }
     let live = true;
+    const update = () => {
+      if (!live) return;
+      const next = view.snapshot();
+      // Keep a successful listing mounted while a manual refresh is in flight;
+      // every other transition, especially invalidation, replaces plaintext.
+      setSnapshot((current) =>
+        next.status === "loading" && current.status === "ready"
+          ? current
+          : next,
+      );
+      if (next.status !== "loading") setRefreshing(false);
+    };
+    const unsubscribe = view.subscribe(update);
     setRefreshing(true);
     // Keep a successful listing mounted while a manual refresh is in flight;
     // replacing it with the loading state would make its actions disappear.
     setSnapshot((current) =>
       current.status === "ready" ? current : { status: "loading" },
     );
-    void view.refresh().finally(() => {
-      if (live) {
-        setSnapshot(view.snapshot());
-        setRefreshing(false);
-      }
-      view.dispose();
-    });
+    void view.refresh().finally(update);
     return () => {
       live = false;
+      unsubscribe();
       view.dispose();
     };
   }, [memories, pubkey, attempt]);

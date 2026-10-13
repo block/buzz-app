@@ -346,6 +346,13 @@ export function PanelWorkspace({
               data-covered={selected !== item.id || undefined}
               data-entering={motion?.enter === item.id || undefined}
               data-leaving={motion?.leave === item.id || undefined}
+              onAnimationEnd={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  motion?.enter === item.id
+                )
+                  setMotion(undefined);
+              }}
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >

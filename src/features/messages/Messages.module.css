@@ -657,15 +657,39 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace. */
+/* Measure loaded rows without painting a scroll position we will replace,
+   then fade them in once positioned. */
+.threadHistory > [data-thread-rows] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-.threadHistory[data-positioning] > [role="status"] {
+/* Fills whichever thread area is waiting. The mark waits one state change
+   before appearing, so a thread that loads at once never flashes it. */
+.threadLoading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  animation: thread-loading-in var(--duration-state) var(--easing-enter)
+    var(--duration-state) both;
+}
+.threadHistory > .threadLoading {
   position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
-  color: var(--text-subtle);
+  inset: 0;
+}
+.threadLoading picture {
+  display: block;
+  line-height: 0;
+}
+:root[data-color-mode="dark"] .threadLoading picture {
+  filter: invert(1);
+}
+@keyframes thread-loading-in {
+  from {
+    opacity: 0;
+  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);

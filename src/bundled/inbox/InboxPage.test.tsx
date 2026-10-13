@@ -652,6 +652,13 @@ it("keeps an archived thread and its composer mounted when a new mention reopens
       screen.getByRole("list", { name: "Inbox conversations" }),
     ).toHaveAttribute("aria-busy", "false"),
   );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("region", { name: "Inbox detail" })
+        .querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   await waitFor(() => expect(rows()).toHaveLength(1));
   const [archivedRow] = rows();

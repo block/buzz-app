@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -263,7 +264,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     ),
   );
   expect(screen.getByText("Two files.")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(viewButton(1));
   expect(
     await screen.findByText(/no transcript for this conversation/),
@@ -271,6 +272,34 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByLabelText("Workspace")).toHaveValue("/draft");
   expect(save).not.toHaveBeenCalled();
+});
+
+it("sets the conversation the profile was opened from apart from recent conversations", () => {
+  const root = "e".repeat(64);
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "channel-session", seen: 0, at: 1 },
+        [`channel/${root}`]: { id: "thread-session", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const Claude = tab(installed().type, 0);
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  const opened = screen.getByRole("region", { name: "This thread" });
+  expect(
+    within(opened).getByRole("button", { name: "View transcript" }),
+  ).toBeVisible();
+  expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  expect(screen.getByText(/channel · channel/)).toBeVisible();
 });
 
 it("is an agent type on the desktop app", () => {

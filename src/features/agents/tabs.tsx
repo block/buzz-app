@@ -7,6 +7,7 @@ import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import type {
   Agent,
+  AgentConversation,
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
@@ -25,12 +26,14 @@ export function agentSections({
   agent,
   type,
   channels,
+  conversation,
   settingsHost,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
+  conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
@@ -49,6 +52,7 @@ export function agentSections({
     render: () => (
       <Component
         agent={agent}
+        {...(conversation && { conversation })}
         save={(config) =>
           settingsHost?.pendingSave
             ? settingsHost.pendingSave(config)

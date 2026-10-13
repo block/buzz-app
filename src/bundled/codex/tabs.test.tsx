@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -67,6 +68,8 @@ function fixture({
           return;
         }
         let result: unknown = {};
+        if (wire.method === "thread/list")
+          result = { data: [], nextCursor: null };
         if (wire.method === "account/read")
           result = {
             account: signedIn
@@ -179,7 +182,7 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
                   ],
                 },
               ],
-              nextCursor: "older",
+              nextCursor: null,
             },
           }
         : {
@@ -200,7 +203,6 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   fireEvent.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
-  expect(screen.getByText("Showing the latest 20 turns.")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute(
@@ -208,7 +210,7 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     ),
   );
   expect(screen.getByText("Two files.")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back to profile" }));
   fireEvent.click(viewButton(1));
   expect(
     await screen.findByText(/Codex has no history for this conversation/),
@@ -216,6 +218,37 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByLabelText("Workspace")).toHaveValue("/draft");
   expect(save).not.toHaveBeenCalled();
+});
+
+it("sets the conversation the profile was opened from apart from recent conversations", () => {
+  const root = "e".repeat(64);
+  const f = fixture({
+    saved: {
+      [JSON.stringify(["channel", "channel"])]: {
+        threadId: "channel-thread",
+        workspace: "/w",
+        at: 1,
+      },
+      [JSON.stringify(["channel", root])]: {
+        threadId: "thread",
+        workspace: "/w",
+        at: 2,
+      },
+    },
+  });
+  render(
+    <f.tabs.SettingsTab
+      {...f.props()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  const opened = screen.getByRole("region", { name: "This thread" });
+  expect(
+    within(opened).getByRole("button", { name: "View transcript" }),
+  ).toBeVisible();
+  expect(screen.getByText(/#general · channel/)).toBeVisible();
+  expect(screen.queryByText(/thread eeeeeeee/)).toBeNull();
 });
 
 it("keeps provider readiness quiet and shows recovery when needed", async () => {
@@ -411,7 +444,7 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   ).not.toHaveAttribute("open");
   expect(
     screen.getByText(
-      "Mention this agent in a channel to start a conversation.",
+      "None. A conversation's session starts when the agent is mentioned.",
     ),
   ).toBeInTheDocument();
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());

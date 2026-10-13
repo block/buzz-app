@@ -4,12 +4,18 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { ModelPicker } from "../../features/agents/ModelPicker";
+import {
+  OpenedConversation,
+  useOpenedSession,
+  useOpenTranscript,
+} from "../../features/agents/OpenedConversation";
 import type {
   AgentCreateModelMenuProps,
   AgentCreateProps,
   AgentProviderSnapshot,
   AgentViewProps,
 } from "../../features/agents/service";
+import { PanelSubview } from "../../features/panels/PanelSubview";
 import { CheckIcon, CopyIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -45,6 +51,7 @@ type ProviderState = AgentProviderSnapshot &
   }>;
 const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
+const CONVERSATION_LIMIT = 30;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
   const rpc = new AppServer();
@@ -503,11 +510,9 @@ export function createTabs(
   function TranscriptView({
     agent,
     conversation,
-    onBack,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
-    onBack(): void;
   }) {
     const [read, setRead] = useState<Read>();
     const [loading, setLoading] = useState(true);
@@ -518,9 +523,9 @@ export function createTabs(
       setLoading(true);
       void readTranscript(
         spawn,
-        conversation.threadId,
-        conversation,
+        { agent: { pubkey: agent.pubkey, name: agent.name }, ...conversation },
         abort.signal,
+        (pubkey) => runtime.name(agent.pubkey, pubkey),
       )
         .then(
           (transcript): Read =>
@@ -539,9 +544,6 @@ export function createTabs(
     return (
       <div className="grid gap-4">
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onBack}>
-            Back
-          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -551,7 +553,6 @@ export function createTabs(
             Refresh
           </Button>
         </div>
-        <h3 className="m-0 text-body">{label(conversation)}</h3>
         {!read ? (
           <p role="status" className="m-0">
             Reading the Codex session…
@@ -583,20 +584,28 @@ export function createTabs(
     );
   }
 
-  function Conversations({ agent }: Pick<AgentViewProps<Config>, "agent">) {
+  function Conversations({
+    agent,
+    conversation,
+  }: {
+    agent: AgentViewProps<Config>["agent"];
+    conversation?: AgentViewProps<Config>["conversation"];
+  }) {
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
     );
     const conversations = runtime.conversations(agent.pubkey);
-    const [open, setOpen] = useState<SavedConversation>();
-    if (open)
-      return (
-        <TranscriptView
-          agent={agent}
-          conversation={open}
-          onBack={() => setOpen(undefined)}
-        />
-      );
+    const {
+      session: here,
+      searching,
+      error: lookupError,
+    } = useOpenedSession(conversations, conversation, (place, signal) =>
+      runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
+    );
+    const recent = conversations
+      .filter((item) => item.key !== here?.key)
+      .slice(0, CONVERSATION_LIMIT);
+    const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const detail = (text: string) => (
@@ -605,62 +614,89 @@ export function createTabs(
       </pre>
     );
     return (
-      <section className="grid gap-1">
-        <h3 className="m-0 text-body">Conversations</h3>
-        {conversations.length || sessions.length ? (
-          <ul className="m-0 grid list-none gap-4 p-0">
-            {/* Work that failed before Codex started a thread has no binding. */}
-            {sessions
-              .filter((view) => !saved.has(view.key))
-              .map((view) => (
-                <li key={view.key}>
-                  <p className="m-0">
-                    <code>{view.key}</code> · {view.status}
-                  </p>
-                  {view.detail && detail(view.detail)}
-                </li>
-              ))}
-            {conversations.map((conversation) => {
-              const view = views.get(conversation.key);
-              return (
-                <li key={conversation.key} className="grid gap-2">
-                  <p className="m-0">
-                    {label(conversation)}
-                    {[
-                      view?.status,
-                      conversation.at
-                        ? new Date(conversation.at).toLocaleString()
-                        : undefined,
-                    ]
-                      .filter(Boolean)
-                      .map((part) => ` · ${part}`)
-                      .join("")}
-                  </p>
-                  {view?.detail && detail(view.detail)}
-                  <div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setOpen(conversation)}
-                    >
-                      View transcript
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="m-0 text-body-sm text-subtle">
-            Mention this agent in a channel to start a conversation.
-          </p>
+      <div className="grid gap-4">
+        {conversation && (
+          <OpenedConversation
+            conversation={conversation}
+            harness="Codex"
+            session={here}
+            searching={searching}
+            error={lookupError}
+            status={here && views.get(here.key)?.status}
+            onView={() => here && show(here)}
+          />
         )}
-      </section>
+        <section className="grid gap-1">
+          <h3 className="m-0 text-body">Recent conversations</h3>
+          {recent.length || sessions.length ? (
+            <ul className="m-0 grid list-none gap-4 p-0">
+              {/* Work that failed before Codex started a thread has no binding. */}
+              {sessions
+                .filter((view) => !saved.has(view.key))
+                .map((view) => (
+                  <li key={view.key}>
+                    <p className="m-0">
+                      <code>{view.key}</code> · {view.status}
+                    </p>
+                    {view.detail && detail(view.detail)}
+                  </li>
+                ))}
+              {recent.map((conversation) => {
+                const view = views.get(conversation.key);
+                return (
+                  <li key={conversation.key} className="grid gap-2">
+                    <p className="m-0">
+                      {label(conversation)}
+                      {[
+                        view?.status,
+                        conversation.at
+                          ? new Date(conversation.at).toLocaleString()
+                          : undefined,
+                      ]
+                        .filter(Boolean)
+                        .map((part) => ` · ${part}`)
+                        .join("")}
+                    </p>
+                    {view?.detail && detail(view.detail)}
+                    <div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => show(conversation)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="m-0 text-body-sm text-subtle">
+              None. A conversation's session starts when the agent is mentioned.
+            </p>
+          )}
+        </section>
+        {open && (
+          <PanelSubview
+            title={label(open)}
+            backLabel="Back to profile"
+            onBack={back}
+          >
+            <TranscriptView agent={agent} conversation={open} />
+          </PanelSubview>
+        )}
+      </div>
     );
   }
 
   /** What the agent runs with. Saving applies to the next turn. */
-  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    conversation,
+  }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
@@ -816,7 +852,7 @@ export function createTabs(
         <details className="grid gap-2">
           <summary>Runtime diagnostics</summary>
           <div className="mt-2">
-            <Conversations agent={agent} />
+            <Conversations agent={agent} conversation={conversation} />
           </div>
         </details>
       </form>

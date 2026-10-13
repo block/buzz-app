@@ -45,6 +45,21 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
           const bounds = await preview.boundingBox();
           expect(bounds.width).toBeGreaterThanOrEqual(1);
           expect(bounds.height).toBeGreaterThanOrEqual(1);
+          const natural = await img.evaluate((el) => ({
+            width: el.naturalWidth,
+            height: el.naturalHeight,
+          }));
+          expect(bounds.width).toBeLessThanOrEqual(
+            Math.min(360, natural.width),
+          );
+          expect(bounds.height).toBeLessThanOrEqual(
+            Math.min(320, natural.height),
+          );
+          if (bounds.width > 1 && bounds.height > 1)
+            expect(bounds.width / bounds.height).toBeCloseTo(
+              natural.width / natural.height,
+              2,
+            );
           expect(bounds.x).toBeGreaterThanOrEqual(0);
           expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
         }

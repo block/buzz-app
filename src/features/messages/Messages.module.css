@@ -409,6 +409,9 @@
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+.attachmentImage[data-image-ready] .attachmentImagePixels {
+  background: transparent;
+}
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
   background: var(--surface-inset);

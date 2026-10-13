@@ -1301,15 +1301,18 @@ surface hosts one, and otherwise a plain fullscreen viewer (Inbox, Sessions,
 drafts and previews). The preview link's own destination is that media source,
 so a middle click, drag or copied link yields the same authenticated URL.
 
-Image attachments reserve their preview geometry before loading and across virtualized
-row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
-and 320px tall without enlarging the frame beyond the original dimensions.
-Missing/invalid dimensions, including metadata that would reserve less than one
-CSS pixel on either axis, use a stable 360:320 frame that shrinks with the available
-width. The fallback can add space around the image while showing the whole frame.
-Responsive frames retain at least one CSS pixel on each axis.
-Loading, failure, or retry does not resize it or force an above-bottom reader to
-the newest row.
+Image attachments reserve loading geometry from valid `imeta dim` metadata,
+bounded to 360px wide and 320px tall without enlarging the frame beyond the
+original dimensions. Missing/invalid dimensions, including metadata that would
+reserve less than one CSS pixel on either axis, use a 360:320 loading frame.
+After the original decodes, its natural dimensions replace metadata and the
+loading frame. Loaded previews follow the image's aspect ratio with no grey
+backing or letterboxing, bounded to 360px wide and 320px tall. Exceptionally thin
+originals retain at least one CSS pixel on each axis. Decode failure retains the
+loading preview; retargeting retires the old source's pixels and dimensions.
+Virtualized remounts start with loading geometry again. The timeline preserves
+the first visible message or bottom-following intent as frames resize. Resizing
+inside a visible message moves its following content in place.
 Unavailable media keeps the same reserved frame and displays its status within it.
 Exceptionally small frames can clip the visible label while retaining the complete
 accessible status.

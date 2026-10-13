@@ -2,7 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { validatedBlurhash } from "../relay/blurhash";
@@ -36,7 +36,19 @@ export function AttachmentImage({
     // lets the restored preview keep the row mounted instead.
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
-  const dimensions = attachment.dimensions;
+  const [decoded, setDecoded] = useState<{
+    source: string;
+    dimensions: NonNullable<Attachment["dimensions"]>;
+  }>();
+  const onDecoded = useCallback(
+    (dimensions: NonNullable<Attachment["dimensions"]>) => {
+      if (source) setDecoded({ source, dimensions });
+    },
+    [source],
+  );
+  const decodedDimensions =
+    decoded?.source === source ? decoded?.dimensions : undefined;
+  const dimensions = decodedDimensions ?? attachment.dimensions;
   const width = dimensions
     ? Math.min(
         360,
@@ -47,13 +59,20 @@ export function AttachmentImage({
   const height = dimensions
     ? (width * dimensions.height) / dimensions.width
     : 0;
+  const previewWidth = decodedDimensions ? Math.max(1, width) : width;
+  const previewHeight = decodedDimensions ? Math.max(1, height) : height;
   const style =
     dimensions &&
-    Number.isFinite(width) &&
-    Number.isFinite(height) &&
-    width >= 1 &&
-    height >= 1
-      ? { width, aspectRatio: `${dimensions.width} / ${dimensions.height}` }
+    Number.isFinite(previewWidth) &&
+    Number.isFinite(previewHeight) &&
+    previewWidth >= 1 &&
+    previewHeight >= 1
+      ? {
+          width: previewWidth,
+          aspectRatio: decodedDimensions
+            ? `${previewWidth} / ${previewHeight}`
+            : `${dimensions.width} / ${dimensions.height}`,
+        }
       : undefined;
   if (!source)
     return cached ? (
@@ -84,6 +103,7 @@ export function AttachmentImage({
         rel="noreferrer"
         aria-label={label}
         data-media-preview=""
+        data-image-ready={decodedDimensions ? true : undefined}
         onClick={(event) => {
           // Every activation stays in-app, modifiers included: the desktop
           // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
@@ -101,6 +121,7 @@ export function AttachmentImage({
             key={JSON.stringify([source, attachment.blurhash])}
             source={source}
             blurhash={attachment.blurhash}
+            onDecoded={onDecoded}
           />
         </span>
         <svg
@@ -133,9 +154,11 @@ export function AttachmentImage({
 function ImagePixels({
   source,
   blurhash,
+  onDecoded,
 }: {
   source: string;
   blurhash: string | undefined;
+  onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
 }) {
   const image = useRef<HTMLImageElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -158,6 +181,11 @@ function ImagePixels({
         decoded = true;
         observer?.disconnect();
         setReady(true);
+        if (original.naturalWidth > 0 && original.naturalHeight > 0)
+          onDecoded({
+            width: original.naturalWidth,
+            height: original.naturalHeight,
+          });
       } catch {
         // Keep the blur preview on original failure, including decode rejection.
       } finally {
@@ -191,7 +219,7 @@ function ImagePixels({
       original.removeEventListener("load", loaded);
       observer?.disconnect();
     };
-  }, [hash]);
+  }, [hash, onDecoded]);
   return (
     <>
       {hash && !ready && (

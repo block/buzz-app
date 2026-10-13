@@ -23,6 +23,7 @@ import {
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
+import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -534,7 +535,11 @@ function Composer({
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,
-    canAttach && !editingDisabled && !editing.target && !voice.capturing,
+    active &&
+      canAttach &&
+      !editingDisabled &&
+      !editing.target &&
+      !voice.capturing,
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
@@ -1100,7 +1105,10 @@ function Composer({
               attempt.signal,
               () =>
                 valueRef.current === captured &&
-                attachments.store.snapshot() === capturedAttachments &&
+                sameAttachmentSelection(
+                  attachments.store.snapshot(),
+                  capturedAttachments,
+                ) &&
                 permitted.current,
             );
             if (decision === null) return;
@@ -1246,6 +1254,7 @@ function Composer({
             });
             return true;
           },
+          attachments.store,
         );
       } else id = publish([]);
       const pending = { next, revision: savedRevision };
@@ -1433,7 +1442,7 @@ function Composer({
           />
         )}
         <BackgroundUploadStatus session={session} focusTarget={input} />
-        {dragging && <p role="status">Drop files to attach</p>}
+        {dragging && <FileDropOverlay composer={form} />}
         {attachmentError && (
           <ToastNotice
             title="Could not attach file"

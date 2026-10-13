@@ -782,6 +782,8 @@ type Runner = {
   readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
+  /** A provider/config transition owns the idle runner and pauses its queue. */
+  transitioning: boolean;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
@@ -1302,27 +1304,38 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         `${identity.name} is answering; change its type when it finishes`,
       );
-    if (!runner || !(await this.claim(runner)))
-      throw new Error("Change its type on the device that runs it");
-    const { record, adopted, preview } = this.retypePlan(
-      identity,
-      kinds.get(identity.type),
-      kind,
-    );
-    await this.native.setType(pubkey, type);
-    // Its new type and config apply together, so neither type runs it with the
-    // other's settings; the list then confirms the type.
-    this.identities = this.identities.map((saved) =>
-      saved.pubkey === pubkey ? { ...saved, type } : saved,
-    );
+    if (!runner) throw new Error("Change its type on the device that runs it");
+    runner.transitioning = true;
     try {
-      this.write({ ...record, config: change ? change.config : adopted });
-    } catch (error) {
-      console.warn(`Agent ${identity.name} settings were not saved`, error);
-      this.update();
+      if (!(await this.claim(runner)))
+        throw new Error("Change its type on the device that runs it");
+      if (runner.working)
+        throw new Error(
+          `${identity.name} is answering; change its type when it finishes`,
+        );
+      const { record, adopted, preview } = this.retypePlan(
+        identity,
+        kinds.get(identity.type),
+        kind,
+      );
+      await this.native.setType(pubkey, type);
+      // Its new type and config apply together, so neither type runs it with the
+      // other's settings; the list then confirms the type.
+      this.identities = this.identities.map((saved) =>
+        saved.pubkey === pubkey ? { ...saved, type } : saved,
+      );
+      try {
+        this.write({ ...record, config: change ? change.config : adopted });
+      } catch (error) {
+        console.warn(`Agent ${identity.name} settings were not saved`, error);
+        this.update();
+      }
+      await this.refresh();
+      return preview.dropped;
+    } finally {
+      runner.transitioning = false;
+      void this.drain(runner);
     }
-    await this.refresh();
-    return preview.dropped;
   }
 
   previewRetype(pubkey: string, type: string): RetypePreview {
@@ -2077,6 +2090,7 @@ export class AgentsService extends Service implements Agents {
       seen: new Set(),
       wrote: new Set(),
       working: 0,
+      transitioning: false,
       mayHold: true,
       epoch: 0,
     };
@@ -2328,7 +2342,7 @@ export class AgentsService extends Service implements Agents {
   // its deadline stops holding the queue when the deadline passes; it is not
   // otherwise fenced.
   private async drain(runner: Runner) {
-    if (runner.running) return;
+    if (runner.running || runner.transitioning) return;
     runner.running = true;
     while (this.runners.get(runner.pubkey) === runner) {
       const agent = this.ready(runner.pubkey);
@@ -2355,6 +2369,8 @@ export class AgentsService extends Service implements Agents {
         runner.queue.length = 0;
         break;
       }
+      // Retype may have reserved this idle runner while claim was pending.
+      if (runner.transitioning) break;
       // The agent or its type may have changed meanwhile.
       if (this.ready(runner.pubkey) !== agent || runner.type !== type) continue;
       runner.activityClaimed = true;

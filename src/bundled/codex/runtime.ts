@@ -356,6 +356,7 @@ export class CodexRuntime {
       delivery.ignored?.();
       return;
     }
+    delivery.signal.throwIfAborted();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;

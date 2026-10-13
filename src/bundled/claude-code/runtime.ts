@@ -252,6 +252,7 @@ export class ClaudeRuntime {
     team,
     workingUntil,
     ignored,
+    signal,
     step,
     acknowledged,
     superseded,
@@ -279,6 +280,7 @@ export class ClaudeRuntime {
         ignored?.();
         return;
       }
+      signal.throwIfAborted();
     }
     const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
     entry.handle = agent;

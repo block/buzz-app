@@ -40,6 +40,7 @@ function setup(
     hold?: boolean;
     starting?: Promise<void>;
     workflowAuthority?: string;
+    signal?: AbortSignal;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -66,7 +67,7 @@ function setup(
       resolve: (pubkey: string) => (pubkey === alice ? "Alice" : undefined),
     },
     profiles: {
-      ensure: async () => undefined,
+      ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
@@ -136,7 +137,7 @@ function setup(
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      signal: new AbortController().signal,
+      signal: options.signal ?? new AbortController().signal,
       workingUntil,
       // The host's answer, as it is when asked.
       current: () =>
@@ -674,52 +675,82 @@ it.each([true, false])(
   },
 );
 
-it("runs a verified sibling-owned workflow mention", async () => {
-  const relay = keypair(),
-    human = keypair(),
-    creator = keypair();
-  const attestation = [
-    "auth",
-    human.pubkey,
-    "",
-    bytesToHex(
-      schnorr.sign(
-        createHash("sha256")
-          .update(`nostr:agent-auth:${creator.pubkey}:`)
-          .digest(),
-        human.secret,
+it.each([false, true])(
+  "handles sibling workflow authorization with cancellation=%s",
+  async (cancelled) => {
+    const relay = keypair(),
+      human = keypair(),
+      creator = keypair();
+    const attestation = [
+      "auth",
+      human.pubkey,
+      "",
+      bytesToHex(
+        schnorr.sign(
+          createHash("sha256")
+            .update(`nostr:agent-auth:${creator.pubkey}:`)
+            .digest(),
+          human.secret,
+        ),
       ),
-    ),
-  ];
-  const profile = eventDto(
-    signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
-  );
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Claude workflow",
-      tags: [
-        ["h", channel],
-        ["p", self],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", creator.pubkey],
-        ["buzz:workflow-mention", self],
-      ],
-    }),
-  );
-  const f = setup([event], { workflowAuthority: relay.pubkey });
-  f.agent.owner = human.pubkey;
-  f.session.profiles.event.mockReturnValue(profile);
-  try {
-    await f.deliver({ type: "mention", event });
-    await vi.waitFor(() =>
-      expect(f.claudes().some((process) => process.prompts.length)).toBe(true),
+    ];
+    const profile = eventDto(
+      signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
     );
-    expect(f.workingUntil).toHaveBeenCalled();
-  } finally {
-    f.runtime.dispose();
-  }
-});
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", creator.pubkey],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = setup([event], {
+      workflowAuthority: relay.pubkey,
+      signal: controller.signal,
+    });
+    f.agent.owner = human.pubkey;
+    f.session.profiles.event.mockReturnValue(profile);
+    f.session.profiles.ensure.mockReturnValue(gate);
+    try {
+      const done = f.deliver({ type: "mention", event });
+      await vi.waitFor(() =>
+        expect(f.session.profiles.ensure).toHaveBeenCalledOnce(),
+      );
+      if (cancelled) {
+        f.runtime.sync([]);
+        controller.abort();
+        release();
+        await expect(done).rejects.toMatchObject({ name: "AbortError" });
+        expect(f.fake.processes).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+        expect(f.runtime.sessions(self)).toEqual([]);
+        return;
+      }
+      release();
+      await done;
+      await vi.waitFor(() =>
+        expect(f.claudes().some((process) => process.prompts.length)).toBe(
+          true,
+        ),
+      );
+      expect(f.workingUntil).toHaveBeenCalled();
+    } finally {
+      release();
+      f.runtime.dispose();
+    }
+  },
+);
 
 /** Asks a process for something over its in-process Buzz tool server. */
 async function mcp(

@@ -965,55 +965,77 @@ it("runs a verified relay workflow mention for its owner", async () => {
   await f.complete();
   expect(f.publish).toHaveBeenCalled();
 });
-it("runs a verified sibling-owned workflow mention", async () => {
-  const f = fixture();
-  const relay = keypair(),
-    human = keypair(),
-    creator = keypair();
-  const attestation = [
-    "auth",
-    human.pubkey,
-    "",
-    bytesToHex(
-      schnorr.sign(
-        createHash("sha256")
-          .update(`nostr:agent-auth:${creator.pubkey}:`)
-          .digest(),
-        human.secret,
+it.each([false, true])(
+  "handles sibling workflow authorization with cancellation=%s",
+  async (cancelled) => {
+    const f = fixture();
+    const relay = keypair(),
+      human = keypair(),
+      creator = keypair();
+    const attestation = [
+      "auth",
+      human.pubkey,
+      "",
+      bytesToHex(
+        schnorr.sign(
+          createHash("sha256")
+            .update(`nostr:agent-auth:${creator.pubkey}:`)
+            .digest(),
+          human.secret,
+        ),
       ),
-    ),
-  ];
-  const profile = eventDto(
-    signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
-  );
-  f.snapshot.session.workflowAuthority = relay.pubkey;
-  f.snapshot.session.profiles.event.mockReturnValue(profile);
-  const ask = f.delivery("work");
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Codex workflow",
-      tags: [
-        ["h", "channel"],
-        ["p", pubkey],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", creator.pubkey],
-        ["buzz:workflow-mention", pubkey],
-      ],
-    }),
-  );
-  await f.runtime.run({
-    ...ask,
-    agent: { ...ask.agent, owner: human.pubkey },
-    trigger: { type: "mention", event },
-  });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
-    creator.pubkey,
-  ]);
-  await f.complete();
-  expect(f.publish).toHaveBeenCalled();
-});
+    ];
+    const profile = eventDto(
+      signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
+    );
+    f.snapshot.session.workflowAuthority = relay.pubkey;
+    f.snapshot.session.profiles.event.mockReturnValue(profile);
+    const gate = deferred<void>();
+    const controller = new AbortController();
+    f.snapshot.session.profiles.ensure.mockReturnValue(gate.promise);
+    const ask = f.delivery("work");
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Codex workflow",
+        tags: [
+          ["h", "channel"],
+          ["p", pubkey],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", creator.pubkey],
+          ["buzz:workflow-mention", pubkey],
+        ],
+      }),
+    );
+    const done = f.runtime.run({
+      ...ask,
+      signal: controller.signal,
+      agent: { ...ask.agent, owner: human.pubkey },
+      trigger: { type: "mention", event },
+    });
+    await vi.waitFor(() =>
+      expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledOnce(),
+    );
+    if (cancelled) {
+      f.runtime.sync([]);
+      controller.abort();
+      gate.resolve();
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(f.spawn).not.toHaveBeenCalled();
+      expect(f.workingUntil).not.toHaveBeenCalled();
+      expect(f.runtime.sessions(pubkey)).toEqual([]);
+      return;
+    }
+    gate.resolve();
+    await done;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
+      creator.pubkey,
+    ]);
+    await f.complete();
+    expect(f.publish).toHaveBeenCalled();
+  },
+);
 it("ignores a relay workflow mention without explicit community authority", async () => {
   const f = fixture();
   const relay = keypair();

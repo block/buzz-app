@@ -184,6 +184,9 @@ admitted kind-0 profile cryptographically proves the same owner through NIP-OA.
 The profile comes from the receiving agent's community profile directory;
 display metadata and saved inventories do not prove sibling ownership. Missing,
 invalid or failed profile reads deny the mention; a later mention can retry.
+Both runtimes recheck delivery cancellation after authorization, before creating
+sessions or starting processes, so removing an agent during a profile read cannot
+restart it when the read completes.
 The event must contain a canonical `buzz:workflow-mention` for the receiving
 agent; all such tags
 must have exactly two fields, a lowercase-hex pubkey, and no duplicate targets.

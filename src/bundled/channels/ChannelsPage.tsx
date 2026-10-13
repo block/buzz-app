@@ -207,7 +207,7 @@ function ChannelWorkspace({
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
-  const historyContainer = useRef<HTMLDivElement>(null);
+  const historyContainer = useRef<HTMLElement>(null);
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
@@ -1148,8 +1148,10 @@ function ChannelWorkspace({
   const body = (
     <SessionColumn enabled={flatSession}>
       <MessageManagementStatus />
-      <div
+      <section
         data-channel-history
+        aria-label="Channel history"
+        tabIndex={-1}
         ref={historyContainer}
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >
@@ -1224,7 +1226,7 @@ function ChannelWorkspace({
             onHeightChange={setJoinNoticeHeight}
           />
         )}
-      </div>
+      </section>
       {!cached && (
         <LiveStatus
           live={queries.live}
@@ -1235,9 +1237,12 @@ function ChannelWorkspace({
             current
               ? () => {
                   if (current.readOnly && !current.cached) {
-                    historyContainer.current
-                      ?.querySelector<HTMLElement>("[data-message-scroller]")
-                      ?.focus({ preventScroll: true });
+                    const history = historyContainer.current;
+                    const target =
+                      history?.querySelector<HTMLElement>(
+                        "[data-message-scroller]",
+                      ) ?? history;
+                    target?.focus({ preventScroll: true });
                   } else {
                     setComposerFocus((value) => value + 1);
                   }

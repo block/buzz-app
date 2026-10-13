@@ -84,7 +84,8 @@ export function rankMentions(
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
  * Every choice can continue the name; only choices `among` can equal it. A key
- * qualifier only tells namesakes apart, so it never continues the name.
+ * qualifier or generated `(agent)` suffix only tells namesakes apart, so it
+ * never continues the name.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
@@ -96,10 +97,15 @@ export const exactMention = (
     (c) => [...c.aliases, c.label],
     query,
     (c) => c.aliases.length > 0 && among(c),
-    (c) => [
-      ...c.aliases,
-      c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
-        ? c.label.slice(0, -(c.qualifier.length + 3))
-        : c.label,
-    ],
+    (c) => {
+      const label =
+        c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
+          ? c.label.slice(0, -(c.qualifier.length + 3))
+          : c.label;
+      // Literal names still block through aliases; generated suffixes do not.
+      return c.agent &&
+        c.aliases.some((name) => `${name.trim()} (agent)` === label)
+        ? c.aliases
+        : [...c.aliases, label];
+    },
   )?.recipient.pubkey;

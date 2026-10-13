@@ -2540,7 +2540,7 @@ it.each([
   },
 );
 type DirectoryPage = {
-  people: { pubkey: string; name: string }[];
+  people: { pubkey: string; name: string; isAgent?: true }[];
   hasMore: boolean;
 };
 /** Other members map to a profile name, or null for a profile still loading. */
@@ -2693,6 +2693,41 @@ it("Space keeps a member's name when an identically named outside namesake is qu
     h.dispose();
   }
 });
+it.each([
+  { name: "Jose", namesake: false, space: true },
+  { name: "Jose", namesake: true, space: true },
+  { name: "Jose (agent)", namesake: false, space: false },
+])(
+  "Space distinguishes an agent qualifier from the real name (%j)",
+  async ({ name, namesake, space }) => {
+    const h = spaceFixture("Jose");
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      expect(h.result()?.spaceId).toBe(h.member);
+      await h.finish({
+        people: [
+          { pubkey: outsideJose, name, isAgent: true },
+          ...(namesake
+            ? [{ pubkey: "e".repeat(64), name, isAgent: true as const }]
+            : []),
+        ],
+        hasMore: false,
+      });
+      await waitFor(() =>
+        expect(
+          h.result()?.items.find((item) => item.id === outsideJose)?.label,
+        ).toMatch(namesake ? /^Jose \(agent\) · / : /^Jose \(agent\)$/),
+      );
+      expect(h.result()?.spaceId).toBe(space ? h.member : undefined);
+      expect(h.canSpace(h.member)).toBe(space);
+      expect(h.canSpace(outsideJose)).toBe(false);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it("Space leaves a member's name as prose once the directory finds a longer outside name", async () => {
   const h = spaceFixture("Jose");
   try {

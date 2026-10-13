@@ -185,8 +185,9 @@ set of choices when all of these are true:
   **continues** the query: the normalized name is longer, starts with the
   normalized query, and the next code point is not a letter, mark, or digit
   (`Jose Luis` and `Jose-Luis` continue `jose`; `Josefa` does not). A label's
-  key qualifier only tells namesakes apart, so `Honey · 4prr` does not
-  continue `honey`.
+  key qualifier or generated `(agent)` suffix only tells namesakes apart, so
+  `Honey · 4prr` and a generated `Honey (agent)` do not continue `honey`.
+  A literal name `Honey (agent)` still continues `honey`.
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items

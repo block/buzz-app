@@ -128,6 +128,10 @@ gaps rather than each plugin inventing its own rhythm. Dependent preferences ret
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
+Use `variant="settings"` for a Settings summary row with one attached labelled
+disclosure action. Supply the static identity/status as `summary`; the trigger
+alone opens the panel, and `keepMounted` preserves its draft. Do not make the
+summary row a second click target or add another save action to the trigger.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
@@ -962,6 +966,10 @@ collapsing them preserves local input state; leave the default for static conten
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows
 form one stack; avoid inserting form-section gaps between individual rows.
+`variant="settings"` composes a static summary with one attached prominent text
+trigger inside a panel-backed Settings boundary. Its panel retains visible field
+labels; the trigger changes disclosure state only and does not replace the form's
+Save.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and

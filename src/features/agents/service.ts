@@ -22,7 +22,7 @@ import type { ProfileQueries } from "../relay/profile-directory";
 import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import type { DefinedIcon } from "../../shared/design-system/icons";
 import {
   createContributions,
@@ -149,6 +149,12 @@ export type AgentChange<Config = unknown> = Readonly<{
 }>;
 /** What a type's read-only peek receives. */
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
+export type AgentSettingsHost = Readonly<{
+  title: string;
+  icon?: DefinedIcon;
+  /** A labelled Type control supplied only by the Agents build view. */
+  typeControl?: (dirty: boolean) => ReactNode;
+}>;
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */
 export type AgentViewProps<Config = unknown> = {
@@ -157,6 +163,8 @@ export type AgentViewProps<Config = unknown> = {
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects. */
   save(config: Config): Promise<void>;
+  /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
+  settingsHost?: AgentSettingsHost;
 };
 /** What a type's part of the New agent dialog receives: the new agent's
  * starting config, from `defaults`, to fill in. The app owns its key, name and
@@ -177,6 +185,8 @@ export type AgentCreateModelMenuProps<Config = unknown> =
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
+  /** Lets the Agents build view place host-owned Type controls in this tab. */
+  role?: "settings";
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */

@@ -16,12 +16,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
   AgentProviderSnapshot,
+  AgentViewProps,
   Agents,
   AgentsSnapshot,
   Carry,
   RegisteredAgentType,
   TeamChange,
 } from "../../features/agents/service";
+import { AgentSettingsDisclosure } from "../../features/agents/AgentSettingsDisclosure";
 import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -123,6 +125,7 @@ function setup(
   {
     shown = true,
     more = [] as RegisteredAgentType[],
+    dirtySettings = false,
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -137,6 +140,23 @@ function setup(
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", () => <p>Echo controls</p>);
+  const tabs = dirtySettings
+    ? [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings" as const,
+          component: ({ settingsHost }: AgentViewProps) =>
+            settingsHost ? (
+              <AgentSettingsDisclosure host={settingsHost} dirty>
+                <p>Provider settings</p>
+              </AgentSettingsDisclosure>
+            ) : (
+              <p>Provider settings</p>
+            ),
+        },
+      ]
+    : [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }];
   const type = {
     key: "test/echo",
     pluginId: "test",
@@ -150,7 +170,7 @@ function setup(
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
     provider: echoProvider.contribution,
-    tabs: [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }],
+    tabs,
     Create: ({
       config,
       onChange,
@@ -279,7 +299,14 @@ it("opens the build view with the type's tabs and the app's Attention tab", asyn
   await user.keyboard("{Enter}");
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
-  expect(tabs).toEqual(["Reply", "Attention"]);
+  expect(tabs).toEqual(["Settings", "Reply", "Attention"]);
+  expect(screen.getByText("Echo")).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).queryByText("Type"),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(screen.getByText("Reply tab")).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Attention" }));
   expect(screen.getByText("Default")).toBeInTheDocument();
@@ -534,7 +561,7 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("changes an agent type from the build view and reports failures", async () => {
+it("reviews an agent provider change from the build view and reports failures", async () => {
   const user = userEvent.setup();
   const relay = {
     key: "test/relay",
@@ -545,23 +572,30 @@ it("changes an agent type from the build view and reports failures", async () =>
     icon: PlugIcon,
     defaults: () => ({ config: {} }),
   } as unknown as RegisteredAgentType;
-  const { agents } = setup([agent("Ada", 1)], { more: [relay] });
+  const { agents } = setup([agent("Ada", 1)], {
+    more: [relay],
+    dirtySettings: true,
+  });
   await user.click(screen.getByRole("option", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
+  expect(
+    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+  ).not.toBeInTheDocument();
   agents.retype
     .mockRejectedValueOnce(new Error("Ada is answering"))
     .mockResolvedValueOnce(["workspace"]);
-  const typeTrigger = within(rail).getByRole("button", {
-    name: "Change type from Echo",
+  await user.click(screen.getByRole("button", { name: "Customize" }));
+  const typeTrigger = screen.getByRole("button", {
+    name: "Change provider from Echo",
   });
   expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
   await user.click(typeTrigger);
-  const menu = await screen.findByRole("menu");
-  const currentChoice = within(menu).getByRole("menuitemradio", {
+  const providerMenu = await screen.findByRole("menu");
+  const currentChoice = within(providerMenu).getByRole("menuitemradio", {
     name: "Echo",
   });
-  const relayChoice = within(menu).getByRole("menuitemradio", {
+  const relayChoice = within(providerMenu).getByRole("menuitemradio", {
     name: "Relay",
   });
   expect(currentChoice).toBeChecked();
@@ -571,6 +605,9 @@ it("changes an agent type from the build view and reports failures", async () =>
   const dialog = await screen.findByRole("dialog", {
     name: "Move Ada to Relay?",
   });
+  expect(
+    screen.queryByRole("dialog", { name: "Change provider" }),
+  ).not.toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   expect(within(dialog).queryByText("Instructions")).toBeNull();
   expect(within(dialog).getByText("Workspace").parentElement).toHaveTextContent(
@@ -586,6 +623,9 @@ it("changes an agent type from the build view and reports failures", async () =>
     "Your agent will continue the conversation in Buzz.",
   );
   expect(dialog).toHaveTextContent("Anything Echo left running will stop.");
+  expect(dialog).toHaveTextContent(
+    "Unsaved Settings changes will be discarded.",
+  );
   await user.click(
     within(dialog).getByRole("button", { name: "Move to Relay" }),
   );
@@ -597,9 +637,7 @@ it("changes an agent type from the build view and reports failures", async () =>
   );
   expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay");
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(within(rail).getByRole("status")).toHaveTextContent(
-    "Dropped: Workspace.",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("Dropped: Workspace.");
 });
 
 it("makes a new agent in the create dialog and goes straight to building it", async () => {

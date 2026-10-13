@@ -37,6 +37,14 @@ Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. The host appends the shared Attention tab.
 
+A type marks its primary configuration tab with `role: "settings"`. In the
+Agents build view the host keeps that tab at a stable `Settings` destination and
+supplies the current type identity plus retype control through `settingsHost`.
+The type keeps ownership of its config draft and Save behavior. Types without a
+settings-role tab receive a host-owned, type-only Settings tab there. Other
+callers, including profile panels, omit `settingsHost` and retain the type's
+ordinary tab presentation.
+
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
 a read-only check, and a management-dialog body. **More → Providers** lists each
 active type once using the registered title and icon. It is a quick health view:

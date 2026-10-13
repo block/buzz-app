@@ -49,6 +49,7 @@ import {
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
+  RobotIcon,
   SmileyIcon,
   SquaresFourIcon,
 } from "../../../../src/shared/design-system/icons/index";
@@ -2007,6 +2008,29 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       ),
     },
   ]}
+/>
+<h3 className="text-label">Settings summary disclosure</h3>
+<Accordion
+  variant="settings"
+  keepMounted
+  items={[
+    {
+      value: "provider",
+      title: "Customize",
+      summary: (
+        <PreferenceRow
+          icon={<RobotIcon />}
+          title="Codex"
+          subtitle="GPT-6.1-Sol · High"
+        />
+      ),
+      content: (
+        <Field label="Model">
+          <Input value="GPT-6.1-Sol" readOnly />
+        </Field>
+      ),
+    },
+  ]}
 />`}
     >
       <Accordion
@@ -2055,6 +2079,29 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
               <p className="text-body-sm text-subtle">
                 Supporting information shares the same row rhythm.
               </p>
+            ),
+          },
+        ]}
+      />
+      <h3 className="text-label">Settings summary disclosure</h3>
+      <Accordion
+        variant="settings"
+        keepMounted
+        items={[
+          {
+            value: "provider",
+            title: "Customize",
+            summary: (
+              <PreferenceRow
+                icon={<RobotIcon />}
+                title="Codex"
+                subtitle="GPT-6.1-Sol · High"
+              />
+            ),
+            content: (
+              <Field label="Model">
+                <Input value="GPT-6.1-Sol" readOnly />
+              </Field>
             ),
           },
         ]}

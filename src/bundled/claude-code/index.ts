@@ -103,7 +103,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       DialogBody: ProviderDialogBody,
     },
-    tabs: [{ id: "settings", title: "Settings", component: SettingsTab }],
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: SettingsTab,
+      },
+    ],
     models: (agent) => runtime.models(agent.pubkey),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: HANDOVER_MS,

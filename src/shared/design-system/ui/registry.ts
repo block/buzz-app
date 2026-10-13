@@ -708,6 +708,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "form",
       "navigation",
       "activity",
+      "settings summary row",
       "controlled expansion",
     ],
     status: "proposed",

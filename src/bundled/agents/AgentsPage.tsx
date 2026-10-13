@@ -79,7 +79,6 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
-import { Radio } from "../../shared/design-system/ui/RadioGroup";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -1225,6 +1224,9 @@ function AgentBuild({
 }) {
   const [copied, setCopied] = useState(false);
   const [pictureError, setPictureError] = useState("");
+  const canRetype =
+    agent.place === "here" &&
+    types.some((item) => !item.remote && item.key !== agent.type);
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
@@ -1258,15 +1260,6 @@ function AgentBuild({
           onSave={(name) => agents.save(agent.pubkey, { name })}
         />
         <dl className={styles.facts}>
-          <dt>Type</dt>
-          <dd>
-            <TypeField
-              agents={agents}
-              agent={agent}
-              type={type}
-              types={types}
-            />
-          </dd>
           <dt>Key</dt>
           <dd className="flex items-center gap-1">
             <code className="truncate">{formatPublicKey(agent.pubkey, 8)}</code>
@@ -1298,6 +1291,23 @@ function AgentBuild({
           agent={agent}
           type={type}
           channels={channels}
+          settingsHost={{
+            title: type?.title ?? "Type unavailable",
+            ...(type?.icon ? { icon: type.icon } : {}),
+            ...(canRetype
+              ? {
+                  typeControl: (dirty: boolean) => (
+                    <TypeField
+                      agents={agents}
+                      agent={agent}
+                      type={type}
+                      types={types}
+                      dirty={dirty}
+                    />
+                  ),
+                }
+              : {}),
+          }}
         />
       </section>
     </div>
@@ -1310,48 +1320,19 @@ const CARRY_LABELS: Record<keyof Carry, string> = {
 };
 const CARRY_KEYS = Object.keys(CARRY_LABELS) as (keyof Carry)[];
 
-function AgentTypeChoice({
-  type,
-  variant = "default",
-}: {
-  type: RegisteredAgentType;
-  variant?: "default" | "card" | "menu";
-}) {
-  const Icon = type.icon;
-  if (variant === "menu")
-    return (
-      <MenuRadioItem value={type.key} selection="highlight" closeOnClick>
-        <ChoiceRow
-          label={type.title}
-          leading={Icon ? <Icon size={20} /> : undefined}
-        />
-      </MenuRadioItem>
-    );
-  return (
-    <Radio
-      value={type.key}
-      variant={variant}
-      indicator={variant === "card" ? "hidden" : "visible"}
-      label={type.title}
-      leading={Icon ? <Icon size={32} /> : undefined}
-      {...(variant === "card" && type.description
-        ? { description: type.description }
-        : {})}
-    />
-  );
-}
-
 /** The agent's type, which the owner can change between turns. */
 function TypeField({
   agents,
   agent,
   type,
   types,
+  dirty,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
+  dirty: boolean;
 }) {
   // A local key can move only between local runtimes. Hosted providers own
   // their agents' keys and have a separate lifecycle.
@@ -1368,7 +1349,7 @@ function TypeField({
   }>();
   const choose = (next: string) => {
     if (next === agent.type) return;
-    const target = types.find((item) => item.key === next);
+    const target = available.find((item) => item.key === next);
     if (!target) return;
     setError("");
     try {
@@ -1401,31 +1382,46 @@ function TypeField({
   );
   return (
     <>
-      {others.length > 0 ? (
-        <MenuRoot
-          onOpenChange={(open) => {
-            if (open) setError("");
-          }}
-        >
-          <MenuTrigger
-            aria-label={`Change type from ${type?.title ?? "unavailable type"}`}
-            disabled={pending}
-            render={<FieldButton aria-busy={pending}>{value}</FieldButton>}
-          />
-          <MenuPopup>
-            <MenuRadioGroup
-              value={agent.type}
-              onValueChange={(next) => choose(String(next))}
-            >
-              {available.map((item) => (
-                <AgentTypeChoice key={item.key} type={item} variant="menu" />
-              ))}
-            </MenuRadioGroup>
-          </MenuPopup>
-        </MenuRoot>
-      ) : (
-        value
-      )}
+      <Field label="Provider">
+        {others.length > 0 ? (
+          <MenuRoot
+            onOpenChange={(open) => {
+              if (open) setError("");
+            }}
+          >
+            <MenuTrigger
+              aria-label={`Change provider from ${type?.title ?? "unavailable provider"}`}
+              disabled={pending}
+              render={<FieldButton aria-busy={pending}>{value}</FieldButton>}
+            />
+            <MenuPopup>
+              <MenuRadioGroup
+                value={agent.type}
+                onValueChange={(next) => choose(String(next))}
+              >
+                {available.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <MenuRadioItem
+                      key={item.key}
+                      value={item.key}
+                      selection="highlight"
+                      closeOnClick
+                    >
+                      <ChoiceRow
+                        label={item.title}
+                        leading={Icon ? <Icon size={20} /> : undefined}
+                      />
+                    </MenuRadioItem>
+                  );
+                })}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
+        ) : (
+          value
+        )}
+      </Field>
       {error && !migration && (
         <p role="alert" className="m-0 mt-1 text-body-sm text-danger">
           {error}
@@ -1461,7 +1457,7 @@ function TypeField({
               loading={pending}
               onClick={() => void change()}
             >
-              Move to {migration?.target.title ?? "new harness"}
+              Move to {migration?.target.title ?? "new provider"}
             </Button>
           </>
         }
@@ -1471,6 +1467,7 @@ function TypeField({
             source={type}
             target={migration.target}
             preview={migration.preview}
+            discardDraft={dirty}
           />
         )}
         {error && (
@@ -1487,10 +1484,12 @@ function MigrationPreview({
   source,
   target,
   preview,
+  discardDraft,
 }: {
   source: RegisteredAgentType | undefined;
   target: RegisteredAgentType;
   preview: ReturnType<Agents["previewRetype"]>;
+  discardDraft: boolean;
 }) {
   const SourceIcon = source?.icon;
   const TargetIcon = target.icon;
@@ -1515,6 +1514,11 @@ function MigrationPreview({
         Your agent will continue the conversation in Buzz.
         {warning && ` ${warning}`}
       </p>
+      {discardDraft && (
+        <p className="m-0 text-body-sm text-warning">
+          Unsaved Settings changes will be discarded.
+        </p>
+      )}
       {(carry.length > 0 || preview.settings.length > 0) && (
         <dl className="m-0 grid gap-2">
           {carry.map((key) => {

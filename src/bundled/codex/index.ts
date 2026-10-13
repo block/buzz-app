@@ -97,7 +97,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       check: () => providerController.check(),
       DialogBody: ProviderDialogBody,
     },
-    tabs: [{ id: "settings", title: "Settings", component: SettingsTab }],
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: SettingsTab,
+      },
+    ],
     models: (agent) => runtime.preview(agent),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: 2 * 60_000,

@@ -261,7 +261,7 @@ function Timeline({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
-    (element: HTMLElement) => {
+    (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
       // Keep the restored event anchored through that change until reader input.
       const anchor = restoredAnchor.current;
@@ -308,12 +308,15 @@ function Timeline({
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
+      // A measured list-height mutation can likewise include Virtua's own offset
+      // correction; only explicit upward input may cancel follow in that callback.
       // Explicit upward input wins even when shrink and reader movement share
       // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
         (upwardGesture.current ||
-          (element.clientWidth === previous.width &&
+          (!layoutOwned &&
+            element.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -597,7 +600,7 @@ function Timeline({
               intent.current === scheduledIntent &&
               scroller.current
             )
-              recordPosition(scroller.current);
+              recordPosition(scroller.current, true);
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(restorePosition);
           });

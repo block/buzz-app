@@ -423,3 +423,93 @@ it("shows local receipt and failure without requiring an ACP transcript, and ope
     f.dispose();
   }
 });
+
+it("dismisses only that agent's error on this message, without changing other work", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+  );
+  const begin = (agent: string, messageId: string) =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId,
+      agent,
+    });
+  try {
+    act(() => {
+      begin(A, root).finish({
+        ok: false,
+        error: "Provider unavailable after a long and detailed reason",
+      });
+      begin(A, next).finish({ ok: false, error: "Elsewhere" });
+      begin(B, root).step("Read", "notes.txt");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    expect(
+      screen.getByText("Provider unavailable after a long and detailed reason")
+        .parentElement,
+    ).toHaveAttribute("data-error");
+    expect(
+      screen.queryByRole("button", { name: "Dismiss error from Bubbles" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss error from Blossom" }),
+    );
+    expect(f.props.open).not.toHaveBeenCalled();
+    expect(onFocusedRemoval).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "View activity for Bubbles" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View activity for Blossom" }),
+    ).toBeNull();
+    expect(
+      local.reader
+        .work()
+        .filter((row) => row.agent === A)
+        .map((row) => [row.messageId, row.state]),
+    ).toEqual([[next, "error"]]);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("moves focus out when dismissing the last error removes the bubble", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+  );
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .finish({ ok: false, error: "Provider unavailable" });
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss error from Blossom" }),
+    );
+    expect(onFocusedRemoval).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Provider unavailable")).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});

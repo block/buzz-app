@@ -515,6 +515,12 @@ export function createAgentActivity(
     queries: Object.freeze({
       snapshot: () => snapshot,
       clearHistory,
+      /** Display-only local acknowledgement, scoped to this session and access. */
+      dismissError(agent: string, channelId: string, messageId: string) {
+        if (!local || closed || !canAccess(channelId)) return false;
+        local.source.dismissError?.({ scope: local.scope, agent, messageId });
+        return true;
+      },
       archive: history?.host,
       selectHistory(agent: string) {
         if (historyAgent === agent) return;

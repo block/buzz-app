@@ -15,6 +15,8 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { XIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -284,43 +286,74 @@ function ActivityBubble({
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
               return (
-                <NavigationItem
-                  key={entry.agent}
-                  aria-label={`View activity for ${entry.name}`}
-                  disabled={!target || !props.canOpen(target)}
-                  onClick={() => {
-                    if (target && props.canOpen(target) && props.open(target))
-                      setExpanded(false);
-                  }}
-                  icon={
-                    <ActivityAvatar
-                      session={props.session}
-                      entry={entry}
-                      size="small"
-                    />
-                  }
-                  label={
-                    <span className={`text-body-sm ${styles.preview}`}>
-                      <ShimmerText
-                        active={
-                          entry.lifecycle
-                            ? entry.state === "working"
-                            : entry.working
+                <div key={entry.agent} className={styles.row}>
+                  <NavigationItem
+                    aria-label={`View activity for ${entry.name}`}
+                    disabled={!target || !props.canOpen(target)}
+                    onClick={() => {
+                      if (target && props.canOpen(target) && props.open(target))
+                        setExpanded(false);
+                    }}
+                    icon={
+                      <ActivityAvatar
+                        session={props.session}
+                        entry={entry}
+                        size="small"
+                      />
+                    }
+                    label={
+                      <span
+                        className={`text-body-sm ${styles.preview}`}
+                        data-error={
+                          entry.lifecycle && entry.state === "error"
+                            ? ""
+                            : undefined
                         }
                       >
-                        {entry.lifecycle
-                          ? label(entry)
-                          : !entry.working
-                            ? "Activity interrupted or out of date"
-                            : (preview?.title ??
-                              "Waiting for activity details")}
-                      </ShimmerText>
-                      {preview?.detail && (
-                        <span className={styles.detail}>{preview.detail}</span>
-                      )}
-                    </span>
-                  }
-                />
+                        <ShimmerText
+                          active={
+                            entry.lifecycle
+                              ? entry.state === "working"
+                              : entry.working
+                          }
+                        >
+                          {entry.lifecycle
+                            ? label(entry)
+                            : !entry.working
+                              ? "Activity interrupted or out of date"
+                              : (preview?.title ??
+                                "Waiting for activity details")}
+                        </ShimmerText>
+                        {preview?.detail && (
+                          <span className={styles.detail}>
+                            {preview.detail}
+                          </span>
+                        )}
+                      </span>
+                    }
+                  />
+                  {entry.lifecycle && entry.state === "error" ? (
+                    <IconButton
+                      size="xs"
+                      aria-label={`Dismiss error from ${entry.name}`}
+                      icon={<XIcon />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (
+                          props.message &&
+                          props.session.agentActivity.dismissError?.(
+                            entry.agent,
+                            props.channelId,
+                            props.message.id,
+                          )
+                        ) {
+                          if (entries.length === 1) props.onFocusedRemoval?.();
+                          setExpanded(entries.length > 1);
+                        }
+                      }}
+                    />
+                  ) : undefined}
+                </div>
               );
             })}
           </div>

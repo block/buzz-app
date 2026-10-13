@@ -112,6 +112,15 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       const box = await popup.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
+      // The full reason wraps rather than truncating; Dismiss stays inside.
+      await expect(popup.getByText("Fixture provider unavailable")).toHaveCSS(
+        "white-space",
+        "normal",
+      );
+      const dismiss = await popup
+        .getByRole("button", { name: /^Dismiss error from / })
+        .boundingBox();
+      expect(dismiss.x + dismiss.width).toBeLessThanOrEqual(box.x + box.width);
       await page.screenshot({
         path: testInfo.outputPath(`local-activity-${colorScheme}-${width}.png`),
       });
@@ -120,6 +129,12 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       await expect(waiting).toBeFocused();
     }
   }
+  // Dismiss hides only this device's view of the error; focus stays in the row.
+  await waiting.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Dismiss error from / }).click();
+  await expect(waiting).toHaveCount(0);
+  await expect(page.locator("body")).not.toBeFocused();
 });
 
 // Real host composition: dedup is about two mounted presentations, not two agents.

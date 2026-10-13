@@ -22,6 +22,8 @@ export type LocalWork = Readonly<{
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
   subscribeWork(listener: () => void): () => void;
+  /** Hides one already-seen error on this device; never changes its outcome. */
+  dismissError?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
 };
 
 /** App-owned local facts. No relay publication, inference, polling or process control. */
@@ -42,6 +44,19 @@ export function createLocalAgentActivity() {
   const reader: LocalAgentSource = {
     work: () => work,
     subscribeWork: (listener) => subscribe(workListeners, listener),
+    dismissError({ scope, agent, messageId }) {
+      for (const [id, row] of entries)
+        if (
+          row.state === "error" &&
+          row.scope === scope &&
+          row.agent === agent &&
+          row.messageId === messageId
+        ) {
+          entries.delete(id);
+          publish();
+          return;
+        }
+    },
   };
   return {
     reader,

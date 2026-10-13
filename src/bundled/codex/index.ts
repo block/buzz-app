@@ -1,6 +1,8 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { config, defaults, validWorkspace } from "./config";
+import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
 export const inject = ["agents", "host"];
@@ -14,8 +16,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const runtime = new CodexRuntime(start, ctx.agents.relay);
-  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
+  const runtime = new CodexRuntime(start, (pubkey) =>
+    ownerReads(ctx.agents.relay(pubkey), pubkey),
+  );
+  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   // Agents that stop running stop their turns, and the last one stops the
   // server; switching communities or a reconnect does not.
   const sync = () => {
@@ -31,7 +35,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   const { CodexTab, SettingsTab, Create } = createTabs(start, runtime);
   ctx.agents.register({
-    id: "codex",
+    id: TYPE_ID,
     title: "Codex",
     description:
       "Codex on this computer, using its native coding tools and your account.",
@@ -51,8 +55,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       { id: "codex", title: "Codex", component: CodexTab },
       { id: "settings", title: "Settings", component: SettingsTab },
     ],
-    models: (agent) => runtime.preview(agent),
-    run: (delivery) => runtime.run(delivery),
-    timeoutMs: 2 * 60_000,
+    ...codexRun(runtime),
   });
 };

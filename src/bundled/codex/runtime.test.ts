@@ -3,6 +3,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
+import { ownerReads } from "../../features/agents/reads";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -203,7 +204,11 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, () => relay, store);
+  const runtime = new CodexRuntime(
+    spawn,
+    (pubkey) => ownerReads(relay, pubkey),
+    store,
+  );
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>

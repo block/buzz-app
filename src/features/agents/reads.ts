@@ -16,6 +16,8 @@ export type ChannelFacts = Readonly<{
 }>;
 
 export type AgentReads = Readonly<{
+  /** The community these reads are of; it changes when the agent's does. */
+  scope: string;
   /** The channel as the community lists it, or undefined when unknown. */
   channel(id: string): Promise<ChannelFacts | undefined>;
   read(
@@ -26,11 +28,9 @@ export type AgentReads = Readonly<{
   profiles(pubkeys: readonly string[]): Promise<unknown>;
   /** A person's name as the channel shows it, if known yet. */
   name(pubkey: string, members: readonly string[]): string | undefined;
-  /** The agent's memory entries. */
-  memories(): Promise<readonly Memory[]>;
+  /** The agent's memory entries; `signal` stops the read. */
+  memories(signal?: AbortSignal): Promise<readonly Memory[]>;
 }>;
-
-const MEMORY_TIMEOUT_MS = 5_000;
 
 /** The reads of the owner's connection to the agent's community, while it is
  * ready; undefined otherwise. Memory is encrypted to the owner, so the owner's
@@ -43,6 +43,7 @@ export function ownerReads(
   if (snapshot?.status !== "ready") return undefined;
   const { session } = snapshot;
   return Object.freeze({
+    scope: snapshot.scope ?? "",
     channel: async (id: string) => {
       const summary =
         session.channels.list().channels.find((item) => item.id === id) ??
@@ -63,30 +64,27 @@ export function ownerReads(
       session.names.resolve(person, undefined, members) ??
       session.profiles.snapshot().get(person)?.name ??
       undefined,
-    memories: async () => {
+    memories: async (signal?: AbortSignal) => {
+      signal?.throwIfAborted();
       const view = session.agentMemories.open(pubkey);
+      // Stopping the read disposes the view, which ends its refresh.
+      let stop!: (reason: unknown) => void;
+      const stopped = new Promise<never>((_, reject) => {
+        stop = reject;
+      });
+      const abort = () => {
+        stop(signal?.reason);
+        view.dispose();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
       try {
-        const done = new Promise<void>((resolve) => {
-          const settled = () =>
-            !["idle", "loading"].includes(view.snapshot().status) && resolve();
-          view.subscribe(settled);
-          settled();
-        });
-        void view.refresh();
-        await Promise.race([
-          done,
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Memory read timed out")),
-              MEMORY_TIMEOUT_MS,
-            ),
-          ),
-        ]);
+        await Promise.race([view.refresh(), stopped]);
         const { status, listing } = view.snapshot();
         if (status !== "ready" || !listing)
           throw new Error(`Memory unavailable (${status})`);
         return listing.entries;
       } finally {
+        signal?.removeEventListener("abort", abort);
         view.dispose();
       }
     },

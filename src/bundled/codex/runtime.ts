@@ -1,12 +1,12 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
-import {
-  fromOwner,
-  type Agent,
-  type AgentHandle,
-  type Delivery,
-  type Models,
+import { fromOwner } from "../../features/agents/owner-attestation";
+import type { AgentReads } from "../../features/agents/reads";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+  Models,
 } from "../../features/agents/service";
-import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
@@ -118,8 +118,8 @@ export class CodexRuntime {
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   constructor(
     private readonly spawn: Spawn,
-    /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** What each agent's turns read of its community, while it can be read. */
+    private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage = localStorage,
   ) {}
   subscribe = (listener: () => void) => {
@@ -345,17 +345,13 @@ export class CodexRuntime {
       delivery.ignored?.();
       return;
     }
-    const snapshot = this.relay(agent.pubkey)?.snapshot();
-    if (snapshot?.status !== "ready")
-      throw new Error("Connect to the agent's community first");
+    const reads = this.reads(agent.pubkey);
+    if (!reads) throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = config(delivery.config);
-    const channel = snapshot.session.channels
-      .list()
-      .channels.find((row) => row.id === channelId);
-    const toolRoot =
-      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+    const channel = await reads.channel(channelId);
+    const toolRoot = channel?.dm ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
@@ -368,7 +364,7 @@ export class CodexRuntime {
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
-      scope: snapshot.scope ?? "",
+      scope: reads.scope,
       event: trigger.event,
       agent,
       settings,
@@ -516,11 +512,11 @@ export class CodexRuntime {
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
-    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+    const reads = this.reads(request.agent.pubkey);
+    if (reads?.scope !== request.scope)
       throw new Error("The community changed");
     return conversationHistory(request.event, request.conversation, (filters) =>
-      snapshot.session.read(filters, { signal }),
+      reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -572,23 +568,12 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
-        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+        const reads = this.reads(request.agent.pubkey);
+        if (reads?.scope !== request.scope)
           throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-        const abort = () => view.dispose();
-        active.signal.addEventListener("abort", abort, { once: true });
-        try {
-          await view.refresh();
-          check();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          active.signal.removeEventListener("abort", abort);
-          view.dispose();
-        }
+        const entries = await reads.memories(active.signal);
+        check();
+        return entries;
       },
     });
     const reply = await callTool(

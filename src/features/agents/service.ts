@@ -76,6 +76,16 @@ import {
   type WriteOptions,
 } from "./attention-objects";
 import {
+  classify,
+  excerpt,
+  mentionFacts,
+  nativeClassifier,
+  notRun,
+  type ClassifierContext,
+  type ClassifierNative,
+  type ClassifierOutcome,
+} from "./classifier";
+import {
   nativeAgents,
   type AgentEventTemplate,
   type AgentIdentity,
@@ -205,11 +215,7 @@ export type AgentAttention = Readonly<{
     options: WriteOptions,
   ): Promise<Shown>;
 }>;
-/** Why a classified watch's event passed without a classifier answer. */
-export type ClassifierSkip = Readonly<{
-  outcome: "not-run";
-  reason: string;
-}>;
+export type { ClassifierOutcome } from "./classifier";
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
@@ -221,10 +227,10 @@ export type Trigger =
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
       interest?: Interest;
-      /** Set when the watch has a classifier that did not run. The event
-       * passes rather than lose a match to an unavailable model, and the
-       * agent is told why. */
-      classifier?: ClassifierSkip;
+      /** Set when the watch has a classifier: its answers, or why it did
+       * not run or failed. An event the classifier cannot check passes
+       * rather than lose a match, and the agent is told why. */
+      classifier?: ClassifierOutcome;
     }>
   | Readonly<{
       type: "timer";
@@ -354,6 +360,8 @@ export type RemoteAgentType = Readonly<{
 export type RegisteredAgentType = Contribution<AgentType>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
+  /** Whether a watch's classifier can run on this device now. */
+  classifier: ClassifierAvailability;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -417,6 +425,12 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether a watch's classifier can run on this device now. */
+  classifier(): ClassifierAvailability;
+  /** Saves the TypeSafe key in native storage, which the classifier uses.
+   * It is never read back into the app or given to an agent. */
+  setClassifierKey(key: string): Promise<void>;
+  clearClassifierKey(): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
   saveTeam(team: TeamChange): Promise<Team>;
@@ -455,11 +469,8 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
-/** Until a classifier is wired in, every classified watch passes unchecked. */
-const UNAVAILABLE: ClassifierSkip = Object.freeze({
-  outcome: "not-run",
-  reason: "no classifier is available on this device",
-});
+/** Classifier calls in flight per agent. */
+const CLASSIFY_LIMIT = 32;
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
@@ -666,6 +677,10 @@ type Runner = {
   activityClaimed?: boolean;
   /** Advances each time attention is seen off, which voids queued watch work. */
   epoch: number;
+  /** Classified watch events not yet queued or dropped. */
+  classifying: number;
+  /** The last classified event's release: results queue in arrival order. */
+  classified: Promise<void>;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -673,6 +688,9 @@ type Runner = {
 };
 
 export class AgentsService extends Service implements Agents {
+  /** Settles once the saved key's status is known; until then a classified
+   * event waits rather than pass unchecked. */
+  private jevStatus: Promise<void> | undefined;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -718,6 +736,7 @@ export class AgentsService extends Service implements Agents {
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     private readonly localActivity = createLocalAgentActivity(),
+    private readonly jev: ClassifierNative | undefined = nativeClassifier(),
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
@@ -727,6 +746,7 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
+      classifier: "unavailable",
       agents: [],
       running: [],
       teams: this.teamList,
@@ -744,6 +764,12 @@ export class AgentsService extends Service implements Agents {
       ];
       this.watch();
       void this.refresh();
+      this.jevStatus = this.jev
+        ?.status()
+        .then((configured) => this.setAvailability(configured))
+        .catch((error) =>
+          console.warn("The classifier key could not be read", error),
+        );
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         for (const runner of this.runners.values()) void this.drain(runner);
@@ -868,8 +894,28 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device. */
-  private classifier = (): ClassifierAvailability => "unavailable";
+  /** Whether watch classifiers can run on this device: a key is saved. */
+  classifier(): ClassifierAvailability {
+    return this.state.classifier;
+  }
+  async setClassifierKey(key: string) {
+    if (!this.jev)
+      throw new Error("The classifier runs only in the desktop app");
+    await this.jev.setKey(key);
+    this.setAvailability(true);
+  }
+  async clearClassifierKey() {
+    if (!this.jev)
+      throw new Error("The classifier runs only in the desktop app");
+    await this.jev.clearKey();
+    this.setAvailability(false);
+  }
+  private setAvailability(configured: boolean) {
+    const classifier = configured ? "available" : "unavailable";
+    if (this.state.classifier === classifier) return;
+    this.state = Object.freeze({ ...this.state, classifier });
+    this.notify();
+  }
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
@@ -1820,6 +1866,8 @@ export class AgentsService extends Service implements Agents {
       wrote: new Set(),
       mayHold: true,
       epoch: 0,
+      classifying: 0,
+      classified: Promise.resolve(),
     };
   }
   private retire(runner: Runner) {
@@ -1840,10 +1888,6 @@ export class AgentsService extends Service implements Agents {
         slug: object.slug,
         watch,
         ...(interest?.type === "interest" ? { interest } : {}),
-        // No classifier model runs here yet, so the event passes unclassified.
-        ...(watch.classifier && this.classifier() === "unavailable"
-          ? { classifier: UNAVAILABLE }
-          : {}),
         ...(watch.filter ? { filter: compileFilter(watch.filter) } : {}),
       });
     }
@@ -1866,8 +1910,8 @@ export class AgentsService extends Service implements Agents {
           bounded(runner.wrote, event.id);
           continue;
         }
-        for (const trigger of this.heard(runner, agent, event))
-          this.enqueue(runner, {
+        for (const trigger of this.heard(runner, agent, event)) {
+          const job = {
             trigger,
             ...(batch.channelId ? { channelId: batch.channelId } : {}),
             ...(trigger.type === "watch"
@@ -1878,9 +1922,131 @@ export class AgentsService extends Service implements Agents {
                   },
                 }
               : {}),
-          });
+          };
+          if (trigger.type === "watch" && trigger.watch.classifier)
+            this.classified(runner, agent, { ...job, trigger });
+          else this.enqueue(runner, job);
+        }
       }
     }
+  }
+  /** Runs a matched watch's classifier, then queues the event if it passes.
+   * The classifier runs after the watch's selectors and filter, and before the
+   * event takes a queue slot, as in Janet. Without a key, or when it fails,
+   * the event passes and its turn is told why. Results queue in the order the
+   * events arrived, whichever call finishes first. */
+  private classified(
+    runner: Runner,
+    agent: Agent,
+    job: Job & { trigger: WatchTrigger },
+  ) {
+    const { trigger } = job;
+    // Never bypassed: past the limit the event is dropped, like a full queue.
+    if (runner.classifying >= CLASSIFY_LIMIT) {
+      console.warn(`Agent ${agent.name} dropped an event to classify`);
+      return;
+    }
+    runner.classifying++;
+    const lifetime = runner.controller.signal;
+    // Whether this runner, as it is now, should still act on the event.
+    const live = () =>
+      !lifetime.aborted &&
+      this.runners.get(runner.pubkey) === runner &&
+      this.stillCurrent(runner, job);
+    const outcome = (async (): Promise<ClassifierOutcome | undefined> => {
+      // A saved key is not known to be missing until its status is read.
+      await this.jevStatus;
+      const jev = this.jev;
+      if (!jev || this.classifier() === "unavailable") return notRun();
+      // Only the copy of the app that holds the agent sends its events out.
+      if (!(await this.claim(runner)) || !live()) return undefined;
+      const context = await this.context(agent, trigger.event);
+      // Stopped or changed while its context was looked up: nothing is sent.
+      if (!live()) return undefined;
+      const { pass, result } = await classify(jev, {
+        // Checked as non-null by the caller.
+        classifier: trigger.watch.classifier as NonNullable<
+          EventWatch["classifier"]
+        >,
+        event: trigger.event,
+        author: {
+          role: trigger.event.pubkey === agent.owner ? "owner" : "other",
+          name: this.displayName(agent, trigger.event.pubkey),
+        },
+        context,
+      });
+      // The key was removed outside the app since it was read.
+      if (result.outcome === "not-run") this.setAvailability(false);
+      return pass ? result : undefined;
+    })().catch((error) => {
+      console.warn(`Agent ${agent.name} could not classify an event`, error);
+      return undefined;
+    });
+    const previous = runner.classified;
+    runner.classified = (async () => {
+      try {
+        await previous;
+        const classifier = await outcome;
+        // A retired or replaced runner keeps none of its work.
+        if (
+          classifier &&
+          !lifetime.aborted &&
+          this.runners.get(runner.pubkey) === runner
+        )
+          this.enqueue(runner, { ...job, trigger: { ...trigger, classifier } });
+      } finally {
+        runner.classifying--;
+      }
+    })();
+  }
+  /** The event's surroundings for the classifier, from what the app knows. */
+  private async context(
+    agent: Agent,
+    event: RelayEvent,
+  ): Promise<ClassifierContext> {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    const summary = channelId
+      ? (channels?.list().channels.find((item) => item.id === channelId) ??
+        channels?.get?.(channelId))
+      : undefined;
+    const parent = threadReference(event)?.parentId ?? null;
+    let found: RelayEvent | undefined;
+    if (parent)
+      try {
+        [found] = await this.require().query(agent.pubkey, [
+          { ids: [parent], limit: 1 },
+        ]);
+      } catch {
+        // The parent stays unknown; the classifier still runs.
+      }
+    return {
+      channel: { name: summary?.name ?? null },
+      thread: {
+        is_reply: !!parent,
+        parent: found
+          ? {
+              author: {
+                role:
+                  found.pubkey === agent.pubkey
+                    ? "self"
+                    : found.pubkey === agent.owner
+                      ? "owner"
+                      : "other",
+                name: this.displayName(agent, found.pubkey),
+              },
+              content: excerpt(found.content),
+            }
+          : null,
+      },
+      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
+    };
+  }
+  private displayName(agent: Agent, pubkey: string) {
+    return (
+      this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
+      null
+    );
   }
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
@@ -1937,7 +2103,12 @@ export class AgentsService extends Service implements Agents {
     const { filter: _, ...rest } = match;
     return {
       ...job,
-      trigger: { type: "watch", event: trigger.event, ...rest },
+      trigger: {
+        type: "watch",
+        event: trigger.event,
+        ...rest,
+        ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
+      },
     };
   }
 

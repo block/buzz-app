@@ -71,6 +71,7 @@ const portable: PortableAgent[] = [
 function setup(saved: Agent[], { shown = true } = {}) {
   let snapshot: AgentsSnapshot = {
     status: "ready",
+    classifier: "unavailable",
     agents: saved,
     running: saved,
     teams: [],
@@ -125,6 +126,9 @@ function setup(saved: Agent[], { shown = true } = {}) {
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
+    classifier: () => "unavailable",
+    setClassifierKey: vi.fn(async () => {}),
+    clearClassifierKey: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
       snapshot = {

@@ -2229,20 +2229,9 @@ it.each([
   },
 );
 
-it("replaces agent status reactions with passive dots and removes them with the last reaction", () => {
+it("keeps agent and human emoji reactions ordinary, without treating them as activity", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };
   const human = { id: "human-reaction", authorId: "human" };
-  const props = {
-    profile: undefined,
-    media: () => undefined,
-    onOpenLink: () => false,
-    day: false,
-    retry: undefined,
-    agentPubkeys: new Set(["agent"]),
-    participantProfiles: new Map([
-      ["agent", { name: "Other agent", isAgent: true as const }],
-    ]),
-  };
   const reactions = [
     { content: "👀", events: [agent, human] },
     { content: "💬", events: [agent] },
@@ -2250,121 +2239,25 @@ it("replaces agent status reactions with passive dots and removes them with the 
   ];
   try {
     const view = renderDom(
-      <MessageRow {...props} row={{ ...row, reactions }} />,
+      <MessageRow
+        row={{ ...row, reactions }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        agentPubkeys={new Set(["agent"])}
+        participantProfiles={
+          new Map([["agent", { name: "Other agent", isAgent: true }]])
+        }
+      />,
     );
-    const signal = screen.getByRole("img", { name: "Other agent working" });
-    expect(signal.querySelectorAll('[data-state="working"]')).toHaveLength(1);
-    expect(signal.querySelector("button, a, [tabindex]")).toBeNull();
-    fireEvent.mouseOver(signal);
-    expect(screen.queryByRole("dialog", { name: "Agent activity" })).toBeNull();
-    expect(view.container.textContent).toContain("👀 1");
-    expect(view.container.textContent).not.toContain("💬");
+    expect(view.container.textContent).toContain("👀 2");
+    expect(view.container.textContent).toContain("💬 1");
     expect(view.container.textContent).toContain("✅ 1");
-    view.rerender(
-      <MessageRow {...props} row={{ ...row, reactions: reactions.slice(1) }} />,
-    );
-    expect(
-      screen.getByRole("img", { name: "Other agent working" }),
-    ).toBeVisible();
-    view.rerender(
-      <MessageRow {...props} row={{ ...row, reactions: reactions.slice(2) }} />,
-    );
     expect(
       screen.queryByRole("img", { name: "Other agent working" }),
     ).toBeNull();
-    expect(view.container.textContent).toContain("✅ 1");
-  } finally {
-    cleanup();
-  }
-});
-
-it("keeps reaction fallback scoped to each message and agent, including after local supersession", () => {
-  const a = "a".repeat(64),
-    b = "b".repeat(64);
-  const listeners = new Set<() => void>();
-  let local = [
-    { agent: a, channelId: row.channelId, messageId: row.id, state: "working" },
-  ];
-  const profiles = new Map([
-    [a, { name: "First agent", isAgent: true as const }],
-    [b, { name: "Second agent", isAgent: true as const }],
-  ]);
-  const channels = { status: "ready", channels: [] };
-  const session = {
-    agentActivity: {
-      snapshot: () => ({ local }),
-      subscribe: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-    profiles: {
-      snapshot: () => profiles,
-      subscribe: () => () => {},
-      ensure: async () => {},
-    },
-    channels: { list: () => channels, subscribeList: () => () => {} },
-    messages: {},
-  } as unknown as RelaySession;
-  const props = {
-    session,
-    profile: undefined,
-    participantProfiles: profiles,
-    media: () => undefined,
-    onOpenLink: () => false,
-    day: false,
-    retry: undefined,
-  };
-  const reacted = {
-    ...row,
-    reactions: [
-      {
-        content: "💬",
-        events: [
-          { id: "a", authorId: a },
-          { id: "b", authorId: b },
-        ],
-      },
-    ],
-  };
-  const view = renderDom(<MessageRow {...props} row={reacted} />);
-  try {
-    // Without the Activity plugin, active local work still has a quiet fallback.
-    expect(
-      screen.getByRole("img", { name: "First agent, Second agent working" }),
-    ).toBeVisible();
-    // A dismissed error is still settled evidence and keeps outranking reactions.
-    for (const settled of [
-      { state: "superseded" },
-      { state: "done" },
-      { state: "error" },
-      { state: "error", dismissed: true },
-    ]) {
-      act(() => {
-        local = [
-          {
-            agent: a,
-            channelId: row.channelId,
-            messageId: row.id,
-            ...settled,
-          },
-        ];
-        for (const listener of listeners) listener();
-      });
-      expect(
-        screen.getByRole("img", { name: "Second agent working" }),
-      ).toBeVisible();
-    }
-    // The earlier local request cannot hide the same agent on a different message.
-    view.rerender(
-      <MessageRow
-        {...props}
-        row={{ ...reacted, id: "newer", threadRootId: row.id }}
-      />,
-    );
-    expect(
-      screen.getByRole("img", { name: "First agent, Second agent working" }),
-    ).toBeVisible();
   } finally {
     cleanup();
   }

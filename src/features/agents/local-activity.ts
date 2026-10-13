@@ -127,8 +127,8 @@ export function createLocalAgentActivity() {
       };
       return {
         started: () => update("working"),
-        // Keep bounded evidence for this exact message; old reactions must not
-        // revive it after the harness acknowledges a newer request.
+        // Keep the exact request outcome after the harness acknowledges a
+        // newer message, without presenting the earlier work as successful.
         supersede: () => update("superseded"),
         /** Latest live step reported by the plugin; display only. */
         step: (tool: string, target?: string) => {

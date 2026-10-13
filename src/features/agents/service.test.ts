@@ -582,9 +582,8 @@ it("leaves the team section out for an agent on no team", () => {
   ).toBe("");
 });
 
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
-  const { service, run, emit, native, relay } = await setup();
+it("keeps handed-off activity local, without publishing working reactions", async () => {
+  const { service, run, emit, native, relay, activity } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   let finish = () => {};
   const turn = new Promise<void>((resolve) => {
@@ -598,53 +597,32 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
     ],
   });
   emit({ events: [mention], channelId: channel });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  await settle();
-  const reactions = await published(native, 7);
-  expect(reactions.map(({ content, tags }) => [content, tags])).toEqual(
-    ["👀", "💬"].map((emoji) => [
-      emoji,
-      [
-        ["h", channel],
-        ["e", mention.id],
-      ],
-    ]),
-  );
-  // STOPGAP(agent-local-typing): this device shows the agent typing in the
-  // mention's thread meanwhile.
-  expect(relay.snapshot().session.typing.local).toHaveBeenCalledWith(
-    expect.objectContaining({
-      pubkey: bot,
-      kind: 20002,
-      tags: [
-        ["h", channel],
-        ["e", mention.id, "", "reply"],
-      ],
-    }),
-  );
-  // `run` has returned, but the turn it handed off is still going.
-  expect(await published(native, 5)).toEqual([]);
-  finish();
-  await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(2),
-  );
-  // The relay takes one target per deletion.
-  expect((await published(native, 5)).map(({ tags }) => tags)).toEqual(
-    reactions.map(({ id }) => [
-      ["h", channel],
-      ["e", id],
-      ["k", "7"],
-    ]),
-  );
-  // Only mentions are reacted to, and a failed run takes its reactions back.
-  run.mockRejectedValueOnce(new Error("boom"));
-  emit({ events: [event("m2", { tags: mention.tags })], channelId: channel });
-  emit({ events: [event("w", { content: "deploy" })], channelId: channel });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-  await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(4),
-  );
-  expect(await published(native, 7)).toHaveLength(4);
+  const typing = relay.snapshot().session.typing.local;
+  try {
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(activity.reader.work()[0]?.state).toBe("working");
+    expect(typing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pubkey: bot,
+        kind: 20002,
+        tags: [
+          ["h", channel],
+          ["e", mention.id, "", "reply"],
+        ],
+      }),
+    );
+    expect(await published(native, 7)).toEqual([]);
+    finish();
+    await vi.waitFor(() =>
+      expect(typing).toHaveBeenCalledWith(expect.objectContaining({ kind: 9 })),
+    );
+    expect(activity.reader.work()[0]?.state).toBe("done");
+    expect(await published(native, 7)).toEqual([]);
+    expect(await published(native, 5)).toEqual([]);
+  } finally {
+    finish();
+  }
 });
 
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
@@ -791,38 +769,6 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   expect(held?.signal.aborted).toBe(true);
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
-});
-
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-it("keeps a mention's reactions however long its handed-off work runs", async () => {
-  vi.useFakeTimers();
-  const { service, run, emit, native } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  let finish = () => {};
-  const turn = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
-  emit({
-    events: [
-      event("m", {
-        tags: [
-          ["h", channel],
-          ["p", bot],
-        ],
-      }),
-    ],
-    channelId: channel,
-  });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  await vi.advanceTimersByTimeAsync(0);
-  expect(await published(native, 7)).toHaveLength(2);
-  // Buzz sets no deadline on an agent's work; the harness decides.
-  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
-  expect(await published(native, 5)).toEqual([]);
-  finish();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(await published(native, 5)).toHaveLength(2);
 });
 
 it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {

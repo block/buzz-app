@@ -15,9 +15,7 @@ import { addressedMessage } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
 import { threadWorkingAgents } from "../agents/thread-working";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
-import { selectProfiles } from "../relay/profile-selection";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
-import { visibleReactions, reactionWorkingAgents } from "./visible-reactions";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
@@ -161,13 +159,6 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
   else if (rect.left < start) strip.scrollLeft -= start - rect.left;
 }
 
-const noReactionSubscription = () => () => {};
-const noReactionProfiles = new Map<
-  string,
-  import("../relay/contracts").Profile
->();
-const emptyReactionProfiles = () => noReactionProfiles;
-
 const FullMessageRow = memo(function MessageRow(
   props: MessageRowProps & { shownRow?: ChannelMessage },
 ) {
@@ -217,51 +208,7 @@ function MessageRowContent({
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
-  const reactorIds = row.reactions
-    .filter(
-      (reaction) => !reaction.emoji && ["👀", "💬"].includes(reaction.content),
-    )
-    .flatMap((reaction) => reaction.events.map((event) => event.authorId))
-    .sort()
-    .join(":");
-  // Fetch only identities that supplied a status reaction on this mounted row.
-  // Unknown identities retain ordinary reactions until profile evidence arrives.
-  useEffect(() => {
-    if (session && reactorIds)
-      void session.profiles
-        .ensure(reactorIds.split(":"), "background")
-        .catch(() => {});
-  }, [session, reactorIds]);
-  const reactorSelection = useMemo(
-    () =>
-      session && reactorIds
-        ? selectProfiles(session.profiles, reactorIds.split(":"))
-        : undefined,
-    [session, reactorIds],
-  );
-  const reactorProfiles = useSyncExternalStore(
-    reactorSelection?.subscribe ?? noReactionSubscription,
-    reactorSelection?.snapshot ?? emptyReactionProfiles,
-    emptyReactionProfiles,
-  );
-  const knownReactionAgents = useMemo(
-    () =>
-      new Set([
-        ...(agentPubkeys ?? []),
-        ...[...reactorProfiles, ...directory.profiles]
-          .filter(([, value]) => value.isAgent)
-          .map(([key]) => key),
-      ]),
-    [agentPubkeys, reactorProfiles, directory.profiles],
-  );
-  const reactions = useMemo(
-    () => visibleReactions(row.reactions, knownReactionAgents),
-    [row.reactions, knownReactionAgents],
-  );
-  const reactionWorkers = reactionWorkingAgents(
-    row.reactions,
-    knownReactionAgents,
-  );
+  const reactions = row.reactions;
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -916,21 +863,10 @@ function MessageRowContent({
               open={onOpenLink}
             />
           )}
-          {active && reactionWorkers.length > 0 && (
-            <ReactionActivity
-              session={session}
-              row={row}
-              agents={reactionWorkers}
-              profiles={new Map([...directory.profiles, ...reactorProfiles])}
-              media={media}
-              name={resolveName}
-            />
-          )}
           {session && scope && extensions ? (
             <MessageReactions
               onFocusedRemoval={() => menuTrigger.current?.focus()}
               row={row}
-              displayedReactions={reactions}
               session={session}
               scope={scope}
               tools={extensions.tools}
@@ -1171,87 +1107,6 @@ function AgentsMessageRow(props: MessageRowProps) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-/** Public reaction fallback: no private details, hover actions or tab stops. */
-function ReactionActivity({
-  session,
-  row,
-  agents,
-  profiles,
-  media,
-  name,
-}: {
-  session: RelaySession | undefined;
-  row: ChannelMessage;
-  agents: readonly string[];
-  profiles: ReadonlyMap<string, Profile>;
-  media: MessageRowProps["media"];
-  name: (key: string, fallback: string) => string;
-}) {
-  const represented = useReplacedTypers(
-    session,
-    row.channelId,
-    row.threadRootId,
-  );
-  // Settled/superseded local requests outrank persistent reactions. Active
-  // work can still use this passive fallback when its detail plugin is off.
-  // Subscribe to exact-message keys, not every step.
-  const localKeys = useSyncExternalStore(
-    session?.agentActivity?.subscribe ?? noSubscribe,
-    () =>
-      [
-        ...new Set(
-          (session?.agentActivity?.snapshot().local ?? [])
-            .filter(
-              (work) =>
-                work.channelId === row.channelId &&
-                work.messageId === row.id &&
-                work.state !== "waiting" &&
-                work.state !== "working",
-            )
-            .map((work) => work.agent),
-        ),
-      ]
-        .sort()
-        .join(":"),
-    () => "",
-  );
-  const local = new Set(localKeys ? localKeys.split(":") : []);
-  const shown = agents.filter(
-    (agent) => !represented.has(agent) && !local.has(agent),
-  );
-  if (!shown.length) return null;
-  const label = (key: string) => name(key, profiles.get(key)?.name ?? "Agent");
-  return (
-    <div
-      className="mt-2 flex flex-wrap items-center gap-2 text-caption text-subtle"
-      role="img"
-      aria-label={`${shown.map(label).join(", ")} working`}
-      data-reaction-activity=""
-    >
-      {shown.map((key) => (
-        <span
-          key={key}
-          className="inline-flex items-center gap-1"
-          aria-hidden="true"
-        >
-          <Avatar
-            size="compact"
-            shape="squircle"
-            alt=""
-            fallback={label(key)}
-            src={
-              profiles.get(key)?.picture
-                ? media(profiles.get(key)?.picture ?? "", "small")
-                : undefined
-            }
-          />
-          <TypingDots />
-        </span>
-      ))}
     </div>
   );
 }

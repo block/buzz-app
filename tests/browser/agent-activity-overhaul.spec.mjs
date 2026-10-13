@@ -159,10 +159,9 @@ test("message activity opens a grouped preview and profile Activity without losi
   const requestRow = thread.locator(`[data-message-id="${root.id}"]`);
   await expect(requestRow.locator('[data-reaction="✅"]')).toBeVisible();
   await expect(requestRow.locator('[data-reaction="👀"]')).toHaveAccessibleName(
-    "👀: 1 person",
+    "👀: 2 people",
   );
-  await expect(requestRow.locator('[data-reaction="💬"]')).toHaveCount(0);
-  await expect(requestRow.locator("[data-reaction-activity]")).toHaveCount(0);
+  await expect(requestRow.locator('[data-reaction="💬"]')).toBeVisible();
   const typingTags = [
     ["h", "alpha"],
     ["e", root.id, "", "root"],
@@ -464,88 +463,4 @@ test("activity avatar stack stays one height with overflow at every supported wi
       });
     }
   }
-});
-
-// Public signed reactions are the only evidence here: no owner-local work or
-// observer telemetry. Verify the replacement is quiet, inert and deletion-driven.
-test("other agents' working reactions become passive compact dots", async ({
-  page,
-  app,
-}, testInfo) => {
-  const key = generateSecretKey();
-  app.serveProfile(key, { name: "Teammate agent", is_agent: true });
-  await open(page, app);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content.startsWith("Thread root"));
-  const row = page.locator(
-    `[data-channel-timeline] [data-message-id="${root.id}"]`,
-  );
-  const reactions = ["👀", "💬"].map((content) =>
-    finalizeEvent(
-      {
-        kind: 7,
-        content,
-        tags: [
-          ["h", "alpha"],
-          ["e", root.id],
-        ],
-        created_at: Math.floor(Date.now() / 1000),
-      },
-      key,
-    ),
-  );
-  for (const event of reactions) app.relay.publish("primary", event);
-  const signal = row.getByRole("img", { name: "Teammate agent working" });
-  await expect(signal).toBeVisible();
-  await expect(signal.locator('[data-state="working"]')).toHaveCount(1);
-  await expect(signal.locator("button, a, [tabindex]")).toHaveCount(0);
-  await expect(
-    row.locator('[data-reaction="👀"], [data-reaction="💬"]'),
-  ).toHaveCount(0);
-  for (const colorScheme of ["light", "dark"]) {
-    await page.emulateMedia({ colorScheme });
-    for (const width of [1440, 800, 390]) {
-      await page.setViewportSize({ width, height: 950 });
-      await signal.scrollIntoViewIfNeeded();
-      await signal.hover();
-      await expect(
-        page.getByRole("dialog", { name: "Agent activity", exact: true }),
-      ).toHaveCount(0);
-      await signal.screenshot({
-        path: testInfo.outputPath(
-          `reaction-signal-${colorScheme}-${width}.png`,
-        ),
-      });
-      expect(await signal.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
-        true,
-      );
-    }
-  }
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(signal.locator("[data-state] > span").first()).toHaveCSS(
-    "animation-name",
-    "none",
-  );
-  const remove = (event) =>
-    app.relay.publish(
-      "primary",
-      finalizeEvent(
-        {
-          kind: 5,
-          content: "",
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ["h", "alpha"],
-            ["e", event.id],
-            ["k", "7"],
-          ],
-        },
-        key,
-      ),
-    );
-  remove(reactions[0]);
-  await expect(signal).toBeVisible();
-  remove(reactions[1]);
-  await expect(signal).toHaveCount(0);
 });

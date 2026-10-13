@@ -87,8 +87,6 @@ import {
 } from "./store";
 // STOPGAP(agent-local-typing): delete with local-typing.ts.
 import { typeLocally } from "./local-typing";
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-import { reactWhileWorking } from "./working-reactions";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -1992,23 +1990,16 @@ export class AgentsService extends Service implements Agents {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
-   * mention run is reacted to, and shown typing here, meanwhile: both are
-   * STOPGAPs, and `done` is empty without them. */
+   * mention run is shown typing on this device meanwhile; no public
+   * activity is published. */
   private working(runner: Runner, { trigger, channelId, work }: Job) {
     work?.started();
-    const native = this.native;
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
     const done =
-      native && event && channel
+      event && channel
         ? [
-            // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-            reactWhileWorking(
-              (template) => native.publish(runner.pubkey, template),
-              event,
-              channel,
-            ),
             // STOPGAP(agent-local-typing): delete with local-typing.ts.
             typeLocally(
               () => {

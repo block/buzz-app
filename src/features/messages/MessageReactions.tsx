@@ -340,12 +340,11 @@ export function MessageReactions(
   props: Props & {
     onFocusedRemoval?: () => void;
     profiles?: ReadonlyMap<string, Profile>;
-    displayedReactions?: readonly MessageReaction[];
   },
 ) {
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
-  const reactions = props.displayedReactions ?? row.reactions;
+  const reactions = row.reactions;
   const action = useReactionAction(props);
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,

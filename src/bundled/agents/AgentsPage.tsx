@@ -40,6 +40,8 @@ import type {
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
 import {
   ContributionBoundary,
   contributionKey,
@@ -91,6 +93,7 @@ import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
+import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -125,9 +128,13 @@ const TABS = [
 export function AgentsPage({
   agents,
   relay,
+  navigation,
+  navigator,
 }: {
   agents: Agents;
   relay: RelayData;
+  navigation?: PageNavigation;
+  navigator?: Navigation;
 }) {
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
@@ -137,7 +144,30 @@ export function AgentsPage({
   const [tab, setTab] = useState<Tab>("yours");
   const [frame, setFrame] = useState<Frame>({ view: "browse" });
   const [creating, setCreating] = useState(false);
-  const [providerKey, setProviderKey] = useState<string>();
+  const [localProviderKey, setLocalProviderKey] = useState<string>();
+  const routed = !!navigation && !!navigator;
+  const providerKey = routed
+    ? agentProviderRoute(
+        navigation.target.kind === "page"
+          ? navigation.target.route?.params
+          : undefined,
+      )
+    : localProviderKey;
+  const setProviderKey = (provider?: string) => {
+    if (!navigation || !navigator) {
+      setLocalProviderKey(provider);
+      return;
+    }
+    if (
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigation.target.pluginId !== "buzz.agents" ||
+      navigation.target.pageId !== "agents" ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    void navigator.open(agentProviderTarget(navigation.target, provider));
+  };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
@@ -361,7 +391,7 @@ export function AgentsPage({
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={more}
-          onClose={() => setProviderKey(undefined)}
+          onClose={() => setProviderKey()}
         />
       )}
     </div>

@@ -24,6 +24,9 @@ import type {
 } from "../../features/agents/service";
 import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentsPage } from "./AgentsPage";
 
@@ -106,7 +109,14 @@ function provider(
 
 function setup(
   saved: Agent[],
-  { shown = true, more = [] as RegisteredAgentType[] } = {},
+  {
+    shown = true,
+    more = [] as RegisteredAgentType[],
+    page = {} as {
+      navigation?: PageNavigation;
+      navigator?: Navigation;
+    },
+  } = {},
 ) {
   let snapshot: AgentsSnapshot = {
     status: "ready",
@@ -210,12 +220,12 @@ function setup(
     snapshot: () => disconnected,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  render(<AgentsPage agents={agents} relay={relay} />);
+  const view = render(<AgentsPage agents={agents} relay={relay} {...page} />);
   const show = (next: Agent[]) => {
     snapshot = { ...snapshot, agents: next };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show };
+  return { agents, echoProvider, types, show, relay, ...view };
 }
 
 async function openAction(
@@ -380,6 +390,74 @@ it("checks active providers in a health submenu and opens their host-owned dialo
   } finally {
     errors.mockRestore();
   }
+});
+
+it("restores a provider dialog from page history and writes open and close visits", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const routed = {
+    ...base,
+    route: { version: 1, params: { provider: "test/echo" } },
+  } as const;
+  let current: { id: string; target: OpenTarget } = {
+    id: "base",
+    target: base,
+  };
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = {
+    snapshot: () => ({ entry: current }),
+    open,
+  } as unknown as Navigation;
+  const request = (): PageNavigation => {
+    const navigation = {
+      entryId: current.id,
+      target: current.target,
+      signal: new AbortController().signal,
+      focus: "content" as const,
+      forSession: () => navigation,
+      resolve: () => true,
+      complete: () => true,
+    };
+    return navigation;
+  };
+  const pageView = (agents: Agents, relay: RelayData) => (
+    <AgentsPage
+      agents={agents}
+      relay={relay}
+      navigator={navigator}
+      navigation={request()}
+    />
+  );
+  const page = { navigator, navigation: request() };
+  const view = setup([agent("Ada", 1)], { page });
+
+  await user.click(screen.getByRole("button", { name: "More agent actions" }));
+  await user.hover(await screen.findByRole("menuitem", { name: "Providers" }));
+  const providers = await screen.findByRole("menu", { name: "Providers" });
+  fireEvent.click(
+    within(providers).getByRole("menuitem", { name: "Echo, ready" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(routed);
+
+  current = { id: "provider", target: routed };
+  view.unmount();
+  const restored = render(pageView(view.agents, view.relay));
+  expect(await screen.findByRole("dialog", { name: "Echo" })).toBeVisible();
+
+  current = { id: "base", target: base };
+  restored.rerender(pageView(view.agents, view.relay));
+  expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
+
+  current = { id: "provider", target: routed };
+  restored.rerender(pageView(view.agents, view.relay));
+  await user.click(await screen.findByRole("button", { name: "Close" }));
+  await vi.waitFor(() => expect(open).toHaveBeenLastCalledWith(base));
 });
 
 it("shows an agent's picture in the grid, peek and build view", async () => {

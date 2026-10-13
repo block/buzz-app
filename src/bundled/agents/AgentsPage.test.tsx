@@ -602,7 +602,9 @@ it("restores a provider dialog from page history and writes open and close visit
   current = { id: "provider", target: routed };
   restored.rerender(pageView(view.agents, view.relay));
   await user.click(await screen.findByRole("button", { name: "Close" }));
-  await vi.waitFor(() => expect(open).toHaveBeenLastCalledWith(base));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith(base, { replace: true }),
+  );
 });
 
 it("shows an agent's picture in the grid, peek and build view", async () => {

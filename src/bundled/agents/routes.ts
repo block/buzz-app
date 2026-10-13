@@ -1,4 +1,3 @@
-import type { RegisteredAgentType } from "../../features/agents/service";
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
 
 type PageTarget = Extract<OpenTarget, { kind: "page" }>;
@@ -16,15 +15,8 @@ export function agentProviderRoute(value: JsonValue | undefined) {
     : undefined;
 }
 
-export function availableAgentProviderRoute(
-  value: JsonValue,
-  types: readonly RegisteredAgentType[],
-) {
-  const provider = agentProviderRoute(value);
-  return (
-    !!provider && types.some((type) => type.key === provider && type.provider)
-  );
-}
+export const availableAgentProviderRoute = (value: JsonValue) =>
+  Boolean(agentProviderRoute(value));
 
 export function agentProviderTarget(
   target: PageTarget,

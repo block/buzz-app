@@ -12,7 +12,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     primary: true,
     route: {
       version: 1,
-      validate: (params) => availableAgentProviderRoute(params, agents.types()),
+      validate: availableAgentProviderRoute,
     },
     component: ({ navigation }) => (
       <AgentsPage

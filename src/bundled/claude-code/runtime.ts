@@ -329,21 +329,35 @@ export class ClaudeRuntime {
     team,
     workingUntil,
     ignored,
+    signal,
     step,
     acknowledged,
     superseded,
     current,
   }: Delivery) {
     const settings = config(raw);
-    // Claude runs commands as you, so only you and your agents can ask it.
+    // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(trigger.event, agent.owner))
-    ) {
-      ignored?.();
-      return;
+    if (trigger.type === "mention") {
+      const snapshot = this.relay(agent.pubkey)?.snapshot();
+      if (
+        !(await fromOwner(trigger.event, agent.owner, {
+          agent: agent.pubkey,
+          authority:
+            snapshot?.status === "ready"
+              ? snapshot.session.workflowAuthority
+              : undefined,
+          profiles:
+            snapshot?.status === "ready"
+              ? snapshot.session.profiles
+              : undefined,
+        }))
+      ) {
+        ignored?.();
+        return;
+      }
+      signal.throwIfAborted();
     }
     const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
     entry.handle = agent;

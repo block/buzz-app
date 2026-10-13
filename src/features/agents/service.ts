@@ -4,6 +4,8 @@ import {
   type WorkOutcome,
 } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
+import { workflowMentionOwner } from "../relay/workflow-attribution";
+import type { ProfileQueries } from "../relay/profile-directory";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -41,7 +43,12 @@ import {
   type NipOaAuthorization,
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
@@ -512,13 +519,41 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
-/** Whether an agent answers `event`: its owner's, or one by another agent the
- * owner attested (NIP-OA). Both bundled types answer nobody else. */
+/** Owner prompts, attested siblings, and verified relay workflow mentions
+ * delegated by the owner or a profile-verified sibling to this particular agent. */
 export async function fromOwner(
-  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
+  event: EventData,
   owner: string,
+  workflow?: {
+    authority: string | undefined;
+    agent: string;
+    profiles?: Pick<ProfileQueries, "ensure" | "event"> | undefined;
+  },
 ) {
-  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+  if (event.pubkey === owner || (await attestedOwner(event)) === owner)
+    return true;
+  const creator =
+    workflow && workflowMentionOwner(event, workflow.authority, workflow.agent);
+  if (!creator) return false;
+  if (creator === owner) return true;
+  const profiles = workflow?.profiles;
+  if (!profiles?.event) return false;
+  try {
+    await profiles.ensure([creator]);
+    const profile = profiles.event(creator);
+    return (
+      !!profile &&
+      hasEventProof(profile) &&
+      profile.kind === 0 &&
+      profile.pubkey === creator &&
+      (await attestedOwner(profile)) === owner &&
+      profiles.event(creator) === profile
+    );
+  } catch {
+    // Missing or failed profile reads are not ownership verdicts; a later
+    // mention can retry through the session's existing profile directory.
+    return false;
+  }
 }
 
 /** The model and effort the triggering message asks of this agent. Only the
@@ -1521,8 +1556,8 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Reads the agent list from native. Every change is made there first and
-   * then read back here, so the list has one source. */
-  private async refresh() {
+   * then read back here, so the list has one source; Retry reads it again. */
+  async refresh() {
     if (!this.native) return;
     const turn = ++this.listed;
     try {
@@ -1530,7 +1565,9 @@ export class AgentsService extends Service implements Agents {
       // A newer list is on its way; this one may predate a change.
       if (turn !== this.listed) return;
       this.identities = identities;
-      this.state = Object.freeze({ ...this.state, status: "ready" });
+      // A read that succeeds ends the failure the last one reported.
+      const { error: _, ...state } = this.state;
+      this.state = Object.freeze({ ...state, status: "ready" });
       // Settings whose agent is gone do nothing.
       const live = new Set(
         identities

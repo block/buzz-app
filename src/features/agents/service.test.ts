@@ -6,6 +6,8 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
+import { eventDto } from "../relay/events";
+import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -1031,12 +1033,8 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
     .update(`nostr:agent-auth:${agent}:`)
     .digest();
   const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
-  const from = (pubkey: string, tags: string[][] = []) => ({
-    pubkey,
-    kind: 9,
-    created_at: 100,
-    tags,
-  });
+  const from = (pubkey: string, tags: string[][] = []) =>
+    event("gate", { pubkey, tags });
   expect(await fromOwner(from(owner), owner)).toBe(true);
   expect(await fromOwner(from(agent, [auth]), owner)).toBe(true);
   expect(await fromOwner(from(agent), owner)).toBe(false);
@@ -1045,6 +1043,25 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
   expect(
     await fromOwner(from(agent, [["auth", owner, "", "0".repeat(128)]]), owner),
   ).toBe(false);
+});
+
+it("accepts relay workflow delegation only from this agent's owner", async () => {
+  const relay = keypair();
+  const workflow = { authority: relay.pubkey, agent: bot };
+  const prompt = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@bot work",
+      tags: [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", viewer],
+        ["buzz:workflow-mention", bot],
+      ],
+    }),
+  );
+  expect(await fromOwner(prompt, viewer, workflow)).toBe(true);
+  expect(await fromOwner(prompt, other, workflow)).toBe(false);
+  expect(await fromOwner(prompt, viewer)).toBe(false);
 });
 
 it("sets and clears a picture through native, and publishes it", async () => {
@@ -1301,6 +1318,53 @@ it("keeps an agent created while identities are still loading", async () => {
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   expect(service.find(bot)?.name).toBe("Echo");
   expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+});
+
+it("reads the list again on refresh and clears the error a failed read left", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const identity = {
+    pubkey: bot,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name: "Echo",
+    deleted: false,
+  };
+  const native = fakeNative([identity]);
+  native.list.mockRejectedValueOnce(
+    new Error("Could not read saved agent identities"),
+  );
+  const service = new AgentsService(
+    ctx,
+    fakeCommunities(fakeRelay()).communities,
+    native,
+    memoryStorage(),
+  );
+  await vi.waitFor(() =>
+    expect(service.local()).toEqual({
+      status: "error",
+      agents: [],
+      error: "Could not read saved agent identities",
+    }),
+  );
+  await service.refresh();
+  expect(native.list).toHaveBeenCalledTimes(2);
+  expect(service.local()).toEqual({
+    status: "ready",
+    agents: [
+      {
+        pubkey: bot,
+        name: "Echo",
+        relayUrl: "wss://relay.example.test",
+        owner: viewer,
+      },
+    ],
+  });
+  expect(service.snapshot().error).toBeUndefined();
 });
 
 it("fires a due timer once, then again an interval after it ran", async () => {

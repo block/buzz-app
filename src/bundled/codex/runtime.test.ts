@@ -6,6 +6,8 @@ import { describe, afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
@@ -187,6 +189,13 @@ function fixture(
     status: "ready",
     scope: scope as string | undefined,
     session: {
+      workflowAuthority: undefined as string | undefined,
+      profiles: {
+        ensure: vi.fn(async () => {}),
+        event: vi.fn(
+          (_key: string): ReturnType<typeof eventDto> | undefined => undefined,
+        ),
+      },
       read,
       agentMemories: { open: memoryOpen },
       channels: {
@@ -714,6 +723,88 @@ it("starts a turn on the model its owner picked, at an effort that model support
     { model: "test-model", effort: "low" },
   ]);
 });
+it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
+  const f = fixture();
+  const settings = (wire: Wire) => {
+    const { threadId, model, effort } = wire.params as Record<string, string>;
+    return { threadId, model, effort };
+  };
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("deeper"),
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // An effort pick alone queues too, on the agent's own model.
+  await f.runtime.run({ ...f.delivery("harder"), effort: "high" });
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
+  expect(f.starts().map(settings)).toEqual([
+    { threadId: "thread-1", model: "test-model", effort: "low" },
+    { threadId: "thread-1", model: "deep-model", effort: "xhigh" },
+    { threadId: "thread-1", model: "test-model", effort: "high" },
+  ]);
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).content),
+  ).toEqual(["FIRST", "SECOND", "THIRD"]);
+});
+it("keeps a plain follow-up behind a queued differing pick instead of steering past it", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...f.delivery("deeper"), model: "deep-model" });
+  await f.runtime.run(f.delivery("plain"));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // "plain" is still queued while "deeper" runs, so this cannot steer either.
+  await f.runtime.run(f.delivery("later"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  await f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
+  const input = (index: number) => JSON.stringify(f.starts()[index]?.params);
+  expect(input(1)).toContain("deeper");
+  expect(input(1)).toContain('"model":"deep-model"');
+  expect(input(2)).toContain("plain");
+  expect(input(2)).toContain('"model":"test-model"');
+  expect(input(3)).toContain("later");
+  f.complete(3, "FOURTH");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(4));
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).content),
+  ).toEqual(["FIRST", "SECOND", "THIRD", "FOURTH"]);
+});
+it("steers a mid-turn message whose pick matches the running turn, or has none", async () => {
+  const f = fixture();
+  await f.runtime.run({
+    ...f.delivery("first"),
+    model: "test-model",
+    effort: "low",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("same"),
+    model: "test-model",
+    effort: "low",
+  });
+  await f.runtime.run(f.delivery("plain"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      2,
+    ),
+  );
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.starts()).toHaveLength(1);
+});
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));
@@ -930,6 +1021,127 @@ it("ignores non-owner messages without spawning", async () => {
   expect(ignored).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
+});
+it("runs a verified relay workflow mention for its owner", async () => {
+  const f = fixture();
+  const relay = keypair();
+  f.snapshot.session.workflowAuthority = relay.pubkey;
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(ignored).not.toHaveBeenCalled();
+  await f.complete();
+  expect(f.publish).toHaveBeenCalled();
+});
+it.each([false, true])(
+  "handles sibling workflow authorization with cancellation=%s",
+  async (cancelled) => {
+    const f = fixture();
+    const relay = keypair(),
+      human = keypair(),
+      creator = keypair();
+    const attestation = [
+      "auth",
+      human.pubkey,
+      "",
+      bytesToHex(
+        schnorr.sign(
+          createHash("sha256")
+            .update(`nostr:agent-auth:${creator.pubkey}:`)
+            .digest(),
+          human.secret,
+        ),
+      ),
+    ];
+    const profile = eventDto(
+      signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
+    );
+    f.snapshot.session.workflowAuthority = relay.pubkey;
+    f.snapshot.session.profiles.event.mockReturnValue(profile);
+    const gate = deferred<void>();
+    const controller = new AbortController();
+    f.snapshot.session.profiles.ensure.mockReturnValue(gate.promise);
+    const ask = f.delivery("work");
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Codex workflow",
+        tags: [
+          ["h", "channel"],
+          ["p", pubkey],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", creator.pubkey],
+          ["buzz:workflow-mention", pubkey],
+        ],
+      }),
+    );
+    const done = f.runtime.run({
+      ...ask,
+      signal: controller.signal,
+      agent: { ...ask.agent, owner: human.pubkey },
+      trigger: { type: "mention", event },
+    });
+    await vi.waitFor(() =>
+      expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledOnce(),
+    );
+    if (cancelled) {
+      f.runtime.sync([]);
+      controller.abort();
+      gate.resolve();
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(f.spawn).not.toHaveBeenCalled();
+      expect(f.workingUntil).not.toHaveBeenCalled();
+      expect(f.runtime.sessions(pubkey)).toEqual([]);
+      return;
+    }
+    gate.resolve();
+    await done;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
+      creator.pubkey,
+    ]);
+    await f.complete();
+    expect(f.publish).toHaveBeenCalled();
+  },
+);
+it("ignores a relay workflow mention without explicit community authority", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({
+    ...f.delivery("work"),
+    trigger: { type: "mention", event },
+    ignored,
+  });
+  expect(ignored).toHaveBeenCalledOnce();
+  expect(f.spawn).not.toHaveBeenCalled();
 });
 it("answers another agent its owner attested, telling the owner of failures", async () => {
   const f = fixture();

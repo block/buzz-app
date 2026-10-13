@@ -4,6 +4,8 @@ import {
   type WorkOutcome,
 } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
+import { workflowMentionOwner } from "../relay/workflow-attribution";
+import type { ProfileQueries } from "../relay/profile-directory";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -41,7 +43,12 @@ import {
   type NipOaAuthorization,
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
@@ -503,13 +510,41 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
-/** Whether an agent answers `event`: its owner's, or one by another agent the
- * owner attested (NIP-OA). Both bundled types answer nobody else. */
+/** Owner prompts, attested siblings, and verified relay workflow mentions
+ * delegated by the owner or a profile-verified sibling to this particular agent. */
 export async function fromOwner(
-  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
+  event: EventData,
   owner: string,
+  workflow?: {
+    authority: string | undefined;
+    agent: string;
+    profiles?: Pick<ProfileQueries, "ensure" | "event"> | undefined;
+  },
 ) {
-  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+  if (event.pubkey === owner || (await attestedOwner(event)) === owner)
+    return true;
+  const creator =
+    workflow && workflowMentionOwner(event, workflow.authority, workflow.agent);
+  if (!creator) return false;
+  if (creator === owner) return true;
+  const profiles = workflow?.profiles;
+  if (!profiles?.event) return false;
+  try {
+    await profiles.ensure([creator]);
+    const profile = profiles.event(creator);
+    return (
+      !!profile &&
+      hasEventProof(profile) &&
+      profile.kind === 0 &&
+      profile.pubkey === creator &&
+      (await attestedOwner(profile)) === owner &&
+      profiles.event(creator) === profile
+    );
+  } catch {
+    // Missing or failed profile reads are not ownership verdicts; a later
+    // mention can retry through the session's existing profile directory.
+    return false;
+  }
 }
 
 /** The model and effort the triggering message asks of this agent. Only the
@@ -852,13 +887,10 @@ export class AgentsService extends Service implements Agents {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
-      const agent = await this.provision(type, remote, name.trim());
-      if (!picture) return agent;
-      // It exists now, so a picture that fails to save does not fail it.
-      await this.save(agent.pubkey, { picture }).catch((error: unknown) =>
-        console.warn(`Agent ${agent.name} picture was not saved`, error),
-      );
-      return this.find(agent.pubkey) ?? agent;
+      const listed = recordPicture(picture);
+      if (picture && !listed)
+        console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
+      return this.provision(type, remote, name.trim(), listed);
     }
     return this.add(
       type,
@@ -873,7 +905,12 @@ export class AgentsService extends Service implements Agents {
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
-  private async provision(type: string, remote: RemoteAgentType, name: string) {
+  private async provision(
+    type: string,
+    remote: RemoteAgentType,
+    name: string,
+    picture: string | undefined,
+  ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
@@ -891,7 +928,14 @@ export class AgentsService extends Service implements Agents {
       throw new Error("The provider returned a key that is already in use");
     this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
-      { pubkey, type, name, relay: community, owner: binding.viewer },
+      {
+        pubkey,
+        type,
+        name,
+        relay: community,
+        owner: binding.viewer,
+        ...(picture ? { picture } : {}),
+      },
     ]);
     return this.finish(pubkey);
   }
@@ -920,15 +964,30 @@ export class AgentsService extends Service implements Agents {
       auth,
       signal,
     });
+    const { picture } = setup;
     await this.writeListing(origin, binding, {
       pubkey,
       name: setup.name,
+      ...(picture ? { picture } : {}),
       runtime: setup.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
     this.writeUnfinished(this.unfinished.filter((entry) => entry !== setup));
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
+    // Listed with its picture either way; its own profile is the provider's.
+    if (picture)
+      await remote
+        .profile({
+          pubkey,
+          community: setup.relay,
+          name: setup.name,
+          picture,
+          signal,
+        })
+        .catch((error: unknown) =>
+          console.warn(`Agent ${setup.name} picture was not published`, error),
+        );
     return agent;
   }
 
@@ -1370,6 +1429,7 @@ export class AgentsService extends Service implements Agents {
           this.show({
             pubkey: setup.pubkey,
             name: setup.name,
+            ...(setup.picture ? { picture: setup.picture } : {}),
             type: setup.type,
             owner: setup.owner,
             relay: setup.relay,

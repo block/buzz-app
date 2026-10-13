@@ -604,19 +604,25 @@ describe("authoritative project home (parity with ACP prompt_project.rs)", () =>
       read.mockImplementationOnce(() => gate);
       const controller = new AbortController();
       const older = destinations.home(CHANNEL, controller.signal);
-      const newer = await destinations.home(CHANNEL, signal());
-      if (outcome === "success") {
-        release([]);
-        await older;
-      } else {
-        const rejected = expect(older).rejects.toBeInstanceOf(Error);
-        if (outcome === "cancel") {
-          controller.abort();
+      try {
+        const newer = await destinations.home(CHANNEL, signal());
+        if (outcome === "success") {
           release([]);
-        } else fail(new Error("offline"));
-        await rejected;
+          await older;
+        } else {
+          const rejected = expect(older).rejects.toBeInstanceOf(Error);
+          if (outcome === "cancel") {
+            controller.abort();
+            release([]);
+          } else fail(new Error("offline"));
+          await rejected;
+        }
+        expect(destinations.peekHome(CHANNEL)).toEqual(newer);
+      } finally {
+        controller.abort();
+        release([]);
+        await older.catch(() => {});
       }
-      expect(destinations.peekHome(CHANNEL)).toEqual(newer);
     },
   );
 

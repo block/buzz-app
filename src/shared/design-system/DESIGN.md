@@ -627,10 +627,17 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
-IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
-sm/md/lg sizes. Existing names
+Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
+(32px square with 16px artwork) and a 10px rounded rectangle
+(`--radius-icon-button`). Choose `md` or `lg` explicitly when an icon action needs
+a larger control; community rail identities and the avatar edit badge retain their
+existing larger treatment. These defaults do not depend on pointer type or viewport
+width. Both controls use the same sm/md/lg scale. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -1015,7 +1022,7 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead, except for the
 wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
+semantics, hug their contents up to a 12rem maximum with ellipsis, use 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
@@ -1124,6 +1131,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
+- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
+  default), matching Berd’s relaxed reply rhythm for both sent and received
+  messages. The message renderer uses `space-4` between prose blocks; labels,
+  controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
@@ -1408,3 +1419,19 @@ recipe: toolbar destinations and More pages overflow retain button semantics.
 
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

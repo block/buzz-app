@@ -86,6 +86,7 @@ export function CustomModelDialog({
         id={form}
         onSubmit={(event) => {
           event.preventDefault();
+          event.stopPropagation();
           const value = model.trim();
           if (value) onSubmit(value);
         }}

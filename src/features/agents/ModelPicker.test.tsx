@@ -120,6 +120,36 @@ it.each([true, false])(
   },
 );
 
+it("does not submit a form around the custom-model dialog", async () => {
+  const submitted = vi.fn();
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitted();
+      }}
+    >
+      <ModelPicker
+        models={models}
+        allowCustomModel
+        value=""
+        defaultLabel="Default model"
+        onChange={onChange}
+      />
+    </form>,
+  );
+  await user.click(control());
+  await user.click(await screen.findByRole("option", { name: "Custom model" }));
+  await user.type(
+    await screen.findByRole("textbox", { name: "Model ID" }),
+    "claude-custom-1{enter}",
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("claude-custom-1");
+  expect(submitted).not.toHaveBeenCalled();
+});
+
 it("uses a dropdown to pick listed models when custom entry is disabled", async () => {
   const { onChange, user } = setup("", { allowCustomModel: false });
   expect(control().tagName).toBe("BUTTON");

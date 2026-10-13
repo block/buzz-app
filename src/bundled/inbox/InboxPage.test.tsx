@@ -783,6 +783,13 @@ it("keeps an archived thread and its composer mounted when a new mention reopens
       screen.getByRole("list", { name: "Inbox conversations" }),
     ).toHaveAttribute("aria-busy", "false"),
   );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("region", { name: "Inbox detail" })
+        .querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   await waitFor(() => expect(rows()).toHaveLength(1));
   const [archivedRow] = rows();
@@ -2705,7 +2712,7 @@ it("keeps Show's open keyboard selection through incoming row updates", async ()
   act(() => show.focus());
   await user.keyboard("{Enter}");
   await waitFor(() =>
-    expect(screen.getByRole("option", { name: "Inbox" })).toHaveFocus(),
+    expect(screen.getByRole("option", { name: /^Inbox$/ })).toHaveFocus(),
   );
   await user.keyboard("{End}");
   const combined = screen.getByRole("option", { name: "Inbox + archived" });

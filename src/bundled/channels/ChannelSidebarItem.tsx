@@ -77,7 +77,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
   props: ItemProps,
 ) {
   const { channel, session, working } = props;
-  const { agents, agentProfiles } = useWorkingAgents(
+  const { agents, agentProfiles, waiting } = useWorkingAgents(
     session,
     channel.id,
     working,
@@ -87,6 +87,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
       {...props}
       agents={agents}
       agentProfiles={agentProfiles}
+      waiting={waiting}
     />
   );
 });
@@ -119,7 +120,9 @@ function ChannelSidebarItemCore({
   menuFinalFocus,
   agents,
   agentProfiles,
+  waiting,
 }: ItemProps & {
+  waiting: boolean;
   agents: readonly string[];
   agentProfiles: ReadonlyMap<string, Profile>;
 }) {
@@ -203,6 +206,7 @@ function ChannelSidebarItemCore({
             agents={agents}
             profiles={agentProfiles}
             channelName={channel.name}
+            waiting={waiting}
           />
         </span>
       }

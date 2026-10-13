@@ -9,6 +9,14 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 
+export type ActivityReceipt = Readonly<{
+  /** Presentation destination; channel-shared sessions may handle several threads. */
+  activityScope?: string;
+  step?: (tool: string, target?: string) => void;
+  acknowledged?: () => void;
+  superseded?: () => void;
+}>;
+
 export type Spawn = (
   id: string,
   options?: HostProcessOptions,
@@ -152,6 +160,7 @@ export class ClaudeProcess {
         "--input-format",
         "stream-json",
         "--verbose",
+        "--replay-user-messages",
         "--permission-mode",
         "bypassPermissions",
         ...(launch.model ? ["--model", launch.model] : []),
@@ -258,7 +267,10 @@ export class ClaudeProcess {
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
-  send(text: string, { model, effort }: TurnPick = {}): Promise<Settled> {
+  send(
+    text: string,
+    { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
+  ): Promise<Settled> {
     if (!this.alive)
       return Promise.resolve({
         ok: false,
@@ -267,12 +279,15 @@ export class ClaudeProcess {
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    const uuid = crypto.randomUUID();
+    this.receipts.set(uuid, activity);
     this.pending++;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
     this.write({
       type: "user",
+      uuid,
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
@@ -363,6 +378,8 @@ export class ClaudeProcess {
   }
   private settle(settled: Settled) {
     this.pending = 0;
+    this.receipts.clear();
+    this.activeReceipts.clear();
     this.lastError = undefined;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
@@ -387,6 +404,11 @@ export class ClaudeProcess {
       this.handle(message);
     }
   }
+  // Replay acknowledgments are correlated by the UUID we supplied, never by
+  // prompt text or tool-result user messages. Only the latest acknowledged
+  // request gets steps; settling ends all requests, not just the latest one.
+  private readonly receipts = new Map<string, ActivityReceipt>();
+  private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
@@ -413,6 +435,31 @@ export class ClaudeProcess {
     ) {
       this.reportsState = true;
       if (message.state === "idle" && this.pending) this.done();
+      return;
+    }
+    if (
+      message.type === "user" &&
+      message.isReplay === true &&
+      typeof message.uuid === "string"
+    ) {
+      const receipt = this.receipts.get(message.uuid);
+      if (receipt) {
+        this.receipts.delete(message.uuid);
+        // Watches/timers have no message activity: they must not hide a mention.
+        if (receipt.step) {
+          const scope = receipt.activityScope ?? "conversation";
+          this.activeReceipts.get(scope)?.superseded?.();
+          this.activeReceipts.set(scope, receipt);
+          receipt.acknowledged?.();
+        }
+      }
+      return;
+    }
+    if (message.type === "assistant") {
+      const step = stepLabel(message);
+      if (step)
+        for (const receipt of this.activeReceipts.values())
+          receipt.step?.(step.tool, step.target);
       return;
     }
     if (message.type !== "result") return;
@@ -479,4 +526,43 @@ export class ClaudeProcess {
       this.pending === 1
     );
   }
+}
+
+/** The last content block of an assistant message as the tool it names and its target. */
+export function stepLabel(
+  message: Message,
+): { tool: string; target?: string } | undefined {
+  const content = (message.message as { content?: unknown } | undefined)
+    ?.content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content.at(-1) as {
+    type?: unknown;
+    name?: unknown;
+    input?: Record<string, unknown>;
+  } | null;
+  if (block?.type === "tool_use" && typeof block.name === "string") {
+    const tool = block.name.split("__").at(-1);
+    if (!tool) return undefined;
+    const input = block.input ?? {};
+    const target = [
+      "description",
+      "file_path",
+      "notebook_path",
+      "pattern",
+      "url",
+      "query",
+      "command",
+    ]
+      .map((key) => input[key])
+      .find((value): value is string => typeof value === "string" && !!value);
+    return target ? { tool, target: shortTarget(target) } : { tool };
+  }
+  if (block?.type === "thinking") return { tool: "Thinking" };
+  if (block?.type === "text") return { tool: "Writing reply" };
+  return undefined;
+}
+
+/** File paths show their name; everything else is passed through for trimming. */
+function shortTarget(value: string) {
+  return value.startsWith("/") ? (value.split("/").at(-1) ?? value) : value;
 }

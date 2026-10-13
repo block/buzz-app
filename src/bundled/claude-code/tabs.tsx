@@ -14,6 +14,7 @@ import type {
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
+import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -93,12 +94,10 @@ export function createTabs({
     agent,
     conversation,
     working,
-    onBack,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
     working: boolean;
-    onBack(): void;
   }) {
     const workspace = readConfig(agent.config).workspace;
     const [read, setRead] = useState<Read>();
@@ -127,10 +126,7 @@ export function createTabs({
     }, [conversation, workspace, working, attempt]);
     return (
       <div className="grid gap-4">
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={onBack}>
-            Back
-          </Button>
+        <div>
           <Button
             variant="ghost"
             loading={loading}
@@ -139,7 +135,6 @@ export function createTabs({
             Refresh
           </Button>
         </div>
-        <h3 className="m-0 text-body">{label(conversation)}</h3>
         {!read ? (
           <p role="status" className="m-0">
             Reading the Claude session…
@@ -204,15 +199,6 @@ export function createTabs({
     useEffect(() => {
       void setup.check();
     }, []);
-    if (open)
-      return (
-        <TranscriptView
-          agent={agent}
-          conversation={open}
-          working={busy.get(open.key) ?? false}
-          onBack={() => setOpen(undefined)}
-        />
-      );
     const status = state.status;
     const line =
       !status || state.checking
@@ -337,6 +323,19 @@ export function createTabs({
             </p>
           )}
         </section>
+        {open && (
+          <PanelSubview
+            title={label(open)}
+            backLabel="Back to profile"
+            onBack={() => setOpen(undefined)}
+          >
+            <TranscriptView
+              agent={agent}
+              conversation={open}
+              working={busy.get(open.key) ?? false}
+            />
+          </PanelSubview>
+        )}
       </div>
     );
   }

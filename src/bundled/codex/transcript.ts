@@ -298,18 +298,31 @@ export async function findConversation(
   });
 }
 
-/** A thread's latest turns, newest first, or undefined when Codex no longer
- * has it. */
+type Page = { data: Turn[]; nextCursor: string | null };
+
+/** A thread's latest `limit` turns, newest first, and whether it has earlier
+ * ones, or undefined when Codex no longer has it. Read a turn per request:
+ * app-server's output frame bounds one full turn, not a page of them. */
 async function page(rpc: AppServer, threadId: string, limit: number) {
+  const data: Turn[] = [];
+  let cursor: string | null = null;
   try {
-    return await rpc.request<{ data: Turn[]; nextCursor: string | null }>(
-      "thread/turns/list",
-      { threadId, limit, sortDirection: "desc", itemsView: "full" },
-    );
+    do {
+      const next: Page = await rpc.request<Page>("thread/turns/list", {
+        threadId,
+        limit: 1,
+        sortDirection: "desc",
+        itemsView: "full",
+        ...(cursor ? { cursor } : {}),
+      });
+      data.push(...next.data);
+      cursor = next.data.length ? next.nextCursor : null;
+    } while (cursor && data.length < limit);
   } catch (error) {
     if (missing(error)) return undefined;
     throw error;
   }
+  return { data: data.slice(0, limit), more: !!cursor };
 }
 const turns = async (rpc: AppServer, threadId: string, limit: number) =>
   (await page(rpc, threadId, limit))?.data ?? [];
@@ -359,7 +372,7 @@ export async function readTranscript(
       const read = await page(rpc, threadId, TURN_LIMIT);
       if (!read || (legacy && !startedFor(read.data, lookup))) continue;
       found = true;
-      more ||= !!read.nextCursor;
+      more ||= read.more;
       if (threadId === lookup.threadId)
         working = read.data[0]?.status === "inProgress";
       all.push(...[...read.data].reverse());

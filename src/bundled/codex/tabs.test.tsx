@@ -14,6 +14,7 @@ import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import { sessionTag } from "./prompt";
@@ -375,17 +376,27 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
             error: { code: -32600, message: `thread not loaded: ${threadId}` },
           },
   );
-  render(<f.tabs.CodexTab {...f.props()} />);
+  render(
+    <PanelSubviewHost close={vi.fn()}>
+      <f.tabs.CodexTab {...f.props()} />
+    </PanelSubviewHost>,
+  );
+  const user = userEvent.setup();
   const viewButton = (index: number) =>
     screen.getAllByRole("button", { name: "View transcript" })[
       index
     ] as HTMLElement;
   expect(screen.getByText(/#general · thread eeeeeeee/)).toBeVisible();
-  fireEvent.click(viewButton(0));
+  const opened = viewButton(0);
+  await user.click(opened);
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Back" }));
-  fireEvent.click(viewButton(1));
+  // The transcript covers the tab, and Back returns focus to what opened it.
+  const back = screen.getByRole("button", { name: "Back to profile" });
+  expect(back).toHaveFocus();
+  await user.click(back);
+  expect(opened).toHaveFocus();
+  await user.click(viewButton(1));
   expect(
     await screen.findByText(/Codex has no history for this conversation/),
   ).toBeVisible();

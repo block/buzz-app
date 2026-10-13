@@ -7,6 +7,7 @@ import {
   findConversation,
   readTranscript,
   shellCommand,
+  TURN_LIMIT,
 } from "./transcript";
 
 const root = "c".repeat(64);
@@ -203,30 +204,84 @@ function server(
   return { spawn, sent };
 }
 
-it("reads the latest turns oldest first and closes its app-server", async () => {
-  const { spawn, sent } = server(() => ({
-    result: {
-      data: [
-        turn({ id: "turn-2", status: "inProgress", completedAt: null }),
-        turn(),
-      ],
-      nextCursor: "earlier",
-    },
-  }));
+/** `thread/turns/list` over a thread's turns, newest first, a page at a time. */
+const paged =
+  (newest: unknown[]) =>
+  ({ limit, cursor }: Record<string, unknown>): Wire => {
+    const start = Number(cursor ?? 0);
+    const end = start + Number(limit);
+    return {
+      result: {
+        data: newest.slice(start, end),
+        nextCursor: end < newest.length ? String(end) : null,
+      },
+    };
+  };
+
+it("reads the latest turns oldest first, a turn per request, and closes its app-server", async () => {
+  const { spawn, sent } = server(
+    paged([
+      turn({ id: "turn-2", status: "inProgress", completedAt: null }),
+      turn(),
+      ...Array.from({ length: TURN_LIMIT }, (_, index) =>
+        turn({ id: `earlier-${index}`, startedAt: 99 - index }),
+      ),
+    ]),
+  );
   const read = await readTranscript(
     spawn,
     { ...lookup, threadId: "thread-1" },
     new AbortController().signal,
   );
   expect(spawn).toHaveBeenCalledWith("app-server", expect.anything());
-  expect(sent.find((w) => w.method === "thread/turns/list")?.params).toEqual({
-    threadId: "thread-1",
-    limit: 20,
-    sortDirection: "desc",
-    itemsView: "full",
-  });
-  expect(read?.turns.map((t) => t.turnId)).toEqual(["turn-1", "turn-2"]);
+  const requests = sent.filter((w) => w.method === "thread/turns/list");
+  expect(requests).toHaveLength(TURN_LIMIT);
+  expect(requests.slice(0, 2).map((w) => w.params)).toEqual([
+    {
+      threadId: "thread-1",
+      limit: 1,
+      sortDirection: "desc",
+      itemsView: "full",
+    },
+    {
+      threadId: "thread-1",
+      limit: 1,
+      sortDirection: "desc",
+      itemsView: "full",
+      cursor: "1",
+    },
+  ]);
+  expect(read?.turns).toHaveLength(TURN_LIMIT);
+  expect(read?.turns.slice(-2).map((t) => t.turnId)).toEqual([
+    "turn-1",
+    "turn-2",
+  ]);
   expect(read).toMatchObject({ more: true, working: true });
+});
+
+it("reads turns that each fit app-server's output frame but together do not", async () => {
+  // Three turns of 1.5 MiB: one per frame fits the 4 MiB bound, all three not.
+  const big = (id: string) =>
+    turn({
+      id,
+      items: [
+        {
+          type: "commandExecution",
+          id: "c",
+          command: "cat log",
+          aggregatedOutput: "x".repeat(1.5 * 1024 * 1024),
+          status: "completed",
+        },
+      ],
+    });
+  const { spawn } = server(paged([big("c"), big("b"), big("a")]));
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "thread-1" },
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((t) => t.turnId)).toEqual(["a", "b", "c"]);
+  expect(read?.more).toBe(false);
 });
 
 it("merges the threads other builds started, found by tag or by their earlier name", async () => {

@@ -13,6 +13,7 @@ import type {
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
+import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -172,11 +173,9 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
   function TranscriptView({
     agent,
     conversation,
-    onBack,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
-    onBack(): void;
   }) {
     const [read, setRead] = useState<Read>();
     const [loading, setLoading] = useState(true);
@@ -207,10 +206,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
     }, [conversation, agent.pubkey, agent.name, attempt]);
     return (
       <div className="grid gap-4">
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={onBack}>
-            Back
-          </Button>
+        <div>
           <Button
             variant="ghost"
             loading={loading}
@@ -219,7 +215,6 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
             Refresh
           </Button>
         </div>
-        <h3 className="m-0 text-body">{label(conversation)}</h3>
         {!read ? (
           <p role="status" className="m-0">
             Reading the Codex session…
@@ -268,14 +263,6 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
       runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
     );
     const [open, setOpen] = useState<SavedConversation>();
-    if (open)
-      return (
-        <TranscriptView
-          agent={agent}
-          conversation={open}
-          onBack={() => setOpen(undefined)}
-        />
-      );
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const recent = conversations
@@ -377,6 +364,15 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
             your messages; timers are not supported yet.
           </p>
         </section>
+        {open && (
+          <PanelSubview
+            title={label(open)}
+            backLabel="Back to profile"
+            onBack={() => setOpen(undefined)}
+          >
+            <TranscriptView agent={agent} conversation={open} />
+          </PanelSubview>
+        )}
       </div>
     );
   }

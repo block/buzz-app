@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 
@@ -300,7 +301,11 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
     0,
   );
-  render(<Claude agent={agent()} save={vi.fn()} />);
+  render(
+    <PanelSubviewHost close={vi.fn()}>
+      <Claude agent={agent()} save={vi.fn()} />
+    </PanelSubviewHost>,
+  );
   const user = userEvent.setup();
   const rows = screen.getAllByRole("listitem");
   expect(rows.map((row) => row.textContent)).toEqual([
@@ -311,10 +316,15 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     screen.getAllByRole("button", { name: "View transcript" })[
       index
     ] as HTMLElement;
-  await user.click(viewButton(0));
+  const opened = viewButton(0);
+  await user.click(opened);
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  // The transcript covers the tab, and Back returns focus to what opened it.
+  const back = screen.getByRole("button", { name: "Back to profile" });
+  expect(back).toHaveFocus();
+  await user.click(back);
+  expect(opened).toHaveFocus();
   await user.click(viewButton(1));
   expect(
     await screen.findByText(/no transcript for this conversation/),

@@ -54,6 +54,7 @@ export function PairingSettings({
   const [manualOrigin, setManualOrigin] = useState<string>();
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string>();
+  const [copied, setCopied] = useState<{ uri: string; failed: boolean }>();
   const [relay, setRelay] = useState(() =>
     client.selected ? communityDestination(client.selected).url : "",
   );
@@ -99,6 +100,14 @@ export function PairingSettings({
       if (attempt === lifetime.current) setError(String(error));
     } finally {
       if (attempt === lifetime.current) setReading(false);
+    }
+  }
+  async function copy(uri: string) {
+    try {
+      await navigator.clipboard.writeText(uri);
+      setCopied({ uri, failed: false });
+    } catch {
+      setCopied({ uri, failed: true });
     }
   }
   function start() {
@@ -364,6 +373,20 @@ export function PairingSettings({
                 </>
               )}
             </div>
+            {state.phase === "qr" && (
+              <>
+                <Button onClick={() => void copy(state.uri)}>
+                  {copied?.uri === state.uri && !copied.failed
+                    ? "Copied"
+                    : "Copy pairing code"}
+                </Button>
+                {copied?.uri === state.uri && copied.failed && (
+                  <p role="alert" className="m-0 text-body-sm text-danger">
+                    Couldn’t copy the pairing code. Try again.
+                  </p>
+                )}
+              </>
+            )}
           </div>
           <ol
             aria-label="Pairing steps"

@@ -347,6 +347,7 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    storage: localStorage,
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

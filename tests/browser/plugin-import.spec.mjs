@@ -106,6 +106,9 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           return preview;
         }
         if (command === "plugin_import_discard") return;
+        // Agent storage starts empty; the app saves agent state there.
+        if (command === "app_agent_state_load") return {};
+        if (command === "app_agent_state_set") return;
         if (command === "plugin_import_install") {
           if (window.importInstallError) {
             await new Promise((resolve) => {

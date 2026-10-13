@@ -1,4 +1,9 @@
-export type LocalWorkState = "waiting" | "working" | "done" | "error";
+export type LocalWorkState =
+  | "waiting"
+  | "working"
+  | "done"
+  | "error"
+  | "superseded";
 export type WorkOutcome = Readonly<{ ok: boolean; error?: string }>;
 /** A harness step: its own tool name and, when known, what it acts on. */
 export type WorkStep = Readonly<{ tool: string; target?: string }>;
@@ -54,7 +59,10 @@ export function createLocalAgentActivity() {
       if (entries.size >= 512) {
         const victim =
           [...entries].find(
-            ([, row]) => row.state === "done" || row.state === "error",
+            ([, row]) =>
+              row.state === "done" ||
+              row.state === "error" ||
+              row.state === "superseded",
           ) ?? entries.entries().next().value;
         if (victim) entries.delete(victim[0]);
       }
@@ -70,7 +78,12 @@ export function createLocalAgentActivity() {
         step?: WorkStep,
       ) => {
         const current = entries.get(id);
-        if (!current || current.state === "done" || current.state === "error")
+        if (
+          !current ||
+          current.state === "done" ||
+          current.state === "error" ||
+          current.state === "superseded"
+        )
           return;
         const next = step ?? (state === "working" ? current.step : undefined);
         if (
@@ -94,6 +107,9 @@ export function createLocalAgentActivity() {
       };
       return {
         started: () => update("working"),
+        // Keep bounded evidence for this exact message; old reactions must not
+        // revive it after the harness acknowledges a newer request.
+        supersede: () => update("superseded"),
         /** Latest live step reported by the plugin; display only. */
         step: (tool: string, target?: string) => {
           const name = tool.trim().slice(0, 80);
@@ -149,7 +165,7 @@ export function localActivity(
       (!threadRootId || row.threadRootId === threadRootId),
   );
   const agents = new Map<string, LocalWork>();
-  const rank = { done: 0, error: 1, waiting: 2, working: 3 };
+  const rank = { superseded: 0, done: 0, error: 1, waiting: 2, working: 3 };
   for (const row of rows) {
     const previous = agents.get(row.agent);
     if (!previous || rank[row.state] > rank[previous.state])
@@ -160,6 +176,7 @@ export function localActivity(
 export function localWorkLabel(
   row: Pick<LocalWork, "state" | "error" | "step">,
 ) {
+  if (row.state === "superseded") return "Continued on a later message";
   return row.state === "waiting"
     ? "Received · waiting to start"
     : row.state === "working"

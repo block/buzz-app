@@ -178,6 +178,9 @@ it("carries a verified mention through host handover into all three scopes witho
     // Late steps/outcomes on the old request cannot bring its bubble back.
     first.step("Edit", "old.txt");
     expect(messageActivity(snapshot(), channel, root.id)).toEqual([]);
+    expect(
+      snapshot().local?.find((work) => work.messageId === root.id),
+    ).toMatchObject({ state: "superseded" });
     finish({ ok: false, error: "Provider unavailable" });
     await vi.waitFor(() =>
       expect(messageActivity(snapshot(), channel, followup.id)[0]?.state).toBe(

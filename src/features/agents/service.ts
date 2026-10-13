@@ -1961,7 +1961,7 @@ export class AgentsService extends Service implements Agents {
             workingUntil: working.hold,
             ignored: () => job.work?.remove(),
             acknowledged: () => job.work?.started(),
-            superseded: () => job.work?.remove(),
+            superseded: () => job.work?.supersede(),
             step: (tool: string, target?: string) =>
               job.work?.step(tool, target),
           }),

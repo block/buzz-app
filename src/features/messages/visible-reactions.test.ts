@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { visibleReactions } from "./visible-reactions";
+import { visibleReactions, reactionWorkingAgents } from "./visible-reactions";
 it("hides agent status glyphs while retaining people, other agent reactions and source evidence", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };
   const human = { id: "human-reaction", authorId: "human" };
@@ -18,6 +18,10 @@ it("hides agent status glyphs while retaining people, other agent reactions and 
     reactions[2],
     reactions[3],
   ]);
+  expect(reactionWorkingAgents(reactions, new Set(["agent"]))).toEqual([
+    "agent",
+  ]);
+  expect(reactionWorkingAgents(reactions, new Set())).toEqual([]);
   expect(reactions[0]?.events).toEqual([agent, human]);
   expect(visibleReactions(reactions, new Set())).toEqual(reactions);
 });

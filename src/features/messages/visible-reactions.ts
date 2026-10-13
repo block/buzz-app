@@ -16,3 +16,22 @@ export function visibleReactions(
     return events.length ? [{ ...reaction, events }] : [];
   });
 }
+
+/** Existing reaction evidence rendered as quiet work, not a new lifecycle.
+ * Automatic and deliberate uses are indistinguishable on the wire. */
+export function reactionWorkingAgents(
+  reactions: readonly MessageReaction[],
+  agents: ReadonlySet<string>,
+): string[] {
+  return [
+    ...new Set(
+      reactions.flatMap((reaction) =>
+        !reaction.emoji && ["👀", "💬"].includes(reaction.content)
+          ? reaction.events
+              .filter((event) => agents.has(event.authorId))
+              .map((event) => event.authorId)
+          : [],
+      ),
+    ),
+  ].sort();
+}

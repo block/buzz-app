@@ -49,7 +49,7 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  ArrowsClockwiseIcon,
+  CircleNotchIcon,
   CopyIcon,
   DotsThreeIcon,
   PlusIcon,
@@ -76,7 +76,6 @@ import {
   MenuSubmenu,
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
-  MenuTrailing,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import {
@@ -420,10 +419,6 @@ function ProviderSubmenu({
             <MenuItem aria-label={`${type.title}, unavailable`} disabled>
               <ProviderIcon type={type} />
               {type.title}
-              <MenuTrailing>
-                <ProviderStatus readiness="attention" />
-                <span className="sr-only">Unavailable</span>
-              </MenuTrailing>
             </MenuItem>
           );
           return (
@@ -470,9 +465,6 @@ function ProviderMenuItem({
       <MenuItem aria-label={`${type.title}, unavailable`} disabled>
         <ProviderIcon type={type} />
         {type.title}
-        <MenuTrailing>
-          <ProviderStatus readiness="unavailable" />
-        </MenuTrailing>
       </MenuItem>
     );
   return (
@@ -498,32 +490,44 @@ function ProviderHealthMenuItem({
     provider.snapshot,
     provider.snapshot,
   );
+  const checking = state.readiness === "checking";
+  const label =
+    state.readiness === "attention"
+      ? (state.attentionLabel ?? `Set up ${type.title}`)
+      : type.title;
+  const select = () => {
+    if (state.readiness === "attention") {
+      const action = provider.attentionAction;
+      if (action)
+        try {
+          action();
+          return;
+        } catch {
+          // Fall back to the provider's recovery guidance.
+        }
+    }
+    onSelect();
+  };
   return (
     <MenuItem
-      aria-label={`${type.title}, ${state.readiness}`}
-      onClick={onSelect}
+      aria-label={`${label}, ${state.readiness}`}
+      aria-busy={checking || undefined}
+      onClick={select}
+      disabled={checking}
     >
-      <ProviderIcon type={type} />
-      {type.title}
-      <MenuTrailing>
-        <ProviderStatus readiness={state.readiness} />
-        <span className="sr-only">{state.readiness}</span>
-      </MenuTrailing>
+      {checking ? (
+        <MenuIcon>
+          <CircleNotchIcon
+            size={17}
+            aria-hidden="true"
+            className="motion-safe:animate-spin"
+          />
+        </MenuIcon>
+      ) : (
+        <ProviderIcon type={type} />
+      )}
+      {label}
     </MenuItem>
-  );
-}
-
-function ProviderStatus({
-  readiness,
-}: {
-  readiness: "ready" | "checking" | "attention" | "unavailable";
-}) {
-  return (
-    <span
-      aria-hidden="true"
-      className={styles.providerStatus}
-      data-readiness={readiness}
-    />
   );
 }
 
@@ -593,21 +597,10 @@ function ManagedProviderDialog({
           {type.title}
         </span>
       }
-      height="stable"
+      headerGap="compact"
       dismissOnOutsideClick
       preventClose={!!state.blocking}
       finalFocus={() => finalFocus.current}
-      headerActions={
-        <IconButton
-          aria-label="Check again"
-          title="Check again"
-          size="sm"
-          disabled={state.readiness === "checking" || !!state.blocking}
-          aria-busy={state.readiness === "checking" || undefined}
-          icon={<ArrowsClockwiseIcon size={16} aria-hidden="true" />}
-          onClick={() => checkProvider(provider)}
-        />
-      }
     >
       <Body />
     </Dialog>

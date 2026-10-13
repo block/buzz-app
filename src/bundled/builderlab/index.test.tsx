@@ -255,7 +255,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     );
     fireEvent.click(
       within(providers).getByRole("menuitem", {
-        name: "Builderlab, attention",
+        name: "Log in to Builderlab, attention",
       }),
     );
     const providerDialog = await screen.findByRole("dialog", {

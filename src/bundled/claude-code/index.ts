@@ -88,6 +88,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,
       check: () => setup.check(),
+      get attentionAction() {
+        const state = setup.snapshot();
+        if (state.running) return undefined;
+        return state.status?.state === "missing"
+          ? () => void setup.run("install")
+          : state.status?.state === "signed-out"
+            ? () => void setup.run("login")
+            : undefined;
+      },
       DialogBody: ProviderDialogBody,
     },
     tabs: [{ id: "settings", title: "Settings", component: SettingsTab }],

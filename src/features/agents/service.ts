@@ -301,6 +301,8 @@ export type Model = Readonly<{
 export type Models = Readonly<{ current: string; models: readonly Model[] }>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
+  /** Action-oriented menu copy for direct recovery or recovery guidance. */
+  attentionLabel?: string;
   /** Installation and sign-in work must be cancelled before its dialog closes. */
   blocking?: boolean;
 }>;
@@ -309,7 +311,9 @@ export type AgentProvider = Readonly<{
   subscribe(listener: () => void): () => void;
   /** Refreshes device-wide readiness without changing installation or auth. */
   check(): void | Promise<void>;
-  /** Provider-owned connection controls and optional saved defaults. */
+  /** Handles the current attention state directly; absent opens DialogBody. */
+  attentionAction?: (() => void) | undefined;
+  /** Provider-owned recovery/progress controls and optional saved defaults. */
   DialogBody: ComponentType;
 }>;
 export type AgentType<Config = unknown> = {

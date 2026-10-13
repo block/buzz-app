@@ -35,6 +35,12 @@ it("finds Claude missing when it cannot be started", async () => {
     "claude --version": new Error("Could not start claude: No such file"),
   });
   await expect(checkClaude(spawn)).resolves.toEqual({ state: "missing" });
+  const setup = new ClaudeSetup(spawn);
+  await setup.check();
+  expect(setup.providerSnapshot()).toEqual({
+    readiness: "attention",
+    attentionLabel: "Install Claude Code",
+  });
 });
 
 it("reports the version and whether it is signed in", async () => {
@@ -122,5 +128,9 @@ it("explains that it needs the desktop app", async () => {
   expect(setup.snapshot().status).toEqual({
     state: "error",
     message: "Claude agents run only in the desktop app",
+  });
+  expect(setup.providerSnapshot()).toEqual({
+    readiness: "attention",
+    attentionLabel: "Claude Code needs attention",
   });
 });

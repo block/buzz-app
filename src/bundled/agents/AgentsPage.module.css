@@ -32,23 +32,6 @@
   padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
-.providerStatus {
-  display: block;
-  width: 0.375rem;
-  height: 0.375rem;
-  border-radius: 50%;
-  background: var(--status-offline);
-}
-.providerStatus[data-readiness="ready"] {
-  background: var(--status-online);
-}
-.providerStatus[data-readiness="checking"] {
-  background: var(--status-away);
-}
-.providerStatus[data-readiness="attention"] {
-  background: var(--border-danger);
-}
-
 .portList {
   display: grid;
   margin: 0;

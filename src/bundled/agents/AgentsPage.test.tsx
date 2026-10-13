@@ -85,8 +85,13 @@ const portable: PortableAgent[] = [
 function provider(
   initial: AgentProviderSnapshot["readiness"],
   DialogBody: () => ReactNode = () => <p>Provider controls</p>,
+  attentionLabel = "Set up provider",
 ) {
-  let state: AgentProviderSnapshot = { readiness: initial };
+  let state: AgentProviderSnapshot =
+    initial === "attention"
+      ? { readiness: initial, attentionLabel }
+      : { readiness: initial };
+  let attentionAction: (() => void) | undefined;
   const listeners = new Set<() => void>();
   const check = vi.fn(async () => undefined);
   return {
@@ -97,12 +102,18 @@ function provider(
         return () => listeners.delete(listener);
       },
       check,
+      get attentionAction() {
+        return attentionAction;
+      },
       DialogBody,
     },
     check,
     set(next: AgentProviderSnapshot) {
       state = next;
       for (const listener of listeners) listener();
+    },
+    setAttentionAction(next: (() => void) | undefined) {
+      attentionAction = next;
     },
   };
 }
@@ -292,9 +303,13 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     icon: PlugIcon,
     defaults: () => ({ config: {} }),
   } as unknown as RegisteredAgentType;
-  const brokenProvider = provider("attention", () => {
-    throw new Error("Broken controls");
-  });
+  const brokenProvider = provider(
+    "attention",
+    () => {
+      throw new Error("Broken controls");
+    },
+    "Repair Broken",
+  );
   brokenProvider.contribution.check = vi.fn(() => {
     throw new Error("Broken check");
   });
@@ -335,39 +350,69 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     });
     expect(relayRow).toHaveAttribute("aria-disabled", "true");
     expect(
-      within(menu).getByRole("menuitem", { name: "Broken, attention" }),
+      within(menu).getByRole("menuitem", {
+        name: "Repair Broken, attention",
+      }),
     ).toBeEnabled();
+    const checkingRow = within(menu).getByRole("menuitem", {
+      name: "Checking, checking",
+    });
+    expect(checkingRow).toHaveAttribute("aria-disabled", "true");
+    expect(checkingRow).toHaveAttribute("aria-busy", "true");
     expect(
-      within(menu).getByRole("menuitem", { name: "Checking, checking" }),
-    ).toBeEnabled();
+      checkingRow.querySelector(".motion-safe\\:animate-spin"),
+    ).toBeVisible();
     expect(echo.querySelector("svg")).toBeInTheDocument();
     expect(checkingProvider.check).toHaveBeenCalled();
 
     fireEvent.click(echo);
     const dialog = await screen.findByRole("dialog", { name: "Echo" });
     expect(within(dialog).getByText("Echo controls")).toBeVisible();
-    const refresh = within(dialog).getByRole("button", { name: "Check again" });
     const close = within(dialog).getByRole("button", { name: "Close" });
     expect(
       within(dialog.querySelector("header") as HTMLElement).getAllByRole(
         "button",
       ),
-    ).toEqual([refresh, close]);
-    const checks = echoProvider.check.mock.calls.length;
-    await user.click(refresh);
-    expect(echoProvider.check).toHaveBeenCalledTimes(checks + 1);
-    act(() => echoProvider.set({ readiness: "checking" }));
-    expect(refresh).toBeDisabled();
+    ).toEqual([close]);
+    act(() => echoProvider.set({ readiness: "attention" }));
+    expect(
+      within(dialog).queryByRole("button", { name: "Check again" }),
+    ).toBeNull();
     act(() => echoProvider.set({ readiness: "ready", blocking: true }));
     await user.keyboard("{Escape}");
     expect(dialog).toBeInTheDocument();
-    expect(refresh).toBeDisabled();
     expect(close).toBeDisabled();
     act(() => echoProvider.set({ readiness: "ready" }));
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    const attentionAction = vi.fn();
+    echoProvider.setAttentionAction(attentionAction);
+    act(() =>
+      echoProvider.set({
+        readiness: "attention",
+        attentionLabel: "Log in to Echo",
+      }),
+    );
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Providers" }),
+    );
+    const actionableProviders = await screen.findByRole("menu", {
+      name: "Providers",
+    });
+    await vi.waitFor(() =>
+      expect(actionableProviders).not.toHaveAttribute("data-starting-style"),
+    );
+    fireEvent.click(
+      within(actionableProviders).getByRole("menuitem", {
+        name: "Log in to Echo, attention",
+      }),
+    );
+    expect(attentionAction).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
 
     await user.click(more);
     await user.hover(
@@ -379,7 +424,7 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     );
     fireEvent.click(
       within(providers).getByRole("menuitem", {
-        name: "Broken, attention",
+        name: "Repair Broken, attention",
       }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(

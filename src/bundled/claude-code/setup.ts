@@ -140,15 +140,22 @@ export class ClaudeSetup {
   };
   private set(change: Partial<SetupState>) {
     this.state = { ...this.state, ...change };
-    this.health = Object.freeze({
-      readiness:
-        !this.state.status || this.state.checking
-          ? "checking"
-          : this.state.status.state === "ready"
-            ? "ready"
-            : "attention",
-      ...(this.state.running ? { blocking: true } : {}),
-    });
+    const status = this.state.status;
+    this.health = Object.freeze(
+      !status || this.state.checking
+        ? { readiness: "checking" }
+        : status.state === "ready"
+          ? { readiness: "ready" }
+          : {
+              readiness: "attention",
+              attentionLabel:
+                status.state === "missing"
+                  ? "Install Claude Code"
+                  : status.state === "signed-out"
+                    ? "Log in to Claude Code"
+                    : "Claude Code needs attention",
+            },
+    );
     for (const listener of this.listeners) listener();
   }
 

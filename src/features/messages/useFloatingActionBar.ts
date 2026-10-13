@@ -176,8 +176,6 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
-    let needsPosition = true;
-    let previousAnchor: DOMRect | undefined;
     const hide = () => {
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets
@@ -188,7 +186,37 @@ export function useFloatingActionBar(
       bar.style.maxWidth = "";
       delete bar.dataset.placement;
     };
-    const position = (anchor: DOMRect) => {
+    const position = () => {
+      // Resolve the painted message again when edits replace text with media.
+      const visual =
+        row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
+        row.querySelector("[data-message-attachments]")?.firstElementChild ??
+        slot;
+      const anchor = visual.getBoundingClientRect();
+      // A narrow side pane covers, but does not unmount, the channel. Keep its
+      // native top-layer toolbar behind the frontmost workspace as it moves.
+      const front =
+        workspace &&
+        document
+          .elementsFromPoint(
+            Math.max(
+              0,
+              Math.min(
+                anchor.x + anchor.width / 2,
+                document.documentElement.clientWidth - 1,
+              ),
+            ),
+            Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
+          )
+          .find(
+            (element) =>
+              !bar.contains(element) && element.closest(workspaceSelector),
+          )
+          ?.closest(workspaceSelector);
+      if (front && front !== workspace) {
+        hide();
+        return;
+      }
       // A top-layer toolbar can retain hover above a portalled modal's backdrop.
       // Keep actions in the active viewer usable, but suppress background rows.
       if (behindActiveModal(row)) {
@@ -240,55 +268,48 @@ export function useFloatingActionBar(
       bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
       bar.style.right = "auto";
     };
+    // A transition or animation on the slot or an ancestor (such as a sliding
+    // drawer) moves it without resizing, mutating or scrolling anything.
+    const moving = () => {
+      for (let node: Element | null = slot; node; node = node.parentElement)
+        for (const animation of node.getAnimations?.() ?? [])
+          if (
+            animation.playState === "running" &&
+            Number.isFinite(animation.effect?.getComputedTiming().endTime)
+          )
+            return true;
+      return false;
+    };
+    let following = false;
+    // Every move of the slot arrives through an event or observer below. Read
+    // its rect once per frame from those, rather than polling it every frame and
+    // forcing a layout whenever the timeline is mid-mutation. Only while finite
+    // motion is in flight does it follow every frame, ending with a realignment
+    // at the resting position.
     const schedule = () => {
-      needsPosition = true;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        position();
+        if (following) following = moving();
+        if (following) schedule();
+      });
     };
-    const trackAnchor = () => {
-      // Sibling edits/media can move the slot without resizing any observed node.
-      // Read only while revealed; avoid positioning work when nothing changed.
-      // Resolve the painted message again when edits replace text with media.
-      const visual =
-        row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
-        row.querySelector("[data-message-attachments]")?.firstElementChild ??
-        slot;
-      const anchor = visual.getBoundingClientRect();
-      // A narrow side pane covers, but does not unmount, the channel. Keep its
-      // native top-layer toolbar behind the frontmost workspace as it moves.
-      const front =
-        workspace &&
-        document
-          .elementsFromPoint(
-            Math.max(
-              0,
-              Math.min(
-                anchor.x + anchor.width / 2,
-                document.documentElement.clientWidth - 1,
-              ),
-            ),
-            Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-          )
-          .find(
-            (element) =>
-              !bar.contains(element) && element.closest(workspaceSelector),
-          )
-          ?.closest(workspaceSelector);
-      if (front && front !== workspace) {
-        hide();
-        previousAnchor = undefined;
-      } else if (
-        needsPosition ||
-        !previousAnchor ||
-        anchor.x !== previousAnchor.x ||
-        anchor.y !== previousAnchor.y ||
-        anchor.width !== previousAnchor.width ||
-        anchor.height !== previousAnchor.height
-      ) {
-        needsPosition = false;
-        position(anchor);
-        previousAnchor = anchor;
-      }
-      frame = requestAnimationFrame(trackAnchor);
+    const follow = () => {
+      following = true;
+      schedule();
     };
+    const motion = (event: Event) => {
+      if (event.target instanceof Node && event.target.contains(slot)) follow();
+    };
+    const motionEvents = [
+      "transitionrun",
+      "transitionend",
+      "transitioncancel",
+      "animationstart",
+      "animationend",
+      "animationcancel",
+    ];
     // Native top-layer boxes do not participate in their DOM ancestor's wheel
     // scroll chain. Keep scrolling the owning history when actions are under
     // the pointer; leave browser zoom gestures alone.
@@ -308,23 +329,42 @@ export function useFloatingActionBar(
       });
     };
     bar.addEventListener("wheel", wheel, { passive: false });
-    trackAnchor();
+    position();
+    if (moving()) follow();
+    for (const type of motionEvents)
+      document.addEventListener(type, motion, true);
     document.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
     observer.observe(slot);
     observer.observe(row);
     observer.observe(bar);
-    if (scroller) observer.observe(scroller);
+    // Sibling edits and media measurements move the slot without resizing any
+    // observed node. The toolbar's own positioning writes must not retrigger it.
+    const siblings = new MutationObserver((records) => {
+      if (records.some((record) => !bar.contains(record.target))) schedule();
+    });
+    if (scroller) {
+      observer.observe(scroller);
+      siblings.observe(scroller, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+      });
+    }
     // Observe modals only while reveal is requested, and share the existing
     // coalesced positioning update.
     const unobserveModals = observeModals(schedule);
     return () => {
       bar.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);
+      for (const type of motionEvents)
+        document.removeEventListener(type, motion, true);
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
       observer.disconnect();
+      siblings.disconnect();
       unobserveModals();
       hide();
     };

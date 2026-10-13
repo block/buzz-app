@@ -77,6 +77,65 @@ it("retained offline tabs can close and open threads without activating connecte
   expect(restored.result.current.tabs).toHaveLength(2);
 });
 
+it("a keyboard move focuses the placed tab at once and never takes focus back later", async () => {
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels: [] }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const current = { id: "alpha", name: "Alpha" };
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current,
+      channels: [current],
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  act(() => h.result.current.state.openThreadTab("alpha", "first", "first"));
+  act(() => h.result.current.state.openThreadTab("alpha", "second", "second"));
+  const strip = document.createElement("div");
+  for (const item of h.result.current.workspace.items) {
+    const tab = document.createElement("button");
+    tab.setAttribute("role", "tab");
+    tab.dataset.tabValue = item.id;
+    strip.append(tab);
+  }
+  const elsewhere = document.createElement("button");
+  document.body.append(strip, elsewhere);
+  const moving = h.result.current.workspace.items[1];
+  if (!moving || !("move" in moving)) throw new Error("expected a thread tab");
+  act(() => moving.move?.(-1));
+  expect(h.result.current.state.tabs.map((tab) => tab.id)).toEqual([
+    "thread:alpha:second",
+    "thread:alpha:first",
+  ]);
+  expect(document.activeElement).toBe(strip.lastElementChild);
+  // The user moves on before the next frame; that frame must not undo it.
+  elsewhere.focus();
+  await new Promise((frame) => requestAnimationFrame(frame));
+  expect(document.activeElement).toBe(elsewhere);
+  strip.remove();
+  elsewhere.remove();
+});
+
 it("the current verified read-only preview owns its thread host, but unrelated previews do not", () => {
   const current = { id: "preview", name: "Public", readOnly: true as const };
   const other = { id: "other", name: "Other public", readOnly: true as const };

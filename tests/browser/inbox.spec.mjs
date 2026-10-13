@@ -66,10 +66,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(
     inbox.getByRole("button", { name: "Load older activity", exact: true }),
   ).toHaveCount(0);
-  await expect(inbox.getByRole("combobox")).toHaveCount(1);
-  await expect(inbox.getByRole("combobox", { name: "Show" })).toHaveText(
-    "Inbox",
-  );
+  await expect(inbox.getByRole("combobox")).toHaveCount(0);
   await expect(filter).toHaveText("All");
   const expectBareUnread = async () => {
     await expect(unread).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -123,7 +120,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     // persistent radio selection styling.
     await filter.hover();
     const radios = filters.getByRole("menuitemradio");
-    await expect(radios).toHaveCount(5);
+    await expect(radios).toHaveCount(7);
     await expect(radios.locator("svg")).toHaveCount(0);
     const selected = filters.getByRole("menuitemradio", {
       name: selectedLabel,
@@ -146,7 +143,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       await expect(checkbox.locator("svg")).toHaveCount(1);
       await expect(checkbox.locator("svg")).toBeVisible();
     }
-    for (const label of ["From", "Show"]) {
+    for (const label of ["Status", "Type", "From"]) {
       const metadata = filters.getByText(label, { exact: true });
       await expect(metadata).toHaveAttribute("data-emphasis", "quiet");
       await expect(metadata).not.toHaveCSS(
@@ -161,6 +158,12 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       );
     }
   };
+  await expect(
+    filters.getByRole("menuitemcheckbox", { name: "Agents", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    filters.getByRole("menuitemradio", { name: "Drafts", exact: true }),
+  ).toBeInViewport();
   await expectMenuSelection("All");
   await page.keyboard.press("Escape");
   await expect(filter).toBeFocused();
@@ -260,7 +263,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       const bounds = element.getBoundingClientRect();
       const controls = [
         ...element.querySelectorAll(
-          '[role="combobox"], [aria-label="Inbox filters"], [aria-label="Unread only"]',
+          '[aria-label="Inbox filters"], [aria-label="Unread only"]',
         ),
       ].map((control) => {
         const { left, right, top, bottom } = control.getBoundingClientRect();
@@ -274,14 +277,14 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
         controls,
       };
     });
-    expect(layout.controls.length).toBe(3);
+    expect(layout.controls.length).toBe(2);
     for (const control of layout.controls) {
       expect(control.left).toBeGreaterThanOrEqual(layout.left);
       expect(control.right).toBeLessThanOrEqual(layout.right);
       expect(control.top).toBeGreaterThanOrEqual(layout.top);
       expect(control.bottom).toBeLessThanOrEqual(layout.bottom);
     }
-    // Show, filters and Unread only remain usable when the toolbar wraps.
+    // The consolidated filter and Unread only remain usable when the toolbar wraps.
 
     const opener = mentionRow.getByRole("button", { name: /^Open / });
     const dot = opener.getByRole("img", { name: "Unread", exact: true });
@@ -322,6 +325,11 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await page.keyboard.press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   await expect(detail).toBeVisible();
+  // The exact-target reveal focuses its row after the thread loads. Let it land
+  // before keyboard sizing, or it can take focus from the handle mid-press.
+  await expect(
+    detail.locator("[data-message-id]").filter({ hasText: "Unread reply 1" }),
+  ).toBeFocused();
   const resizedWidth = await resizeInboxDetail(page, detail);
   await detail
     .getByRole("button", { name: "Close detail", exact: true })

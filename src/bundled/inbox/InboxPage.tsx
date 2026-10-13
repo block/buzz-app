@@ -30,6 +30,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import {
   InboxFilters,
   type ActivityFilter,
+  type ShowFilter,
   type SenderFilter,
 } from "./InboxFilters";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
@@ -44,7 +45,6 @@ import {
   ArchiveOffIcon,
   BellIcon,
 } from "../../shared/design-system/icons";
-import { Select } from "../../shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -68,12 +68,10 @@ import {
   updateArchive,
 } from "./archive";
 
-type ShowFilter = "inbox" | "archived" | "all";
 type AttentionFilter = "all" | "unread";
 const shows = [
   { value: "inbox", label: "Inbox" },
   { value: "archived", label: "Archived" },
-  { value: "all", label: "Inbox + archived" },
 ] as const;
 const activities = [
   { value: "all", label: "All activity" },
@@ -90,7 +88,6 @@ const attentions = [
   { value: "all", label: "All messages" },
   { value: "unread", label: "Unread only" },
 ] as const;
-const showGroups = [{ label: "", options: shows }] as const;
 type Filters = {
   show: ShowFilter;
   activity: ActivityFilter;
@@ -334,10 +331,9 @@ export function InboxView({
   const items = inbox.items;
   const archived = (item: InboxItem) =>
     isArchived(archives, item, activity === "mentions");
-  const viewItems =
-    show === "all"
-      ? items
-      : items.filter((item) => archived(item) === (show === "archived"));
+  const viewItems = items.filter(
+    (item) => archived(item) === (show === "archived"),
+  );
   useEffect(() => {
     try {
       reopenArchives(archiveScope, inbox.items, archiveRevision);
@@ -737,22 +733,15 @@ export function InboxView({
   }, [failure, pending]);
   const toolbar = (
     <header className={styles.toolbar}>
-      {!drafts && (
-        <Select
-          variant="compact"
-          label="Show"
-          value={show}
-          groups={showGroups}
-          onValueChange={(value) => {
-            if (value === show) return;
-            cancelRetry();
-            setSelectedTarget(undefined);
-            setFilter({ show: value as ShowFilter });
-          }}
-        />
-      )}
       <InboxFilters
         view={drafts ? "drafts" : activity}
+        show={show}
+        onShowChange={(value) => {
+          if (value === show) return;
+          cancelRetry();
+          setSelectedTarget(undefined);
+          setFilter({ show: value });
+        }}
         sender={senderFilter}
         unreadOnly={unreadOnly}
         triggerRef={fallbackControl}
@@ -1003,11 +992,6 @@ export function InboxView({
                                       {context}
                                     </span>
                                   </span>
-                                  {show === "all" && rowArchived && (
-                                    <span className="text-caption text-subtle">
-                                      Archived
-                                    </span>
-                                  )}
                                 </span>
                                 <span
                                   id={`${previewId}-${item.id}`}

@@ -17,20 +17,16 @@ test.use({
 });
 
 async function choose(page, inbox, control, option) {
-  if (control === "Show") {
-    await inbox.getByRole("combobox", { name: control }).click();
-    await page.getByRole("option", { name: option, exact: true }).click();
-    await expect(inbox.getByRole("combobox", { name: control })).toContainText(
-      option,
-    );
-    return;
-  }
   await inbox
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();
   const menu = page.getByRole("menu", { name: "Inbox filters" });
   await expect(menu).toBeVisible();
-  if (control === "Sender") {
+  if (control === "Show") {
+    await menu
+      .getByRole("menuitemradio", { name: option, exact: true })
+      .click();
+  } else if (control === "Sender") {
     const people = menu.getByRole("menuitemcheckbox", { name: "People" });
     const agents = menu.getByRole("menuitemcheckbox", { name: "Agents" });
     if (
@@ -65,7 +61,7 @@ async function choose(page, inbox, control, option) {
   await expect(menu).toHaveCount(0);
 }
 
-test("Inbox Show filter is separate from attention filters and preserves them", async ({
+test("Inbox status choices combine with attention filters and preserve them", async ({
   page,
   app,
 }) => {
@@ -77,9 +73,9 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
 
-  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
-    "Inbox",
-  );
+  await expect(
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("All");
   await expect(
     inbox.getByRole("button", { name: "About Inbox archive" }),
   ).toHaveCount(0);
@@ -109,9 +105,9 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await page.reload();
   await openPage(page, "Inbox");
   await expect(rows).toHaveCount(1);
-  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
-    "Archived",
-  );
+  await expect(
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("Archived");
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
   ).toContainText("Mentions");
@@ -124,9 +120,9 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
     0,
   );
-  await choose(page, inbox, "Show", "Inbox + archived");
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText("Archived");
+  await expect(rows.getByRole("button", { name: /^Restore / })).toBeVisible();
   await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   await expect(
@@ -138,21 +134,21 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
-  // Keep the open choice and keyboard highlight while relay activity updates rows.
-  const show = inbox.getByRole("combobox", { name: "Show" });
-  await show.focus();
-  await page.keyboard.press("Enter");
-  // Opening schedules focus into the list; End must target that option, not
-  // the trigger before the keyboard interaction is ready.
-  await expect(
-    page.getByRole("option", { name: "Inbox", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("End");
-  const combined = page.getByRole("option", {
-    name: "Inbox + archived",
+  // Preserve the focused status choice while relay activity updates rows.
+  const trigger = inbox.getByRole("button", {
+    name: "Inbox filters",
     exact: true,
   });
-  await expect(combined).toHaveAttribute("data-highlighted", "");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const archived = page.getByRole("menuitemradio", {
+    name: "Archived",
+    exact: true,
+  });
+  await expect(archived).toBeVisible();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowUp");
+  await expect(archived).toBeFocused();
   app.append(
     "primary",
     channel,
@@ -164,13 +160,14 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
     [["p", app.viewer]],
   );
   await expect(rows).toHaveCount(1);
-  await expect(page.getByRole("option")).toHaveCount(3);
-  await expect(combined).toHaveAttribute("data-highlighted", "");
+  await expect(archived).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("listbox")).toHaveCount(0);
-  await expect(show).toContainText("Inbox + archived");
-  await expect(show).toBeFocused();
-  await expect(rows).toHaveCount(2);
+  await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
+    0,
+  );
+  await expect(trigger).toContainText("Archived");
+  await expect(trigger).toBeFocused();
+  await expect(rows).toHaveCount(1);
 });
 
 test("Inbox archive survives reload and reopens Threads before fresh Mentions", async ({
@@ -357,7 +354,8 @@ test("saved grouped archive converges with unresolved Inbox evidence across relo
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
   await expect(rows).toHaveCount(3);
-  await choose(page, inbox, "Show", "Inbox + archived");
+  await choose(page, inbox, "Show", "Archived");
+  await choose(page, inbox, "Show", "Inbox");
   const saved = await page.evaluate(
     ({ channel, rootId, messageIds }) => {
       const filterKey = Object.keys(localStorage).find(
@@ -393,13 +391,11 @@ test("saved grouped archive converges with unresolved Inbox evidence across relo
     await page.reload();
     await openPage(page, "Inbox");
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    await expect(rows).toHaveCount(3);
+    await expect(rows).toHaveCount(1);
     await choose(page, inbox, "Show", "Archived");
     await expect(rows).toHaveCount(2);
     await choose(page, inbox, "Show", "Inbox");
     await expect(rows).toHaveCount(1);
-    await choose(page, inbox, "Show", "Inbox + archived");
-    await expect(rows).toHaveCount(3);
     expect(
       await page.evaluate((key) => localStorage.getItem(key), saved.key),
     ).toBe(saved.revision);
@@ -545,8 +541,8 @@ test("selected row button advances and menu closes without losing the original d
 });
 
 // Browser-only: a row menu beside a live rich editor must not replace it; a
-// combined-view Archive changes the row action but not its mounted reader.
-test("unselected row menu and combined-view Archive leave the open editor alone", async ({
+// Restoring the other row preserves its unread evidence across status changes.
+test("unselected row Archive preserves the open editor and unread neighbor", async ({
   page,
   app,
 }) => {
@@ -602,24 +598,17 @@ test("unselected row menu and combined-view Archive leave the open editor alone"
   expect(
     (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
   ).toBeUndefined();
-  await choose(page, inbox, "Show", "Inbox + archived");
+  await choose(page, inbox, "Show", "Archived");
+  await expect(rows).toHaveCount(1);
+  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await next.getByRole("button", { name: /^Restore / }).click();
+  await expect(rows).toHaveCount(0);
+  await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(2);
   await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
-  await thread.getByRole("button", { name: /^Open / }).click();
-  await editor.evaluate((el) => {
-    el.dataset.retentionMarker = "combined-editor";
-  });
-  await expect(list).toHaveAttribute("aria-busy", "false");
-  await thread.getByRole("button", { name: /^Archive / }).click();
-  await expect(thread.getByRole("button", { name: /^Restore / })).toBeVisible();
-  await expect(rows).toHaveCount(2);
-  await expect(thread).toHaveAttribute("data-selected", "true");
-  await expect(editor).toHaveText("Keep the unselected archive draft");
-  await expect(editor).toHaveAttribute(
-    "data-retention-marker",
-    "combined-editor",
-  );
-  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  expect(
+    (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
+  ).toBeUndefined();
 });
 
 test("reply and fresh mention reopen their filters without replacing composer draft", async ({
@@ -742,18 +731,18 @@ test("same-account windows reconcile filters and archive intent without reload",
     await expect(rows).toHaveCount(0);
     await expect(siblingRows).toHaveCount(0);
     await choose(other, sibling, "Show", "Archived");
-    await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
-      "Archived",
-    );
+    await expect(
+      inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+    ).toContainText("Archived");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
     await siblingRows.getByRole("button", { name: /^Restore / }).click();
     await expect(rows).toHaveCount(0);
     await expect(siblingRows).toHaveCount(0);
     await choose(page, inbox, "Show", "Inbox");
-    await expect(sibling.getByRole("combobox", { name: "Show" })).toContainText(
-      "Inbox",
-    );
+    await expect(
+      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
+    ).toHaveText("Mentions · Agents");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

@@ -778,7 +778,7 @@ test("same-account windows reconcile filters and archive intent without reload",
     await choose(page, inbox, "Show", "Inbox");
     await expect(
       sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toContainText("All");
+    ).toHaveText("Mentions · Agents");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

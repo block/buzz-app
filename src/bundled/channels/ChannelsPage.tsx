@@ -666,6 +666,24 @@ function ChannelWorkspace({
   };
   const channelConversation = useRef<HTMLDivElement>(null);
   const highlightReturn = useReturnHighlight(channelConversation, currentId);
+  const returnFocus = useRef<
+    { trigger: HTMLElement; channelId: string | undefined } | undefined
+  >(undefined);
+  useLayoutEffect(() => {
+    const pending = returnFocus.current;
+    if (!pending) return;
+    if (pending.channelId !== currentId || !pending.trigger.isConnected) {
+      returnFocus.current = undefined;
+      return;
+    }
+    // The close commit gets one focus handoff, never a deferred request that
+    // can override a later, unrelated tab selection.
+    returnFocus.current = undefined;
+    if (pending.trigger.closest('[inert], [hidden], [aria-hidden="true"]'))
+      return;
+    if (!document.querySelector('dialog[open], [aria-modal="true"]'))
+      pending.trigger.focus({ preventScroll: true });
+  });
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -688,7 +706,8 @@ function ChannelWorkspace({
         routedThread.messageId === tab.messageId
       )
         select(tab.channelId);
-      if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+      const trigger = threadTrigger.current;
+      if (trigger) returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),

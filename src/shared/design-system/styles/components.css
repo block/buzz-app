@@ -417,6 +417,13 @@
     color: var(--text-subtle);
   }
 
+  /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
+  .buzz-avatar[data-size="compact"] {
+    @apply text-caption;
+    width: 1.3125rem;
+    height: 1.3125rem;
+  }
+
   .buzz-avatar[data-size="small"] {
     @apply text-caption;
     width: 1.5rem;
@@ -1720,6 +1727,68 @@
   @media (prefers-reduced-motion: reduce) {
     .buzz-tabs-arrival {
       animation-timing-function: steps(1, end);
+    }
+  }
+
+  /* Activity arrival: a quiet fade. data-arrive="grow" (standalone pills)
+     also opens and closes its space with the same settle timing, so content
+     below moves instead of jumping. */
+  .buzz-arrive {
+    animation: buzz-arrive var(--duration-state) var(--easing-enter) both;
+  }
+  .buzz-arrive[data-arrive="grow"] {
+    display: grid;
+    grid-template-rows: 1fr;
+    animation: buzz-arrive-grow var(--duration-settle) var(--easing-settle) both;
+  }
+  .buzz-arrive[data-arrive="grow"] > * {
+    min-height: 0;
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      backwards;
+  }
+  @keyframes buzz-arrive {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes buzz-arrive-grow {
+    from {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+    to {
+      grid-template-rows: 1fr;
+    }
+  }
+  /* Clips only while the space animates (discrete, held for the duration), so
+     hidden content never adds scroll height and focus rings are unclipped at rest. */
+  @keyframes buzz-arrive-reveal {
+    from,
+    to {
+      overflow: clip;
+    }
+  }
+  /* Leaving: the owner keeps the element mounted until this finishes. */
+  .buzz-arrive[data-arrive="grow"][data-leaving] {
+    pointer-events: none;
+    animation: buzz-leave var(--duration-settle) var(--easing-settle) forwards;
+  }
+  .buzz-arrive[data-arrive="grow"][data-leaving] > * {
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      reverse forwards;
+  }
+  @keyframes buzz-leave {
+    to {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-arrive,
+    .buzz-arrive[data-leaving] {
+      animation: none;
     }
   }
 }

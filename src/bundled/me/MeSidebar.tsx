@@ -196,7 +196,11 @@ function MeConversationRow({
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
 >) {
-  const { agents, agentProfiles } = useWorkingAgents(session, id, working);
+  const { agents, agentProfiles, waiting } = useWorkingAgents(
+    session,
+    id,
+    working,
+  );
   return (
     <ChannelActivityPopover
       session={session}
@@ -228,6 +232,7 @@ function MeConversationRow({
                 agents={agents}
                 profiles={agentProfiles}
                 channelName={title}
+                waiting={waiting}
               />
             </span>
           }

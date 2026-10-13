@@ -210,7 +210,7 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        // Per-user installs, such as Claude Code's official installer, come first:
+        // Per-user installs, such as Claude's official installer, come first:
         // an older system-wide copy in /usr/local/bin would otherwise run instead,
         // and installing again could not replace it.
         let mut directories = std::env::var_os("HOME")

@@ -1,3 +1,4 @@
+import { useReplacedTypers } from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   useCallback,
@@ -43,6 +44,7 @@ export function TypingIndicator({
   canOpenActivity?: ((target: string) => boolean) | undefined;
   openActivity?: ((target: string) => boolean) | undefined;
 }) {
+  const replaced = useReplacedTypers(session, channelId, threadRootId);
   const entries = useSyncExternalStore(
     session.typing.subscribe,
     session.typing.snapshot,
@@ -83,13 +85,14 @@ export function TypingIndicator({
     [session, channelId, needsRows],
   );
   const rows = useSyncExternalStore(subscribeRows, getRows);
-  const agents = [...details.keys()].sort();
+  const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
   const firstAgent = agents[0];
   const humans = entries.filter(
     (entry) =>
       entry.channelId === channelId &&
       entry.threadRootId === threadRootId &&
-      !details.has(entry.pubkey),
+      !details.has(entry.pubkey) &&
+      !replaced.has(entry.pubkey),
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));

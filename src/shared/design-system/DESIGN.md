@@ -691,9 +691,6 @@ when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
-supports `appearance="compact"` for the outlined rounded control used by trailing settings
-choices; it retains an editable value and a browse button.
-Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
@@ -1495,11 +1492,10 @@ viewer includes enabled and disabled examples.
 ### Chip and title fields (proposed)
 
 `Combobox.Control appearance="chip"` drops the field's surface and browse
-button until the control is hovered or open, so a choice reads as a label, such
-as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+button, so an editable choice reads as a compact label. Keyboard focus keeps a ring.
 `Input appearance="title"` sets its value at title size with no field around it,
 for a name that is also the heading, such as the new agent's name. It keeps
-the field border transparent while editing; the caret indicates the edit location.
+the field border transparent at rest and uses the shared perimeter stroke on focus.
 
 Proposed: `InputGroup surface="panel"` uses the panel fill for image URL entry
 on a contrasting modal surface, retaining the shared field focus treatment.

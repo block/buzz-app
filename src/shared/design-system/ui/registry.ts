@@ -194,7 +194,15 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
       "Base UI owns focus, positioning, dismissal and transition presence; shared motion tokens animate entry and exit.",
-    variants: ["default", "wide", "expanded", "motion none", "flex body"],
+    variants: [
+      "default",
+      "wide",
+      "expanded",
+      "motion none",
+      "flex body",
+      "stable-tall height",
+      "padded chrome",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Dialog.tsx",
@@ -248,9 +256,17 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "input",
     name: "Input",
-    purpose: "A single-line text field.",
-    behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    purpose:
+      "A single-line text field. InputGroup owns the shared frame for leading and trailing content.",
+    behavior:
+      "Base UI owns form and keyboard semantics. InputGroup supports inset and panel surfaces while its native input retains focus.",
+    variants: [
+      "default",
+      "disabled",
+      "invalid",
+      "title",
+      "InputGroup panel surface",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Input.tsx",
@@ -794,6 +810,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "field",
       "disabled",
       "align: start | center | end",
+      "compact subtle",
+      "leading icon",
     ],
     status: "proposed",
     collection: "components",

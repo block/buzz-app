@@ -2,6 +2,8 @@ import { ExamplePreview } from "./ExamplePreview";
 import { Section } from "./primitives";
 import { useState, type ReactNode } from "react";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
+import { InputGroup } from "../../../../src/shared/design-system/ui/InputGroup";
+import { CodeIcon } from "../../../../src/shared/design-system/icons";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
 import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
 import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
@@ -120,6 +122,11 @@ export function InputExamples() {
           error="Enter a workspace name."
         >
           <Input required />
+        </Field>
+        <Field label="Image URL on a floating surface">
+          <InputGroup surface="panel">
+            <input type="url" placeholder="https://example.com/image.png" />
+          </InputGroup>
         </Field>
       </FormExample>
     </div>
@@ -420,6 +427,15 @@ export function SelectExamples() {
             groups={workspaceGroups}
           />
         </div>
+        <Select
+          label="Card workspace"
+          variant="compact"
+          appearance="subtle"
+          leading={<CodeIcon size={16} aria-hidden="true" />}
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
       </FormExample>
     </div>
   );

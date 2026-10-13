@@ -21,7 +21,7 @@
   text-align: center;
   user-select: none;
 }
-.card:is([role="option"], [role="listitem"]) {
+.card:is([role="option"], [role="gridcell"]) {
   cursor: pointer;
 }
 .card:is([aria-selected="true"], [data-selected="true"]) {

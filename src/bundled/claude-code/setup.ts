@@ -12,23 +12,40 @@ export type ClaudeStatus =
 
 const CHECK_TIMEOUT_MS = 15_000;
 
-async function queryModels(spawn: Spawn) {
-  const process = await ClaudeProcess.spawn(spawn, { cwd: "~/.buzz" });
-  let timer: ReturnType<typeof setTimeout> | undefined;
+async function queryModels(spawn: Spawn, signal: AbortSignal) {
+  let child: HostProcess | undefined;
+  let process: ClaudeProcess | undefined;
+  const request = new AbortController();
+  const abort = () => {
+    request.abort();
+    void child?.kill();
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  const timer = setTimeout(() => {
+    request.abort(new Error("Claude Code model discovery timed out"));
+    void child?.kill();
+  }, CHECK_TIMEOUT_MS);
   try {
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("Claude Code model discovery timed out")),
-        CHECK_TIMEOUT_MS,
-      );
-    });
-    return await Promise.race([
-      process.initialize({ systemPrompt: "" }).then(() => process.models()),
-      timeout,
-    ]);
+    process = await ClaudeProcess.start(
+      async (id, options) => {
+        request.signal.throwIfAborted();
+        child = await spawn(id, options);
+        if (request.signal.aborted) await child.kill();
+        request.signal.throwIfAborted();
+        return child;
+      },
+      { cwd: "~", systemPrompt: "", discovery: true },
+    );
+    request.signal.throwIfAborted();
+    const models = await process.models();
+    request.signal.throwIfAborted();
+    return models;
   } finally {
-    if (timer) clearTimeout(timer);
-    await process.kill().catch(() => undefined);
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    if (process) await process.kill().catch(() => undefined);
+    else await child?.kill().catch(() => undefined);
   }
 }
 
@@ -105,6 +122,8 @@ export async function runStep(
 export type SetupState = Readonly<{
   status: ClaudeStatus | undefined;
   models: readonly ClaudeModel[];
+  modelsChecking: boolean;
+  modelsError: string;
   checking: boolean;
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
@@ -117,6 +136,8 @@ export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
     models: [],
+    modelsChecking: false,
+    modelsError: "",
     checking: false,
     running: undefined,
     output: "",
@@ -124,7 +145,8 @@ export class ClaudeSetup {
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
-  private loadingModels = false;
+  private modelRequest: AbortController | undefined;
+  private modelsLoaded = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
 
@@ -172,7 +194,15 @@ export class ClaudeSetup {
       return;
     }
     if (this.state.checking || this.state.running) return;
-    this.set({ checking: true });
+    this.modelRequest?.abort();
+    this.modelRequest = undefined;
+    this.modelsLoaded = false;
+    this.set({
+      checking: true,
+      models: [],
+      modelsChecking: false,
+      modelsError: "",
+    });
     const status = await checkClaude(this.spawn);
     this.set({
       status,
@@ -182,20 +212,31 @@ export class ClaudeSetup {
   }
 
   /** Loads optional model copy only for surfaces that display the catalog. */
-  async loadModels() {
+  async loadModels(retry = false) {
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
-      this.loadingModels
+      this.modelRequest ||
+      (this.modelsLoaded && !retry)
     )
       return;
-    this.loadingModels = true;
+    const request = new AbortController();
+    this.modelRequest = request;
+    this.set({ modelsChecking: true, modelsError: "" });
     try {
-      this.set({ models: await queryModels(this.spawn) });
-    } catch {
-      // Model metadata is optional; setup remains usable when discovery fails.
+      const models = await queryModels(this.spawn, request.signal);
+      if (this.modelRequest === request) this.set({ models });
+    } catch (error) {
+      if (this.modelRequest === request && !request.signal.aborted)
+        this.set({
+          modelsError: error instanceof Error ? error.message : String(error),
+        });
     } finally {
-      this.loadingModels = false;
+      if (this.modelRequest === request) {
+        this.modelRequest = undefined;
+        this.modelsLoaded = true;
+        this.set({ modelsChecking: false });
+      }
     }
   }
 
@@ -234,6 +275,8 @@ export class ClaudeSetup {
     return this.process?.kill();
   }
   dispose() {
+    this.modelRequest?.abort();
+    this.modelRequest = undefined;
     void this.cancel();
   }
 }

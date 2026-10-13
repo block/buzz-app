@@ -141,13 +141,15 @@ export class ClaudeSetup {
   private set(change: Partial<SetupState>) {
     this.state = { ...this.state, ...change };
     const status = this.state.status;
+    const blocking = this.state.running ? { blocking: true as const } : {};
     this.health = Object.freeze(
       !status
-        ? { readiness: "checking" }
+        ? { readiness: "checking", ...blocking }
         : status.state === "ready"
-          ? { readiness: "ready" }
+          ? { readiness: "ready", ...blocking }
           : {
               readiness: "attention",
+              ...blocking,
               attentionLabel:
                 status.state === "missing"
                   ? "Install Claude Code"

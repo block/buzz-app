@@ -678,13 +678,16 @@ form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
-trailing row choices: a small ghost trigger with a visually hidden accessible
+trailing row choices: a small outlined trigger with a quiet `border-standard`
+boundary and a visually hidden accessible
 label, bounded single-line value, and full choice text in the popup and value hint.
 Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
 selection-mark slot in every option so selecting the widest label cannot resize it.
 The caller owns its column width. `align="end"` anchors a trailing choice popup
 to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. For searchable choices, use the shared Combobox parts; keep
+when the choice is unavailable. An option may include one concise supporting
+description; Select shows it as a byline in the popup while the closed trigger
+retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep
@@ -1431,6 +1434,13 @@ is a specific product-mark exception, not another general icon family.
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
 the shared icon gateway. It does not permit another general icon library.
+
+Agent-type provider marks follow the same single-owner path. Keep approved artwork
+in `icons/HarnessLogos.tsx` (with colocated raster assets when needed), record its
+provenance in `NOTICE.md`, and export it through `icons/index.ts` with custom-icon
+metadata. The registering agent type references that export once through
+`AgentType.icon`; host-owned selectors render the registered mark and never rebuild
+a provider-to-icon map from type IDs.
 
 ### Picker search and choices
 

@@ -20,6 +20,7 @@ import { AgentBrowse } from "./AgentBrowse";
 import { AgentCard, AgentPortrait } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { AgentTabs } from "./AgentTabs";
+import { useAgentSettingsHost } from "./AgentSettingsHost";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
 import { AgentDelete } from "../../features/agents/AgentManage";
@@ -34,7 +35,6 @@ import type {
 import type {
   Agent,
   Agents,
-  Carry,
   RegisteredAgentType,
   Team,
 } from "../../features/agents/service";
@@ -48,7 +48,6 @@ import {
 } from "../../features/conversation/ContributionBoundary";
 import {
   ArrowLeftIcon,
-  ArrowRightIcon,
   CircleNotchIcon,
   CopyIcon,
   DotsThreeIcon,
@@ -58,11 +57,9 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
-import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
-import { FieldButton } from "../../shared/design-system/ui/FieldButton";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -70,8 +67,6 @@ import {
   MenuPopup,
   MenuIcon,
   MenuItem,
-  MenuRadioGroup,
-  MenuRadioItem,
   MenuRoot,
   MenuSubmenu,
   MenuSubmenuPopup,
@@ -1224,25 +1219,7 @@ function AgentBuild({
 }) {
   const [copied, setCopied] = useState(false);
   const [pictureError, setPictureError] = useState("");
-  const [pendingType, setPendingType] = useState<{
-    key: string;
-    config: unknown;
-  }>();
-  const stagedType = pendingType?.key !== agent.type ? pendingType : undefined;
-  const settingsType =
-    types.find((item) => item.key === stagedType?.key) ?? type;
-  const settingsAgent = stagedType
-    ? { ...agent, type: stagedType.key, config: stagedType.config }
-    : agent;
-  const pendingTypeSave = stagedType
-    ? async (config: unknown = stagedType.config) => {
-        await agents.retype(agent.pubkey, stagedType.key, { config });
-        setPendingType(undefined);
-      }
-    : undefined;
-  const canRetype =
-    agent.place === "here" &&
-    types.some((item) => !item.remote && item.key !== agent.type);
+  const settings = useAgentSettingsHost({ agents, agent, type, types });
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
@@ -1304,249 +1281,12 @@ function AgentBuild({
         )}
         <AgentTabs
           agents={agents}
-          agent={settingsAgent}
-          type={settingsType}
+          agent={settings.agent}
+          type={settings.type}
           channels={channels}
-          settingsHost={{
-            ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
-            ...(canRetype
-              ? {
-                  typeControl: (dirty: boolean) => (
-                    <TypeField
-                      agents={agents}
-                      agent={agent}
-                      type={type}
-                      types={types}
-                      dirty={dirty}
-                      selected={stagedType?.key ?? agent.type}
-                      onSelect={setPendingType}
-                    />
-                  ),
-                }
-              : {}),
-          }}
+          settingsHost={settings.settingsHost}
         />
       </section>
-    </div>
-  );
-}
-
-const CARRY_LABELS: Record<keyof Carry, string> = {
-  instructions: "Instructions",
-  workspace: "Workspace",
-};
-const CARRY_KEYS = Object.keys(CARRY_LABELS) as (keyof Carry)[];
-
-/** The agent's type, which the owner can change between turns. */
-function TypeField({
-  agents,
-  agent,
-  type,
-  types,
-  dirty,
-  selected,
-  onSelect,
-}: {
-  agents: Agents;
-  agent: Agent;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
-  dirty: boolean;
-  selected: string;
-  onSelect(type: { key: string; config: unknown } | undefined): void;
-}) {
-  // A local key can move only between local runtimes. Hosted providers own
-  // their agents' keys and have a separate lifecycle.
-  const available =
-    agent.place === "here" ? types.filter((item) => !item.remote) : [];
-  const others = available.filter((item) => item.key !== agent.type);
-  const selectedType = available.find((item) => item.key === selected) ?? type;
-  const TypeIcon = selectedType?.icon;
-  const [error, setError] = useState("");
-  const [migration, setMigration] = useState<{
-    target: RegisteredAgentType;
-    preview: ReturnType<Agents["previewRetype"]>;
-  }>();
-  const choose = (next: string) => {
-    if (next === selected) return;
-    if (next === agent.type) {
-      onSelect(undefined);
-      return;
-    }
-    const target = available.find((item) => item.key === next);
-    if (!target) return;
-    setError("");
-    try {
-      setMigration({
-        target,
-        preview: agents.previewRetype(agent.pubkey, target.key),
-      });
-    } catch (reason) {
-      setError(message(reason));
-    }
-  };
-  const stage = () => {
-    if (!migration) return;
-    setError("");
-    onSelect({ key: migration.target.key, config: migration.preview.config });
-    setMigration(undefined);
-  };
-  const value = (
-    <span className="flex min-w-0 items-center gap-2">
-      {TypeIcon && <TypeIcon size={20} aria-hidden="true" />}
-      {selectedType?.title ?? "Type unavailable"}
-    </span>
-  );
-  return (
-    <>
-      <Field label="Provider">
-        {others.length > 0 ? (
-          <MenuRoot
-            onOpenChange={(open) => {
-              if (open) setError("");
-            }}
-          >
-            <MenuTrigger
-              aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
-              render={<FieldButton>{value}</FieldButton>}
-            />
-            <MenuPopup>
-              <MenuRadioGroup
-                value={selected}
-                onValueChange={(next) => choose(String(next))}
-              >
-                {available.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <MenuRadioItem
-                      key={item.key}
-                      value={item.key}
-                      selection="highlight"
-                      closeOnClick
-                    >
-                      <ChoiceRow
-                        label={item.title}
-                        leading={Icon ? <Icon size={20} /> : undefined}
-                      />
-                    </MenuRadioItem>
-                  );
-                })}
-              </MenuRadioGroup>
-            </MenuPopup>
-          </MenuRoot>
-        ) : (
-          value
-        )}
-      </Field>
-      {error && !migration && (
-        <p role="alert" className="m-0 mt-1 text-body-sm text-danger">
-          {error}
-        </p>
-      )}
-      <Dialog
-        open={Boolean(migration)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMigration(undefined);
-            setError("");
-          }
-        }}
-        title={
-          migration
-            ? `Move ${agent.name} to ${migration.target.title}?`
-            : "Move agent?"
-        }
-        headerGap="compact"
-        actions={
-          <>
-            <Button onClick={() => setMigration(undefined)}>Cancel</Button>
-            <Button variant="primary" onClick={stage}>
-              Continue
-            </Button>
-          </>
-        }
-      >
-        {migration && (
-          <MigrationPreview
-            source={type}
-            target={migration.target}
-            preview={migration.preview}
-            discardDraft={dirty}
-          />
-        )}
-      </Dialog>
-    </>
-  );
-}
-
-function MigrationPreview({
-  source,
-  target,
-  preview,
-  discardDraft,
-}: {
-  source: RegisteredAgentType | undefined;
-  target: RegisteredAgentType;
-  preview: ReturnType<Agents["previewRetype"]>;
-  discardDraft: boolean;
-}) {
-  const SourceIcon = source?.icon;
-  const TargetIcon = target.icon;
-  const carry = CARRY_KEYS.filter(
-    (key) => preview.moved.includes(key) || preview.dropped.includes(key),
-  );
-  const warning = source?.migrationWarning;
-  return (
-    <div className="grid gap-4">
-      <div className="flex items-center gap-3 text-body">
-        <span className="flex items-center gap-2">
-          {SourceIcon && <SourceIcon size={24} aria-hidden="true" />}
-          {source?.title ?? "Unavailable type"}
-        </span>
-        <ArrowRightIcon size={16} aria-hidden="true" />
-        <span className="flex items-center gap-2">
-          {TargetIcon && <TargetIcon size={24} aria-hidden="true" />}
-          {target.title}
-        </span>
-      </div>
-      <p className="m-0 text-body-sm text-secondary">
-        The provider changes when you save settings. Your agent will continue
-        the conversation in Buzz.
-        {warning && ` ${warning}`}
-      </p>
-      {discardDraft && (
-        <p className="m-0 text-body-sm text-warning">
-          Unsaved Settings changes will be discarded when you continue.
-        </p>
-      )}
-      {(carry.length > 0 || preview.settings.length > 0) && (
-        <dl className="m-0 grid gap-2">
-          {carry.map((key) => {
-            const moved = preview.moved.includes(key);
-            const dropped = preview.dropped.includes(key);
-            return (
-              <div className="flex justify-between gap-3" key={key}>
-                <dt>{CARRY_LABELS[key]}</dt>
-                <dd
-                  className={`m-0 text-body-sm ${dropped ? "text-danger" : "text-secondary"}`}
-                >
-                  {dropped ? "Dropped" : moved ? "Moves" : null}
-                </dd>
-              </div>
-            );
-          })}
-          {preview.settings.map((setting) => (
-            <div className="flex justify-between gap-3" key={setting.id}>
-              <dt>{setting.label}</dt>
-              <dd
-                className={`m-0 text-body-sm ${setting.outcome === "reset" ? "text-warning" : "text-danger"}`}
-              >
-                {setting.outcome === "reset" ? "Resets" : "Dropped"}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
     </div>
   );
 }

@@ -206,6 +206,21 @@ it("is disabled as a whole", () => {
   expect(control()).toBeDisabled();
 });
 
+it("shows that models are loading", () => {
+  render(
+    <ModelPicker
+      models={[]}
+      allowCustomModel={false}
+      value=""
+      defaultLabel="Default model"
+      onChange={vi.fn()}
+      loading
+    />,
+  );
+  expect(control()).toBeDisabled();
+  expect(screen.getByText("Loading models…")).toBeVisible();
+});
+
 it("presents rich model rows inside a menu", async () => {
   const { onChange, user } = setupMenu("sonnet");
   await user.click(screen.getByRole("button", { name: "Models" }));

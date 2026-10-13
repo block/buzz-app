@@ -224,6 +224,7 @@ export function ModelPicker({
               else onChange(model);
             }}
           />
+          {loading && <p className="buzz-field-description">Loading models…</p>}
         </div>
       )}
       {allowCustomModel && customModel !== null && (

@@ -6,19 +6,9 @@
     "networkOrigins": ["https://downloads.claude.ai"],
     "processes": [
       {
-        "id": "claude",
+        "id": "claude-sh",
         "program": "bash",
-        "args": ["claude.sh", "run"]
-      },
-      {
-        "id": "install",
-        "program": "bash",
-        "args": ["claude.sh", "install"]
-      },
-      {
-        "id": "use",
-        "program": "bash",
-        "args": ["claude.sh", "use"]
+        "args": ["-c"]
       },
       {
         "id": "platform",

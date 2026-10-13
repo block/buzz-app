@@ -51,8 +51,11 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 /** Applies the plugin to a stand-in context; sign-in runs until killed. */
 function applied({ loggedIn = true } = {}) {
   let type: AgentType<Config> | undefined;
-  const spawn = vi.fn(async (_id: string, options: HostProcessOptions = {}) => {
-    const args = (options.args ?? []).join(" ");
+  const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
+    // Claude runs as a step of claude.sh: its script, $0 and step come first.
+    const args = (options.args ?? [])
+      .slice(id === "claude-sh" ? 3 : 0)
+      .join(" ");
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
       if (args === "auth login") kill = () => resolve(null);

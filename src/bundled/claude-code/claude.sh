@@ -1,6 +1,6 @@
 # Buzz's own copy of Claude, apart from any `claude` the user installed.
-# The plugin's processes run this with `bash -c` (the app inlines it into the
-# manifest), each starting with one of:
+# The plugin runs it as `bash -c` (see `withScript` in setup.ts), each time
+# with one of these steps:
 #
 #   run [ARGS...]                    runs the copy in use with ARGS
 #   install VERSION PLATFORM SHA256  downloads a release and checks it

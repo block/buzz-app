@@ -4,7 +4,8 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import { fakeSpawn } from "./claude-testing";
-import { checkClaude, ClaudeSetup, MIN_VERSION } from "./setup";
+import script from "./claude.sh?raw";
+import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
 
 /** A spawn whose processes print `output[args]` and exit with its code. */
 function scripted(
@@ -256,4 +257,17 @@ it("waits for a Claude agent before the first download", async () => {
   expect(requests).toEqual([]);
   await setup.update(true);
   expect(requests).toHaveLength(2);
+});
+
+it("starts Claude and its install steps as steps of claude.sh", async () => {
+  const { spawn, calls } = scripted({});
+  const run = withScript(spawn);
+  await run("claude", { args: ["--version"] });
+  await run("use", { args: ["2.1.300"] });
+  await run("platform");
+  expect(calls).toEqual([
+    { id: "claude-sh", args: [script, "claude.sh", "run", "--version"] },
+    { id: "claude-sh", args: [script, "claude.sh", "use", "2.1.300"] },
+    { id: "platform", args: [] },
+  ]);
 });

@@ -4,7 +4,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
-import { ClaudeSetup } from "./setup";
+import { ClaudeSetup, withScript } from "./setup";
 import { Create, createTabs } from "./tabs";
 
 export const TYPE_ID = "claude-code";
@@ -20,9 +20,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
-  const spawn = host.spawn?.bind(host);
+  const spawn = host.spawn && withScript(host.spawn.bind(host));
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
-  const runtime = new ClaudeRuntime(host, agents.relay);
+  const runtime = new ClaudeRuntime(spawn ? { spawn } : {}, agents.relay);
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
   let needed: boolean | undefined;

@@ -8,6 +8,7 @@ import type {
   HostResponse,
 } from "../../features/host/service";
 import { ClaudeProcess, ENV, type Spawn } from "./claude";
+import script from "./claude.sh?raw";
 
 export type ClaudeStatus =
   | Readonly<{ state: "missing" }>
@@ -32,6 +33,26 @@ const PLATFORMS: Readonly<Record<string, string>> = {
   "Linux aarch64": "linux-arm64",
   "Linux x86_64": "linux-x64",
 };
+
+/** The `claude.sh` step behind each process the plugin starts by name. */
+const STEPS: Readonly<Record<string, string>> = {
+  claude: "run",
+  install: "install",
+  use: "use",
+};
+/** Starts `claude`, `install` and `use` as steps of `claude.sh`, which the
+ * manifest grants as `bash -c`; other processes start as declared. */
+export const withScript =
+  (spawn: Spawn): Spawn =>
+  (id, options) => {
+    const step = STEPS[id];
+    return step
+      ? spawn("claude-sh", {
+          ...options,
+          args: [script, "claude.sh", step, ...(options?.args ?? [])],
+        })
+      : spawn(id, options);
+  };
 
 /** Orders `a.b.c` versions; negative when `a` is older. */
 export function compareVersions(a: string, b: string) {

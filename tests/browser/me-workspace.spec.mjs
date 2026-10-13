@@ -227,7 +227,8 @@ test.describe("personal recipients", () => {
     app,
   }) => {
     // An older finite head may finish after a live arrival mounts the reader.
-    // Hold that real response so WebKit must initialize before the prepend.
+    // Hold the response to exercise that route; the mounted timeline test
+    // controls the exact zero-viewport ordering independently of browser timing.
     let releaseHead;
     const heldHead = new Promise((resolve) => {
       releaseHead = resolve;

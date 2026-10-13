@@ -4900,6 +4900,42 @@ it("does not ask about outside recipients in a session media-comment composer", 
   expect(add).not.toHaveBeenCalled();
 });
 
+it("keeps the draft and requires explicit Retry when an eager upload fails during nonmember admission", async () => {
+  const h = mount();
+  const result = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => result.promise);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: [second.pubkey] },
+    ],
+  };
+  Object.assign(h.session, {
+    attachments: { upload },
+    channels: {
+      ...h.session.channels,
+      list: () => list,
+    },
+    memberAdditions: { add: vi.fn() },
+  });
+  h.retarget({});
+  h.fill("Keep my draft");
+  act(() => h.commands().insertMention(first));
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  fireEvent.submit(screen.getByRole("form"));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await act(async () => result.reject(new Error("relay down")));
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(upload).toHaveBeenCalledOnce();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input().value).toContain("Keep my draft");
+  expect(
+    screen.getByRole("button", { name: "Retry notes.txt" }),
+  ).toBeInTheDocument();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,

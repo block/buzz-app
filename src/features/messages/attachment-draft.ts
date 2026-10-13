@@ -218,6 +218,10 @@ export function attachmentDraft(
     if (next) start(next);
   }
   function start(item: DraftAttachment, signal = new AbortController().signal) {
+    if (item.status === "error")
+      return Promise.reject(
+        new Error(item.error || "Retry or remove this file."),
+      );
     const existing = pending.get(item.id);
     if (existing && active.has(item.id)) return abortable(existing, signal);
     const work = prepareOne(item, signal);

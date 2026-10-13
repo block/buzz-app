@@ -241,6 +241,7 @@ function AttachmentItem({
       ) : (
         <button
           type="button"
+          data-draft-preview={item.id}
           className={styles.preview}
           aria-label={`Preview ${item.file.name}`}
           onClick={(event) => preview(event.currentTarget)}
@@ -362,6 +363,17 @@ function AttachmentItem({
             )
           }
         />
+        {item.status === "error" && (
+          <IconButton
+            size="xs"
+            shape="round"
+            variant="primary"
+            disabled={disabled}
+            aria-label={`Remove ${item.file.name}`}
+            onClick={() => remove(item.id)}
+            icon={<XIcon size={16} />}
+          />
+        )}
         {item.error && (
           <span role="alert" className="sr-only">
             {item.error}

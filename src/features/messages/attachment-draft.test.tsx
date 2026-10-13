@@ -220,6 +220,9 @@ it("aborting a send cancels eager uploads and retains ready descriptors", async 
   ]);
   expect(draft.result.current.blocked).toBe(true);
 
+  act(() =>
+    draft.result.current.store.retry(draft.result.current.items[1]?.id ?? ""),
+  );
   const retry = new AbortController();
   let retryWork: Promise<readonly UploadedAttachment[]>;
   await act(async () => {
@@ -479,4 +482,25 @@ it("renders real host transfer bytes as a determinate ring through completion", 
   });
   await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
   expect(screen.getByRole("button", { name: "Remove notes.txt" })).toBeTruthy();
+});
+
+it("rejects eager upload errors until explicit Retry, including after Send handoff", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() => draft.result.current.store.add([file()]));
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  await act(async () => h.calls[0]?.result.reject(new Error("relay down")));
+  expect(draft.result.current.blocked).toBe(true);
+  const target = attachmentDraft(h.session, "send", "one");
+  act(() => transferAttachmentDraft(draft.result.current.store, target));
+  await expect(
+    target.prepareForSend(new AbortController().signal),
+  ).rejects.toThrow("relay down");
+  expect(h.calls).toHaveLength(1);
+  expect(target.snapshot()[0]?.status).toBe("error");
+  target.retry(target.snapshot()[0]?.id ?? "");
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  const work = target.prepareForSend(new AbortController().signal);
+  h.calls[1]?.result.resolve(uploaded());
+  await expect(work).resolves.toEqual([uploaded()]);
 });

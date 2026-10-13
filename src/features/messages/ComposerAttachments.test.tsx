@@ -12,6 +12,8 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { DraftAttachment } from "./attachment-draft";
 
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
+
 beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
@@ -233,6 +235,10 @@ it("explains an upload failure on focus and preserves retry and removal", async 
     key: "Delete",
   });
   expect(remove).toHaveBeenCalledWith("failed-file");
+  remove.mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Remove report.pdf" }));
+  expect(remove).toHaveBeenCalledExactlyOnceWith("failed-file");
+  expect(retry).toHaveBeenCalledOnce();
 });
 
 it("keeps removal available during upload", () => {
@@ -428,4 +434,81 @@ it("navigates local image and video previews while uploading without sent-messag
   ).toBeTruthy();
   expect(remove).not.toHaveBeenCalled();
   expect(retry).not.toHaveBeenCalled();
+});
+
+it("shows unavailable playback when the native media listener cannot start", async () => {
+  const url = `https://relay.test/media/${"a".repeat(64)}.mp4`;
+  render(
+    <ComposerAttachments
+      items={[
+        {
+          id: "native-video",
+          file: new File([], "clip.mp4", { type: "video/mp4" }),
+          status: "ready",
+          uploaded: {
+            url,
+            name: "clip.mp4",
+            type: "video/mp4",
+            size: 8,
+            sha256: "a".repeat(64),
+          },
+        },
+      ]}
+      disabled={false}
+      remove={vi.fn()}
+      retry={vi.fn()}
+      media={() => `buzz-media://localhost/${encodeURIComponent(url)}`}
+    />,
+  );
+  await screen.findByText("Preview unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }));
+  await waitFor(() =>
+    expect(screen.getByRole("dialog").textContent).toContain(
+      "Preview unavailable",
+    ),
+  );
+  expect(screen.getByRole("dialog").querySelector("video")).toBeNull();
+});
+
+it("returns focus to the selected generic attachment after viewer navigation", async () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:photo"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  render(
+    <ComposerAttachments
+      items={[
+        {
+          id: "image",
+          file: new File(["png"], "photo.png", { type: "image/png" }),
+          status: "uploading",
+        },
+        {
+          id: "pdf",
+          file: new File(["pdf"], "report.pdf", { type: "application/pdf" }),
+          status: "queued",
+        },
+      ]}
+      disabled={false}
+      remove={vi.fn()}
+      retry={vi.fn()}
+      media={() => undefined}
+    />,
+  );
+  const image = screen.getByRole("button", { name: "Preview photo.png" });
+  image.focus();
+  fireEvent.click(image);
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+  expect(screen.getByRole("dialog").textContent).toContain(
+    "No preview available for this file type.",
+  );
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Preview report.pdf" }),
+    ),
+  );
 });

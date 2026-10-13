@@ -1118,6 +1118,8 @@ function Composer({
         }
       }
       attempt.signal.throwIfAborted();
+      if (attachments.store.snapshot().some((item) => item.status === "error"))
+        return;
       if (
         valueRef.current !== captured ||
         !sameAttachmentSelection(

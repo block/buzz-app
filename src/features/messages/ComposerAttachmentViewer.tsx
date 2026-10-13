@@ -8,6 +8,7 @@ import { galleryMotion } from "./use-image-gallery-motion";
 import { useRef, useState, useLayoutEffect, type RefObject } from "react";
 import { MediaReviewFrame } from "./MediaReviewFrame";
 import { ImageReviewStage } from "./ImageReviewStage";
+import { useMediaElementSource } from "./use-media-element-source";
 import { VideoPlayer } from "./VideoPlayer";
 import { AudioAttachment } from "./AudioAttachment";
 import { FileAttachment } from "./FileAttachment";
@@ -220,6 +221,9 @@ function DraftMedia({
   const source = item.uploaded
     ? resolvedSource
     : (initialSource ?? resolvedSource);
+  const sourceUnavailable = useMediaElementSource(
+    isVideo ? source : undefined,
+  ).unavailable;
   useLayoutEffect(() => {
     if (!activeVideo || !source) return;
     const element = video.current;
@@ -251,7 +255,7 @@ function DraftMedia({
         No preview available for this file type.
       </p>
     );
-  if (!source || failed === source)
+  if (!source || sourceUnavailable || failed === source)
     return (
       <p className={styles.mediaReviewUnavailable} role="status">
         Preview unavailable

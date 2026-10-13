@@ -129,6 +129,18 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     });
     await expect(form.getByText(/Ready$/)).toHaveCount(3);
     expect(uploadRequests).toHaveLength(3);
+    // Real modal focus returns to the navigated generic preview, not its opener.
+    await form.getByRole("button", { name: "Preview picked.txt" }).click();
+    const preview = page.getByRole("dialog", { name: "Attachment preview" });
+    await preview.getByRole("button", { name: "Next attachment" }).click();
+    await expect(
+      preview.getByText("dropped.txt", { exact: true }).first(),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveCount(0);
+    await expect(
+      form.getByRole("button", { name: "Preview dropped.txt" }),
+    ).toBeFocused();
     // Completed eager uploads leave the remove control available.
     await expect(form.locator("[data-uploading]")).toHaveCount(0);
     await expect(remove.locator("svg")).toHaveCount(1);
@@ -567,7 +579,7 @@ test("local previews stay interactive during eager upload and removal collapses 
             if (req.url !== "/api/relay/upload" || req.method !== "POST")
               return next();
             req.resume();
-            const status = ++requests === 1 ? 503 : 204;
+            const status = [1, 4].includes(++requests) ? 503 : 204;
             void held.then(() => {
               res.writeHead(status);
               res.end();
@@ -914,12 +926,65 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => form.evaluate((el) => el.getBoundingClientRect().height))
       .toBe(beforeFailure);
+    const failedRemove = form.getByRole("button", { name: "Remove photo.png" });
+    await expect(failedRemove).toBeVisible();
+    // Both error actions must fit inside the real strip scrollport.
+    for (const action of [retry, failedRemove]) {
+      expect(
+        await action.evaluate((el) => {
+          const control = el.getBoundingClientRect();
+          const strip = el.closest("ul").getBoundingClientRect();
+          return Math.min(
+            control.left - strip.left,
+            strip.right - control.right,
+            control.top - strip.top,
+          );
+        }),
+      ).toBeGreaterThanOrEqual(0);
+    }
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate(
+        (mode) =>
+          document.documentElement.classList.toggle("dark", mode === "dark"),
+        mode,
+      );
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "200%";
+        });
+        await retry.click({ trial: true });
+        await failedRemove.click({ trial: true });
+      }
+    }
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "";
+    });
+    await page.setViewportSize({ width: 1440, height: 950 });
     await form.screenshot({
       path: test.info().outputPath("compact-upload-retry.png"),
     });
     await retry.click();
     await expect(retry).toHaveCount(0);
     await expect(form.getByRole("progressbar")).toHaveCount(0);
+    await form.getByLabel("Choose attachments").setInputFiles({
+      name: "failed.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("failed"),
+    });
+    await expect(
+      form.getByRole("button", { name: "Retry failed.txt" }),
+    ).toBeVisible();
+    await expect(
+      form.getByRole("button", { name: "Send message" }),
+    ).toBeDisabled();
+    await form.getByRole("button", { name: "Remove failed.txt" }).click();
+    await expect(
+      form.getByRole("button", { name: "Retry failed.txt" }),
+    ).toHaveCount(0);
+    await expect(
+      form.getByRole("button", { name: "Send message" }),
+    ).toBeEnabled();
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate(() => {
       window.reviewTransitions = [];

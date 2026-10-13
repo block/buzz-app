@@ -288,6 +288,33 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     return value;
   });
   expect(background).toBe(gradient);
+  // The corner caps draw the visible edge and the backdrop outside its arcs.
+  const caps = await page
+    .locator(".shell-body > [data-joined]")
+    .evaluate((el) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--border-standard)";
+      el.append(probe);
+      const standard = getComputedStyle(probe).color;
+      probe.remove();
+      const [backdrop, edge] = ["::before", "::after"].map((pseudo) =>
+        getComputedStyle(el, pseudo),
+      );
+      return {
+        content: [backdrop.content, edge.content],
+        backdrop: backdrop.backgroundImage,
+        mask: backdrop.maskImage.includes("radial-gradient"),
+        border: [edge.borderTopWidth, edge.borderTopColor === standard],
+        shadow: edge.boxShadow !== "none",
+      };
+    });
+  expect(caps).toEqual({
+    content: ['""', '""'],
+    backdrop: gradient,
+    mask: true,
+    border: ["1px", true],
+    shadow: true,
+  });
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -449,6 +476,74 @@ test("joined surface, sidebar pages, real link panel and compact community navig
   await expect(projects).toHaveAttribute("aria-checked", "true");
   await expectProjectsChoice(1);
 });
+
+// Chromium hit-tests a scroll start on the main thread when a rounded clip
+// encloses the scroller, so one busy task would hold every shell scroll start.
+// Both scrollers overflow so the compositor owns their scrolling. At 2x
+// Chromium composites every scroller whatever the runner's LCD-text setting, so
+// only the shell can send a scroll start to the main thread.
+const scrollStart = scroll.extend({ largeSidebar: true, deviceScaleFactor: 2 });
+scrollStart(
+  "Chromium starts shell scrolls without a main-thread hit test",
+  async ({ page, app, browserName }) => {
+    test.skip(
+      browserName !== "chromium",
+      "WebKit hit-tests scroll starts off the main thread under rounded clips",
+    );
+    await open(page, app);
+    await settle(page);
+    // The timeline opens at its newest row and the channel list at its top.
+    const scrollers = {
+      timeline: [
+        page.getByRole("region", { name: "Channel message history" }),
+        200,
+      ],
+      channels: [
+        page.getByRole("navigation", {
+          name: "Subscribed channels",
+          exact: true,
+        }),
+        -200,
+      ],
+    };
+    const cdp = await page.context().newCDPSession(page);
+    const mainThreadHitTests = {};
+    for (const [name, [scroller, yDistance]] of Object.entries(scrollers)) {
+      const events = [];
+      const collect = ({ value }) => events.push(...value);
+      cdp.on("Tracing.dataCollected", collect);
+      const traced = new Promise((resolve) =>
+        cdp.once("Tracing.tracingComplete", resolve),
+      );
+      await cdp.send("Tracing.start", {
+        categories: "-*,input",
+        transferMode: "ReportEvents",
+      });
+      const { x, y, width, height } = await box(scroller);
+      const offset = await scroller.evaluate((el) => el.scrollTop);
+      // Resolves after the browser has delivered the whole gesture.
+      await cdp.send("Input.synthesizeScrollGesture", {
+        x: x + width / 2,
+        y: y + height / 2,
+        yDistance,
+        gestureSourceType: "mouse",
+      });
+      await expect
+        .poll(() => scroller.evaluate((el) => el.scrollTop))
+        .not.toBe(offset);
+      await cdp.send("Tracing.end");
+      await traced;
+      cdp.off("Tracing.dataCollected", collect);
+      const count = (event) => events.filter((e) => e.name === event).length;
+      expect(
+        count("InputHandlerProxy::HandleGestureScrollBegin"),
+        `the compositor traced the ${name} scroll start`,
+      ).toBeGreaterThan(0);
+      mainThreadHitTests[name] = count("PostingHitTestToMainThread");
+    }
+    expect(mainThreadHitTests).toEqual({ timeline: 0, channels: 0 });
+  },
+);
 
 test("narrow link panels begin after the rendered sidebar", async ({
   page,

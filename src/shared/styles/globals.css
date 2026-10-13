@@ -293,12 +293,98 @@
     display: flex;
     min-width: 0;
   }
+  /* Corner caps. Chromium hit-tests the start of a scroll on the main thread
+     whenever a rounded clip encloses the scroller, so one busy task would hold
+     every shell scroll until it ends. The joined Panel therefore clips its
+     content to a rectangle and redraws its rounded corner on top: ::before
+     repaints the backdrop outside the arc and ::after the Panel's edge. Both
+     ignore pointers and keep their own compositor layers; merged into a
+     content layer they would fail the hit test again. Every engine draws the
+     caps, though only Chromium gains speed, so all hosts share one shell. */
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1;
+    --shell-gutter: var(--space-2);
+    padding: 0 var(--shell-gutter) var(--shell-gutter) 0;
+    isolation: isolate;
+  }
+  @media (min-width: 40rem) {
+    .shell-body {
+      --shell-gutter: var(--space-4);
+    }
+  }
+  .shell-body > .panel {
+    overflow: visible;
+    border-color: transparent;
+    box-shadow: none;
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0;
     container-type: inline-size;
+    /* Not `clip`, which stops lazy images loading ahead of the viewport. */
+    overflow: hidden;
+    /* container-type alone leaves the narrow navigation above the caps. */
+    isolation: isolate;
+  }
+  .shell-body > .panel::before,
+  .shell-body > .panel::after {
+    content: "";
+    position: absolute;
+    /* The Panel's border box within .shell-body. */
+    inset: 0 var(--shell-gutter) var(--shell-gutter) 0;
+    z-index: 1;
+    pointer-events: none;
+    /* Not `transform`: a transform layer snaps to whole pixels, which would
+       part the caps from the Panel at fractional Interface sizes. */
+    will-change: opacity;
+  }
+  .shell-body > .panel::before {
+    --r: var(--panel-radius);
+    --far: calc(100% - var(--r));
+    --outside: transparent calc(var(--r) - 0.5px), black 0;
+    --tile: calc(var(--r) + 2px);
+    /* The viewport-sized .shell-background, aligned at its bottom-right. */
+    background-color: var(--color-shell);
+    background-image: var(--bg-app);
+    background-position: right calc(-1 * var(--shell-gutter)) bottom
+      calc(-1 * var(--shell-gutter));
+    background-size: 100vw 100dvh;
+    background-repeat: no-repeat;
+    /* Each corner square minus its arc. Full-box circles, rather than circles
+       in corner tiles, keep fractional sizes from leaking the fill. Longhands
+       let the build add the -webkit-mask-composite that Chromium < 120 needs. */
+    mask-image:
+      radial-gradient(circle var(--r) at var(--r) var(--r), var(--outside)),
+      radial-gradient(circle var(--r) at var(--far) var(--r), var(--outside)),
+      radial-gradient(circle var(--r) at var(--r) var(--far), var(--outside)),
+      radial-gradient(circle var(--r) at var(--far) var(--far), var(--outside)),
+      linear-gradient(black 0 0), linear-gradient(black 0 0),
+      linear-gradient(black 0 0), linear-gradient(black 0 0);
+    mask-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      left top,
+      right top,
+      left bottom,
+      right bottom;
+    mask-size:
+      auto,
+      auto,
+      auto,
+      auto,
+      var(--tile) var(--tile),
+      var(--tile) var(--tile),
+      var(--tile) var(--tile),
+      var(--tile) var(--tile);
+    mask-repeat: no-repeat;
+    mask-composite:
+      intersect, intersect, intersect, intersect, add, add, add, add;
+  }
+  .shell-body > .panel::after {
+    border: var(--panel-border);
+    border-radius: inherit;
+    box-shadow: var(--panel-shadow);
   }
   .shell-sidebar,
   .shell-sidebar-default {

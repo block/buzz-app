@@ -143,7 +143,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       await expect(checkbox.locator("svg")).toHaveCount(1);
       await expect(checkbox.locator("svg")).toBeVisible();
     }
-    for (const label of ["From", "Show"]) {
+    for (const label of ["Status", "Type", "From"]) {
       const metadata = filters.getByText(label, { exact: true });
       await expect(metadata).toHaveAttribute("data-emphasis", "quiet");
       await expect(metadata).not.toHaveCSS(

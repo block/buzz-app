@@ -212,6 +212,9 @@ export function PanelWorkspace({
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
   const adopted = useRef(adoptSelection);
+  // In the main pane, a newly selected closable tab (a thread) slides in over
+  // the tab it replaces; returning to the permanent tab stays immediate.
+  const [motion, setMotion] = useState<{ enter: string; leave: string }>();
   useLayoutEffect(() => {
     if (adopted.current !== adoptSelection) {
       adopted.current = adoptSelection;
@@ -247,6 +250,12 @@ export function PanelWorkspace({
         block: "nearest",
         inline: "nearest",
       });
+      if (main && previous.current && previous.current !== selected)
+        setMotion(
+          items.find((item) => item.id === selected)?.close
+            ? { enter: selected, leave: previous.current }
+            : undefined,
+        );
       previous.current = selected;
       previousInstance.current = instance;
       focusTab.current = false;
@@ -335,6 +344,8 @@ export function PanelWorkspace({
               aria-labelledby={`${panelId(item.id)}-tab`}
               className={styles.workspacePane}
               data-covered={selected !== item.id || undefined}
+              data-entering={motion?.enter === item.id || undefined}
+              data-leaving={motion?.leave === item.id || undefined}
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >

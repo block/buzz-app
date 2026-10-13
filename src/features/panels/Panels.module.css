@@ -226,6 +226,43 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   opacity: 0;
   pointer-events: none;
 }
+/* A thread opened in the main pane slides across the conversation it covers,
+   which stays visible underneath until the slide lands. */
+.workspaceBody:has(> [data-entering]) {
+  overflow: clip;
+}
+.workspacePane[data-entering]:not([data-covered]) {
+  z-index: 1;
+  background: var(--surface-panel);
+  animation: workspace-enter var(--duration-panel-enter) var(--easing-enter);
+}
+.workspacePane[data-leaving][data-covered] {
+  animation: workspace-hold var(--duration-panel-enter);
+}
+@keyframes workspace-enter {
+  from {
+    transform: translateX(100%);
+    box-shadow: var(--elevation-dock);
+  }
+  to {
+    box-shadow: var(--elevation-dock);
+  }
+}
+@keyframes workspace-hold {
+  from,
+  to {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+html[data-keyboard-input] .workspacePane {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspacePane {
+    animation: none;
+  }
+}
 .tabDetail {
   --space-panel-inset: var(--space-5);
   display: flex;

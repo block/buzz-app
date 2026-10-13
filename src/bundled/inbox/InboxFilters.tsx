@@ -92,32 +92,6 @@ export function InboxFilters({
           style={{ maxHeight: "var(--available-height)" }}
         >
           <MenuGroup>
-            <MenuGroupLabel emphasis="quiet">Status</MenuGroupLabel>
-            <MenuCheckboxItem
-              checked={show !== "archived"}
-              disabled={drafts || show === "inbox"}
-              closeOnClick={false}
-              onCheckedChange={(checked) => {
-                if (!drafts && (checked || show === "all"))
-                  onShowChange(checked ? "all" : "archived");
-              }}
-            >
-              Inbox
-            </MenuCheckboxItem>
-            <MenuCheckboxItem
-              checked={show !== "inbox"}
-              disabled={drafts || show === "archived"}
-              closeOnClick={false}
-              onCheckedChange={(checked) => {
-                if (!drafts && (checked || show === "all"))
-                  onShowChange(checked ? "all" : "inbox");
-              }}
-            >
-              Archived
-            </MenuCheckboxItem>
-          </MenuGroup>
-          <MenuSeparator />
-          <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Type</MenuGroupLabel>
             <MenuRadioGroup value={view} onValueChange={onViewChange}>
               {views
@@ -159,6 +133,28 @@ export function InboxFilters({
             >
               Agents
             </MenuCheckboxItem>
+          </MenuGroup>
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Status</MenuGroupLabel>
+            <MenuRadioGroup value={show} onValueChange={onShowChange}>
+              <MenuRadioItem
+                value="inbox"
+                selection="highlight"
+                disabled={drafts}
+                closeOnClick
+              >
+                Inbox
+              </MenuRadioItem>
+              <MenuRadioItem
+                value="archived"
+                selection="highlight"
+                disabled={drafts}
+                closeOnClick
+              >
+                Archived
+              </MenuRadioItem>
+            </MenuRadioGroup>
           </MenuGroup>
           <MenuSeparator />
           <MenuRadioGroup value={view} onValueChange={onViewChange}>

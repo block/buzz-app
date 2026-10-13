@@ -120,7 +120,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     // persistent radio selection styling.
     await filter.hover();
     const radios = filters.getByRole("menuitemradio");
-    await expect(radios).toHaveCount(5);
+    await expect(radios).toHaveCount(7);
     await expect(radios.locator("svg")).toHaveCount(0);
     const selected = filters.getByRole("menuitemradio", {
       name: selectedLabel,

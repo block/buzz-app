@@ -17,41 +17,39 @@ test.use({
 });
 
 async function choose(page, inbox, control, option) {
+  if (control === "Show" && option === "Inbox and archived") {
+    // Exercise compatibility with a combined view saved by older builds.
+    await page.evaluate(() => {
+      const key = Object.keys(localStorage).find(
+        (key) =>
+          key.startsWith("buzz-view.v1:") &&
+          JSON.parse(key.slice("buzz-view.v1:".length))[1] === "inbox:filters",
+      );
+      if (!key) throw new Error("Missing saved Inbox filters");
+      const value = JSON.stringify({
+        ...JSON.parse(localStorage.getItem(key)),
+        show: "all",
+      });
+      localStorage.setItem(key, value);
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key,
+          newValue: value,
+          storageArea: localStorage,
+        }),
+      );
+    });
+    return;
+  }
   await inbox
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();
   const menu = page.getByRole("menu", { name: "Inbox filters" });
   await expect(menu).toBeVisible();
   if (control === "Show") {
-    const inboxChoice = menu.getByRole("menuitemcheckbox", {
-      name: "Inbox",
-      exact: true,
-    });
-    const archived = menu.getByRole("menuitemcheckbox", {
-      name: "Archived",
-      exact: true,
-    });
-    if (
-      option !== "Archived" &&
-      (await inboxChoice.getAttribute("aria-checked")) !== "true"
-    )
-      await inboxChoice.click();
-    if (
-      option !== "Inbox" &&
-      (await archived.getAttribute("aria-checked")) !== "true"
-    )
-      await archived.click();
-    if (
-      option === "Archived" &&
-      (await inboxChoice.getAttribute("aria-checked")) === "true"
-    )
-      await inboxChoice.click();
-    if (
-      option === "Inbox" &&
-      (await archived.getAttribute("aria-checked")) === "true"
-    )
-      await archived.click();
-    await page.keyboard.press("Escape");
+    await menu
+      .getByRole("menuitemradio", { name: option, exact: true })
+      .click();
   } else if (control === "Sender") {
     const people = menu.getByRole("menuitemcheckbox", { name: "People" });
     const agents = menu.getByRole("menuitemcheckbox", { name: "Agents" });
@@ -167,17 +165,14 @@ test("Inbox status checkboxes combine with attention filters and preserve them",
   });
   await trigger.focus();
   await page.keyboard.press("Enter");
-  const archived = page.getByRole("menuitemcheckbox", {
+  const archived = page.getByRole("menuitemradio", {
     name: "Archived",
     exact: true,
   });
   await expect(archived).toBeVisible();
-  await page.keyboard.press("Home");
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowUp");
   await expect(archived).toBeFocused();
-  await expect(
-    page.getByRole("menuitemcheckbox", { name: "Inbox", exact: true }),
-  ).toBeDisabled();
   app.append(
     "primary",
     channel,
@@ -191,15 +186,12 @@ test("Inbox status checkboxes combine with attention filters and preserve them",
   await expect(rows).toHaveCount(1);
   await expect(archived).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(archived).toBeChecked();
-  await expect(page.getByRole("menu", { name: "Inbox filters" })).toBeVisible();
-  await page.keyboard.press("Escape");
   await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
     0,
   );
-  await expect(trigger).toContainText("Inbox and archived");
+  await expect(trigger).toContainText("Archived");
   await expect(trigger).toBeFocused();
-  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveCount(1);
 });
 
 test("Inbox archive survives reload and reopens Threads before fresh Mentions", async ({

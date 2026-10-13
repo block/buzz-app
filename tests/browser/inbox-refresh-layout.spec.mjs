@@ -174,12 +174,8 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();
   await page
-    .getByRole("menuitemcheckbox", { name: "Archived", exact: true })
+    .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
-  await page
-    .getByRole("menuitemcheckbox", { name: "Inbox", exact: true })
-    .click();
-  await page.keyboard.press("Escape");
   await expect(rows).toHaveCount(1);
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
@@ -199,9 +195,8 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   });
   await filters.click();
   const menu = page.getByRole("menu", { name: "Inbox filters" });
-  await menu
-    .getByRole("menuitemcheckbox", { name: "Inbox", exact: true })
-    .click();
+  await menu.getByRole("menuitemradio", { name: "Inbox", exact: true }).click();
+  await filters.click();
   await menu
     .getByRole("menuitemradio", { name: "Mentions", exact: true })
     .click();
@@ -210,7 +205,7 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
     .getByRole("menuitemcheckbox", { name: "People", exact: true })
     .click();
   await page.keyboard.press("Escape");
-  await expect(filters).toHaveText("Mentions · Inbox and archived · Agents");
+  await expect(filters).toHaveText("Mentions · Agents");
   await expect
     .poll(() =>
       filters.evaluate((element) => element.getBoundingClientRect().right),

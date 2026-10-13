@@ -13,6 +13,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
+import { writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { createRelaySession } from "../../features/relay/session";
@@ -1658,22 +1659,25 @@ async function chooseFilter(label: string, control = "Activity type") {
     );
     return;
   }
+  if (control === "Show" && label === "Inbox and archived") {
+    // Preserve coverage of saved combined views from older builds.
+    const scope = owners.at(-1)?.session.scope;
+    if (!scope) throw new Error("Missing Inbox fixture owner");
+    const key = `buzz-view.v1:${JSON.stringify([scope, "inbox:filters"])}`;
+    await act(async () => {
+      writeView(scope, "inbox:filters", {
+        ...JSON.parse(localStorage.getItem(key) ?? "{}"),
+        show: "all",
+      });
+    });
+    return;
+  }
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
   await user.click(trigger);
   await screen.findByRole("menu", { name: "Inbox filters" });
   if (control === "Show") {
-    const inbox = screen.getByRole("menuitemcheckbox", { name: /^Inbox$/ });
-    const archived = screen.getByRole("menuitemcheckbox", { name: "Archived" });
-    if (label !== "Archived" && inbox.getAttribute("aria-checked") !== "true")
-      await user.click(inbox);
-    if (label !== "Inbox" && archived.getAttribute("aria-checked") !== "true")
-      await user.click(archived);
-    if (label === "Archived" && inbox.getAttribute("aria-checked") === "true")
-      await user.click(inbox);
-    if (label === "Inbox" && archived.getAttribute("aria-checked") === "true")
-      await user.click(archived);
-    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("menuitemradio", { name: label }));
   } else if (control === "Sender") {
     const people = screen.getByRole("menuitemcheckbox", { name: "People" });
     const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
@@ -2480,21 +2484,18 @@ it.each([true, false])(
   },
 );
 
-it("keeps the status checkbox focused through incoming row updates", async () => {
+it("keeps the status choice focused through incoming row updates", async () => {
   const h = fixture();
   const user = userEvent.setup();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
   await user.click(trigger);
-  const archived = await screen.findByRole("menuitemcheckbox", {
+  const archived = await screen.findByRole("menuitemradio", {
     name: "Archived",
   });
-  await user.keyboard("{Home}{ArrowDown}");
+  await user.keyboard("{End}{ArrowUp}");
   await waitFor(() => expect(archived).toHaveFocus());
-  expect(
-    screen.getByRole("menuitemcheckbox", { name: /^Inbox$/ }),
-  ).toHaveAttribute("aria-disabled", "true");
   const incoming = message(h.alice, "room", "Another review request", 50, [
     ["p", h.viewer.pubkey],
   ]);
@@ -2503,13 +2504,8 @@ it("keeps the status checkbox focused through incoming row updates", async () =>
   await waitFor(() => expect(rows()).toHaveLength(3));
   expect(archived).toHaveFocus();
   await user.keyboard("{Enter}");
-  await waitFor(() => expect(archived).toBeChecked());
-  expect(
-    screen.getByRole("menu", { name: "Inbox filters" }),
-  ).toBeInTheDocument();
-  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  expect(trigger).toHaveTextContent("Inbox and archived");
+  expect(trigger).toHaveTextContent("Archived");
   expect(trigger).toHaveFocus();
 });
 
@@ -2629,10 +2625,14 @@ it("combines the existing filter choices without placeholder actions", async () 
   await user.click(screen.getByRole("button", { name: "Inbox filters" }));
   await screen.findByRole("menu", { name: "Inbox filters" });
   for (const name of ["Inbox", "Archived", "People", "Agents"])
-    expect(screen.getByRole("menuitemcheckbox", { name })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(
+      screen.getByRole(
+        name === "Inbox" || name === "Archived"
+          ? "menuitemradio"
+          : "menuitemcheckbox",
+        { name },
+      ),
+    ).toHaveAttribute("aria-disabled", "true");
   await user.click(screen.getByRole("menuitemradio", { name: /^All$/ }));
   await waitFor(() =>
     expect(

@@ -1309,18 +1309,36 @@ function useThreadAgents(
     get,
     get,
   );
-  const activity = useSyncExternalStore(
+  // Subscribe to this thread's working agents, not every activity step.
+  const getWork = () => {
+    const activity = session?.agentActivity?.snapshot();
+    const typers = threadWorkingAgents(
+      activity,
+      keys ? keys.split(",") : [],
+      channelId,
+      rootId,
+      { messageId, agents: represented },
+    );
+    const local = localActivity(
+      {
+        local: (activity?.local ?? []).filter(
+          (row) => row.messageId !== messageId || !represented.has(row.agent),
+        ),
+      },
+      channelId,
+      rootId,
+    );
+    const waiting =
+      typers.length > 0 && typers.every((agent) => breathing(local.get(agent)));
+    return `${waiting ? "waiting" : "working"}:${typers.join(",")}`;
+  };
+  const work = useSyncExternalStore(
     session?.agentActivity?.subscribe ?? noSubscribe,
-    session?.agentActivity?.snapshot ?? noLibrary,
-    session?.agentActivity?.snapshot ?? noLibrary,
+    getWork,
+    getWork,
   );
-  const typers = threadWorkingAgents(
-    activity,
-    keys ? keys.split(",") : [],
-    channelId,
-    rootId,
-    { messageId, agents: represented },
-  );
+  const [state, joined = ""] = work.split(/:(.*)/s);
+  const typers = joined ? joined.split(",") : [];
   const hasWork = typers.length > 0;
   const getLibrary = (hasWork && session?.agentChoices.snapshot) || noLibrary;
   const library = useSyncExternalStore(
@@ -1328,19 +1346,9 @@ function useThreadAgents(
     getLibrary,
     getLibrary,
   );
-  const local = localActivity(
-    {
-      local: (activity?.local ?? []).filter(
-        (row) => row.messageId !== messageId || !represented.has(row.agent),
-      ),
-    },
-    channelId,
-    rootId,
-  );
   return {
     agents:
       library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
-    waiting:
-      typers.length > 0 && typers.every((agent) => breathing(local.get(agent))),
+    waiting: state === "waiting",
   };
 }

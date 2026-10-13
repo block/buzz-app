@@ -39,24 +39,37 @@ import {
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 
+const noSubscribe = () => () => {};
 /** Activity belongs to the exact triggering message, not the composer. */
 export function ActivityAccessory(props: ComposerAccessoryProps) {
   const { session, channelId, message, canOpen } = props;
-  const snapshot = useSyncExternalStore(
+  const messageId = message?.id;
+  // Every row mounts this; only rows with work subscribe to each activity
+  // step, profile and choice change. Others read once and wait for work.
+  const hasWork = useSyncExternalStore(
     session.agentActivity.subscribe,
+    () =>
+      !!messageId &&
+      messageActivity(session.agentActivity.snapshot(), channelId, messageId)
+        .length > 0,
+  );
+  const snapshot = useSyncExternalStore(
+    hasWork ? session.agentActivity.subscribe : noSubscribe,
     session.agentActivity.snapshot,
   );
-  const messageId = message?.id;
   const entries = useMemo(
-    () => (messageId ? messageActivity(snapshot, channelId, messageId) : []),
-    [snapshot, channelId, messageId],
+    () =>
+      messageId && hasWork
+        ? messageActivity(snapshot, channelId, messageId)
+        : [],
+    [snapshot, channelId, messageId, hasWork],
   );
   const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
+    hasWork ? session.profiles.subscribe : noSubscribe,
     session.profiles.snapshot,
   );
   const choices = useSyncExternalStore(
-    session.agentChoices.subscribe,
+    hasWork ? session.agentChoices.subscribe : noSubscribe,
     session.agentChoices.snapshot,
   );
   const resolveName = useChannelIdentityNames(session, channelId);

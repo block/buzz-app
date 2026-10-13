@@ -37,6 +37,21 @@ test("Back restores Personal space without inheriting the active community", asy
   ).toBeVisible();
 });
 
+// An invalid address fails again synchronously, so its Retry control stays.
+test("keyboard Retry keeps focus when the retry fails in place", async ({
+  page,
+  app,
+}) => {
+  await page.goto(`${app.origin}/#buzz=not-json`);
+  const retry = button(page, "Retry navigation");
+  await retry.focus();
+  await retry.press("Enter");
+  await retry.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(resolve)),
+  );
+  await expect(retry).toBeFocused();
+});
+
 test("keyboard Retry hands off focus while reconnecting a failed Messages tab opening", async ({
   page,
   app,

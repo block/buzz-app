@@ -10,9 +10,11 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type MouseEvent,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -63,14 +65,14 @@ const noop = () => () => {};
 type Deletion = {
   row: ChannelMessage;
   authorization?: AgentOwnerAuthorization | undefined;
-  done?: (() => void) | undefined;
+  done?: ((focus: boolean) => void) | undefined;
   focus?: (() => HTMLElement | null) | undefined;
 };
 const Management = createContext<
   | {
       remove(
         row: ChannelMessage,
-        done?: () => void,
+        done?: (focus: boolean) => void,
         focus?: () => HTMLElement | null,
         authorization?: AgentOwnerAuthorization,
       ): void;
@@ -85,7 +87,7 @@ export function useMessageDeletion() {
   const management = useContext(Management);
   const editor = useMessageEditScope();
   return management
-    ? (row: ChannelMessage, done?: () => void) =>
+    ? (row: ChannelMessage, done?: (focus: boolean) => void) =>
         management.remove(row, done, () => editor?.focusTarget() ?? null)
     : undefined;
 }
@@ -104,26 +106,34 @@ export function MessageManagement({
 }) {
   const presented = useConversationPresentation();
   const [selection, setSelection] = useState<Deletion>();
-  const [completions, setCompletions] = useState<
-    { id: string; done: () => void }[]
-  >([]);
+  const completions = useRef(new Map<string, () => void>());
   if (!presented && selection) setSelection(undefined);
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
   );
-  // Dispatched deletions can settle after their confirmation portal retires.
+  // Receipt/verified echo owns success; journal dismissal is not acceptance.
   useEffect(() => {
-    const settled = completions.filter(({ id }) => {
-      const operation = operations.find((item) => item.event.id === id);
-      return !operation || ["seen", "accepted"].includes(operation.delivery);
-    });
-    if (!settled.length) return;
-    setCompletions((current) =>
-      current.filter((item) => !settled.includes(item)),
+    const pending = completions.current;
+    const stop = session.outbox?.observeSend((event) =>
+      event.kind === 5
+        ? () => {
+            const done = pending.get(event.id);
+            pending.delete(event.id);
+            done?.();
+          }
+        : undefined,
     );
-    for (const { done } of settled) done();
-  }, [completions, operations]);
+    return () => {
+      stop?.();
+      pending.clear();
+    };
+  }, [session]);
+  useEffect(() => {
+    for (const id of completions.current.keys())
+      if (!operations.some((item) => item.event.id === id))
+        completions.current.delete(id);
+  }, [operations]);
   const channels = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -216,13 +226,15 @@ export function MessageManagement({
           session={session}
           selection={selection}
           operations={operations}
-          dispatched={(id) => {
+          dispatched={(id, dialog) => {
             const done = selection.done;
-            if (done)
-              setCompletions((current) =>
-                current.some((item) => item.id === id)
-                  ? current
-                  : [...current, { id, done }],
+            if (done && !completions.current.has(id))
+              completions.current.set(id, () =>
+                done(
+                  document.activeElement === document.body ||
+                    !!selection.focus?.()?.contains(document.activeElement) ||
+                    !!dialog?.contains(document.activeElement),
+                ),
               );
           }}
           close={() => setSelection(undefined)}
@@ -426,7 +438,7 @@ function DeleteMessageDialog({
   session: RelaySession;
   selection: Deletion;
   operations: readonly OutgoingEvent[];
-  dispatched(id: string): void;
+  dispatched(id: string, dialog: Element | null): void;
   close(): void;
 }) {
   const { row, authorization } = selection;
@@ -453,7 +465,8 @@ function DeleteMessageDialog({
       close();
     }
   }, [operationId, operation, close]);
-  const run = () => {
+  const run = (event: MouseEvent<HTMLButtonElement>) => {
+    const dialog = event.currentTarget.closest('[role="alertdialog"]');
     setError(undefined);
     try {
       if (
@@ -471,11 +484,11 @@ function DeleteMessageDialog({
         );
       if (operationId) {
         session.outbox?.retry(operationId);
-        dispatched(operationId);
+        dispatched(operationId, dialog);
       } else {
         const id = session.messages.remove([row.id], authorization);
         setOperationId(id);
-        dispatched(id);
+        dispatched(id, dialog);
       }
     } catch (cause) {
       setError(

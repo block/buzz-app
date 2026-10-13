@@ -17,6 +17,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayEvent } from "../../features/relay/events";
+import { PublishRejected } from "../../features/relay/outbox";
 import type { Navigation } from "../../features/navigation/controller";
 import { matchesEvent } from "../../features/relay/projection";
 import {
@@ -102,10 +103,12 @@ afterEach(() => {
 });
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 async function frame() {
   await act(async () => {
@@ -1032,5 +1035,97 @@ it("does not let a withheld deletion completion cancel a replacement edit", asyn
   } finally {
     publication.resolve();
     gate.gate.resolve();
+  }
+});
+
+async function withheldEmptyDeletion() {
+  const h = await fixture(true);
+  const { reader, editor } = await opened(h);
+  act(() => {
+    editor.value = "Retained reply draft";
+  });
+  fireEvent.input(editor);
+  const row = reader.querySelector<HTMLElement>(
+    `[data-message-id="${h.reply?.id}"]`,
+  );
+  if (!row) throw new Error("Missing owned reply");
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row).getByRole("button", { name: "More message actions" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  );
+  await waitFor(() => expect(editor).toHaveValue("My Inbox reply"));
+  act(() => {
+    editor.value = "";
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit form");
+  fireEvent.submit(form);
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  const publication = h.holdPublication();
+  const gate = h.hold();
+  try {
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () => {
+      const refresh = h.session.inboxFeed.refresh();
+      await gate.started.promise;
+      expect(dialog).not.toBeInTheDocument();
+      gate.gate.resolve();
+      await refresh;
+    });
+    return { h, reader, editor, publication };
+  } catch (error) {
+    publication.resolve();
+    throw error;
+  } finally {
+    gate.gate.resolve();
+  }
+}
+
+it("keeps a resumed correction when a rejected deletion is discarded", async () => {
+  const { h, editor, publication } = await withheldEmptyDeletion();
+  try {
+    await act(async () =>
+      publication.reject(new PublishRejected("Deletion refused")),
+    );
+    const discard = await screen.findByRole("button", {
+      name: "Discard failed update",
+    });
+    act(() => {
+      editor.focus();
+      editor.value = "Keep this resumed correction";
+    });
+    fireEvent.input(editor);
+    fireEvent.click(discard);
+    await waitFor(() => expect(h.session.outbox?.snapshot()).toHaveLength(0));
+    expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+    expect(editor).toHaveValue("Keep this resumed correction");
+  } finally {
+    publication.resolve();
+  }
+});
+
+it("restores a deleted edit's draft without taking focus from a recovered Inbox control", async () => {
+  const { editor, publication } = await withheldEmptyDeletion();
+  try {
+    const filter = screen.getByRole("combobox", { name: "Sender" });
+    act(() => filter.focus());
+    expect(filter).toHaveFocus();
+    await act(async () => publication.resolve());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Edit message" }),
+      ).toBeNull(),
+    );
+    expect(editor).toHaveValue("Retained reply draft");
+    expect(filter).toHaveFocus();
+  } finally {
+    publication.resolve();
   }
 });

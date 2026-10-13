@@ -999,8 +999,10 @@ function Composer({
         }
         if (requestDeletion && session.outbox?.supports(5)) {
           const checkpoint = beforeEdit.current;
-          requestDeletion(editing.target, () => {
-            if (beforeEdit.current === checkpoint) editing.close();
+          requestDeletion(editing.target, (focus) => {
+            if (beforeEdit.current !== checkpoint) return;
+            editing.close();
+            focusRestoredDraft.current = focus;
           });
         }
         return;

@@ -1188,6 +1188,7 @@ it.each(["peer", "own"] as const)(
       outbox: {
         supports: () => true,
         subscribe: () => () => {},
+        observeSend: () => () => {},
         snapshot: () => operations,
       },
       unread: {

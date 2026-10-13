@@ -455,9 +455,16 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
 
   // Moving the last side tab away also removes the pane, without toggling it.
   for (let remaining = 2; remaining > 0; remaining--) {
+    const moved = await threadTabs(side).first().getAttribute("data-tab-value");
     await threadTabs(side).first().focus();
     await page.keyboard.press("Alt+Shift+ArrowLeft");
     await expect(threadTabs(side)).toHaveCount(remaining - 1);
+    // Placement commits before moveBy's animation-frame focus handoff. Finish
+    // that handoff before focusing another tab for the next shortcut.
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    await expect(
+      main.locator(`[role="tab"][data-tab-value="${moved}"]`),
+    ).toBeFocused();
   }
   await expect(side).toBeHidden();
   const emptyBounds = await main.boundingBox();

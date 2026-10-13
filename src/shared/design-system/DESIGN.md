@@ -431,9 +431,10 @@ content; Base UI retains each control's keyboard and focus semantics.
 Short action menus and compact account popovers retain 8px `radius-row`
 corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
 never automatically because the viewport is narrow. Dialogs and alert dialogs
-use the same `elevated-material` fill, blur, and accessibility fallback while
-retaining their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
-apply the material to each step; their shared wrapper stays transparent.
+use an opaque `surface-popover` fill so the modal backdrop cannot gray or tint
+the content surface: white in light mode, raised charcoal in dark mode. They
+retain their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
+apply the opaque fill to each step; their shared wrapper stays transparent.
 
 ### Corner scale and nesting
 

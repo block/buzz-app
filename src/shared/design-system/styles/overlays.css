@@ -31,7 +31,7 @@
   /* A stepped dialog paints only its visible cards, not their shared wrapper. */
   .buzz-dialog:not([data-stepped]),
   .buzz-dialog-step {
-    @apply elevated-material;
+    background: var(--surface-popover);
   }
   /* Steps share one centered popup/backdrop; overlap only for the crossfade. */
   .buzz-dialog[data-stepped] {
@@ -180,6 +180,9 @@
     justify-content: safe end;
     gap: var(--space-3);
     overflow-x: auto;
+    /* Keep the 2px ring and its 2px offset inside the scrolling footer. */
+    padding: var(--space-1);
+    margin: calc(-1 * var(--space-1));
   }
   /* Each step retains its own sizing while it exits, including when the next
      step is content-sized. The transparent popup only owns their shared grid. */

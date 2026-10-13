@@ -2480,3 +2480,67 @@ test("empty states preserve grouping and contain translated copy at 200 percent"
     });
   }
 });
+
+// Focus-ring clipping needs real overflow geometry, including the scrolling footer.
+test("dialog footer focus rings remain visible in both themes and widths", async ({
+  page,
+}) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["light", "dark"]) {
+      for (const [route, trigger, role, action] of [
+        [
+          "floating-surfaces",
+          "Open interaction dialog",
+          "dialog",
+          "Close proof",
+        ],
+        [
+          "components/alert-dialog",
+          "Discard example changes",
+          "alertdialog",
+          "Discard",
+        ],
+      ] as const) {
+        await page.goto(`${viewer}#/design/${route}`);
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        await page.getByRole("button", { name: trigger, exact: true }).click();
+        const dialog = page.getByRole(role);
+        await expect(dialog).toHaveCSS(
+          "background-color",
+          mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
+        );
+        await page.keyboard.press("Tab");
+        const button = dialog.getByRole("button", {
+          name: action,
+          exact: true,
+        });
+        await button.focus();
+        await expectKeyboardRing(button);
+        await expect
+          .poll(async () =>
+            button.evaluate((element) => {
+              const footer = element.closest(".buzz-dialog-actions");
+              if (!footer) throw new Error("Missing dialog footer");
+              const control = element.getBoundingClientRect();
+              const bounds = footer.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              const ring =
+                parseFloat(style.outlineWidth) +
+                parseFloat(style.outlineOffset);
+              return {
+                left: control.left - ring >= bounds.left,
+                right: control.right + ring <= bounds.right,
+                top: control.top - ring >= bounds.top,
+                bottom: control.bottom + ring <= bounds.bottom,
+              };
+            }),
+          )
+          .toEqual({ left: true, right: true, top: true, bottom: true });
+        await page.keyboard.press("Escape");
+        await expect(dialog).toHaveCount(0);
+      }
+    }
+  }
+});

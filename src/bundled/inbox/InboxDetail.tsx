@@ -1,3 +1,7 @@
+import {
+  ConversationHost,
+  type ConversationHostServices,
+} from "../../features/conversation/ConversationHost";
 import { ConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
   type ReactNode,
@@ -35,6 +39,7 @@ export function InboxDetail({
   scope,
   navigator,
   extensions,
+  host,
   channelName,
   previewIncomplete,
   onBack,
@@ -47,6 +52,7 @@ export function InboxDetail({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
   onBack(): void;
@@ -274,31 +280,49 @@ export function InboxDetail({
               // The flex class must not override native hidden presentation.
               style={previewIncomplete ? { display: "none" } : undefined}
             >
-              {item.target.kind === "channel" ? (
-                <ChannelPreview
-                  session={session}
-                  extensions={extensions}
-                  channelId={item.channelId}
-                  channelName={
-                    channel?.channelType === "dm"
-                      ? `DM with ${dmName}`
-                      : channelName
-                  }
-                  anchor={target.messageId}
-                />
-              ) : (
-                <ThreadPanel
-                  session={session}
-                  scope={session.scope}
-                  extensions={extensions}
-                  channelId={item.channelId}
-                  channelName={channelName}
-                  messageId={target.messageId}
-                  sessionConversation={channel?.channelType === "session"}
-                  revealSelected
-                  onOpenLink={() => false}
-                />
-              )}
+              <ConversationHost
+                host={host}
+                session={session}
+                scope={session.scope}
+                channelId={item.channelId}
+                channelName={channelName}
+                threadId={
+                  item.target.kind === "channel" ? undefined : target.messageId
+                }
+                extensions={extensions}
+              >
+                {(interactions) => (
+                  <>
+                    {" "}
+                    {item.target.kind === "channel" ? (
+                      <ChannelPreview
+                        interactions={interactions}
+                        session={session}
+                        extensions={extensions}
+                        channelId={item.channelId}
+                        channelName={
+                          channel?.channelType === "dm"
+                            ? `DM with ${dmName}`
+                            : channelName
+                        }
+                        anchor={target.messageId}
+                      />
+                    ) : (
+                      <ThreadPanel
+                        session={session}
+                        scope={session.scope}
+                        extensions={extensions}
+                        channelId={item.channelId}
+                        channelName={channelName}
+                        messageId={target.messageId}
+                        sessionConversation={channel?.channelType === "session"}
+                        revealSelected
+                        {...interactions}
+                      />
+                    )}
+                  </>
+                )}
+              </ConversationHost>
             </div>
           </ConversationPresentation>
         )}

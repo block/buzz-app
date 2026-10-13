@@ -1,3 +1,4 @@
+import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { useRef, useState } from "react";
 import type {
   Attachment,
@@ -81,6 +82,11 @@ export function ConversationTab({
         : null;
     setMedia({ messageId, attachment, seconds, hasComments });
   };
+  const interactions: ConversationInteractions = {
+    onOpenLink: openLink,
+    canOpenLink,
+    onOpenMediaReview: openMedia,
+  };
   return (
     <MessageManagement session={session} channelId={channel.id} active={active}>
       <section
@@ -112,9 +118,7 @@ export function ConversationTab({
             }
             extensions={extensions}
             close={close}
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
-            onOpenMediaReview={openMedia}
+            {...interactions}
           />
         ) : (
           <SessionColumn enabled={sessionConversation}>
@@ -125,10 +129,8 @@ export function ConversationTab({
               viewer={session.viewer}
               cached={!!channel.cached}
               extensions={extensions}
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
+              {...interactions}
               onOpenThread={openThread}
-              onOpenMediaReview={openMedia}
               revealMessageId={sent}
             />
             <MessageComposer

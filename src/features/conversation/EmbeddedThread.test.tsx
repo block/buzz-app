@@ -1,3 +1,8 @@
+import {
+  ConversationHost,
+  type ConversationInteractions,
+} from "./ConversationHost";
+import { ConversationPresentation } from "./ConversationPresentation";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -274,4 +279,46 @@ it("offers recovery for a failed edit left in the outbox", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
   expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
+});
+
+it("the shared conversation host supplies live actions and retires them while its reader is withheld", () => {
+  const h = fixture();
+  let captured: ConversationInteractions | undefined;
+  const mount = (visible: boolean) => (
+    <ConversationPresentation value={visible}>
+      <ConversationHost {...h.props} threadId={h.props.messageId}>
+        {(interactions) => {
+          captured = interactions;
+          return (
+            <button
+              type="button"
+              onClick={() => interactions.onOpenLink("fixture:one")}
+            >
+              Open profile
+            </button>
+          );
+        }}
+      </ConversationHost>
+    </ConversationPresentation>
+  );
+  const view = render(mount(true));
+  const old = captured;
+  expect(old?.canOpenLink?.("fixture:one")).toBe(true);
+  fireEvent.click(screen.getByText("Open profile"));
+  expect(screen.getByText("Linked content")).toBeVisible();
+  expect(h.panelProps()?.channelContext?.threadId).toBe(h.props.messageId);
+  view.rerender(mount(false));
+  expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
+  expect(old?.onOpenLink("fixture:one")).toBe(false);
+  act(() =>
+    old?.onOpenMediaReview?.(
+      "a",
+      { kind: "image", url: "https://fixture.test/image.png" },
+      0,
+    ),
+  );
+  expect(screen.queryByLabelText("Media review")).not.toBeInTheDocument();
+  view.rerender(mount(true));
+  fireEvent.click(screen.getByText("Open profile"));
+  expect(screen.getByText("Linked content")).toBeVisible();
 });

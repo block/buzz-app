@@ -1,4 +1,8 @@
 import {
+  ConversationHost,
+  type ConversationHostServices,
+} from "../../features/conversation/ConversationHost";
+import {
   type ReactNode,
   useEffect,
   useLayoutEffect,
@@ -48,6 +52,7 @@ export function DraftsView({
   scope,
   navigator,
   extensions,
+  host,
   onEmptyRetire,
   toolbar,
   resizeHandle,
@@ -56,6 +61,7 @@ export function DraftsView({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   onEmptyRetire(): void;
   toolbar: ReactNode;
   resizeHandle?: ReactNode;
@@ -393,37 +399,51 @@ export function DraftsView({
             )}
             <div className={styles.draftEditor}>
               {activeChannel ? (
-                active.coordinates.threadRootId ? (
-                  <ThreadPanel
-                    key={active.key}
-                    session={session}
-                    scope={session.scope}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={activeChannel.name}
-                    messageId={active.coordinates.threadRootId}
-                    requireReadyRoot
-                    onDraftSaved={retire}
-                    sessionConversation={
-                      activeChannel.channelType === "session"
-                    }
-                    onOpenLink={() => false}
-                  />
-                ) : (
-                  <ChannelPreview
-                    key={active.key}
-                    session={session}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={
-                      activeChannel.channelType === "dm"
-                        ? `DM with ${destination(activeChannel)}`
-                        : activeChannel.name
-                    }
-                    draft
-                    onDraftSaved={retire}
-                  />
-                )
+                <ConversationHost
+                  key={active.key}
+                  host={host}
+                  session={session}
+                  scope={session.scope}
+                  channelId={activeChannel.id}
+                  channelName={activeChannel.name}
+                  threadId={active.coordinates.threadRootId}
+                  extensions={extensions}
+                >
+                  {(interactions) =>
+                    active.coordinates.threadRootId ? (
+                      <ThreadPanel
+                        key={active.key}
+                        session={session}
+                        scope={session.scope}
+                        extensions={extensions}
+                        channelId={activeChannel.id}
+                        channelName={activeChannel.name}
+                        messageId={active.coordinates.threadRootId}
+                        requireReadyRoot
+                        onDraftSaved={retire}
+                        sessionConversation={
+                          activeChannel.channelType === "session"
+                        }
+                        {...interactions}
+                      />
+                    ) : (
+                      <ChannelPreview
+                        interactions={interactions}
+                        key={active.key}
+                        session={session}
+                        extensions={extensions}
+                        channelId={activeChannel.id}
+                        channelName={
+                          activeChannel.channelType === "dm"
+                            ? `DM with ${destination(activeChannel)}`
+                            : activeChannel.name
+                        }
+                        draft
+                        onDraftSaved={retire}
+                      />
+                    )
+                  }
+                </ConversationHost>
               ) : (
                 <p role="status" className="text-body text-subtle">
                   This conversation is unavailable. Your draft is unchanged.

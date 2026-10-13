@@ -1,3 +1,4 @@
+import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
@@ -1119,6 +1120,11 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
+  const interactions: ConversationInteractions = {
+    onOpenLink: openLink,
+    canOpenLink,
+    onOpenMediaReview: openMediaReview,
+  };
   // The channel conversation: a session column, or the first main-pane tab.
   const body = (
     <SessionColumn enabled={flatSession}>
@@ -1158,10 +1164,8 @@ function ChannelWorkspace({
               ? navigation
               : undefined
           }
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
+          {...interactions}
           onOpenThread={flatSession ? undefined : openThread}
-          onOpenMediaReview={openMediaReview}
           revealMessageId={sent?.channelId === current.id ? sent.id : undefined}
         />
       ) : (

@@ -1,3 +1,5 @@
+const emptyPanels: never[] = [];
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import { readView, writeView } from "../../shared/view-state";
 import { useAttachmentDraft } from "../../features/messages/attachment-draft";
@@ -371,6 +373,17 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
+          host={
+            {
+              relay,
+              navigation: { open },
+              panels: {
+                subscribe: () => () => {},
+                snapshot: () => emptyPanels,
+                resolve: () => undefined,
+              },
+            } as unknown as ConversationHostServices
+          }
           relay={relay}
           navigator={{ open } as unknown as Navigation}
         />

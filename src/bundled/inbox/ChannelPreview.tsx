@@ -1,3 +1,4 @@
+import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { useEffect, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -16,11 +17,13 @@ export function ChannelPreview({
   channelId,
   channelName,
   extensions,
+  interactions,
   anchor,
   draft = false,
   onDraftSaved,
 }: {
   session: RelaySession;
+  interactions: ConversationInteractions;
   channelId: string;
   channelName: string;
   extensions?: ConversationExtensions | undefined;
@@ -78,7 +81,7 @@ export function ChannelPreview({
         channelName={channelName}
         messageId={anchor}
         revealSelected
-        onOpenLink={() => false}
+        {...interactions}
       />
     );
   return (
@@ -103,7 +106,7 @@ export function ChannelPreview({
                   ? { messageId: anchor, signal: inlineSignal }
                   : undefined
               }
-              onOpenLink={() => false}
+              {...interactions}
             />
           )}
           {(window.status === "error" || window.error) && (
@@ -149,6 +152,7 @@ export function ChannelPreview({
               : `Message #${channelName}`
           }
           sessionConversation={channel?.channelType === "session"}
+          {...interactions}
           onSend={setSentId}
           onDraftSaved={onDraftSaved}
         />

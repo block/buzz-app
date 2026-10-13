@@ -15,7 +15,10 @@ export function useReturnHighlight(
     let row: HTMLElement | undefined;
     const clear = () => {
       row?.classList.remove(styles.returnHighlight ?? "");
-      row?.removeEventListener("animationend", clear);
+      row?.removeEventListener("animationend", finish);
+    };
+    const finish = (event: AnimationEvent) => {
+      if (event.target === row && event.pseudoElement === "::after") clear();
     };
     // Let tab selection and the current close/navigation commit settle first.
     // Check once: hidden, unloaded and offscreen roots get no deferred cue.
@@ -49,7 +52,7 @@ export function useReturnHighlight(
       )
         return;
       row.classList.add(styles.returnHighlight ?? "");
-      row.addEventListener("animationend", clear);
+      row.addEventListener("animationend", finish);
     });
     pending.current = () => {
       cancelAnimationFrame(frame);

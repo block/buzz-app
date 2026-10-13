@@ -29,7 +29,7 @@ function insideScrollPadding(el, edge) {
 }
 
 // Browser-only: posted layout, overflow, focus scrolling and real viewer wiring.
-test("posted image strips keep counts visible and every image reachable beside documents", async ({
+test("posted image strips preserve image proportions and keep every image reachable beside documents", async ({
   page,
   browserName,
 }, testInfo) => {
@@ -84,7 +84,7 @@ test("posted image strips keep counts visible and every image reachable beside d
     const strip = history.getByRole("group", { name: "8 images", exact: true });
     const links = strip.getByRole("link");
     await expect(links).toHaveCount(8);
-    await expect(history.getByText("8 images", { exact: true })).toBeVisible();
+    await expect(history.getByText("8 images", { exact: true })).toHaveCount(0);
     const viewer = page.getByRole("dialog", {
       name: "Image viewer",
       exact: true,
@@ -103,14 +103,22 @@ test("posted image strips keep counts visible and every image reachable beside d
           return { top: r.top, width: r.width, height: r.height };
         }),
       );
-      expect(
-        geometry.every(
-          (r) =>
-            r.top === geometry[0].top &&
-            r.width === geometry[0].width &&
-            r.height === r.width,
-        ),
-      ).toBe(true);
+      const availableWidth = await strip.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return (
+          el.clientWidth -
+          parseFloat(style.paddingLeft) -
+          parseFloat(style.paddingRight)
+        );
+      });
+      for (const [i, tile] of geometry.entries()) {
+        const ratio = i % 2 ? 400 / 600 : 900 / 600;
+        const expectedWidth = Math.min(72 * ratio, availableWidth);
+        expect(tile.top).toBe(geometry[0].top);
+        // Account only for the browser's subpixel layout rounding.
+        expect(tile.width).toBeCloseTo(expectedWidth, 1);
+        expect(tile.height).toBeCloseTo(expectedWidth / ratio, 1);
+      }
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
@@ -151,9 +159,9 @@ test("posted image strips keep counts visible and every image reachable beside d
       await links
         .last()
         .evaluate((el) => el.removeAttribute("data-focus-probe"));
-      await expect(
-        history.getByText("8 images", { exact: true }),
-      ).toBeVisible();
+      await expect(history.getByText("8 images", { exact: true })).toHaveCount(
+        0,
+      );
       // Shift+Tab back from the right end exercises the reveal's other branch:
       // the tile whose leading edge the start clips is partly visible too, so
       // the same native no-scroll rule would leave it focused and cut off.

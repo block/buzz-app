@@ -1,21 +1,21 @@
 import type { CSSProperties } from "react";
 
-// Choices ported from block/buzz's AccentPickerContent.
+// The six message colors selected from the designer's reference.
 export const BUBBLE_COLORS = [
   "neutral",
   "blue",
-  "cyan",
   "green",
   "orange",
-  "red",
   "pink",
   "lilac",
-  "purple",
-  "indigo",
 ] as const;
 export type BubbleColor = (typeof BUBBLE_COLORS)[number];
 export const BUBBLE_COLOR_KEY = "buzz-bubble-color.v1";
 export function parseBubbleColor(value: unknown): BubbleColor {
+  // Keep existing device preferences usable after narrowing the palette.
+  if (value === "cyan" || value === "indigo") return "blue";
+  if (value === "red") return "pink";
+  if (value === "purple") return "lilac";
   return BUBBLE_COLORS.includes(value as BubbleColor)
     ? (value as BubbleColor)
     : "neutral";

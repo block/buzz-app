@@ -573,8 +573,12 @@ it.each([9, 40002])(
   },
 );
 
-it.each([{ width: 1600, height: 900 }])(
-  "uses fixed thumbnails regardless of image dimensions: %j",
+it.each([
+  { width: 1600, height: 900 },
+  { width: 400, height: 600 },
+  { width: 600, height: 600 },
+])(
+  "preserves the original image proportions in thumbnails: %j",
   (dimensions) => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -592,11 +596,48 @@ it.each([{ width: 1600, height: 900 }])(
       />,
     );
     expect(html).toContain('data-thumbnail="true"');
-    expect(html).not.toContain("aspect-ratio:");
+    expect(html).toContain(
+      `--image-ratio:${dimensions.width / dimensions.height}`,
+    );
     expect(html).toContain('aria-label="Open image attachment"');
     expect(html).toContain('loading="lazy"');
   },
 );
+
+it("uses loaded image proportions without metadata and resets them when the source changes", () => {
+  const show = (url: string) => (
+    <MessageRow
+      row={{ ...row, attachments: [{ url, kind: "image" }] }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />
+  );
+  const view = renderDom(show("https://image.test/landscape.png"));
+  try {
+    const link = () =>
+      view.getByRole("link", { name: "Open image attachment" });
+    const loaded = (width: number, height: number) => {
+      const image = link().querySelector("img");
+      if (!image) throw new Error("Expected attachment image");
+      Object.defineProperties(image, {
+        naturalWidth: { value: width },
+        naturalHeight: { value: height },
+      });
+      fireEvent.load(image);
+    };
+    loaded(900, 600);
+    expect(link().style.getPropertyValue("--image-ratio")).toBe("1.5");
+    view.rerender(show("https://image.test/portrait.png"));
+    expect(link().style.getPropertyValue("--image-ratio")).toBe("");
+    loaded(300, 600);
+    expect(link().style.getPropertyValue("--image-ratio")).toBe("0.5");
+  } finally {
+    view.unmount();
+  }
+});
 
 it.each([undefined, { width: 640, height: 400 }])(
   "keeps cached images silent and unfetched, but explains a live unavailable source (%j)",
@@ -641,7 +682,11 @@ it.each([undefined, { width: 640, height: 400 }])(
       expect(placeholder).not.toBeNull();
       expect(placeholder).toBeEmptyDOMElement();
       expect(placeholder).toHaveAttribute("data-thumbnail", "true");
-      expect(placeholder).not.toHaveAttribute("style"); // Strip CSS owns fixed geometry.
+      if (dimensions)
+        expect(placeholder).toHaveStyle({
+          "--image-ratio": String(dimensions.width / dimensions.height),
+        });
+      else expect(placeholder).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
@@ -1502,8 +1547,7 @@ it.each([1, 2, 10])(
     expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
     const text = new DOMParser().parseFromString(html, "text/html").body
       .textContent;
-    if (count === 1) expect(text).not.toContain("1 image");
-    else expect(text).toContain(`${count} images`);
+    expect(text).not.toContain(`${count} ${count === 1 ? "image" : "images"}`);
   },
 );
 
@@ -1535,7 +1579,7 @@ it("preserves interleaved file order and counts unavailable images but not unsaf
   expect(html).toContain('role="group" aria-label="1 image"');
   const text = new DOMParser().parseFromString(html, "text/html").body
     .textContent;
-  expect(text).toContain("2 images");
+  expect(text).not.toContain("2 images");
   expect(text).not.toContain("1 image");
   expect(html).toContain("Image unavailable");
   expect(html).not.toContain("javascript:");
@@ -2375,9 +2419,9 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.container.textContent).toContain("👀 2");
-    expect(view.container.textContent).toContain("💬 1");
-    expect(view.container.textContent).toContain("✅ 1");
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
+    expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
+    expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(
       screen.queryByRole("img", { name: "Other agent working" }),
     ).toBeNull();

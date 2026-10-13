@@ -56,6 +56,12 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
+  await button(page, "Blue message color").focus();
+  await page.keyboard.press("Enter");
+  await expect(button(page, "Blue message color")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   const system = page.getByRole("radio", { name: "System", exact: true });
   await expect(system).toBeChecked();
   await page.emulateMedia({ colorScheme: "dark" });
@@ -106,7 +112,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
           "surface-base",
           "surface-panel",
           "text-metadata",
-          "affordance-accent-prominent",
+          "surface-message-own",
         ].map((role) => {
           probe.style.color = `var(--${role})`;
           return [role, getComputedStyle(probe).color];
@@ -137,20 +143,43 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toHaveCSS("backdrop-filter", "blur(8px)");
     await page.keyboard.press("Escape");
   }
-  for (const [mode, colors] of Object.entries(palettes)) {
-    const preview = page.locator(`.buzz-theme-thumbnail[data-mode="${mode}"]`);
-    for (const [part, property, role] of [
-      ["backdrop", "fill", "surface-base"],
-      ["panel", "fill", "surface-panel"],
-      ["lines", "stroke", "text-metadata"],
-      ["accent", "fill", "affordance-accent-prominent"],
-    ]) {
-      for (const element of await preview
-        .locator(`.buzz-theme-preview-${part}`)
-        .all())
-        await expect(element).toHaveCSS(property, colors[role]);
+  for (const hostMode of ["Dark", "Light"]) {
+    await chooseColorMode(page, hostMode);
+    for (const [mode, colors] of Object.entries(palettes)) {
+      const preview = page.locator(
+        `.buzz-theme-thumbnail[data-mode="${mode}"]`,
+      );
+      for (const [part, property, role] of [
+        ["backdrop", "fill", "surface-base"],
+        ["panel", "fill", "surface-panel"],
+        ["lines", "stroke", "text-metadata"],
+        ["message", "fill", "surface-message-own"],
+      ]) {
+        for (const element of await preview
+          .locator(`.buzz-theme-preview-${part}`)
+          .all())
+          await expect(element).toHaveCSS(property, colors[role]);
+      }
     }
   }
+  await button(page, "Pink message color").click();
+  const pink = await button(page, "Pink message color").evaluate(
+    (el) => getComputedStyle(el).backgroundColor,
+  );
+  for (const preview of await page
+    .locator('.buzz-theme-preview[data-tone="light"]')
+    .all()) {
+    await expect(preview).toHaveAttribute("data-bubble-color", "pink");
+    for (const bubble of await preview
+      .locator(".buzz-theme-preview-message")
+      .all())
+      await expect(bubble).toHaveCSS("fill", pink);
+  }
+  await page
+    .getByRole("region", { name: "Appearance", exact: true })
+    .screenshot({
+      path: testInfo.outputPath("appearance-pink-preview.png"),
+    });
   await chooseColorMode(page, "Dark");
   await page.reload();
   await expectMode(page, "dark", true);

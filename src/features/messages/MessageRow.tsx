@@ -18,7 +18,11 @@ import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
-import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import {
+  DayDivider,
+  MessageTimestamp,
+  MessageTimestampHint,
+} from "./MessageTimestamp";
 import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -532,11 +536,7 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
       >
-        <span className={styles.messageGutter}>
-          {stackPrevious && (
-            <MessageTimestamp createdAt={row.createdAt} compact />
-          )}
-        </span>
+        <span className={styles.messageGutter} />
         <div className={styles.messageBody}>
           {opened && session && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>
@@ -704,109 +704,150 @@ function MessageRowContent({
                 />
               </div>
             )}
-            {!attachmentOnly && (
-              <div
-                className={shownRow ? undefined : styles.messageBubble}
-                data-own={
-                  (!shownRow && !!viewer && row.authorId === viewer) ||
-                  undefined
-                }
-                data-long-text={
-                  row.content.length > 160 ||
-                  row.content.includes("\n") ||
-                  undefined
-                }
-              >
-                {timeReply && (
-                  <span className={styles.mediaTimeLink}>
-                    {onMediaTime ? (
-                      <Button
-                        size="sm"
-                        type="button"
-                        onClick={() => onMediaTime(timeReply.anchor.seconds)}
-                      >
-                        {timeReply.label}
-                      </Button>
-                    ) : (
-                      <span>{timeReply.label}</span>
-                    )}
-                  </span>
-                )}
-                {extensions?.messages ? (
-                  <MessageBody registry={extensions.messages} message={row}>
-                    {body}
-                  </MessageBody>
-                ) : (
-                  body
-                )}
-              </div>
-            )}
-            {attachmentGroups.length > 0 && (
-              <div className={styles.messageAttachments}>
-                {attachmentGroups.map((group) => {
-                  const images = group[0]?.kind === "image";
-                  const files = group[0]?.kind === "file";
-                  const items = group.map((attachment, index) => {
-                    const url = safeMessageUrl(attachment.url);
-                    if (!url) return null;
-                    const source = media(url);
-                    if (attachment.kind === "file")
-                      return (
-                        <FileAttachment
-                          key={url}
-                          attachment={{ ...attachment, url }}
-                          source={source}
-                          onOpenLink={onOpenLink}
-                        />
-                      );
-                    if (attachment.kind === "audio") {
-                      if (
-                        source &&
-                        (isProxySource(source) || isNativeMediaSource(source))
-                      )
-                        return extensions?.attachments ? (
-                          <AttachmentView
-                            key={url}
-                            registry={extensions.attachments}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            fallback={
-                              <AudioAttachment
-                                attachment={{ ...attachment, url }}
-                                source={source}
-                              />
-                            }
-                          />
-                        ) : (
-                          <AudioAttachment
+            <MessageTimestampHint
+              createdAt={stackPrevious ? row.createdAt : undefined}
+            >
+              {!attachmentOnly && (
+                <div
+                  className={shownRow ? undefined : styles.messageBubble}
+                  data-message-action-anchor
+                  data-own={
+                    (!shownRow && !!viewer && row.authorId === viewer) ||
+                    undefined
+                  }
+                  data-long-text={
+                    row.content.length > 160 ||
+                    row.content.includes("\n") ||
+                    undefined
+                  }
+                >
+                  {timeReply && (
+                    <span className={styles.mediaTimeLink}>
+                      {onMediaTime ? (
+                        <Button
+                          size="sm"
+                          type="button"
+                          onClick={() => onMediaTime(timeReply.anchor.seconds)}
+                        >
+                          {timeReply.label}
+                        </Button>
+                      ) : (
+                        <span>{timeReply.label}</span>
+                      )}
+                    </span>
+                  )}
+                  {extensions?.messages ? (
+                    <MessageBody registry={extensions.messages} message={row}>
+                      {body}
+                    </MessageBody>
+                  ) : (
+                    body
+                  )}
+                </div>
+              )}
+              {attachmentGroups.length > 0 && (
+                <div
+                  className={styles.messageAttachments}
+                  data-message-attachments
+                >
+                  {attachmentGroups.map((group) => {
+                    const images = group[0]?.kind === "image";
+                    const files = group[0]?.kind === "file";
+                    const items = group.map((attachment, index) => {
+                      const url = safeMessageUrl(attachment.url);
+                      if (!url) return null;
+                      const source = media(url);
+                      if (attachment.kind === "file")
+                        return (
+                          <FileAttachment
                             key={url}
                             attachment={{ ...attachment, url }}
                             source={source}
+                            onOpenLink={onOpenLink}
                           />
                         );
+                      if (attachment.kind === "audio") {
+                        if (
+                          source &&
+                          (isProxySource(source) || isNativeMediaSource(source))
+                        )
+                          return extensions?.attachments ? (
+                            <AttachmentView
+                              key={url}
+                              registry={extensions.attachments}
+                              attachment={{ ...attachment, url }}
+                              source={source}
+                              fallback={
+                                <AudioAttachment
+                                  attachment={{ ...attachment, url }}
+                                  source={source}
+                                />
+                              }
+                            />
+                          ) : (
+                            <AudioAttachment
+                              key={url}
+                              attachment={{ ...attachment, url }}
+                              source={source}
+                            />
+                          );
+                        return (
+                          <FileAttachment
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            onOpenLink={onOpenLink}
+                          />
+                        );
+                      }
+                      if (attachment.kind === "image") {
+                        return (
+                          <AttachmentImage
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            cached={cached}
+                            thumbnail
+                            keepMounted={keepRowMounted}
+                            label={
+                              group.length > 1
+                                ? `Open image ${index + 1} of ${group.length}`
+                                : "Open image attachment"
+                            }
+                            {...(onOpenMediaReview
+                              ? {
+                                  onOpenReview: (item, seconds) =>
+                                    onOpenMediaReview(
+                                      row.id,
+                                      item,
+                                      seconds,
+                                      row.replyCount > 0 ||
+                                        (!!row.threadRootId &&
+                                          row.threadRootId !== row.id),
+                                    ),
+                                }
+                              : {})}
+                          />
+                        );
+                      }
                       return (
-                        <FileAttachment
+                        <MediaAttachment
                           key={url}
                           attachment={{ ...attachment, url }}
-                          source={source}
-                          onOpenLink={onOpenLink}
-                        />
-                      );
-                    }
-                    if (attachment.kind === "image") {
-                      return (
-                        <AttachmentImage
-                          key={url}
-                          attachment={{ ...attachment, url }}
-                          source={source}
-                          cached={cached}
-                          thumbnail
-                          keepMounted={keepRowMounted}
-                          label={
-                            group.length > 1
-                              ? `Open image ${index + 1} of ${group.length}`
-                              : "Open image attachment"
-                          }
+                          media={media}
+                          mode={mediaMode}
+                          {...(attachment.kind === "video" &&
+                          mediaSeekTo !== undefined
+                            ? {
+                                seekTo: mediaSeekTo,
+                                ...(mediaSeekRequest !== undefined
+                                  ? { seekRequest: mediaSeekRequest }
+                                  : {}),
+                              }
+                            : {})}
+                          {...(onMediaPlayback
+                            ? { onPlayback: onMediaPlayback }
+                            : {})}
                           {...(onOpenMediaReview
                             ? {
                                 onOpenReview: (item, seconds) =>
@@ -822,69 +863,78 @@ function MessageRowContent({
                             : {})}
                         />
                       );
-                    }
-                    return (
-                      <MediaAttachment
-                        key={url}
-                        attachment={{ ...attachment, url }}
-                        media={media}
-                        mode={mediaMode}
-                        {...(attachment.kind === "video" &&
-                        mediaSeekTo !== undefined
-                          ? {
-                              seekTo: mediaSeekTo,
-                              ...(mediaSeekRequest !== undefined
-                                ? { seekRequest: mediaSeekRequest }
-                                : {}),
-                            }
-                          : {})}
-                        {...(onMediaPlayback
-                          ? { onPlayback: onMediaPlayback }
-                          : {})}
-                        {...(onOpenMediaReview
-                          ? {
-                              onOpenReview: (item, seconds) =>
-                                onOpenMediaReview(
-                                  row.id,
-                                  item,
-                                  seconds,
-                                  row.replyCount > 0 ||
-                                    (!!row.threadRootId &&
-                                      row.threadRootId !== row.id),
-                                ),
-                            }
-                          : {})}
-                      />
-                    );
-                  });
-                  return images ? (
-                    <div className={styles.imageGroup} key={group[0]?.url}>
-                      {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                      <div
-                        className={styles.imageStrip}
-                        role="group"
-                        aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
-                        onFocus={revealFocusedThumbnail}
-                      >
+                    });
+                    return images ? (
+                      <div className={styles.imageGroup} key={group[0]?.url}>
+                        {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                        <div
+                          className={styles.imageStrip}
+                          role="group"
+                          aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
+                          onFocus={revealFocusedThumbnail}
+                        >
+                          {items}
+                        </div>
+                      </div>
+                    ) : files ? (
+                      <div className={styles.fileGroup} key={group[0]?.url}>
                         {items}
                       </div>
-                      {group.length > 1 && (
-                        <div className={styles.imageCount}>
-                          {group.length} images
-                        </div>
-                      )}
-                    </div>
-                  ) : files ? (
-                    <div className={styles.fileGroup} key={group[0]?.url}>
-                      {items}
-                    </div>
-                  ) : (
-                    items
-                  );
-                })}
-              </div>
-            )}
+                    ) : (
+                      items
+                    );
+                  })}
+                </div>
+              )}
+            </MessageTimestampHint>
           </div>
+          {session && scope && extensions ? (
+            <MessageReactions
+              onFocusedRemoval={() => menuTrigger.current?.focus()}
+              row={row}
+              session={session}
+              scope={scope}
+              tools={extensions.tools}
+              inline={extensions.inline}
+              profiles={directory.profiles}
+              disabled={
+                !canReact ||
+                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+              }
+            />
+          ) : (
+            reactions.length > 0 && (
+              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+                {reactions.flatMap((reaction) =>
+                  [
+                    ...new Set(reaction.events.map((event) => event.authorId)),
+                  ].map((authorId) => (
+                    <span
+                      key={JSON.stringify([
+                        reaction.content,
+                        reaction.emoji?.url,
+                        authorId,
+                      ])}
+                    >
+                      {extensions ? (
+                        <InlineText
+                          registry={extensions.inline}
+                          content={{
+                            text: reaction.content,
+                            message: row,
+                            reaction,
+                          }}
+                          media={media}
+                        />
+                      ) : (
+                        reaction.content
+                      )}
+                    </span>
+                  )),
+                )}
+              </div>
+            )
+          )}
           <DeliveryNotice row={row} retry={retry} />
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
@@ -909,52 +959,6 @@ function MessageRowContent({
               open={onOpenLink}
             />
           )}
-          {session && scope && extensions ? (
-            <MessageReactions
-              onFocusedRemoval={() => menuTrigger.current?.focus()}
-              row={row}
-              session={session}
-              scope={scope}
-              tools={extensions.tools}
-              inline={extensions.inline}
-              profiles={directory.profiles}
-              disabled={
-                !canReact ||
-                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-              }
-            />
-          ) : (
-            reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
-                {reactions.map((reaction) => (
-                  <span
-                    key={JSON.stringify([
-                      reaction.content,
-                      reaction.emoji?.url,
-                    ])}
-                  >
-                    {extensions ? (
-                      <InlineText
-                        registry={extensions.inline}
-                        content={{
-                          text: reaction.content,
-                          message: row,
-                          reaction,
-                        }}
-                        media={media}
-                      />
-                    ) : (
-                      reaction.content
-                    )}{" "}
-                    {
-                      new Set(reaction.events.map((event) => event.authorId))
-                        .size
-                    }
-                  </span>
-                ))}
-              </div>
-            )
-          )}
           {(row.replyCount > 0 ||
             (!row.threadRootId && threadAgents.length > 0)) &&
             onOpenThread && (
@@ -962,6 +966,7 @@ function MessageRowContent({
                 variant="ghost"
                 size="sm"
                 data-thread-summary=""
+                data-reply-connector={row.replyCount > 0 || undefined}
                 data-first-participant-shape={
                   agentPubkeys?.has(row.participants[0] ?? "")
                     ? "squircle"

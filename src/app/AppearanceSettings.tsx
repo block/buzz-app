@@ -55,6 +55,7 @@ export function AppearanceSettings({
             trailing={
               <ThemePicker
                 value={preference}
+                messageColor={bubbleColor}
                 onValueChange={appearance.setMode}
               />
             }
@@ -106,35 +107,40 @@ export function AppearanceSettings({
             }
           />
           <PreferenceRow
-            title="Message color"
-            subtitle="For your bubbles and send button on this device."
+            title="Message bubbles"
             trailing={(label) => (
               <fieldset
                 {...label}
-                className="m-0 flex w-48 min-w-0 max-w-full flex-wrap gap-2 border-0 p-0"
+                className="m-0 grid min-w-0 max-w-full grid-cols-6 gap-2 border-0 p-0"
               >
-                {BUBBLE_COLORS.map((color) => (
-                  <IconButton
-                    key={color}
-                    data-bubble-color={color}
-                    style={messageButtonStyle}
-                    variant="primary"
-                    size="sm"
-                    shape="round"
-                    aria-label={`${color.charAt(0).toUpperCase()}${color.slice(1)} message color`}
-                    title={`${color.charAt(0).toUpperCase()}${color.slice(1)}`}
-                    aria-pressed={bubbleColor === color}
-                    onClick={() => appearance.setBubbleColor(color)}
-                    icon={
-                      <CheckIcon
-                        aria-hidden="true"
-                        className={
-                          bubbleColor === color ? "opacity-100" : "opacity-0"
-                        }
-                      />
-                    }
-                  />
-                ))}
+                {BUBBLE_COLORS.map((color) => {
+                  const colorLabel =
+                    color === "neutral"
+                      ? "Default"
+                      : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
+                  return (
+                    <IconButton
+                      key={color}
+                      data-bubble-color={color}
+                      style={messageButtonStyle}
+                      variant="primary"
+                      size="sm"
+                      shape="round"
+                      aria-label={`${colorLabel} message color`}
+                      title={colorLabel}
+                      aria-pressed={bubbleColor === color}
+                      onClick={() => appearance.setBubbleColor(color)}
+                      icon={
+                        <CheckIcon
+                          aria-hidden="true"
+                          className={
+                            bubbleColor === color ? "opacity-100" : "opacity-0"
+                          }
+                        />
+                      }
+                    />
+                  );
+                })}
               </fieldset>
             )}
           />

@@ -198,19 +198,17 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(
     root.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await root
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
+  await root.getByRole("button", { name: "👍: You", exact: true }).click();
   await expect(root.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
   await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
   await expect
@@ -377,13 +375,11 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
   await row.getByRole("button", { name: "React with 👍", exact: true }).click();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await row
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
+  await row.getByRole("button", { name: "👍: You", exact: true }).click();
   await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
   await expect
     .poll(
@@ -466,23 +462,9 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
   await settle(page);
-  const expectClockAligned = async () => {
-    // The caption-sized clock is centered beside the first prose line, including
-    // when interface scaling changes their independently owned type roles.
-    await expect
-      .poll(() =>
-        row.evaluate((element) => {
-          const clock = element
-            .querySelector('time > span[aria-hidden="true"]')
-            .getBoundingClientRect();
-          const prose = element.querySelector("p");
-          const firstLineCenter =
-            prose.getBoundingClientRect().top +
-            Number.parseFloat(getComputedStyle(prose).lineHeight) / 2;
-          return Math.abs(clock.top + clock.height / 2 - firstLineCenter);
-        }),
-      )
-      .toBeLessThan(0.5);
+  const expectClockHidden = async () => {
+    await expect(row.locator("time")).toHaveClass(/sr-only/);
+    await expect(row.locator("time")).toHaveCSS("position", "absolute");
   };
   const baseline = await following.boundingBox();
   for (const mode of ["hover", "focus"]) {
@@ -494,10 +476,13 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     await expect(actions).toHaveCSS("opacity", "1");
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();
-    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(prose.y);
+    expect(
+      toolbar.y + toolbar.height <= prose.y ||
+        toolbar.x >= prose.x + prose.width,
+    ).toBe(true);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);
-    await expectClockAligned();
+    await expectClockHidden();
     await expect
       .poll(() =>
         link.evaluate((node) => {
@@ -517,7 +502,12 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   );
   await row.scrollIntoViewIfNeeded();
   await settle(page);
-  await expectClockAligned();
+  await expectClockHidden();
+  await row.locator("[data-message-action-anchor]").hover();
+  const timestampHint = page.getByRole("tooltip").filter({ hasText: "2023" });
+  await expect(timestampHint).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(timestampHint).toHaveCount(0);
 });
 
 test("historical single-day DMs and their threads expose dates without hover", async ({

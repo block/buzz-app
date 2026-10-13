@@ -4,6 +4,7 @@ import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactEventHandler } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { validatedBlurhash } from "../relay/blurhash";
@@ -31,6 +32,11 @@ export function AttachmentImage({
   const active = useConversationPresentation();
   const corners = useMediaCorners();
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [loadedDimensions, setLoadedDimensions] = useState<{
+    source: string;
+    width: number;
+    height: number;
+  }>();
   if (!active && viewerOpen) setViewerOpen(false);
   // The viewer portal and its opener live in this row; eviction closes it.
   useEffect(() => {
@@ -39,17 +45,23 @@ export function AttachmentImage({
     // lets the restored thumbnail keep the row mounted instead.
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
-  const style =
-    !thumbnail && attachment.dimensions
-      ? {
+  const dimensions =
+    attachment.dimensions ??
+    (loadedDimensions?.source === source ? loadedDimensions : undefined);
+  const style: CSSProperties | undefined = dimensions
+    ? thumbnail
+      ? ({
+          "--image-ratio": dimensions.width / dimensions.height,
+        } as CSSProperties)
+      : {
           width: Math.min(
             360,
-            attachment.dimensions.width,
-            (320 * attachment.dimensions.width) / attachment.dimensions.height,
+            dimensions.width,
+            (320 * dimensions.width) / dimensions.height,
           ),
-          aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+          aspectRatio: `${dimensions.width} / ${dimensions.height}`,
         }
-      : undefined;
+    : undefined;
   if (!source)
     return cached ? (
       <span
@@ -65,6 +77,7 @@ export function AttachmentImage({
           thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable
         }
         role="status"
+        style={thumbnail ? style : undefined}
       >
         {thumbnail ? (
           <>
@@ -106,6 +119,16 @@ export function AttachmentImage({
             key={JSON.stringify([source, attachment.blurhash])}
             source={source}
             blurhash={attachment.blurhash}
+            onLoad={
+              thumbnail && !attachment.dimensions
+                ? (event) => {
+                    const { naturalWidth: width, naturalHeight: height } =
+                      event.currentTarget;
+                    if (width && height)
+                      setLoadedDimensions({ source, width, height });
+                  }
+                : undefined
+            }
           />
         </span>
         <svg
@@ -138,9 +161,11 @@ export function AttachmentImage({
 function ImagePixels({
   source,
   blurhash,
+  onLoad,
 }: {
   source: string;
   blurhash: string | undefined;
+  onLoad: ReactEventHandler<HTMLImageElement> | undefined;
 }) {
   const image = useRef<HTMLImageElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -213,6 +238,7 @@ function ImagePixels({
         src={source}
         alt=""
         loading="lazy"
+        onLoad={onLoad}
         style={{ visibility: ready ? "visible" : "hidden" }}
       />
     </>

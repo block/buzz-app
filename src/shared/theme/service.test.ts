@@ -279,9 +279,17 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
   expect(app.snapshot().fontScale).toBe(1);
 });
 
-it.each([...BUBBLE_COLORS, "invalid", "#ffffff"])(
-  "restores bubble color %s consistently before and after startup",
-  (value) => {
+it.each<[string, string]>([
+  ...BUBBLE_COLORS.map((color): [string, string] => [color, color]),
+  ["cyan", "blue"],
+  ["indigo", "blue"],
+  ["red", "pink"],
+  ["purple", "lilac"],
+  ["invalid", "neutral"],
+  ["#ffffff", "neutral"],
+])(
+  "restores bubble color %s as %s before and after startup",
+  (value, expected) => {
     const b = browser();
     b.values.set(BUBBLE_COLOR_KEY, value);
     runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
@@ -291,7 +299,8 @@ it.each([...BUBBLE_COLORS, "invalid", "#ffffff"])(
     });
     const initial = b.root.dataset.bubbleColor;
     const app = createAppearance(b.host);
-    expect(initial).toBe(app.snapshot().bubbleColor);
+    expect(initial).toBe(expected);
+    expect(app.snapshot().bubbleColor).toBe(expected);
     expect(b.root.dataset.bubbleColor).toBe(initial);
     app.dispose();
   },
@@ -310,11 +319,11 @@ it("saves bubble color, recovers from denied storage, synchronizes reset, and di
   expect(app.snapshot().bubbleError).toBeNull();
   b.values.set(BUBBLE_COLOR_KEY, "purple");
   b.change(BUBBLE_COLOR_KEY);
-  expect(app.snapshot().bubbleColor).toBe("purple");
+  expect(app.snapshot().bubbleColor).toBe("lilac");
   b.values.delete(BUBBLE_COLOR_KEY);
   b.change(null);
   expect(app.snapshot().bubbleColor).toBe("neutral");
   app.dispose();
-  app.setBubbleColor("red");
+  app.setBubbleColor("pink");
   expect(b.root.dataset.bubbleColor).toBe("neutral");
 });

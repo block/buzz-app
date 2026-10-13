@@ -1,6 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 import { BUBBLE_COLORS } from "../../src/shared/theme/bubble-color.ts";
-import { wcagRatio } from "../../scripts/design-system/apca.mjs";
+import { apcaContrast, wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 const specimen = (page, id) => page.locator(`[aria-labelledby="label-${id}"]`);
 // macOS WebKit follows the host preference: Option-Tab includes every control.
@@ -77,6 +77,12 @@ for (const theme of ["light", "dark"]) {
         element.dataset.bubbleColor = color;
       }, color);
       await page.mouse.move(0, 0);
+      const bubble = own.locator("[data-message-action-anchor][data-own]");
+      const bodyPaint = await paint(bubble);
+      expect(
+        Math.abs(apcaContrast(bodyPaint.ink, bodyPaint.background)),
+      ).toBeGreaterThanOrEqual(60);
+      await expectReadable(bubble);
       for (const link of [receivedLink, ownLink]) {
         await expect(link).toHaveCSS("text-decoration-line", "underline");
         await expectReadable(link);

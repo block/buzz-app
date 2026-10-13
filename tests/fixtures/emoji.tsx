@@ -1,3 +1,4 @@
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
 import { Context } from "@deepseek-ai/cordis";
@@ -335,6 +336,7 @@ Object.assign(window, {
   },
 });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [thread, setThread] = useState(false),
     [messageRevision, setMessageRevision] = useState(0);

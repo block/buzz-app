@@ -168,7 +168,7 @@ it.each(["light", "dark"] as const)(
   "message text and links contrast with both bubble fills in %s",
   (mode) => {
     const palette = resolvedPalette(mode);
-    // Neutral bubbles keep standard text and the system link color.
+    // Default own bubbles retain normal text and link colors.
     for (const surface of ["--surface-message", "--surface-message-own"]) {
       for (const text of surface === "--surface-message-own"
         ? ["--text-message-own", "--text-message-link-own"]
@@ -179,10 +179,20 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    const own = luminance(palette["--surface-message-own"]);
-    const received = luminance(palette["--surface-message"]);
-    if (mode === "light") expect(own).toBeLessThan(received);
-    else expect(own).toBeGreaterThan(received);
+    const received = palette["--surface-message"];
+    if (!received) throw new Error("Missing received message fill");
+    const target = mode === "light" ? 0 : 255;
+    const expected = `#${[1, 3, 5]
+      .map((i) =>
+        Math.round(
+          Number.parseInt(received.slice(i, i + 2), 16) * 0.95 + target * 0.05,
+        )
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+    expect(palette["--surface-message-own"]).toBe(expected);
+    expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
   },
 );
 
@@ -193,6 +203,12 @@ it.each(BUBBLE_COLORS)(
       const palette = resolvedPalette(mode, color);
       expect(palette["--text-message-own"]).toBe(
         color === "neutral" ? palette["--text-standard"] : "#ffffff",
+      );
+      expect(palette["--text-message-link-own"]).toBe(
+        color === "neutral" ? palette["--text-link"] : "#ffffff",
+      );
+      expect(palette["--text-message-action"]).toBe(
+        color === "neutral" ? palette["--neutral-1"] : "#ffffff",
       );
       expect(
         contrast(

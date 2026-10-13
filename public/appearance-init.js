@@ -15,21 +15,11 @@
   document.documentElement.dataset.colorMode = mode;
   let bubbleColor = "neutral";
   try {
-    const value = localStorage.getItem("buzz-bubble-color.v1");
-    if (
-      [
-        "neutral",
-        "blue",
-        "cyan",
-        "green",
-        "orange",
-        "red",
-        "pink",
-        "lilac",
-        "purple",
-        "indigo",
-      ].includes(value)
-    )
+    let value = localStorage.getItem("buzz-bubble-color.v1");
+    if (value === "cyan" || value === "indigo") value = "blue";
+    else if (value === "red") value = "pink";
+    else if (value === "purple") value = "lilac";
+    if (["neutral", "blue", "green", "orange", "pink", "lilac"].includes(value))
       bubbleColor = value;
   } catch {
     /* Neutral remains usable without storage. */

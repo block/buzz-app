@@ -52,10 +52,10 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Part of the final measured item, so end alignment includes breathing room.
+/* Keep the final message clear of floating typing/activity indicators.
    The spacer scrolls away with history instead of shortening its viewport. */
 .timelineEnd {
-  height: var(--space-3);
+  height: var(--space-8);
 }
 .feed ol {
   list-style: none;
@@ -162,71 +162,86 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1h);
+  gap: 0;
   margin: var(--space-1h) 0 0;
+}
+.reactions:has(.reactionItem),
+.reactionFallback {
+  position: relative;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding-inline: var(--space-1);
+  border: 1.5px solid var(--surface-panel);
+  /* A capsule on one line; stable corners keep wrapped emoji inside the surface. */
+  border-radius: calc(var(--size-control-sm) / 2 + 1.5px);
+  background: var(--reaction-surface, var(--surface-message));
+}
+.message:has(.messageBubble[data-own]) > .messageBody {
+  --reaction-surface: var(--surface-message-own);
+  --reaction-ink: var(--text-message-own);
+}
+.messageContent:has(.messageBubble) + .reactions:has(.reactionItem),
+.messageContent:has(.messageBubble) + .reactionFallback {
+  margin-top: calc(-1 * var(--space-1));
 }
 .reactions:empty {
   margin-top: 0;
 }
 .reactionFallback > span:not([role]) {
-  background: var(--affordance-subtle);
-  border-radius: var(--radius-chip);
-  padding: var(--space-half) var(--space-1h);
-  max-width: 10rem;
+  display: grid;
+  place-items: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  font-size: var(--text-caption);
+  --inline-emoji-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.reactionPillWrap {
-  position: relative;
+.reactionItem {
   display: inline-flex;
   max-width: 100%;
 }
-.reactionChip {
+.reactionGlyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1h);
-  min-width: 3rem;
-  max-width: min(10rem, 100%);
-  min-height: 1.75rem;
-  border: 1px solid var(--border);
-  background: var(--surface-control);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
+  max-width: var(--size-control-sm);
+  pointer-events: none;
 }
-.reactionChip:hover {
-  background: var(--surface-hover);
-}
-.reactionChip:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.reactionChip[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
-  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
-  color: var(--primary);
-}
-.reactionChip:disabled {
-  cursor: default;
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
+  .reactionGlyph {
+    transition: transform var(--duration-fast) var(--easing-enter);
+  }
+  .reactionItem
+    button:enabled:not([aria-disabled="true"]):hover
+    .reactionGlyph {
+    transform: rotate(var(--reaction-tilt, 0deg)) scale(1.1);
+  }
 }
 .reactionNativeEmoji {
   display: inline-block;
-  min-width: 1.125rem;
-  max-width: 6rem;
-  font-size: var(--text-body-sm);
-  line-height: 1.2857142857;
+  min-width: 0.75rem;
+  max-width: var(--size-control-sm);
+  font-size: var(--text-caption);
+  line-height: 1;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Color emoji can paint beyond their font-size line box. Keep that ink clear
+   of truncation while retaining bounded labels for long reaction content. */
+.reactionGlyph .reactionNativeEmoji {
+  padding: var(--space-half);
+}
 .reactionFallbackEmoji {
   display: inline-block;
   min-width: 0;
-  max-width: 6rem;
+  max-width: var(--size-control-sm);
   font-size: var(--text-caption);
   line-height: 1;
   overflow: hidden;
@@ -235,61 +250,9 @@
 }
 .reactionCustomEmoji {
   display: block;
-  width: 0.875rem;
-  height: 0.875rem;
+  width: 0.75rem;
+  height: 0.75rem;
   object-fit: contain;
-}
-.reactionCount {
-  display: inline-flex;
-  flex: none;
-  font-size: var(--text-caption);
-  line-height: 1.1666666667;
-  font-variant-numeric: tabular-nums;
-}
-.reactionCountMotion {
-  display: block;
-  height: 1lh;
-  overflow: hidden;
-}
-.reactionCountRoll {
-  display: flex;
-  flex-direction: column;
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
-  animation-fill-mode: both;
-}
-.reactionCountRoll[data-direction="up"] {
-  animation-name: reactionCountUp;
-}
-.reactionCountRoll[data-direction="down"] {
-  animation-name: reactionCountDown;
-}
-@keyframes reactionCountUp {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-50%);
-  }
-}
-@keyframes reactionCountDown {
-  from {
-    transform: translateY(-50%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .reactionCountRoll {
-    animation: none;
-  }
-  .reactionCountRoll[data-direction="up"] {
-    transform: translateY(-50%);
-  }
-  .reactionCountRoll[data-direction="down"] {
-    transform: translateY(0);
-  }
 }
 .visuallyHidden {
   position: absolute;
@@ -299,19 +262,33 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
+.reactionPreviewContent {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  max-width: 14rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
 .reactionPreviewEmoji {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 1rem;
+  --reaction-preview-size: calc(var(--space-6) * 2);
+  display: grid;
+  place-items: center;
+  margin-bottom: var(--space-1);
+}
+.reactionPreviewEmoji .reactionNativeEmoji {
+  max-width: var(--space-16);
+  font-size: var(--reaction-preview-size);
+}
+.reactionPreviewEmoji .reactionCustomEmoji {
+  width: calc(var(--space-6) * 2);
+  height: calc(var(--space-6) * 2);
 }
 .reactionPreviewName {
   @apply text-caption text-tertiary;
 }
 .reactionPreviewNames {
-  @apply text-label-sm;
-  max-width: 14rem;
-  overflow-wrap: anywhere;
+  @apply text-caption text-standard;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {
@@ -341,6 +318,8 @@
   }
 }
 .inlineReactionTool {
+  /* Avoid flattening the static SVG when neighboring emoji layers animate. */
+  transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
   width: 1.75rem;
@@ -351,13 +330,13 @@
   height: 1.75rem;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--reaction-ink, var(--text-secondary));
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
   border-color: var(--border);
-  background: var(--surface-control);
-  color: var(--text-standard);
+  background: var(--reaction-surface, var(--surface-control));
+  color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
   display: inline-block;
@@ -414,13 +393,14 @@
 .attachmentImage img {
   object-fit: cover;
 }
-/* Fixed tiles keep lazy loading from moving the reading position. */
+/* Thumbnails share a compact height while retaining the original proportions. */
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
 }
 .imageStrip {
   display: flex;
+  align-items: flex-start;
   gap: var(--space-2);
   overflow-x: auto;
   padding: var(--space-1);
@@ -430,18 +410,17 @@
 .attachmentImage[data-thumbnail],
 .imageUnavailable {
   flex: 0 0 auto;
-  width: calc(var(--space-16) + var(--space-2));
-  aspect-ratio: 1;
+  width: calc((var(--space-16) + var(--space-2)) * var(--image-ratio, 1));
+  max-width: 100%;
+  aspect-ratio: var(--image-ratio, 1);
   margin: 0;
+}
+.attachmentImage:where([data-thumbnail]) img {
+  object-fit: contain;
 }
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
-}
-.imageCount {
-  @apply text-caption;
-  color: var(--text-subtle);
-  margin-top: var(--space-1);
 }
 .imageUnavailable {
   @apply text-caption;
@@ -638,7 +617,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .messageBody [data-thread-summary] {
   max-width: 100%;
   align-self: flex-start;
-  margin-inline-start: calc(-1 * var(--space-1));
+  margin-inline-start: var(--space-3);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -647,14 +626,31 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: var(--space-1);
   padding-right: var(--space-1h);
 }
+.messageBody [data-reply-connector] {
+  margin-inline-start: calc(var(--space-4) + var(--space-3));
+  max-width: calc(100% - var(--space-4) - var(--space-3));
+}
+.messageBody [data-reply-connector]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0px - var(--space-3));
+  inset-block-end: 50%;
+  inline-size: var(--space-3);
+  block-size: 50%;
+  border-inline-start: 2px solid var(--border-standard);
+  border-block-end: 2px solid var(--border-standard);
+  border-end-start-radius: var(--radius-control);
+  pointer-events: none;
+}
+
 .threadHistory {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-panel-inset);
-  /* Scrollable end padding, not a fixed strip above the composer. */
-  --history-bottom-inset: var(--space-3);
+  /* Match the channel's end spacer so typing clears the last reply too. */
+  --history-bottom-inset: var(--space-8);
   padding-bottom: var(--history-bottom-inset);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
@@ -1534,9 +1530,10 @@ button.mediaPreview {
   display: contents;
 }
 .messageActions {
-  @apply popover-surface;
-  --floating-radius: var(--radius-control);
-  --floating-inset: var(--space-half);
+  background: transparent;
+  color: var(--text-standard);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1548,9 +1545,16 @@ button.mediaPreview {
   gap: var(--space-half);
   padding: var(--space-half);
   margin-inline-start: auto;
+  scroll-margin-block-start: var(--space-2);
+  scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
+}
+.messageActions:not([data-placement="beside"]) {
+  @apply popover-surface;
+  --floating-radius: var(--radius-control);
+  --floating-inset: var(--space-half);
 }
 .quickReactionGlyph {
   pointer-events: none;
@@ -1604,7 +1608,7 @@ html[data-keyboard-input] .quickReactionGlyph {
     top: 0;
   }
   .messageActions {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     max-width: none;
     opacity: 0;
     pointer-events: none;
@@ -1624,6 +1628,9 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
+  }
+  .messageActions[data-placement="beside"] {
+    translate: 0 -50%;
   }
   /* Retain pointer travel to the lifted toolbar without adding row spacing. */
   .message:hover::before {
@@ -1754,40 +1761,10 @@ html[data-keyboard-input] .quickReactionGlyph {
   }
 }
 
-/* Continuations retain a readable clock without repeating the author header. */
 .messageGutter {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-}
-.continuationTime {
-  /* Revealed on hover only; keep it out of selections like the action bar. */
-  user-select: none;
-  position: relative;
-  z-index: 1;
-  background: var(--surface-panel);
-  color: var(--text-subtle);
-  /* Align the caption within the prose's first line without changing its type. */
-  display: flex;
-  align-items: center;
-  block-size: calc(var(--text-message) * var(--text-message--line-height));
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  font-weight: var(--text-caption--font-weight);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-@media (hover: hover) and (pointer: fine) {
-  .continuationTime {
-    opacity: 0;
-  }
-  .message:hover .continuationTime,
-  .message:has(:focus-visible) .continuationTime,
-  .message[data-actions-revealed] .continuationTime,
-  html[data-keyboard-navigation] .message:focus-within .continuationTime {
-    opacity: 1;
-  }
 }
 /* The picker retains every reaction when the shortcut strip cannot fit. */
 @container message-row (max-width: 16.25rem) {
@@ -2286,7 +2263,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .sentFromThread {
-  padding-inline-start: var(--space-3);
+  padding-inline-start: var(--space-4);
   font-size: var(--text-caption);
   color: var(--text-secondary);
   margin-block: var(--space-1);
@@ -2342,9 +2319,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin-top: 0;
 }
 
-/* The continuation clock follows the first line inside the bubble's inset. */
-.message[data-stack-previous]:has(.messageBubble) .continuationTime {
-  margin-block-start: var(--space-2);
+.messagePayload {
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .messageAvatar {
@@ -2448,13 +2426,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-top: var(--space-half);
 }
 .message .byline {
-  padding-inline-start: var(--space-3);
+  padding-inline-start: var(--space-4);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .message .delivery {
-  padding-inline-start: var(--space-3);
+  padding-inline-start: var(--space-4);
+}
+.message .reactions {
+  margin-inline-start: var(--space-2);
+  max-width: calc(100% - var(--space-2));
 }
 
 .text pre {
@@ -2475,9 +2457,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Keep focus-ring clearance inside the scrollport without insetting the tiles. */
 .messageAttachments .imageStrip {
   margin: calc(-1 * var(--space-1));
-}
-.messageAttachments .imageCount {
-  margin-top: var(--space-half);
 }
 
 .composerActions[hidden] {

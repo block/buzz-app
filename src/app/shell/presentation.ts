@@ -80,7 +80,10 @@ export function headerPageSelection(
   if (
     selected !== "buzz.me/me" &&
     page &&
-    (page.placement === undefined || page.placement === "sidebar") &&
+    // Placement applies only to primary pages.
+    (!page.primary ||
+      page.placement === undefined ||
+      page.placement === "sidebar") &&
     pages.some(
       (page) =>
         page.key === "buzz.channels/channels" &&

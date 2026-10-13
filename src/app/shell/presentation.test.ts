@@ -158,6 +158,11 @@ describe("header area selection", () => {
       primary: true,
       placement: "toolbar",
     },
+    {
+      ...page("example.linked/main", "External linked"),
+      primary: false,
+      placement: "toolbar",
+    },
   ];
   test.each([
     ["buzz.channels/channels", "buzz.channels/channels"],
@@ -171,6 +176,7 @@ describe("header area selection", () => {
     ["settings", "settings"],
     ["example.header/main", "example.header/main"],
     ["example.tools/main", "example.tools/main"],
+    ["example.linked/main", "buzz.channels/channels"],
     ["missing/page", "missing/page"],
   ])("%s selects %s without changing the destination", (selected, expected) => {
     expect(headerPageSelection(entries, selected)).toBe(expected);

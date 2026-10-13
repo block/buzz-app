@@ -61,7 +61,6 @@ for (const width of [1280, 390, 320]) {
             ),
           ].map((row) => ({ ...box(row), text: row.textContent })),
           header: box(element.querySelector("header")),
-          show: box(element.querySelector('[role="combobox"]')),
           filters: box(element.querySelector('[aria-label="Inbox filters"]')),
           unread: box(element.querySelector('[aria-label="Unread only"]')),
         };

@@ -176,6 +176,8 @@ export type AgentCreateProps<Config = unknown> = {
 };
 export type AgentCreateModelMenuProps<Config = unknown> =
   AgentCreateProps<Config> & {
+    /** Whether this provider is the create form's current selection. */
+    active?: boolean;
     /** Opens Create's host-owned model-ID dialog after its menu closes. */
     requestCustomModel(
       initialValue: string,

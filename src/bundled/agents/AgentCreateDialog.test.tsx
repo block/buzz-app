@@ -101,13 +101,16 @@ const modeled = {
     config,
     disabled,
     onChange,
+    active,
   }: {
     config: Modeled;
     disabled: boolean;
+    active: boolean;
     onChange(config: Modeled): void;
   }) => (
     <ModelPicker
       presentation="menu"
+      active={active}
       models={[{ id: "fast", label: "Fast", description: "Quick answers" }]}
       allowCustomModel
       value={config.model}
@@ -232,9 +235,16 @@ it("exposes provider models as a submenu without switching on hover", async () =
     name: "Agent provider and model: Echo",
   });
   await user.click(trigger);
-  const provider = await screen.findByRole("menuitem", { name: "Modeled" });
+  expect(
+    await screen.findByRole("menuitemradio", { name: "Echo" }),
+  ).toBeChecked();
+  const provider = screen.getByRole("menuitemradio", { name: "Modeled" });
+  expect(provider).not.toBeChecked();
   expect(provider).toHaveAttribute("aria-haspopup", "menu");
   await user.hover(provider);
+  expect(
+    await screen.findByRole("menuitemradio", { name: /Modeled default/ }),
+  ).not.toBeChecked();
   expect(within(dialog).getByLabelText("Reply")).toBeInTheDocument();
 });
 
@@ -288,7 +298,7 @@ it("switches provider from the combined menu, resetting its config", async () =>
       name: "Agent provider and model: Echo",
     }),
   );
-  await user.click(await screen.findByRole("menuitem", { name: "Notes" }));
+  await user.click(await screen.findByRole("menuitemradio", { name: "Notes" }));
 
   expect(
     within(dialog).getByRole("button", {
@@ -318,7 +328,7 @@ it("starts over again when switching back to the first type", async () => {
         name: `Agent provider and model: ${from}`,
       }),
     );
-    await user.click(await screen.findByRole("menuitem", { name: to }));
+    await user.click(await screen.findByRole("menuitemradio", { name: to }));
   };
   await switchTo("Echo", "Notes");
   await switchTo("Notes", "Echo");

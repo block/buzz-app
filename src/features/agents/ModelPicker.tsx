@@ -121,6 +121,7 @@ export function ModelPicker({
   presentation = "field",
   description,
   requestCustomModel,
+  active = true,
 }: {
   models: readonly ModelChoice[];
   /** Whether text absent from `models` may be committed as its model ID. */
@@ -137,6 +138,8 @@ export function ModelPicker({
     initialValue: string,
     onChange: (model: string) => void,
   ) => void;
+  /** Whether this menu belongs to the provider currently selected by its host. */
+  active?: boolean;
 }) {
   const [customModel, setCustomModel] = useState<string | null>(null);
   const control = useRef<HTMLDivElement>(null);
@@ -165,7 +168,7 @@ export function ModelPicker({
       {presentation === "menu" ? (
         <>
           <MenuRadioGroup
-            value={selected.id}
+            value={active ? selected.id : "\0inactive-provider"}
             onValueChange={(model) => onChange(model)}
           >
             {items.map((model) => (

@@ -13,7 +13,11 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import { CaretDownIcon, RobotIcon } from "../../shared/design-system/icons";
+import {
+  CaretDownIcon,
+  CheckIcon,
+  RobotIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -125,18 +129,29 @@ export function AgentCreateDialog({
               return (
                 <MenuItem
                   key={item.key}
+                  role="menuitemradio"
+                  aria-checked={item.key === type?.key}
                   closeOnClick
                   onClick={() => choose(item.key)}
                 >
                   <ChoiceRow label={label} leading={<TypeIcon type={item} />} />
+                  {item.key === type?.key && (
+                    <CheckIcon size={16} aria-hidden="true" />
+                  )}
                 </MenuItem>
               );
             const itemConfig =
               item.key === type?.key ? config : startingConfig(item);
             return (
               <MenuSubmenu key={item.key}>
-                <MenuSubmenuTrigger>
+                <MenuSubmenuTrigger
+                  role="menuitemradio"
+                  aria-checked={item.key === type?.key}
+                >
                   <ChoiceRow label={label} leading={<TypeIcon type={item} />} />
+                  {item.key === type?.key && (
+                    <CheckIcon size={16} aria-hidden="true" />
+                  )}
                 </MenuSubmenuTrigger>
                 <MenuSubmenuPopup
                   size="wide"
@@ -144,6 +159,7 @@ export function AgentCreateDialog({
                 >
                   <CreateModelMenu
                     config={itemConfig}
+                    active={item.key === type?.key}
                     disabled={pending}
                     onChange={(next) => chooseModel(item, next)}
                     requestCustomModel={(initialValue, onChange) =>

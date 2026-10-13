@@ -78,6 +78,10 @@ impl LiveRun {
 fn start(controller: &Controller, agent: &Agent, secret: &Secret, relay: &str) -> LiveRun {
     let config = controller.store.root();
     crate::connection::oauth_root(config).unwrap();
+    let journals = config.join("delivery-journals");
+    crate::connection::private_directory(&journals).unwrap();
+    let home = config.join("home");
+    crate::connection::private_directory(&home).unwrap();
     let runs = config.join("runs");
     crate::connection::private_directory(&runs).unwrap();
     let temporary = tempfile::tempdir_in(&runs).unwrap();
@@ -95,6 +99,11 @@ fn start(controller: &Controller, agent: &Agent, secret: &Secret, relay: &str) -
         .env("RUST_LOG", "buzz_acp=debug")
         .env("BUZZ_RELAY_URL", relay)
         .env("BUZZ_AGENT_CONFIG_DIR", config)
+        .env("HOME", home)
+        .env(
+            "BUZZ_ACP_DELIVERY_JOURNAL",
+            journals.join(format!("{}.json", agent.id)),
+        )
         .env("TMPDIR", &scratch)
         .env("TMP", &scratch)
         .env("TEMP", &scratch);
@@ -147,6 +156,7 @@ fn probe(
         peer.to_path_buf(),
         config.join("run-controls"),
         config.join("control-write"),
+        config.join("delivery-journals"),
     ];
     fs::write(
         work.join("probe.json"),

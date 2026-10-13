@@ -97,7 +97,19 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
           return {
             top: paragraph.top,
             bottom: paragraph.bottom,
-            line: Number.parseFloat(getComputedStyle(el).minHeight),
+            text: [...el.childNodes]
+              .filter(
+                (node) =>
+                  node.nodeType === Node.TEXT_NODE && node.textContent.trim(),
+              )
+              .flatMap((node) => {
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                return [...range.getClientRects()].map((box) => ({
+                  left: box.left,
+                  right: box.right,
+                }));
+              }),
             images: [...el.querySelectorAll("img")].map((image) => {
               const box = image.getBoundingClientRect();
               return {
@@ -115,11 +127,16 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
           expect(image.left).toBeGreaterThanOrEqual(0);
           expect(image.right).toBeLessThanOrEqual(width);
         }
+        expect(layout.text.length).toBeGreaterThan(0);
+        for (const text of layout.text) {
+          expect(text.left).toBeGreaterThanOrEqual(0);
+          expect(text.right).toBeLessThanOrEqual(width);
+        }
         const lines = [...new Set(layout.images.map((image) => image.top))];
         if (width === 390) expect(lines.length).toBeGreaterThan(1);
         for (let index = 1; index < lines.length; index++)
           expect(lines[index] - lines[index - 1]).toBeGreaterThanOrEqual(
-            layout.line,
+            48 * scale,
           );
       }
     }

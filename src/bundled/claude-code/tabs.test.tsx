@@ -274,7 +274,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     }),
   ].join("\n");
   const Claude = tab(
-    installed({ files: { "-Users-me--buzz/kept.jsonl": transcript } }).type,
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
     0,
   );
   render(<Claude agent={agent()} save={vi.fn()} />);

@@ -210,7 +210,8 @@ export async function readTranscript(
     bytes = await readFile(
       spawn,
       "~/.claude/projects",
-      `${project}/${conversation.sessionId}.jsonl`,
+      // Project names start with `-`; GNU base64 would read one as options.
+      `./${project}/${conversation.sessionId}.jsonl`,
       signal,
     );
   } catch (error) {

@@ -1,5 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
+import manifest from "./manifest.json";
 import { claudeTurns, projectName, readTranscript } from "./transcript";
 
 const root = "c".repeat(64);
@@ -148,7 +153,7 @@ function host(files: Record<string, string>) {
 
 it("reads the session file from the project of the agent's workspace", async () => {
   const { spawn, reads } = host({
-    "-Users-me--buzz/session-1.jsonl": file(),
+    "./-Users-me--buzz/session-1.jsonl": file(),
   });
   const read = await readTranscript(
     spawn,
@@ -161,7 +166,10 @@ it("reads the session file from the project of the agent's workspace", async () 
     "workspace",
     expect.objectContaining({ cwd: "~/.buzz" }),
   );
-  expect(reads[0]?.cwd).toBe("~/.claude/projects");
+  expect(reads[0]).toMatchObject({
+    cwd: "~/.claude/projects",
+    args: ["./-Users-me--buzz/session-1.jsonl"],
+  });
   expect(read).toMatchObject({ more: false, unknownThread: 0 });
   expect(read?.turns).toHaveLength(2);
 });
@@ -177,4 +185,33 @@ it("treats a missing session file as no transcript, not a failure", async () => 
       new AbortController().signal,
     ),
   ).resolves.toBeUndefined();
+});
+
+it("passes this platform's base64 a session path it reads as a file", async () => {
+  const { spawn, reads } = host({});
+  await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  const path = reads[0]?.args?.[0] ?? "";
+  const read = manifest.host.processes.find((process) => process.id === "read");
+  const root = mkdtempSync(join(tmpdir(), "claude-projects-"));
+  try {
+    mkdirSync(join(root, "-Users-me--buzz"));
+    writeFileSync(join(root, "-Users-me--buzz", "session-1.jsonl"), "{}\n");
+    const output = execFileSync(
+      read?.program ?? "",
+      [...(read?.args ?? []), path],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
+    expect(atob(output.replace(/\s/g, ""))).toBe("{}\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

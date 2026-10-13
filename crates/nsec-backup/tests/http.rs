@@ -473,3 +473,49 @@ async fn oversized_uploads_fail_before_io_and_transport_failures_are_distinct() 
     assert_redacted(&error, "fixture-secret");
     assert_eq!(requests.await.unwrap()[0].body, envelope);
 }
+
+#[test]
+fn loopback_http_bypasses_environment_proxies() {
+    const CHILD: &str = "BUZZ_NSEC_BACKUP_PROXY_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let (client, requests) = server(vec![Reply::json(recovery(vec![], vec![]))], "").await;
+            let result = tokio::time::timeout(Duration::from_secs(5), client.recover())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(result.backups.is_empty());
+            let requests = requests.await.unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0]
+                .headers
+                .to_ascii_lowercase()
+                .contains("\r\nx-bb-session-credential: fixture-session\r\n"));
+        });
+        return;
+    }
+
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    proxy.set_nonblocking(true).unwrap();
+    let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+    // A child process isolates proxy variables from tests running concurrently.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args(["--exact", "loopback_http_bypasses_environment_proxies"]);
+    for name in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"] {
+        child.env_remove(name).env_remove(name.to_ascii_lowercase());
+    }
+    let output = child
+        .env(CHILD, "1")
+        .env("HTTP_PROXY", &proxy_url)
+        .env("ALL_PROXY", &proxy_url)
+        .output()
+        .unwrap();
+    // Child completion is the barrier for any proxy connection.
+    assert_eq!(proxy.accept().unwrap_err().kind(), ErrorKind::WouldBlock);
+    assert!(
+        output.status.success(),
+        "child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

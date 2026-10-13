@@ -58,7 +58,8 @@ pub struct RecoveredBackup {
     pub backup_id: String,
     pub nostr_pubkey: String,
     #[serde(deserialize_with = "deserialize_secret")]
-    secret_key: Zeroizing<[u8; 32]>,
+    // Keep key bytes in a stable allocation when the recovery list grows.
+    secret_key: Box<Zeroizing<[u8; 32]>>,
 }
 
 impl RecoveredBackup {
@@ -80,11 +81,11 @@ impl fmt::Debug for RecoveredBackup {
 
 fn deserialize_secret<'de, D: Deserializer<'de>>(
     deserializer: D,
-) -> Result<Zeroizing<[u8; 32]>, D::Error> {
+) -> Result<Box<Zeroizing<[u8; 32]>>, D::Error> {
     let encoded = Zeroizing::new(String::deserialize(deserializer)?);
-    let mut secret = Zeroizing::new([0; 32]);
+    let mut secret = Box::new(Zeroizing::new([0; 32]));
     if encoded.len() != 43
-        || URL_SAFE_NO_PAD.decode_slice(encoded.as_bytes(), &mut *secret) != Ok(32)
+        || URL_SAFE_NO_PAD.decode_slice(encoded.as_bytes(), &mut **secret) != Ok(32)
     {
         return Err(serde::de::Error::custom("invalid recovery secret"));
     }
@@ -153,13 +154,16 @@ impl Client {
         let mut credential =
             HeaderValue::from_str(credential).map_err(|_| Error::InvalidCredential)?;
         credential.set_sensitive(true);
-        let http = reqwest::Client::builder()
+        let mut http = reqwest::Client::builder()
             // The session header must never follow a redirect to another destination.
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|_| Error::Transport)?;
+            .timeout(Duration::from_secs(30));
+        if base_url.scheme() == "http" {
+            // Loopback HTTP must not send credentials through an ambient proxy.
+            http = http.no_proxy();
+        }
+        let http = http.build().map_err(|_| Error::Transport)?;
         Ok(Self {
             http,
             base_url,
@@ -184,7 +188,8 @@ impl Client {
         serde_json::from_slice(&body).map_err(|_| Error::InvalidResponse)
     }
 
-    /// Recover all keys without selecting or installing one. HTTP 404 means no backups.
+    /// Recover all keys without selecting or installing one.
+    /// HTTP 404 can mean no backups or an unavailable recovery endpoint.
     /// A successful response may contain only failed backup IDs.
     pub async fn recover(&self) -> Result<Recovery, Error> {
         let body = self

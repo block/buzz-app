@@ -29,9 +29,10 @@ a caller-initiated retry. Redirects are rejected and requests time out after 30 
 
 Recovery implements the JSON list contract in squareup/cash-server#133899. It
 preserves every returned backup and failed ID in order, including successful
-responses with only failed IDs. `Error::HttpStatus(404)` distinguishes no backups;
-other status codes, transport failures, malformed responses, and size violations
-remain separate. Recovery reads are bounded to 64 KiB, sufficient for 100 backups.
+responses with only failed IDs. `Error::HttpStatus(404)` can mean no backups or an
+unavailable recovery endpoint; it does not prove that no backups exist. Other
+status codes, transport failures, malformed responses, and size violations remain
+separate. Recovery reads are bounded to 64 KiB, sufficient for 100 backups.
 
 Owned response buffers, encoded secrets, and decoded keys use best-effort
 zeroization. Client/recovery diagnostics omit credentials and secrets; errors omit

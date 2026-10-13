@@ -18,9 +18,29 @@ function AvatarArtwork({
   const image = useRef<HTMLImageElement>(null);
   const [status, setStatus] = useState<ImageStatus>("loading");
   useLayoutEffect(() => {
-    // A cached image can be ready before this instance receives its load event.
-    if (image.current?.complete && image.current.naturalWidth > 0)
-      setStatus("loaded");
+    const artwork = image.current;
+    if (!artwork) return;
+    let active = true;
+    let decoding = false;
+    const reveal = () => {
+      if (decoding) return;
+      decoding = true;
+      void artwork.decode().then(
+        () => {
+          if (active) setStatus("loaded");
+        },
+        () => {
+          if (active) setStatus("failed");
+        },
+      );
+    };
+    artwork.addEventListener("load", reveal);
+    // Cached bytes still need decoding; only start after loading to preserve laziness.
+    if (artwork.complete && artwork.naturalWidth > 0) reveal();
+    return () => {
+      active = false;
+      artwork.removeEventListener("load", reveal);
+    };
   }, []);
   if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
   return (
@@ -33,7 +53,6 @@ function AvatarArtwork({
         loading={loading}
         decoding="async"
         referrerPolicy="no-referrer"
-        onLoad={() => setStatus("loaded")}
         onError={() => setStatus("failed")}
       />
       {status === "loading" ? <span aria-hidden="true">{fallback}</span> : null}

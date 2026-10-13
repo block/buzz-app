@@ -56,7 +56,7 @@ fn owner() -> String {
     auth[1].clone()
 }
 fn created(dir: &std::path::Path, credentials: &Memory) -> (AppAgents, AppAgent) {
-    let agents = AppAgents::open(dir.join("agents2/identities.json"));
+    let agents = AppAgents::open(dir.join("agents/identities.json"));
     let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Ada").unwrap();
     let auth: Vec<String> =
         serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
@@ -295,7 +295,9 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     let credentials = Memory::default();
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
-    let sha = "a".repeat(64);
+    use sha2::{Digest, Sha256};
+    let bytes = b"media body";
+    let sha = format!("{:x}", Sha256::digest(bytes));
     let auth = agent.upload_auth(&key, &sha).unwrap();
     assert_eq!(auth["kind"], 24242);
     let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
@@ -305,6 +307,35 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
         ["server", agent.relay.trim_start_matches("wss://")]
     );
     assert!(agent.upload_auth(&key, "not-a-hash").is_err());
+    let get = agent.media_auth(&key).unwrap();
+    assert_eq!(get["kind"], 24242);
+    let tags: Vec<Vec<String>> = serde_json::from_value(get["tags"].clone()).unwrap();
+    assert_eq!(tags[0], ["t", "get"]);
+    assert_eq!(
+        tags[2],
+        ["server", agent.relay.trim_start_matches("wss://")]
+    );
+    let media = format!(
+        "{}/media/{sha}.png",
+        agent.relay.replacen("wss", "https", 1)
+    );
+    assert_eq!(agent.media_url(&media).unwrap(), media);
+    assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
+    assert!(agent.verify_media_hash(&media, bytes).is_ok());
+    assert!(agent.verify_media_hash(&media, b"different body").is_err());
+    let thumbnail = format!("{}/media/{sha}.thumb.jpg", agent.endpoint(""));
+    assert!(agent
+        .verify_media_hash(&thumbnail, b"derived thumbnail")
+        .is_ok());
+    for input in [
+        format!("https://elsewhere.test/media/{sha}.png"),
+        format!("{media}?x=1"),
+        format!("{sha}/../x"),
+        format!("{sha}.PNG"),
+        "not-a-hash".into(),
+    ] {
+        assert!(agent.media_url(&input).is_err(), "{input}");
+    }
     let future = u64::MAX / 2;
     let memory = agent.memory(&key, "mem/notes", "hi", future).unwrap();
     assert_eq!(memory["kind"], 30174);
@@ -313,13 +344,14 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     assert!(agent.memory(&key, "../notes", "hi", 0).is_err());
     let other = Secret::generate().unwrap();
     assert!(agent.upload_auth(&other, &sha).is_err());
+    assert!(agent.media_auth(&other).is_err());
     assert!(agent.memory(&other, "core", "hi", 0).is_err());
 }
 
 #[test]
 fn concurrent_writers_on_one_file_keep_every_identity() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("agents2/identities.json");
+    let path = dir.path().join("agents/identities.json");
     let credentials = std::sync::Arc::new(Memory::default());
     let threads: Vec<_> = (0..8)
         .map(|_| {
@@ -365,7 +397,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
     credentials.add(&id, &key).unwrap();
     set(&credentials.1.add, true);
     let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
-    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents2/identities.json"));
+    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents/identities.json"));
     let adopt = |picture: &str| {
         AppAgents::adopt(
             "https://relay.example/",
@@ -430,7 +462,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
 fn an_adopted_key_that_cannot_be_saved_withdraws_only_its_row() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
-    let agents = AppAgents::open(dir.path().join("agents2/identities.json"));
+    let agents = AppAgents::open(dir.path().join("agents/identities.json"));
     let key = Secret::generate().unwrap();
     let pubkey = key.pubkey().to_owned();
     let auth: Vec<String> =

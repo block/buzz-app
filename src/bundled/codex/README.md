@@ -1,7 +1,7 @@
-# Codex for Agents2
+# Codex for Agents
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
-Agents2 owns the identity, admission, configuration, and signed Buzz actions. This plugin
+Agents owns the identity, admission, configuration, and signed Buzz actions. This plugin
 owns Codex work after delivery handover. It starts one `codex app-server` for all
 agents and uses an independent Codex thread for each agent's Buzz conversation.
 Each thread carries its agent's workspace, instructions and tools, so one crash
@@ -13,20 +13,22 @@ From the feature worktree:
 
 ```sh
 source bin/activate-hermit
-BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
+BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
 1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
-2. Open **Agents2 → New agent**, choose **Codex**, and create an agent. The Codex
-   tab checks the installed CLI and existing account. If needed, install Codex
+2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
+   optionally pick a model beside it and add instructions. Name the agent and
+   click **Create agent**. The Codex tab checks the installed CLI and existing
+   account. If needed, install Codex
    and run `codex login` in a terminal, then click **Check again**.
 3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,
    session scope, and instructions, then **Save**.
-4. Mentions and replies are automatic; **Attention** also lets you add event
+4. Mentions are automatic; **Attention** also lets you add event
    watches. In a channel you can write to, select the agent from the `@` picker
    and add it to the channel if prompted. Send: `@Codex Test create hello.txt containing
    hello in the workspace, read it back, and report what you found`. Use the
@@ -61,7 +63,7 @@ To inspect a saved session, see [View a Codex session](../../../docs/view-codex-
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
-`mem_set`, and `canvas`. These run inside Buzz through the agent's native-backed
+`mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
 reads use the owner's encrypted-memory view; writes use the agent handle.
@@ -101,14 +103,14 @@ and cleanup.
 
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
-- Replies use Agents2's host signer. Codex receives no Buzz agent key and does not
+- Replies use Agents' host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. Short Buzz guidance and custom instructions are
   supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude Code's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
-- Shared Agent Activity integration is deferred because this Agents2 delivery
+- Shared Agent Activity integration is deferred because this Agents delivery
   contract has no live-activity API. The Codex tab shows conversation status and
   the latest command/output. Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;

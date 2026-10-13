@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents2/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -78,6 +78,7 @@ function setup(thread: readonly EventData[] = []) {
     publish,
     query,
     upload: vi.fn(),
+    media: vi.fn(),
     remember: vi.fn(),
   };
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
@@ -225,6 +226,107 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   expect((await runtime.models(self)).current).toBe("opus");
   runtime.dispose();
 });
+it("puts the agent's teams in its system prompt, resuming idle sessions when they change", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  // A reply in the root's thread, so the same session.
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const mention = (id: string) => (id === "2" ? root : reply);
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (id: string, team?: string) =>
+    runtime.run({
+      trigger: { type: "mention", event: mention(id) },
+      channelId: channel,
+      agent,
+      config: DEFAULT_CONFIG,
+      ...(team ? { team } : {}),
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as Delivery);
+  const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
+    String(
+      (
+        process?.received.find(
+          (wire) =>
+            (wire.request as { subtype?: string } | undefined)?.subtype ===
+            "initialize",
+        )?.request as { appendSystemPrompt?: string } | undefined
+      )?.appendSystemPrompt,
+    );
+  await run("2", "<team>\nCrew roster\n</team>");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(system(first)).toContain("<team>\nCrew roster\n</team>");
+  await run("3");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(system(second)).not.toContain("<team>");
+  runtime.dispose();
+});
+
+it("names the agent in its system prompt, resuming idle sessions when it is renamed", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const mention = (id: string) => (id === "2" ? root : reply);
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (id: string, name: string) => {
+    // A rename reaches the runtime as a changed agent list.
+    runtime.sync([{ pubkey: self, name, config: DEFAULT_CONFIG } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event: mention(id) },
+      channelId: channel,
+      agent: { ...agent, name },
+      config: DEFAULT_CONFIG,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as Delivery);
+  };
+  const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
+    String(
+      (
+        process?.received.find(
+          (wire) =>
+            (wire.request as { subtype?: string } | undefined)?.subtype ===
+            "initialize",
+        )?.request as { appendSystemPrompt?: string } | undefined
+      )?.appendSystemPrompt,
+    );
+  await run("2", "Claude");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(system(first)).toContain(`You are Claude (pubkey ${self}).`);
+  await run("3", "Pollen");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(system(second)).toContain(`You are Pollen (pubkey ${self}).`);
+  runtime.dispose();
+});
+
 it("reads model ids and aliases as names", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");
@@ -508,4 +610,49 @@ it("replaces the spare when no agent runs where it was started", async () => {
     expect.arrayContaining(["--model", "sonnet"]),
   );
   expect(claudes()).toHaveLength(2);
+});
+
+it("tells the owner, not the asking sibling, when a sibling's turn fails", async () => {
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const mention = message("2", "@Claude hi", {
+    pubkey: sibling,
+    tags: [
+      ["h", channel],
+      ["p", self],
+      ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))],
+    ],
+  });
+  const { runtime, published, claudes, agent } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  spare.hold = true;
+  await runtime.run({
+    trigger: { type: "mention", event: mention },
+    channelId: channel,
+    agent: { ...agent, owner },
+    config: DEFAULT_CONFIG,
+    signal: new AbortController().signal,
+    workingUntil: () => undefined,
+  } as unknown as Delivery);
+  await flush(10);
+  expect(spare.prompts).toHaveLength(1);
+  // Both share one login, so both hit the same limit: tagging the sibling
+  // would wake it to fail and tag this agent back.
+  spare.exit(1, "Error: usage limit\n");
+  await flush(10);
+  const report = published.find((event) => event.kind === 9);
+  expect(report?.tags).toEqual([
+    ["h", channel],
+    ["e", mention.id, "", "reply"],
+    ["p", owner],
+  ]);
 });

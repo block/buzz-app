@@ -18,13 +18,23 @@ export function systemPrompt(
   input: Readonly<{
     scope: Scope;
     cwd: string;
+    /** Who the agent is, so it can name itself and the session viewer can too. */
+    agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
+    /** A section for each team the agent is on, from the host. */
+    team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
     memory?: string | null;
   }>,
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
   return [
+    input.agent
+      ? section(
+          "identity",
+          `You are ${input.agent.name} (pubkey ${input.agent.pubkey}).`,
+        )
+      : "",
     section(
       "base",
       `${basePrompt.trim()}\n\n${BUZZ_PROMPT}\n\n${model.trim()}`,
@@ -33,6 +43,7 @@ export function systemPrompt(
     input.instructions?.trim()
       ? section("agent-instructions", input.instructions)
       : "",
+    input.team?.trim() ?? "",
     input.memory === null
       ? section(
           "core-memory",

@@ -4,7 +4,7 @@ import {
   type AgentHandle,
   type Delivery,
   type Models,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
@@ -44,6 +44,8 @@ type Request = {
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   interest: string;
+  /** The agent's team sections, if it is on a team. */
+  team: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -107,7 +109,7 @@ function textOf(event: EventData, name: string) {
   return text;
 }
 
-/** Agents2 owns admission/identity. This plugin owns work after hand-over, and
+/** Agents owns admission/identity. This plugin owns work after hand-over, and
  * uses one app-server for every agent. Each conversation is its own Codex
  * thread carrying its agent's workspace, instructions and tools, and tool
  * calls find their agent by thread and turn. */
@@ -391,8 +393,9 @@ export class CodexRuntime {
     );
   }
   private storageKey(scope: string, pubkey: string) {
-    // Resume restores the persisted tool schema; pre-tools bindings start fresh.
-    return `buzz.codex.sessions.v3:${scope}:${pubkey}`;
+    // Resume restores the persisted tool schema, so a binding from before a
+    // tool change starts fresh. v4 added media_get.
+    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -452,6 +455,7 @@ export class CodexRuntime {
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
+      team: delivery.team ?? "",
       answered,
     };
     if (!validWorkspace(settings.workspace)) {
@@ -471,7 +475,7 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
-      // Startup and history reads stay ordered without holding Agents2 delivery.
+      // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
@@ -539,7 +543,7 @@ export class CodexRuntime {
       });
     lane.tail = job;
     this.status(request.agent.pubkey, key, "Starting");
-    // Agents2 can deliver follow-ups and other conversations immediately.
+    // Agents can deliver follow-ups and other conversations immediately.
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {
@@ -556,6 +560,8 @@ export class CodexRuntime {
       snapshot.session.read(filters, { signal }),
     );
   }
+  // Tags the owner even when a sibling asked: tagging the sibling would wake
+  // it, and two agents failing alike would wake each other without end.
   private publish(request: Request, content: string) {
     return request.agent.publish({
       kind: 9,
@@ -563,7 +569,7 @@ export class CodexRuntime {
       tags: [
         ["h", request.conversation.channelId],
         ["e", rootOf(request.event), "", "reply"],
-        ["p", request.event.pubkey],
+        ["p", request.agent.owner],
       ],
     });
   }
@@ -622,7 +628,7 @@ export class CodexRuntime {
         }
       },
     });
-    const text = await callTool(
+    const reply = await callTool(
       client,
       {
         channel: request.conversation.channelId,
@@ -636,7 +642,17 @@ export class CodexRuntime {
       active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
-    return { success: true, contentItems: [{ type: "inputText", text }] };
+    return {
+      success: true,
+      contentItems: [
+        typeof reply === "string"
+          ? { type: "inputText", text: reply }
+          : {
+              type: "inputImage",
+              imageUrl: `data:${reply.type};base64,${reply.data}`,
+            },
+      ],
+    };
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -687,11 +703,8 @@ export class CodexRuntime {
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
     const server = this.open();
-    const signal = AbortSignal.any([
-      entry.abort.signal,
-      turnAbort.signal,
-      AbortSignal.timeout(29 * 60_000),
-    ]);
+    // No deadline of our own: a turn runs until Codex ends it.
+    const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {
       rpc: server.rpc,
       ready: new Promise((resolve, reject) => {
@@ -868,7 +881,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings),
+            value: developerInstructions(agent, settings, request.team),
           },
         },
       });

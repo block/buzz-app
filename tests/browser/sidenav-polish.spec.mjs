@@ -74,7 +74,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     "Inbox",
     "Bestie",
     "Projects",
-    "Agents2",
+    "Agents",
     "Workflows",
   ].map((name) => pages.getByRole("button", { name, exact: true }));
   const assertDestinationFillParity = async () => {
@@ -200,11 +200,11 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await expect(alpha).toBeFocused();
   const node = await sidebar.elementHandle();
   await page
-    .getByRole("button", { name: "Agents2", exact: true })
+    .getByRole("button", { name: "Agents", exact: true })
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
   await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
@@ -308,6 +308,27 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
       await expect(overflow).toBeHidden();
       await expect(topbarPages).toBeVisible();
     }
+    // The icon default is compact, but community identities keep their larger
+    // targets. Host CSS must not accidentally erase those explicit exceptions.
+    const rail = page.getByRole("navigation", {
+      name: "Communities",
+      exact: true,
+    });
+    for (const control of await rail.getByRole("button").all()) {
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([40, 40]);
+    }
+    await header
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    const profileAvatar = page.getByRole("menuitem", {
+      name: "View your profile",
+    });
+    await expect(profileAvatar).toBeVisible();
+    const avatarBox = await profileAvatar.boundingBox();
+    expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
+    await page.keyboard.press("Escape");
+    await expect(profileAvatar).toHaveCount(0);
     expect(await controls.count()).toBeGreaterThanOrEqual(5);
     for (const control of await controls.all()) {
       const box = await control.boundingBox();
@@ -653,15 +674,15 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     )
     .toBe(expandedWidth);
 
-  await sidebar.getByRole("button", { name: "Agents2", exact: true }).click();
+  await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(sidebar).not.toBeVisible();
   await expect(rail).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Show Channel sidebar" }).click();
@@ -678,7 +699,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     )
     .toBe(expandedWidth);
   await expect(
-    sidebar.getByRole("button", { name: "Agents2", exact: true }),
+    sidebar.getByRole("button", { name: "Agents", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
 

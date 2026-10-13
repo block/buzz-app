@@ -2,13 +2,34 @@
 
 ## Scope
 
-Agents2 (`src/bundled/agents2`, `src/features/agents2`) is the app's only agent
+Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
 Channel templates plugin, agent snapshots, team bundles, community catalog and
 agent-management request popups are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
+
+Agents was called Agents2 while v1 still shipped. Startup now moves its identity
+folder to `agents/identities.json` and its browser settings to `buzz.agents.v1`
+and `buzz.agents.teams.v1`. Identity bytes and keychain entries are unchanged.
+The Agents2 plugin switch moves to `buzz.agents`; the retired v1 switch is
+removed. Plugin registry versions distinguish these preferences (native v2,
+browser v3), so a later restart preserves changes to the new switch.
+
+The temporary migrators are `src/features/agents/migrate-storage.ts`,
+`src/plugins/migrate-agent-flag.ts`,
+`crates/plugin-manager/src/migrate_agent_flag.rs`, and
+`src-tauri/src/sign_out/migrate_agents.rs`. Remove them and their call sites after
+2026-10-18 once development users have upgraded; remove the old registry-version
+readers and the legacy sign-out keep/key-deletion entries at the same time.
+This is a one-way development migration: close older Buzz copies before the
+first upgraded launch and use the upgraded build afterward. Native migration
+requires the existing exclusive instance lock; conflicts stop startup without
+replacing either folder. A pending erase handles both folder names before the
+migration runs. Browser moves write the destination before removing the source
+and resume identical interrupted copies; differing destinations are left intact
+and reported as migration errors.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
@@ -18,13 +39,13 @@ archive state and presence do not prove ownership, membership or runtime state.
 `LocalAgents` (`src/features/agents/local.ts`) is a read-only snapshot of the
 viewer's live agents on this machine, in any community:
 `{ status, agents: [{ pubkey, name, relayUrl, owner }] }`, with `status` one of
-`unavailable`, `loading`, `ready` or `error`. `Agents2Service.local()` produces it
-from its saved identities (deleted ones omitted), so it carries Agents2's own
-loading and error state. Agents2's `snapshot()` is different: it holds only the
+`unavailable`, `loading`, `ready` or `error`. `AgentsService.local()` produces it
+from its saved identities (deleted ones omitted), so it carries Agents' own
+loading and error state. Agents' `snapshot()` is different: it holds only the
 selected community's agents, with their settings.
 
-`app/services.ts` composes consumers before Agents2 exists, through
-`createLocalAgents()`. Until `bind` connects `agents2.local`, the snapshot is
+`app/services.ts` composes consumers before Agents exists, through
+`createLocalAgents()`. Until `bind` connects `agents.local`, the snapshot is
 `unavailable`; unbinding returns it there. Two consumers read it directly:
 
 - the identity-name service, which lets a local agent's name win in its own
@@ -65,7 +86,7 @@ retirement revokes its candidates.
 
 `templates` serves saved channel-kit templates and section defaults (session setup
 resolves lineups through it with `templateAgentChoices`). Its identities are the
-local agents once Agents2 is bound, and the library only while the local source is
+local agents once Agents is bound, and the library only while the local source is
 `unavailable`. It never falls back to the library after a local error.
 `templateAgentChoices` returns nothing until archive evidence is ready, and
 library-only choices additionally need visible community membership. Saved keys
@@ -92,8 +113,8 @@ the lookup.
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 In streams and forums, nonmember mentions also offer people from the selected
-community directory and, when the viewer can add members, the viewer's `managed`
-agents that are not in the channel. Send asks before adding them; selection grants
+community directory and, when the viewer can add members, the viewer's own agents
+(`managed` or not) that are not in the channel. Send asks before adding them; selection grants
 no access. A pasted mention of a known profile is offered the same way. A DM can
 name outsiders but never notifies them. Session invitations keep their existing
 rules, including library choices. Shared choice visibility is not permission to
@@ -314,8 +335,8 @@ the relay re-verifies consent. An owner request copies the target's single live
 by that re-read, and only a definitive relay rejection skips it. No profile pane
 offers Archive or Unarchive now; the only caller is agent deletion.
 
-**Delete agent** on Agents2 forgets the agent's key on this device, then
-(`Agents2Service.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
+**Delete agent** on Agents forgets the agent's key on this device, then
+(`AgentsService.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
 runs whenever its community is open:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every

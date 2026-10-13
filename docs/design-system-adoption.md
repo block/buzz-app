@@ -11,7 +11,7 @@ Use this map to find the shared owner before changing a product surface.
 | Area | Shared owner | App uses |
 | --- | --- | --- |
 | Colors and type | Surface, text, border, affordance, and complete type roles | Host aliases forward to shared roles. Feature CSS uses role names; inline links pair text and hover roles. |
-| Actions | Button and IconButton | Retry, refresh, delete, recovery, composer send, and picker triggers. Standard sizes are 32/40/52px minimums. Labels stay on one line; surrounding layouts reflow whole controls or scroll. |
+| Actions | Button and IconButton | Retry, refresh, delete, recovery, composer send, and picker triggers. Standard sizes are 32/40/52px; IconButton defaults to small and labelled Button defaults to medium. Text-button heights are minimums. Labels stay on one line; surrounding layouts reflow whole controls or scroll. |
 | Forms and choices | Field, Input, Textarea, RadioGroup, Checkbox | Profile, community setup, appearance, plugin import, and workflow editing. |
 | Search | SearchField | Channels, pages, members, and GIFs retain their query, refs, and keyboard handlers. |
 | Navigation | NavigationItem | Settings, channel rows, shell destinations, Home, and community choices. Route destinations use button semantics; the wide shell topbar is the documented chrome-tab exception. |
@@ -73,7 +73,7 @@ Use [DESIGN.md's whole-surface recipes](../src/shared/design-system/DESIGN.md#co
 as the target; remove resolved gaps from this table when their migrations are verified.
 During PR preparation, source references were refreshed against `a6ea532d6`,
 including the new Me workspace. The browser observations below remain tied to
-`2bea18769`; the newer Me workspace and Agents2 page were not browser-retested.
+`2bea18769`; the newer Me workspace and Agents page were not browser-retested.
 
 Browser inspection covered Messages, Inbox, Reminders, Projects, Agents, Sessions,
 Workflows, Me, the account menu, Channel members, a profile companion panel, and

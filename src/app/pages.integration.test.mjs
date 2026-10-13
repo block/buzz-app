@@ -130,10 +130,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.builderlab",
         "block.hosted-communities",
         "buzz.channels",
+        "buzz.channels",
+        "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",
       ],
     );
+    // Messages owns thread placement through the plugin-settings boundary.
+    assert.equal(services.settingsCards.has("buzz.channels/messages"), true);
+    const messageSettings = services.settingsCards
+      .snapshot()
+      .find((card) => card.key === "buzz.channels/messages");
+    assert.equal(messageSettings.title, "Messages");
     const pairingCard = services.settingsCards
       .snapshot()
       .find((card) => card.key === "buzz.pairing/mobile");
@@ -190,6 +198,8 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "block.builderlab",
         "block.hosted-communities",
+        "buzz.channels",
+        "buzz.channels",
         "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",
@@ -468,7 +478,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "buzz.channels",
         "buzz.reminders",
-        "buzz.agents2",
+        "buzz.agents",
         "buzz.inbox",
         "buzz.bestie",
       ],

@@ -115,7 +115,7 @@ export function AppearanceSettings({
               >
                 <div
                   data-message-colors
-                  className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto"
+                  className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto p-1 scroll-p-1 [&>button]:scroll-m-1"
                 >
                   {BUBBLE_COLORS.map((color) => {
                     const colorLabel =

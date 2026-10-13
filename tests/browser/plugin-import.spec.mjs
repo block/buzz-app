@@ -269,6 +269,8 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await checkButtons(appearance, scale);
       const colors = appearance.locator("[data-message-colors] button");
       await colors.first().focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
       for (let index = 0; index < 6; index++) {
         if (index) await page.keyboard.press("Tab");
         await expect(colors.nth(index)).toBeFocused();
@@ -279,7 +281,17 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               const palette = button
                 .closest("[data-message-colors]")
                 .getBoundingClientRect();
-              return box.left >= palette.left && box.right <= palette.right;
+              const style = getComputedStyle(button);
+              const ring =
+                parseFloat(style.outlineWidth) +
+                parseFloat(style.outlineOffset);
+              return (
+                ring === 4 &&
+                box.left - ring >= palette.left &&
+                box.right + ring <= palette.right &&
+                box.top - ring >= palette.top &&
+                box.bottom + ring <= palette.bottom
+              );
             }),
           )
           .toBe(true);

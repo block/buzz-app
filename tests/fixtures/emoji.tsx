@@ -190,6 +190,16 @@ const sessions = ["a", "b"].map((community) => {
       tags: [["e", root.id]],
     }),
   );
+  const repeatedReactions = new URLSearchParams(location.search).has("repeated")
+    ? [member, keypair()].map((key, index) =>
+        signed(key, {
+          kind: 7,
+          content: "😂",
+          created_at: 30 + index,
+          tags: [["e", root.id]],
+        }),
+      )
+    : [];
   const ownReaction = signed(viewer, {
     kind: 7,
     content: "✅",
@@ -244,6 +254,7 @@ const sessions = ["a", "b"].map((community) => {
     reaction,
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
+    ...repeatedReactions,
   ]);
   return {
     ...owner,
@@ -254,6 +265,7 @@ const sessions = ["a", "b"].map((community) => {
       reaction,
       ...(wrap ? [...wrapReactions, ownReaction] : []),
       ...longReactions,
+      ...repeatedReactions,
       broken,
       unloaded,
       single,

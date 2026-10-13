@@ -209,8 +209,12 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     }),
   ).toBeVisible();
   await root.getByRole("button", { name: "👍: You", exact: true }).click();
-  await expect(root.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await expect(
+    root.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -380,7 +384,9 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
     }),
   ).toBeVisible();
   await row.getByRole("button", { name: "👍: You", exact: true }).click();
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>

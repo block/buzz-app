@@ -183,9 +183,8 @@ test.describe("Berd-style Me organization", () => {
       exact: true,
     });
     await assistant.click();
-    await page
-      .getByRole("button", { name: "Owned Honey", exact: true })
-      .click();
+    // Its name gains presence (", online") once that is known.
+    await page.getByRole("button", { name: /^Owned Honey(,|$)/ }).click();
     await expect(
       page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
     ).toBeVisible();

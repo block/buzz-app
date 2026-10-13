@@ -302,8 +302,8 @@ test.describe("personal recipients", () => {
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", honey.pubkey],
       ]);
-      // Successful personal sends keep explicit mention chips for follow-up turns.
-      await expect(composer).toHaveText(`@${honey.name} `);
+      // A mention is one-off in Me: the assistant picker carries follow-ups.
+      await expect(composer).toHaveText("");
       // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");

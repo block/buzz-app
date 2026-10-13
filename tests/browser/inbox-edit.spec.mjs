@@ -11,9 +11,6 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
   viewport: { width: 1280, height: 720 },
 });
-// Thread root 0's row previews its oldest unread reply. A focused dwell in the
-// startup Alpha view may already have read "Broadcast reply".
-const threadZeroPreview = /Broadcast reply|Unread reply 0/;
 
 test("Inbox edits an owned reply in place and restores the reply draft", async ({
   page,
@@ -26,7 +23,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   const conversation = inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem")
-    .filter({ hasText: threadZeroPreview });
+    .filter({ hasText: "Broadcast reply" });
   await conversation.getByRole("button", { name: /^Open / }).click();
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   const reply = detail.getByRole("textbox", {
@@ -128,11 +125,14 @@ for (const submitted of [false, true])
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    const conversation = inbox
-      .getByRole("list", { name: "Inbox conversations" })
-      .getByRole("listitem")
-      .filter({ hasText: threadZeroPreview });
-    await conversation.getByRole("button", { name: /^Open / }).click();
+    // The preview can settle on either reply as thread inputs arrive; the
+    // conversation's accessible identity is the stable target for this test.
+    await inbox
+      .getByRole("button", {
+        name: "Open Alice Fixture in #Alpha",
+        exact: true,
+      })
+      .click();
     const detail = inbox.getByRole("region", { name: "Inbox detail" });
     const editor = detail.getByRole("textbox", {
       name: "Reply to thread",

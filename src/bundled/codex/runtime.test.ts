@@ -161,7 +161,11 @@ function fixture(
   let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
-    if (plugin && _id === "app-server" && appServerSpawns++ === 0) {
+    // The plugin starts the app server as a step of Buzz's `codex.sh`.
+    const appServer =
+      _id === "app-server" ||
+      value?.args?.slice(2, 4).join(" ") === "run app-server";
+    if (plugin && appServer && appServerSpawns++ === 0) {
       const catalogExit = deferred<number | null>();
       return {
         write: async (data: string) => {
@@ -196,6 +200,12 @@ function fixture(
             : "FILE CONTENT",
         ),
       );
+      return { ...process, exited: Promise.resolve(0) };
+    }
+    // The plugin's setup checks find Buzz's copy installed and signed in.
+    const step = value?.args?.slice(3).join(" ");
+    if (step === "--version" || step === "login status") {
+      value?.onStdout?.("codex-cli 0.162.1\n");
       return { ...process, exited: Promise.resolve(0) };
     }
     options = value;

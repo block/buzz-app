@@ -39,6 +39,9 @@ export type ThreadSnapshot = Readonly<{
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
   limited: boolean;
+  /** Signed reverse-window bounds proved no older replies remain. Only a
+   * successful strict read sets it; interruptions and resets clear it. */
+  complete?: boolean;
   /** Older pages are demand-loaded; forward is the legacy bounded walk. */
   direction?: "older" | "forward";
   /** The in-flight or failed read, distinct from the traversal direction. */
@@ -130,6 +133,7 @@ export function createThreadView({
     error: undefined,
     canLoadMore: false,
     limited: false,
+    complete: false,
   });
   const listeners = new Set<() => void>();
   function related<T extends EventData>(
@@ -276,6 +280,7 @@ export function createThreadView({
         status: "error",
         limited: true,
         canLoadMore: false,
+        complete: false,
         error:
           "Thread view exceeded its memory limit. Refresh to read from the beginning.",
       });
@@ -317,6 +322,7 @@ export function createThreadView({
       status: "idle",
       canLoadMore: false,
       limited: false,
+      complete: false,
       error: canAccess()
         ? "Thread read interrupted. Refresh to continue."
         : "This channel is no longer available.",
@@ -497,15 +503,16 @@ export function createThreadView({
         if (!active()) return;
         if (revision === selectionRevision && result !== "selected") {
           targetStatus = "unavailable";
-          // Target availability says nothing about the retained window's bounds.
-          publish({ status: "ready" });
+          // Target availability says nothing about the retained window's bounds,
+          // but the hidden target makes the visible count incomplete.
+          publish({ status: "ready", complete: false });
           return;
         }
         if (revision === selectionRevision) {
           targetStatus = "ready";
           publish();
           if (snapshot.targetStatus !== "ready") {
-            publish({ status: "ready" });
+            publish({ status: "ready", complete: false });
             return;
           }
         }
@@ -553,7 +560,7 @@ export function createThreadView({
           rootUnavailable = true;
           cursor = undefined;
           pages = 0;
-          publish({ canLoadMore: false });
+          publish({ canLoadMore: false, complete: false });
           throw new Error("The original thread message is unavailable.");
         }
         if (!retain(union(remote, related(root)))) return;
@@ -645,7 +652,7 @@ export function createThreadView({
           rootUnavailable = true;
           cursor = undefined;
           pages = 0;
-          publish({ canLoadMore: false });
+          publish({ canLoadMore: false, complete: false });
           throw new Error("The original thread message is unavailable.");
         }
         // Count traversal rows before presentation filtering. The bridge may return
@@ -694,6 +701,7 @@ export function createThreadView({
         direction: mode === "older" ? "older" : "forward",
         canLoadMore: more && pages < MAX_PAGES,
         limited: more && pages >= MAX_PAGES,
+        complete: mode === "older" && !more,
       });
     } catch (error) {
       if (active()) {

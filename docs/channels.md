@@ -1121,8 +1121,9 @@ windows show the reply count; partial or legacy history says “replies loaded�
 (or “Replies” when none are loaded yet). Counts include collapsed descendants.
 The first reply always shows its author, even when it matches the original.
 The original has no day divider above it; its byline already names the day.
-Agent-addressed messages retain their date when expanded. An unresolved linked
-reply keeps the count labelled as loaded, even if its refresh returns ready.
+Agent-addressed messages retain their date when expanded. Only a successful
+signed window read marks the count complete; interruptions, access purges and
+exact-target refreshes that read no bounds keep it labelled as loaded.
 Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested

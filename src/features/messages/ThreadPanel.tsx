@@ -1121,16 +1121,9 @@ function ThreadMessages({
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const replyCount = snapshot.replies.length;
-  // A failed exact-target refresh can end before reading a new signed window.
-  // Only a resolved target and signed reverse-window bounds establish exhaustion.
+  // Only the reader's signed exhaustion evidence makes a count complete.
   const repliesComplete =
-    (snapshot.targetStatus === undefined ||
-      snapshot.targetStatus === "ready") &&
-    snapshot.direction === "older" &&
-    snapshot.status === "ready" &&
-    !snapshot.error &&
-    !snapshot.canLoadMore &&
-    !snapshot.limited;
+    !!snapshot.complete && snapshot.status === "ready" && !snapshot.error;
   const replyLabel = replyCount
     ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}${repliesComplete ? "" : " loaded"}`
     : repliesComplete

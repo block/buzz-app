@@ -564,7 +564,7 @@ it.each([false, true])(
 );
 it("separates the original from replies without presenting incomplete history as empty or complete", () => {
   const h = messagesHarness();
-  h.snapshot.direction = "older";
+  h.snapshot.complete = true;
   h.render();
   expect(screen.getByText("No replies yet")).toBeVisible();
 
@@ -587,37 +587,24 @@ it("separates the original from replies without presenting incomplete history as
   h.render();
   expect(screen.getByText("2 replies")).toBeVisible();
 
+  // Exhaustion comes only from the reader's evidence, never from a missing
+  // continuation, direction or target state.
   for (const partial of [
+    { complete: false },
+    { complete: undefined },
     { status: "loading" as const },
     { status: "error" as const, error: "Unable to load replies" },
-    { canLoadMore: true },
-    { limited: true },
-    { direction: "forward" as const },
-    { targetStatus: "unavailable" as const },
-    { targetStatus: "loading" as const },
-    { targetStatus: "error" as const },
   ]) {
     Object.assign(
       h.snapshot,
-      {
-        direction: "older",
-        status: "ready",
-        error: undefined,
-        canLoadMore: false,
-        limited: false,
-        targetStatus: undefined,
-      },
+      { complete: true, status: "ready", error: undefined },
       partial,
     );
     h.render();
     expect(screen.getByText("2 replies loaded")).toBeVisible();
   }
 
-  h.snapshot.targetStatus = "ready";
-  h.render();
-  expect(screen.getByText("2 replies")).toBeVisible();
-
-  h.snapshot.targetStatus = "unavailable";
+  h.snapshot.complete = false;
   h.snapshot.replies = [];
   h.render();
   expect(screen.getByText("Replies", { exact: true })).toBeVisible();

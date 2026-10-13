@@ -255,6 +255,7 @@ it.each([true, false])(
       status: "ready",
       direction: "older",
       canLoadMore: hasMore,
+      complete: !hasMore,
     });
     expect(
       await h.view.retarget(selected.id, new AbortController().signal),
@@ -263,7 +264,11 @@ it.each([true, false])(
     missing = true;
     const beforeRefresh = h.requests.length;
     await h.view.refresh();
-    expect(h.view.snapshot()).toMatchObject({ targetStatus: "unavailable" });
+    // The hidden target makes the visible count incomplete, whatever the bounds.
+    expect(h.view.snapshot()).toMatchObject({
+      targetStatus: "unavailable",
+      complete: false,
+    });
     expect(
       h.requests.slice(beforeRefresh).some(([f]) => f?.thread_window),
     ).toBe(false);
@@ -276,6 +281,8 @@ it.each([true, false])(
       target: { id: root.id },
       direction: "older",
       canLoadMore: hasMore,
+      // No new bounds were read since the target disappeared.
+      complete: false,
     });
 
     if (hasMore) {
@@ -289,11 +296,56 @@ it.each([true, false])(
         older.id,
         selected.id,
       ]);
-      expect(h.view.snapshot().canLoadMore).toBe(false);
+      expect(h.view.snapshot()).toMatchObject({
+        canLoadMore: false,
+        complete: true,
+      });
     }
   },
 );
 
+it("keeps partial history incomplete after an unrelated access purge, exact-target retry and retarget", async () => {
+  const selected = reply(3);
+  let missing = false;
+  const h = await setup((filter) => {
+    if (filter.ids)
+      return filter.ids.includes(root.id) ? [root] : missing ? [] : [selected];
+    if (!filter.thread_window) return [];
+    return [
+      selected,
+      bounds(filter, { created_at: selected.created_at, id: selected.id }),
+    ];
+  });
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    complete: false,
+  });
+  expect(await h.view.retarget(selected.id, new AbortController().signal)).toBe(
+    "selected",
+  );
+
+  h.traffic.denied("00000000-0000-0000-0000-000000000099", "fixture");
+  expect(h.view.snapshot()).toMatchObject({
+    status: "idle",
+    canLoadMore: false,
+    complete: false,
+  });
+  missing = true;
+  await h.view.refresh();
+  expect(await h.view.retarget(root.id, new AbortController().signal)).toBe(
+    "selected",
+  );
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    targetStatus: "ready",
+    direction: "older",
+    canLoadMore: false,
+    limited: false,
+    complete: false,
+  });
+});
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

@@ -280,7 +280,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
                 : "Codex needs attention."}
           </p>
           {error && (
-            <p role="alert" className="m-0">
+            <p role="alert" className="m-0 wrap-anywhere">
               {error}
             </p>
           )}

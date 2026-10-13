@@ -1,12 +1,15 @@
 // A type's model choice, shared by agent types for the New agent dialog and
-// their settings. Each type decides whether its catalog also accepts typed IDs.
-import { useLayoutEffect, useRef, useState } from "react";
+// their settings. Each type decides whether its catalog accepts custom IDs.
+import { useId, useRef, useState } from "react";
 import {
   ClaudeLogoIcon,
   OpenAILogoIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
-import { Combobox } from "../../shared/design-system/ui/Combobox";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import styles from "./AgentControls.module.css";
 
@@ -60,12 +63,11 @@ export function ModelPicker({
   compact?: boolean;
   description?: string | undefined;
 }) {
-  const [query, setQuery] = useState<string | null>(null);
-  const highlighted = useRef<ModelChoice | null>(null);
-  const enteringCustomModel = useRef(false);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [customModel, setCustomModel] = useState("");
   const control = useRef<HTMLDivElement>(null);
-  const measure = useRef<HTMLSpanElement>(null);
-  const [width, setWidth] = useState(0);
+  const customInput = useRef<HTMLInputElement>(null);
+  const customForm = useId();
   const fallback: ModelChoice = {
     id: "",
     label: defaultLabel,
@@ -74,51 +76,22 @@ export function ModelPicker({
   const items: ModelChoice[] = [fallback, ...models];
   if (value && !items.some((model) => model.id === value))
     items.push({ id: value, label: value, description: "Unavailable model" });
-  const custom = query?.trim();
-  if (
-    allowCustomModel &&
-    custom &&
-    !items.some((m) => m.id === custom || m.label === custom)
-  )
-    items.push({ id: custom, label: custom, description: "Custom model" });
-  const shown =
-    query === null
-      ? [...items]
-      : items.filter((model) =>
-          `${model.label} ${model.id}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-        );
-  if (allowCustomModel && !query?.trim()) shown.push(CUSTOM_MODEL_ACTION);
   const selected = items.find((model) => model.id === value) ?? fallback;
-  const text = query ?? selected.label;
-  useLayoutEffect(() => {
-    const element = measure.current;
-    if (!compact || !element) return;
-    const update = () => setWidth(element.getBoundingClientRect().width);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [compact]);
-  const commit = () => {
-    if (query === null) return;
-    if (enteringCustomModel.current && !query.trim()) {
-      enteringCustomModel.current = false;
-      setQuery(null);
-      return;
-    }
-    const match = items.find(
-      (model) => model.id === query || model.label === query,
-    );
-    if (match) onChange(match.id);
-    else if (allowCustomModel) onChange(query.trim());
-    enteringCustomModel.current = false;
-    setQuery(null);
+  const choices = allowCustomModel ? [...items, CUSTOM_MODEL_ACTION] : items;
+  const openCustomDialog = () => {
+    const listed = !value || models.some((model) => model.id === value);
+    setCustomModel(listed ? "" : value);
+    setCustomDialogOpen(true);
   };
-  if (!allowCustomModel)
-    return (
-      <div className={compact ? styles.compactModel : undefined}>
+  const submitCustomModel = () => {
+    const model = customModel.trim();
+    if (!model) return;
+    onChange(model);
+    setCustomDialogOpen(false);
+  };
+  return (
+    <>
+      <div ref={control} className={compact ? styles.compactModel : undefined}>
         <Select
           label="Model"
           value={selected.id}
@@ -130,7 +103,7 @@ export function ModelPicker({
           groups={[
             {
               label: "",
-              options: items.map((model) => ({
+              options: choices.map((model) => ({
                 value: model.id,
                 label: model.label,
                 description: model.description,
@@ -140,115 +113,59 @@ export function ModelPicker({
           ]}
           disabled={disabled || loading}
           description={compact ? undefined : description}
-          onValueChange={onChange}
+          onValueChange={(model) => {
+            if (model === CUSTOM_MODEL_ACTION.id) openCustomDialog();
+            else onChange(model);
+          }}
         />
       </div>
-    );
-  return (
-    <div ref={control} className={compact ? styles.compactModel : undefined}>
-      {compact && (
-        <span ref={measure} aria-hidden="true" className={styles.measure}>
-          {text}
-        </span>
-      )}
-      <Combobox.Root<ModelChoice>
-        disabled={disabled}
-        items={shown}
-        filteredItems={shown}
-        value={selected}
-        inputValue={text}
-        modal={false}
-        itemToStringLabel={(model) => model.label}
-        isItemEqualToValue={(a, b) => a.id === b.id}
-        onItemHighlighted={(model) => {
-          highlighted.current = model ?? null;
-        }}
-        onInputValueChange={(next, details) => {
-          if (
-            details.reason === "input-change" ||
-            details.reason === "input-clear"
-          )
-            setQuery(next);
-        }}
-        onOpenChange={(open, details) => {
-          if (open && details.reason === "input-press")
-            queueMicrotask(() =>
-              control.current?.querySelector("input")?.select(),
-            );
-          if (!open && details.reason === "escape-key") {
-            enteringCustomModel.current = false;
-            setQuery(null);
+      {allowCustomModel && (
+        <Dialog
+          open={customDialogOpen}
+          onOpenChange={setCustomDialogOpen}
+          title="Custom model"
+          headerGap="compact"
+          initialFocus={customInput}
+          finalFocus={() =>
+            control.current?.querySelector<HTMLElement>("[role=combobox]") ??
+            false
           }
-        }}
-        onValueChange={(model) => {
-          if (model?.id === CUSTOM_MODEL_ACTION.id) {
-            enteringCustomModel.current = true;
-            setQuery("");
-            queueMicrotask(() =>
-              control.current?.querySelector("input")?.focus(),
-            );
-            return;
-          }
-          enteringCustomModel.current = false;
-          if (model) onChange(model.id);
-          setQuery(null);
-        }}
-      >
-        <Combobox.Control
-          label="Model"
-          labelVisibility={compact ? "hidden" : "visible"}
-          triggerLabel="Browse models"
-          onBrowse={() => {
-            // Base UI opens on mousedown; select after its click finishes.
-            setTimeout(
-              () => control.current?.querySelector("input")?.select(),
-              0,
-            );
-          }}
-          loading={loading}
-          description={compact ? undefined : description}
-          leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
-          appearance={compact ? "chip" : "field"}
-          placeholder="Choose or enter a model"
-          style={
-            compact
-              ? { width: width ? `${Math.ceil(width) + 2}px` : "12ch" }
-              : undefined
-          }
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setQuery(null);
-            if (
-              event.key === "Enter" &&
-              !highlighted.current &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              commit();
-            }
-          }}
-        />
-        <Combobox.Popup
-          className={compact ? styles.modelOptions : undefined}
-          empty="Type a model ID to use a custom model."
-        >
-          <Combobox.List>
-            {(model: ModelChoice) => (
-              <Combobox.Item
-                key={model.id || "default"}
-                value={model}
-                label={model.label}
-                description={model.description}
+          actions={
+            <>
+              <Button onClick={() => setCustomDialogOpen(false)}>Cancel</Button>
+              <Button
+                form={customForm}
+                type="submit"
+                variant="prominent"
+                disabled={!customModel.trim()}
               >
-                <span className="flex items-center gap-2">
-                  <ModelIcon model={`${model.id} ${model.label}`} />
-                  {model.label}
-                </span>
-              </Combobox.Item>
-            )}
-          </Combobox.List>
-        </Combobox.Popup>
-      </Combobox.Root>
-    </div>
+                Use model
+              </Button>
+            </>
+          }
+        >
+          <form
+            id={customForm}
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitCustomModel();
+            }}
+          >
+            <Field label="Model ID" labelVisibility="hidden">
+              <Input
+                ref={customInput}
+                value={customModel}
+                placeholder="Enter a model ID"
+                required
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                onChange={(event) => setCustomModel(event.target.value)}
+              />
+            </Field>
+          </form>
+        </Dialog>
+      )}
+    </>
   );
 }

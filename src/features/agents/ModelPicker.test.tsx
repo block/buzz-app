@@ -2,24 +2,10 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
 
-beforeEach(() => {
-  // jsdom has no layout observers; the compact picker sizes itself with one.
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+afterEach(cleanup);
 
 const models: ModelChoice[] = [
   { id: "sonnet", label: "Sonnet" },
@@ -45,83 +31,38 @@ function setup(
 }
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
-const input = () => control() as HTMLInputElement;
 
 it("shows the default's label when no model is chosen", () => {
   setup("");
-  expect(input()).toHaveValue("Default model");
+  expect(control()).toHaveTextContent("Default model");
 });
 
 it("shows the chosen model's label", () => {
   setup("opus");
-  expect(input()).toHaveValue("Opus");
+  expect(control()).toHaveTextContent("Opus");
 });
 
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
-  await user.click(input());
+  await user.click(control());
   await user.click(await screen.findByRole("option", { name: /Sonnet/ }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("sonnet");
 });
 
 it("picks the default as an empty value", async () => {
   const { onChange, user } = setup("opus");
-  await user.click(input());
+  await user.click(control());
   await user.click(
     await screen.findByRole("option", { name: /Default model/ }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
 });
 
-it.each([
-  ["field", () => input()],
-  [
-    "browse button",
-    () => screen.getByRole("button", { name: "Browse models" }),
-  ],
-] as const)(
-  "replaces the full value after opening from the %s",
-  async (_name, opener) => {
-    const { user } = setup("opus");
-    await user.click(opener());
-    await waitFor(() => {
-      expect(input().selectionStart).toBe(0);
-      expect(input().selectionEnd).toBe("Opus".length);
-    });
-    await user.keyboard("x");
-    expect(input()).toHaveValue("x");
-  },
-);
-
-it("commits a typed custom ID on Enter", async () => {
-  const { onChange, user } = setup("");
-  await user.clear(input());
-  await user.type(input(), "my-model-1{Enter}");
-  expect(onChange).toHaveBeenLastCalledWith("my-model-1");
-});
-
-it("commits a typed custom ID when focus leaves", async () => {
-  const { onChange, user } = setup("");
-  await user.clear(input());
-  await user.type(input(), "  my-model-2  ");
-  await user.tab();
-  expect(onChange).toHaveBeenLastCalledWith("my-model-2");
-});
-
-it("commits a typed label as that model's ID", async () => {
-  const { onChange, user } = setup("");
-  await user.clear(input());
-  await user.type(input(), "Opus");
-  await user.keyboard("{Enter}");
-  expect(onChange).toHaveBeenLastCalledWith("opus");
-});
-
 it.each([true, false])(
   "shows a saved unlisted value as unavailable when custom entry is %s",
   async (allowCustomModel) => {
     const { user } = setup("claude-old-1", { allowCustomModel });
-    if (allowCustomModel) expect(input()).toHaveValue("claude-old-1");
-    else expect(control()).toHaveTextContent("claude-old-1");
+    expect(control()).toHaveTextContent("claude-old-1");
     await user.click(control());
     const option = await screen.findByRole("option", { name: /claude-old-1/ });
     expect(option).toHaveTextContent("Unavailable model");
@@ -141,32 +82,31 @@ it("uses a dropdown to pick listed models when custom entry is disabled", async 
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });
 
-it("starts custom entry from an explicit menu option", async () => {
+it("edits a custom model in a dialog without changing the selection on cancel", async () => {
   const { onChange, user } = setup("opus");
-  await user.click(input());
+  await user.click(control());
   const custom = await screen.findByRole("option", { name: "Custom model" });
   expect(custom).toHaveAccessibleDescription("Enter a model ID");
   await user.click(custom);
+  expect(
+    await screen.findByRole("dialog", { name: "Custom model" }),
+  ).toBeVisible();
+  const modelId = screen.getByRole("textbox", { name: "Model ID" });
+  await waitFor(() => expect(modelId).toHaveFocus());
   expect(onChange).not.toHaveBeenCalled();
-  expect(input()).toHaveValue("");
-  expect(input()).toHaveFocus();
-  await user.click(input());
-  expect(screen.getByRole("option", { name: "Custom model" })).toBeVisible();
-  await user.tab();
+  await user.type(modelId, "ignored-model");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(onChange).not.toHaveBeenCalled();
-  expect(input()).toHaveValue("Opus");
-  await user.click(input());
+  expect(screen.queryByRole("dialog", { name: "Custom model" })).toBeNull();
+  expect(control()).toHaveTextContent("Opus");
+  await user.click(control());
   await user.click(await screen.findByRole("option", { name: "Custom model" }));
-  await user.type(input(), "claude-custom-1{Enter}");
+  await user.type(
+    await screen.findByRole("textbox", { name: "Model ID" }),
+    "  claude-custom-1  ",
+  );
+  await user.click(screen.getByRole("button", { name: "Use model" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("claude-custom-1");
-});
-
-it("offers a typed ID that matches nothing as a custom model", async () => {
-  const { user } = setup("");
-  await user.clear(input());
-  await user.type(input(), "zzz-unlisted");
-  const option = await screen.findByRole("option", { name: /zzz-unlisted/ });
-  expect(option).toHaveTextContent("Custom model");
 });
 
 it("is disabled as a whole", () => {
@@ -180,13 +120,13 @@ it("is disabled as a whole", () => {
       disabled
     />,
   );
-  expect(input()).toBeDisabled();
+  expect(control()).toBeDisabled();
 });
 
 it("works compact, in the dialog's corner", async () => {
   const { onChange, user } = setup("sonnet", { compact: true });
-  expect(input()).toHaveValue("Sonnet");
-  await user.click(input());
+  expect(control()).toHaveTextContent("Sonnet");
+  await user.click(control());
   await user.click(await screen.findByRole("option", { name: /Opus/ }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });

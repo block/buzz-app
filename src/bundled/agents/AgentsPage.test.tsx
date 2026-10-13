@@ -405,9 +405,13 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     const more = screen.getByRole("button", { name: "More agent actions" });
 
     await user.click(more);
-    const trigger = await screen.findByRole("menuitem", { name: "Providers" });
+    const trigger = await screen.findByRole("menuitem", {
+      name: "Provider settings",
+    });
     await user.hover(trigger);
-    const menu = await screen.findByRole("menu", { name: "Providers" });
+    const menu = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
     await vi.waitFor(() =>
       expect(menu).not.toHaveAttribute("data-starting-style"),
     );
@@ -451,10 +455,10 @@ it("checks active providers in a health submenu and opens their host-owned dialo
 
     await user.click(more);
     await user.hover(
-      await screen.findByRole("menuitem", { name: "Providers" }),
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
     );
     const reopenedProviders = await screen.findByRole("menu", {
-      name: "Providers",
+      name: "Provider settings",
     });
     fireEvent.click(
       within(reopenedProviders).getByRole("menuitem", {
@@ -488,10 +492,10 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     );
     await user.click(more);
     await user.hover(
-      await screen.findByRole("menuitem", { name: "Providers" }),
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
     );
     const actionableProviders = await screen.findByRole("menu", {
-      name: "Providers",
+      name: "Provider settings",
     });
     await vi.waitFor(() =>
       expect(actionableProviders).not.toHaveAttribute("data-starting-style"),
@@ -506,9 +510,11 @@ it("checks active providers in a health submenu and opens their host-owned dialo
 
     await user.click(more);
     await user.hover(
-      await screen.findByRole("menuitem", { name: "Providers" }),
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
     );
-    const providers = await screen.findByRole("menu", { name: "Providers" });
+    const providers = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
     await vi.waitFor(() =>
       expect(providers).not.toHaveAttribute("data-starting-style"),
     );
@@ -573,8 +579,12 @@ it("restores a provider dialog from page history and writes open and close visit
   const view = setup([agent("Ada", 1)], { page });
 
   await user.click(screen.getByRole("button", { name: "More agent actions" }));
-  await user.hover(await screen.findByRole("menuitem", { name: "Providers" }));
-  const providers = await screen.findByRole("menu", { name: "Providers" });
+  await user.hover(
+    await screen.findByRole("menuitem", { name: "Provider settings" }),
+  );
+  const providers = await screen.findByRole("menu", {
+    name: "Provider settings",
+  });
   fireEvent.click(
     within(providers).getByRole("menuitem", { name: "Echo, ready" }),
   );

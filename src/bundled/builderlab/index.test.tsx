@@ -238,9 +238,11 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       screen.getByRole("button", { name: "More agent actions" }),
     );
     await providerUser.hover(
-      await screen.findByRole("menuitem", { name: "Providers" }),
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
     );
-    const providers = await screen.findByRole("menu", { name: "Providers" });
+    const providers = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
     await waitFor(() =>
       expect(providers).not.toHaveAttribute("data-starting-style"),
     );

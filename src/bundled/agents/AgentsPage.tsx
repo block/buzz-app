@@ -404,9 +404,9 @@ function ProviderSubmenu({
   return (
     <MenuSubmenu>
       <MenuSubmenuTrigger onFocus={check} onPointerEnter={check}>
-        Providers
+        Provider settings
       </MenuSubmenuTrigger>
-      <MenuSubmenuPopup aria-label="Providers">
+      <MenuSubmenuPopup aria-label="Provider settings">
         {types.map((type) => {
           const fallback = (
             <MenuItem aria-label={`${type.title}, unavailable`} disabled>

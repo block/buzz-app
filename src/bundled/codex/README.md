@@ -24,7 +24,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
    click **Create agent**. The Codex tab checks the installed CLI and existing
    account. If needed, install Codex
    and run `codex login` in a terminal, then click **Check again**.
-3. **Agents → More → Providers → Codex** manages the device connection and
+3. **Agents → More → Provider settings → Codex** manages the device connection and
    explicit-save model/thinking defaults. A blank agent choice inherits those
    defaults without changing its saved record. The **Workspace** defaults to
    `~/.buzz`, like Claude. In the agent's

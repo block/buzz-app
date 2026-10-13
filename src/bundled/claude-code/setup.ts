@@ -2,12 +2,13 @@
 // keeping that copy on the latest release. Each step runs as a declared
 // process; the copy lives apart from any `claude` the user installed, and
 // shares their `~/.claude` sign-in and settings.
+import type { AgentProviderSnapshot } from "../../features/agents/service";
 import type {
   HostProcess,
   HostRequest,
   HostResponse,
 } from "../../features/host/service";
-import { ClaudeProcess, ENV, type Spawn } from "./claude";
+import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
 import script from "./claude.sh?raw";
 
 export type ClaudeStatus =
@@ -63,6 +64,26 @@ export function compareVersions(a: string, b: string) {
     if (difference) return difference;
   }
   return 0;
+}
+
+async function queryModels(spawn: Spawn) {
+  const process = await ClaudeProcess.spawn(spawn, { cwd: "~/.buzz" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("Claude Code model discovery timed out")),
+        CHECK_TIMEOUT_MS,
+      );
+    });
+    return await Promise.race([
+      process.initialize({ systemPrompt: "" }).then(() => process.models()),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await process.kill().catch(() => undefined);
+  }
 }
 
 /** Runs a short process and returns its exit code and output. */
@@ -166,6 +187,7 @@ async function testRelease(spawn: Spawn, version: string) {
 
 export type SetupState = Readonly<{
   status: ClaudeStatus | undefined;
+  models: readonly ClaudeModel[];
   checking: boolean;
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
@@ -179,13 +201,16 @@ const OUTPUT_LIMIT = 20_000;
 export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
+    models: [],
     checking: false,
     running: undefined,
     output: "",
     notice: undefined,
   };
   private readonly listeners = new Set<() => void>();
+  private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
+  private loadingModels = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
@@ -200,6 +225,7 @@ export class ClaudeSetup {
   ) {}
 
   snapshot = () => this.state;
+  providerSnapshot = () => this.health;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -208,6 +234,26 @@ export class ClaudeSetup {
   };
   private set(change: Partial<SetupState>) {
     this.state = { ...this.state, ...change };
+    const status = this.state.status;
+    const blocking = this.state.running ? { blocking: true as const } : {};
+    this.health = Object.freeze(
+      !status
+        ? { readiness: "checking", ...blocking }
+        : status.state === "ready"
+          ? { readiness: "ready", ...blocking }
+          : {
+              readiness: "attention",
+              ...blocking,
+              attentionLabel:
+                status.state === "missing"
+                  ? "Install Claude Code"
+                  : status.state === "outdated"
+                    ? "Update Claude Code"
+                    : status.state === "signed-out"
+                      ? "Log in to Claude Code"
+                      : "Claude Code needs attention",
+            },
+    );
     for (const listener of this.listeners) listener();
   }
   private log(text: string) {
@@ -224,10 +270,32 @@ export class ClaudeSetup {
       });
       return;
     }
-    if (this.state.checking) return;
+    if (this.state.checking || this.state.running) return;
     this.set({ checking: true });
     const status = await checkClaude(this.spawn);
-    this.set({ status, checking: false });
+    this.set({
+      status,
+      ...(status.state === "ready" ? {} : { models: [] }),
+      checking: false,
+    });
+  }
+
+  /** Loads optional model copy only for surfaces that display the catalog. */
+  async loadModels() {
+    if (
+      !this.spawn ||
+      this.state.status?.state !== "ready" ||
+      this.loadingModels
+    )
+      return;
+    this.loadingModels = true;
+    try {
+      this.set({ models: await queryModels(this.spawn) });
+    } catch {
+      // Model metadata is optional; setup remains usable when discovery fails.
+    } finally {
+      this.loadingModels = false;
+    }
   }
 
   /** Moves Buzz's copy to the latest release. Unless `needed`, a computer

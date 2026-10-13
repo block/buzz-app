@@ -35,6 +35,12 @@ function scripted(
 it("finds Claude missing when Buzz has no copy", async () => {
   const { spawn } = scripted({ "claude --version": { code: 127 } });
   await expect(checkClaude(spawn)).resolves.toEqual({ state: "missing" });
+  const setup = new ClaudeSetup(spawn);
+  await setup.check();
+  expect(setup.providerSnapshot()).toEqual({
+    readiness: "attention",
+    attentionLabel: "Install Claude Code",
+  });
 });
 
 it("finds a copy older than Buzz needs outdated", async () => {
@@ -67,6 +73,11 @@ it("reports the version and whether it is signed in", async () => {
     version: "2.1.200",
     account: "a@example.com · Example",
   });
+  const setup = new ClaudeSetup(ready.spawn);
+  await setup.check();
+  const refreshing = setup.check();
+  expect(setup.providerSnapshot()).toEqual({ readiness: "ready" });
+  await refreshing;
 });
 
 it("runs sign-in, shows its output, and checks again after", async () => {
@@ -132,6 +143,10 @@ it("explains that it needs the desktop app", async () => {
   expect(setup.snapshot().status).toEqual({
     state: "error",
     message: "Claude agents run only in the desktop app",
+  });
+  expect(setup.providerSnapshot()).toEqual({
+    readiness: "attention",
+    attentionLabel: "Claude Code needs attention",
   });
 });
 

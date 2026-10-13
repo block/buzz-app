@@ -163,6 +163,7 @@ export class CodexSetup {
   /** Looking for Buzz's copy or downloading one, which deliveries wait for
    * while Buzz has found no copy to run. */
   private holding: Promise<void> | undefined;
+  private checked: Promise<CodexStatus> | undefined;
 
   constructor(
     private readonly spawn: Spawn | undefined,
@@ -184,20 +185,25 @@ export class CodexSetup {
     this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
   }
 
-  async check() {
-    if (!this.spawn) {
-      this.set({
-        status: {
-          state: "error",
-          message: "Codex agents run only in the desktop app",
-        },
-      });
-      return;
+  /** Looks again, or joins the look in progress, and returns what it found. */
+  check(): Promise<CodexStatus> {
+    const spawn = this.spawn;
+    if (!spawn) {
+      const status = {
+        state: "error",
+        message: "Codex agents run only in the desktop app",
+      } as const;
+      this.set({ status });
+      return Promise.resolve(status);
     }
-    if (this.state.checking) return;
-    this.set({ checking: true });
-    const status = await checkCodex(this.spawn);
-    this.set({ status, checking: false });
+    this.checked ??= (async () => {
+      this.set({ checking: true });
+      const status = await checkCodex(spawn);
+      this.checked = undefined;
+      this.set({ status, checking: false });
+      return status;
+    })();
+    return this.checked;
   }
 
   /** Moves Buzz's copy to the latest release. Unless `needed`, a computer

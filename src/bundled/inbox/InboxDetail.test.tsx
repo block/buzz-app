@@ -423,12 +423,10 @@ it("Escape dismisses a thread's fullscreen image without closing the detail", as
     name: "Open image attachment",
   });
   fireEvent.click(thumbnail, { detail: 1 });
-  const close = within(
-    screen.getByRole("dialog", { name: "Image viewer" }),
-  ).getByRole("button", { name: "Close fullscreen viewer" });
-  expect(close).toHaveFocus();
-  // The portal bubbles through ThreadPanel and InboxDetail in React.
-  fireEvent.keyDown(close, { key: "Escape" });
+  const viewer = screen.getByRole("dialog", { name: "Image viewer" });
+  expect(viewer).toHaveFocus();
+  // The shared review portal dismisses before the page's reader can close.
+  fireEvent.keyDown(viewer, { key: "Escape" });
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   expect(screen.getByRole("complementary", { name: "Thread" })).toBe(reader);
   expect(screen.getByRole("textbox")).toBe(editor);

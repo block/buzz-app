@@ -112,7 +112,7 @@ it("uses smiley-plus for message reactions while leaving composer emoji unchange
   expect(
     screen.getByRole("button", { name: "Add reaction" }).querySelector("svg"),
   ).toHaveClass("tabler-icon-mood-plus");
-  const composer = screen.getByRole("button", { name: "Insert emoji" });
+  const composer = screen.getByRole("button", { name: "Emoji and GIFS" });
   expect(composer.querySelector("svg")).toHaveClass("tabler-icon-mood-smile");
   await user.hover(composer);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(

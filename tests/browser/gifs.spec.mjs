@@ -86,7 +86,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     exact: true,
   });
   const emojiTrigger = page.getByRole("button", {
-    name: "Insert emoji",
+    name: "Emoji and GIFS",
     exact: true,
   });
   await draft.fill("unfinished draft");
@@ -387,7 +387,7 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     await page.goto(app.origin);
     await openPage(page, "Messages");
     const trigger = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFS",
       exact: true,
     });
     const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
@@ -452,7 +452,7 @@ test.describe("GIF send roundtrip", () => {
       exact: true,
     });
     const trigger = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFS",
       exact: true,
     });
     await trigger.click();

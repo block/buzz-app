@@ -340,21 +340,30 @@ it("shows a catalog failure in the creation row and retries before choosing a mo
 it("replaces sign-in with available models after Codex login succeeds", async () => {
   const f = fixture(false);
   render(
-    <f.tabs.CreateModel
-      config={defaults}
-      disabled={false}
-      onChange={vi.fn()}
-    />,
+    <>
+      <f.tabs.CreateModel
+        config={defaults}
+        disabled={false}
+        onChange={vi.fn()}
+      />
+      <f.tabs.CreateModel
+        config={defaults}
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    </>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+  const buttons = await screen.findAllByRole("button", { name: "Sign in" });
+  if (!buttons[0]) throw new Error("Missing sign-in");
+  fireEvent.click(buttons[0]);
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
   f.login.resolve(0);
-  expect(
-    await screen.findByRole("combobox", { name: "Model" }),
-  ).toHaveTextContent("Model A");
+  await waitFor(() =>
+    expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2),
+  );
   expect(
     screen.queryByRole("button", { name: "Sign in" }),
   ).not.toBeInTheDocument();

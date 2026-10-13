@@ -178,8 +178,22 @@ function CodexSignIn({
 }
 
 export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
+  let accountRevision = 0;
+  const accountListeners = new Set<() => void>();
+  const accountSnapshot = () => accountRevision;
+  const subscribeAccount = (listener: () => void) => {
+    accountListeners.add(listener);
+    return () => {
+      accountListeners.delete(listener);
+    };
+  };
+  const signedIn = () => {
+    accountRevision += 1;
+    for (const listener of accountListeners) listener();
+  };
   /** The catalog check starts with the view and aborts when it unmounts. */
   function useCatalog() {
+    const revision = useSyncExternalStore(subscribeAccount, accountSnapshot);
     const [data, setData] = useState<Catalog>();
     const [error, setError] = useState("");
     const [checking, setChecking] = useState(true);
@@ -212,7 +226,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
         current = false;
         abort.abort();
       };
-    }, [attempt]);
+    }, [attempt, revision]);
     return {
       data,
       error,
@@ -234,7 +248,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
         <CodexSignIn
           spawn={spawn}
           disabled={props.disabled}
-          onSignedIn={retry}
+          onSignedIn={signedIn}
         />
       );
     return (

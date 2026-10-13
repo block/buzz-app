@@ -161,7 +161,11 @@ export function authoritativeProjects(
 /** The host supplies verified, principal-bound reads. No feature can pick an origin or signer. */
 export function projectDestinations(read: Read) {
   const homes = new ByteLru<ProjectHome>(64, 1024 * 1024);
-  const attempts = new Map<string, object>();
+  // A cancelled newer caller must not block a surviving read from retaining its result.
+  const attempts = new Map<
+    string,
+    { next: number; completed: number; pending: number }
+  >();
   let homeEpoch = 0;
   async function surviving(entities: Entity[], signal: AbortSignal) {
     if (!entities.length) return [];
@@ -229,9 +233,15 @@ export function projectDestinations(read: Read) {
     /** Only a complete read is evidence of "none"; a capped read throws. */
     async home(channelId: string, signal: AbortSignal): Promise<ProjectHome> {
       signal.throwIfAborted();
-      const attempt = {};
+      const attemptsForChannel = attempts.get(channelId) ?? {
+        next: 0,
+        completed: 0,
+        pending: 0,
+      };
+      const attempt = ++attemptsForChannel.next;
+      attemptsForChannel.pending++;
       const epoch = homeEpoch;
-      attempts.set(channelId, attempt);
+      attempts.set(channelId, attemptsForChannel);
       try {
         const events = await read(
           [30621, 30617].map((kind) => ({
@@ -273,18 +283,27 @@ export function projectDestinations(read: Read) {
         signal.throwIfAborted();
         if (epoch !== homeEpoch)
           throw new DOMException("Project cache cleared", "AbortError");
-        if (attempts.get(channelId) === attempt) homes.set(channelId, result);
+        if (attempt > attemptsForChannel.completed) {
+          attemptsForChannel.completed = attempt;
+          homes.set(channelId, result);
+        }
         return result;
       } catch (error) {
         if (
           !signal.aborted &&
           epoch === homeEpoch &&
-          attempts.get(channelId) === attempt
-        )
+          attempt > attemptsForChannel.completed
+        ) {
+          attemptsForChannel.completed = attempt;
           homes.delete(channelId);
+        }
         throw error;
       } finally {
-        if (attempts.get(channelId) === attempt) attempts.delete(channelId);
+        if (
+          --attemptsForChannel.pending === 0 &&
+          attempts.get(channelId) === attemptsForChannel
+        )
+          attempts.delete(channelId);
       }
     },
     async list(signal: AbortSignal) {

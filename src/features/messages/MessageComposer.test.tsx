@@ -5761,6 +5761,13 @@ describe("project resource picker", () => {
           reads.at(-1)?.resolve({ status: "home", project }),
         );
         expect(await screen.findByRole("button", { name: row })).toBeVisible();
+        p.h.retarget({ channelId: "other" });
+        await waitFor(() => expect(p.homes.mock.lastCall?.[0]).toBe("other"));
+        await act(async () => reads.at(-1)?.resolve({ status: "none" }));
+        p.h.retarget({ channelId: "channel" });
+        await waitFor(() => expect(p.homes.mock.lastCall?.[0]).toBe("channel"));
+        expect(trigger()).toBeVisible();
+        expect(trigger()).toBeDisabled();
       } finally {
         await act(async () => {
           for (const read of reads) read.resolve({ status: "none" });

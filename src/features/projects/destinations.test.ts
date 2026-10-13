@@ -637,6 +637,47 @@ describe("authoritative project home (parity with ACP prompt_project.rs)", () =>
     expect(oversized.peekHome(CHANNEL)).toBeUndefined();
   });
 
+  it.each(["before", "after"])(
+    "retains the surviving check when the newer lookup is cancelled %s it completes",
+    async (ordering) => {
+      const { read, destinations } = fixture([]);
+      let releaseOlder = (_events: RelayEvent[]) => {};
+      let releaseNewer = (_events: RelayEvent[]) => {};
+      read.mockImplementationOnce(
+        () =>
+          new Promise<RelayEvent[]>((resolve) => {
+            releaseOlder = resolve;
+          }),
+      );
+      const older = destinations.home(CHANNEL, signal());
+      read.mockImplementationOnce(
+        () =>
+          new Promise<RelayEvent[]>((resolve) => {
+            releaseNewer = resolve;
+          }),
+      );
+      const controller = new AbortController();
+      const newer = destinations.home(CHANNEL, controller.signal);
+      const rejected = expect(newer).rejects.toBeInstanceOf(Error);
+      try {
+        if (ordering === "after") {
+          releaseOlder([]);
+          await older;
+        }
+        controller.abort();
+        releaseNewer([]);
+        await rejected;
+      } finally {
+        controller.abort();
+        releaseNewer([]);
+        releaseOlder([]);
+        await rejected;
+      }
+      await older;
+      expect(destinations.peekHome(CHANNEL)).toEqual({ status: "none" });
+    },
+  );
+
   it("reads by #buzz-channel and resolves one surviving home", async () => {
     const { read, destinations } = fixture([
       channelRepo,

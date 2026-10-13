@@ -56,6 +56,14 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   await page.keyboard.press("Escape");
   await expect(mention).toBeFocused();
   await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");
+  await page.setViewportSize({ width: 560, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  await mention.click();
+  await expect(profile).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(mention).toBeFocused();
+  await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");
   await detail
     .getByRole("button", { name: "Open in channel", exact: true })
     .click();

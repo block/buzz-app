@@ -2333,10 +2333,21 @@ it("keeps reaction fallback scoped to each message and agent, including after lo
     expect(
       screen.getByRole("img", { name: "First agent, Second agent working" }),
     ).toBeVisible();
-    for (const state of ["superseded", "done", "error"]) {
+    // A dismissed error is still settled evidence and keeps outranking reactions.
+    for (const settled of [
+      { state: "superseded" },
+      { state: "done" },
+      { state: "error" },
+      { state: "error", dismissed: true },
+    ]) {
       act(() => {
         local = [
-          { agent: a, channelId: row.channelId, messageId: row.id, state },
+          {
+            agent: a,
+            channelId: row.channelId,
+            messageId: row.id,
+            ...settled,
+          },
         ];
         for (const listener of listeners) listener();
       });

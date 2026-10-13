@@ -18,6 +18,8 @@ export type LocalWork = Readonly<{
   error?: string;
   /** Latest live step, as the harness named it; display only. */
   step?: WorkStep;
+  /** The owner hid this error here; the outcome remains as evidence. */
+  dismissed?: true;
 }>;
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
@@ -48,11 +50,12 @@ export function createLocalAgentActivity() {
       for (const [id, row] of entries)
         if (
           row.state === "error" &&
+          !row.dismissed &&
           row.scope === scope &&
           row.agent === agent &&
           row.messageId === messageId
         ) {
-          entries.delete(id);
+          entries.set(id, Object.freeze({ ...row, dismissed: true }));
           publish();
           return;
         }
@@ -60,7 +63,9 @@ export function createLocalAgentActivity() {
   };
   return {
     reader,
-    begin(input: Omit<LocalWork, "state" | "startedAt" | "error">) {
+    begin(
+      input: Omit<LocalWork, "state" | "startedAt" | "error" | "dismissed">,
+    ) {
       // Keep the newest accepted handling of one exact message; late completions
       // retain their own token and cannot overwrite its replacement.
       for (const [id, row] of entries)

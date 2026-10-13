@@ -473,8 +473,12 @@ it("dismisses only that agent's error on this message, without changing other wo
       local.reader
         .work()
         .filter((row) => row.agent === A)
-        .map((row) => [row.messageId, row.state]),
-    ).toEqual([[next, "error"]]);
+        .map((row) => [row.messageId, row.state, row.dismissed]),
+    ).toEqual([
+      // The outcome remains as settled evidence; only its display is hidden.
+      [root, "error", true],
+      [next, "error", undefined],
+    ]);
   } finally {
     view.unmount();
     f.dispose();

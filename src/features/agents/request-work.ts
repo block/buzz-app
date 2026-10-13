@@ -11,6 +11,8 @@ export type RequestWork = {
   /** Latest live local step, such as a tool name. */
   step?: WorkStep;
   lifecycle: boolean;
+  /** A settled error the owner dismissed on this device. */
+  dismissed?: boolean;
   selected: ReturnType<typeof requestActivity>;
   turns: Snapshot["turns"];
   working: boolean;
@@ -57,6 +59,7 @@ export function requestWork(
           },
           working: chosen.state === "working",
           lifecycle: true,
+          ...(chosen.dismissed ? { dismissed: true } : {}),
         },
       ];
     }

@@ -692,7 +692,7 @@ function ChannelWorkspace({
     continuingVisit,
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
-    openLink: (url) => openLink(url, true),
+    openLink: (url) => openLink(url, { fromThread: true }),
     fallbackFocus: settingsTrigger,
     eligible: (entry) =>
       !entry.panel.channelMenu ||
@@ -908,7 +908,18 @@ function ChannelWorkspace({
     };
   }, [currentId, routedThread]);
   const openLink = useCallback(
-    (url: string, fromThread = false, returnFocus?: HTMLElement) => {
+    (
+      url: string,
+      {
+        fromThread = false,
+        returnFocus,
+        rootId,
+      }: {
+        fromThread?: boolean;
+        returnFocus?: HTMLElement | undefined;
+        rootId?: string;
+      } = {},
+    ) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -981,6 +992,7 @@ function ChannelWorkspace({
         open(
           {
             channelId: context.channelId,
+            ...(rootId && { rootId }),
             panel: candidate,
             target: url,
           },
@@ -1250,7 +1262,7 @@ function ChannelWorkspace({
           }
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
+          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)

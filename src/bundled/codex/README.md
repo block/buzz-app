@@ -56,8 +56,8 @@ Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
-disconnecting from its community interrupts its turns and ends shells they left
-running; the server ends when no
+disconnecting from its community interrupts its turns and asks Codex to end
+shells they left running; the server ends when no
 Codex agent that has worked is still running, or when the plugin is disabled.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
@@ -79,7 +79,7 @@ follow-up before its final reply.
 
 New conversations use `~/Library/Application Support/Buzz/codex` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex` on Linux. The launcher links only `config.toml`, `auth.json`, `AGENTS.md`, `rules`, and `skills` from the existing `CODEX_HOME` (default `~/.codex`); credentials are not copied. An explicit private `sqlite_home` override prevents shared configuration or `CODEX_SQLITE_HOME` from routing new database state back to desktop. Rollouts, paginated history and other runtime state remain private. File-based sign-in and refresh retain the existing shared file. Keyring credentials are scoped to the home and may require a separate Buzz sign-in.
 
-Existing v4 bindings without a store marker keep their original home, native context, tool history and transcript. Those conversations remain visible in Codex desktop and continue updating there. Codex has no complete supported migration for their paginated history, so this change neither moves nor resets them. New bindings persist their store marker; workspace changes and recovery from a genuinely deleted thread create an isolated session. Thread/channel/DM scope and steering remain unchanged. Legacy and isolated servers start lazily and retain background terminals until the existing agent/plugin shutdown boundary.
+Existing v4 bindings without a store marker keep their original home, native context, tool history and transcript. Those conversations remain visible in Codex desktop and continue updating there. Bindings retain their history because Codex has no complete supported migration for paginated history. New bindings persist their store marker; workspace changes and recovery from a genuinely deleted thread create an isolated session. Conversation scope follows the configured thread/channel/DM policy. Legacy and isolated servers start lazily and retain background terminals until the existing agent/plugin shutdown boundary.
 
 Conflicting private configuration files or links to a different shared home stop setup with a diagnostic instead of overwriting either setup. The private home lives outside the default agent workspace.
 

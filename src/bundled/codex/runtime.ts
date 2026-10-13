@@ -35,6 +35,7 @@ import {
   type ToolReply,
   type Wire,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -120,8 +121,6 @@ export type SavedConversation = {
   store: Store;
   at?: number;
 };
-/** Bindings listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -267,10 +266,16 @@ export class CodexRuntime {
       for (const server of servers)
         for (const [threadId, owner] of server.threads)
           if (owner === pubkey) {
+            if (![...this.servers.values()].includes(server)) continue;
             server.threads.delete(threadId);
             await server.rpc
               .request("thread/backgroundTerminals/clean", { threadId })
-              .catch(() => undefined);
+              .catch((error) =>
+                console.error(
+                  "Codex could not clean a stopped agent's terminals",
+                  error,
+                ),
+              );
           }
     })();
     this.stopping.set(pubkey, stopped);
@@ -352,7 +357,7 @@ export class CodexRuntime {
     }
     return {};
   }
-  /** The agent's most recently used bindings in this community. */
+  /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const snapshot = this.relay(pubkey)?.snapshot();
     const ready = snapshot?.status === "ready" ? snapshot : undefined;
@@ -384,8 +389,44 @@ export class CodexRuntime {
           return [];
         }
       })
-      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-      .slice(0, CONVERSATION_LIMIT);
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a

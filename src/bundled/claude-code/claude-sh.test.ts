@@ -2,6 +2,7 @@
 // sharing one folder do.
 import { execFile, spawn } from "node:child_process";
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -44,6 +45,7 @@ async function disk(releases: readonly string[], current?: string) {
       env: { PATH: process.env.PATH ?? "", HOME: home },
     });
   return {
+    home,
     dir,
     step,
     /** Leaves no doubt the release `current` names still runs. */
@@ -134,4 +136,40 @@ it("leaves the release in use when its switch's release is pruned while it waits
   holder.kill("SIGKILL");
   await expect(switching).rejects.toThrow("0.1.0 is no longer downloaded");
   expect(await selected()).toBe("0.2.0");
+});
+
+it("starts the release in use when switches prune the one it read", async () => {
+  const { home, step, folders } = await disk(
+    ["0.1.0", "0.2.0", "0.3.0"],
+    "0.1.0",
+  );
+  // A `cat` that stops after its first read, of `current`, until `go`.
+  const bin = join(home, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "cat"),
+    `#!/bin/sh\n/bin/cat "$@"\n[ -e "${bin}/read" ] && exit\n: >"${bin}/read"\nuntil [ -e "${bin}/go" ]; do sleep 0.05; done\n`,
+  );
+  await chmod(join(bin, "cat"), 0o755);
+  const launching = run(
+    "bash",
+    ["-c", script, "claude.sh", "run", "--version"],
+    {
+      env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home },
+    },
+  );
+  await expect
+    .poll(() =>
+      access(join(bin, "read")).then(
+        () => true,
+        () => false,
+      ),
+    )
+    .toBe(true);
+  // Two builds switch past the release the launcher read, pruning it.
+  await step("use", "0.2.0");
+  await step("use", "0.3.0");
+  expect(await folders()).not.toContain("0.1.0");
+  await writeFile(join(bin, "go"), "");
+  expect((await launching).stdout.trim()).toBe("0.3.0");
 });

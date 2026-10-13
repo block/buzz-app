@@ -32,11 +32,21 @@ command="$1"
 shift
 case "$command" in
 run)
-  # The plugin names a release to test it before it is in use.
-  version="${BUZZ_CODEX_VERSION:-$(cat "$dir/current" 2>/dev/null || true)}"
-  # 127, as for a missing program: the plugin reads it as "not installed".
-  valid "$version" || { echo "Codex is not installed" >&2; exit 127; }
-  exec "$dir/$version/bin/codex" "$@"
+  # A failed exec returns (execfail, without errexit), so the launcher can
+  # look again when a release it read was pruned before it started.
+  set +e
+  shopt -s execfail
+  while :; do
+    # The plugin names a release to test it before it is in use.
+    version="${BUZZ_CODEX_VERSION:-$(cat "$dir/current" 2>/dev/null)}"
+    # 127, as for a missing program: the plugin reads it as "not installed".
+    valid "$version" || { echo "Codex is not installed" >&2; exit 127; }
+    exec "$dir/$version/bin/codex" "$@"
+    # Builds that switched after the read above may have pruned its release;
+    # then start the one `current` names now.
+    [ -z "${BUZZ_CODEX_VERSION:-}" ] &&
+      [ "$(cat "$dir/current" 2>/dev/null)" != "$version" ] || exit 127
+  done
   ;;
 install)
   version="$1" target="$2" checksum="$3"

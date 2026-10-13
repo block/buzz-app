@@ -18,6 +18,7 @@ import { PanelSubview } from "./PanelSubview";
 import { PanelDock } from "./PanelDock";
 
 afterEach(() => {
+  delete document.documentElement.dataset.keyboardNavigation;
   cleanup();
   vi.restoreAllMocks();
 });
@@ -432,6 +433,7 @@ test("next and previous tab requests cycle tabs, wrapping, including local detai
   await user.click(screen.getByRole("button", { name: "Open log" }));
   await user.click(tab("Thread"));
   expect(selectedTab()).toBe("Thread");
+  expect(document.documentElement.dataset.keyboardNavigation).toBeUndefined();
   act(() => {
     // No async yield: a held accelerator must see the previous selection.
     switchTab("buzz:next-tab");
@@ -445,6 +447,9 @@ test("next and previous tab requests cycle tabs, wrapping, including local detai
     switchTab("buzz:previous-tab");
     expect(selectedTab()).toBe("Ada");
   });
+  // Without a main-document keydown, the request itself marks keyboard
+  // navigation so the focused fallback tab shows its ring.
+  expect(document.documentElement.dataset.keyboardNavigation).toBe("");
 });
 
 test("tab switching does nothing behind a modal or with a single tab", () => {
@@ -457,6 +462,7 @@ test("tab switching does nothing behind a modal or with a single tab", () => {
   );
   act(() => switchTab("buzz:next-tab"));
   expect(tab("Thread")).toHaveAttribute("aria-selected", "true");
+  expect(document.documentElement.dataset.keyboardNavigation).toBeUndefined();
   view.rerender(
     <PanelWorkspace
       value="one"

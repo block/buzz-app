@@ -7,17 +7,17 @@
 // only reports a turn that fails.
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import {
-  fromOwner,
-  type Agent,
-  type AgentHandle,
-  type Delivery,
-  type Effort,
-  type Models,
+import { fromOwner } from "../../features/agents/owner-attestation";
+import type { AgentReads } from "../../features/agents/reads";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+  Effort,
+  Models,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
-import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
@@ -65,7 +65,6 @@ export const config = (value: unknown): Config => ({
 
 /** How long a read of the agent's core memory is reused. */
 const MEMORY_TTL_MS = 5 * 60_000;
-const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
@@ -111,9 +110,9 @@ export class ClaudeRuntime {
   );
 
   constructor(
-    private readonly host: Host,
-    /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    private readonly host: Pick<Host, "spawn">,
+    /** What each agent's turns read of its community, while it can be read. */
+    private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage = globalThis.localStorage,
   ) {}
 
@@ -464,12 +463,9 @@ export class ClaudeRuntime {
     channelId: string,
     fresh = false,
   ) {
-    const snapshot = this.relay(self)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary =
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId);
-    const dm = summary?.channelType === "dm";
+    const reads = this.reads(self);
+    const summary = await reads?.channel(channelId);
+    const dm = summary?.dm === true;
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     const scope = entry.config.scope;
@@ -477,16 +473,16 @@ export class ClaudeRuntime {
       dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    if (reads && (thread || dm))
       try {
-        const events = await session.read(
+        const events = await reads.read(
           thread
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+          AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
         );
         earlier = events
           .filter(
@@ -512,9 +508,9 @@ export class ClaudeRuntime {
           .map((tag) => tag[1] ?? ""),
       ]),
     ].filter(Boolean);
-    if (session)
+    if (reads)
       await Promise.race([
-        session.profiles.ensure(pubkeys, "foreground").catch(() => undefined),
+        reads.profiles(pubkeys).catch(() => undefined),
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
@@ -530,10 +526,7 @@ export class ClaudeRuntime {
       ...(thread ? { thread } : {}),
       context: unseen,
       total: earlier.length + 1,
-      name: (pubkey: string) =>
-        session?.names.resolve(pubkey, undefined, members) ??
-        session?.profiles.snapshot().get(pubkey)?.name ??
-        undefined,
+      name: (pubkey: string) => reads?.name(pubkey, members),
     };
   }
 
@@ -626,8 +619,7 @@ export class ClaudeRuntime {
     return value;
   }
 
-  /** The agent's memory, read back through the owner's session: it is
-   * encrypted to the owner, so no agent key is needed to read it. */
+  /** The agent's memory, as its community's reads give it. */
   private memories(pubkey: string): Promise<readonly Memory[]> {
     // The owner's session holds few memory views at once, so calls share one.
     let reading = this.reading.get(pubkey);
@@ -640,33 +632,9 @@ export class ClaudeRuntime {
     return reading;
   }
   private async readMemories(pubkey: string): Promise<readonly Memory[]> {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const view = snapshot.session.agentMemories.open(pubkey);
-    try {
-      const done = new Promise<void>((resolve) => {
-        const settled = () =>
-          !["idle", "loading"].includes(view.snapshot().status) && resolve();
-        view.subscribe(settled);
-        settled();
-      });
-      void view.refresh();
-      await Promise.race([
-        done,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Memory read timed out")),
-            MEMORY_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      view.dispose();
-    }
+    const reads = this.reads(pubkey);
+    if (!reads) throw new Error("Buzz is not connected");
+    return reads.memories();
   }
 }
 

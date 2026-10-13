@@ -2,14 +2,14 @@
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
+import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
 import { Create, createTabs } from "./tabs";
 
-export const TYPE_ID = "claude-code";
-/** A turn's run returns once Claude has it, so this bounds only the hand-over. */
-const HANDOVER_MS = 2 * 60_000;
+export { TYPE_ID };
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -20,7 +20,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);
   const setup = new ClaudeSetup(spawn);
-  const runtime = new ClaudeRuntime(host, agents.relay);
+  const runtime = new ClaudeRuntime(host, (pubkey) =>
+    ownerReads(agents.relay(pubkey), pubkey),
+  );
   const sync = () => {
     const snapshot = agents.snapshot();
     // Agents that stop running, the app signing out included, stop their
@@ -57,8 +59,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       { id: "claude", title: "Claude", component: ClaudeTab },
       { id: "settings", title: "Settings", component: SettingsTab },
     ],
-    models: (agent) => runtime.models(agent.pubkey),
-    run: (delivery) => runtime.run(delivery),
-    timeoutMs: HANDOVER_MS,
+    ...claudeRun(runtime),
   });
 };

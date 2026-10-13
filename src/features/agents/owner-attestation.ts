@@ -84,3 +84,12 @@ function satisfied(
       : event.created_at > value;
   });
 }
+
+/** Whether an agent answers `event`: its owner's, or one by another agent the
+ * owner attested (NIP-OA). Both bundled types answer nobody else. */
+export async function fromOwner(
+  event: Pick<EventData, "pubkey" | "kind" | "created_at" | "tags">,
+  owner: string,
+) {
+  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+}

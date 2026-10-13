@@ -22,7 +22,6 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 import type { LocalAgentsSnapshot } from "./local";
-import { attestedOwner } from "./owner-attestation";
 import {
   deleteAgentRecord,
   publishAgentRecord,
@@ -469,14 +468,7 @@ export function teamPrompt(
     })
     .join("\n\n");
 }
-/** Whether an agent answers `event`: its owner's, or one by another agent the
- * owner attested (NIP-OA). Both bundled types answer nobody else. */
-export async function fromOwner(
-  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
-  owner: string,
-) {
-  return event.pubkey === owner || (await attestedOwner(event)) === owner;
-}
+export { fromOwner } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */

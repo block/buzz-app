@@ -453,7 +453,7 @@ export function WorkspaceCombobox({
       itemToStringLabel={(item) => item.label}
     >
       <Combobox.Control
-        appearance={compact ? "compact" : "field"}
+        appearance={compact ? "chip" : "field"}
         label={label}
         triggerLabel={`Browse ${label.toLowerCase()}`}
         placeholder="Search workspaces"

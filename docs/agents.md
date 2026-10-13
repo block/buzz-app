@@ -38,12 +38,11 @@ the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. The host appends the shared Attention tab.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
-Agents build view the host keeps that tab at a stable `Settings` destination and
-supplies the current type identity plus retype control through `settingsHost`.
-The type keeps ownership of its config draft and Save behavior. Types without a
-settings-role tab receive a host-owned, type-only Settings tab there. Other
-callers, including profile panels, omit `settingsHost` and retain the type's
-ordinary tab presentation.
+Agents build view and profile panel, the host keeps that tab at a stable
+`Settings` destination and supplies the current type identity plus retype
+control through `settingsHost`. The type keeps ownership of its config draft
+and Save behavior. Types without a settings-role tab receive a host-owned,
+type-only Settings tab in both surfaces.
 
 A reviewed provider choice remains a host-owned draft until that Settings
 form's Save action succeeds. While it is pending, the selected provider's

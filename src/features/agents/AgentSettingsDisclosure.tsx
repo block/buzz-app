@@ -17,7 +17,9 @@ export function AgentSettingsDisclosure({
   dirty?: boolean;
   children?: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = host.disclosure?.expanded ?? localExpanded;
+  const setExpanded = host.disclosure?.onExpandedChange ?? setLocalExpanded;
   const Icon = host.icon;
   const typeControl = host.typeControl?.(dirty);
   const hasDetails = typeControl != null || children != null;

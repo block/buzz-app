@@ -11,7 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -19,7 +19,6 @@ import type {
   AgentViewProps,
   Agents,
   AgentsSnapshot,
-  Carry,
   RegisteredAgentType,
   TeamChange,
 } from "../../features/agents/service";
@@ -140,20 +139,48 @@ function setup(
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", () => <p>Echo controls</p>);
+  const DirtySettings = ({ agent, save, settingsHost }: AgentViewProps) => {
+    const [reply, setReply] = useState(
+      (agent.config as { reply: string }).reply,
+    );
+    const [error, setError] = useState("");
+    const pendingSave = settingsHost?.pendingSave;
+    return settingsHost ? (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError("");
+          void save({ reply }).catch((reason: unknown) =>
+            setError(String(reason instanceof Error ? reason.message : reason)),
+          );
+        }}
+      >
+        <AgentSettingsDisclosure host={settingsHost} dirty>
+          <p>Provider settings</p>
+          <label>
+            Reply
+            <input
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+            />
+          </label>
+        </AgentSettingsDisclosure>
+        {error && <p role="alert">{error}</p>}
+        <button type="submit" disabled={!pendingSave}>
+          Save
+        </button>
+      </form>
+    ) : (
+      <p>Provider settings</p>
+    );
+  };
   const tabs = dirtySettings
     ? [
         {
           id: "settings",
           title: "Settings",
           role: "settings" as const,
-          component: ({ settingsHost }: AgentViewProps) =>
-            settingsHost ? (
-              <AgentSettingsDisclosure host={settingsHost} dirty>
-                <p>Provider settings</p>
-              </AgentSettingsDisclosure>
-            ) : (
-              <p>Provider settings</p>
-            ),
+          component: DirtySettings,
         },
       ]
     : [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }];
@@ -211,6 +238,7 @@ function setup(
     previewRetype: vi.fn(
       () =>
         ({
+          config: { endpoint: "wss://relay.example" },
           moved: [],
           dropped: ["workspace"],
           settings: [
@@ -227,7 +255,16 @@ function setup(
           ],
         }) as const,
     ),
-    retype: vi.fn(async (): Promise<readonly (keyof Carry)[]> => []),
+    retype: vi.fn(async (pubkey, typeKey, change) => {
+      const changed = snapshot.agents.map((saved) =>
+        saved.pubkey === pubkey
+          ? { ...saved, type: typeKey, config: change?.config ?? {} }
+          : saved,
+      );
+      snapshot = { ...snapshot, agents: changed, running: changed };
+      for (const listener of listeners) listener();
+      return ["workspace"] as const;
+    }),
     remove: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
@@ -561,8 +598,41 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("reviews an agent provider change from the build view and reports failures", async () => {
+it("saves a reviewed provider change without collapsing settings", async () => {
   const user = userEvent.setup();
+  const RelaySettings = ({
+    agent,
+    save,
+    settingsHost,
+  }: AgentViewProps<{ endpoint: string }>) => {
+    const [endpoint, setEndpoint] = useState(agent.config.endpoint);
+    const [error, setError] = useState("");
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError("");
+          void save({ endpoint }).catch((reason: unknown) =>
+            setError(String(reason instanceof Error ? reason.message : reason)),
+          );
+        }}
+      >
+        {settingsHost && (
+          <AgentSettingsDisclosure host={settingsHost}>
+            <label>
+              Endpoint
+              <input
+                value={endpoint}
+                onChange={(event) => setEndpoint(event.target.value)}
+              />
+            </label>
+          </AgentSettingsDisclosure>
+        )}
+        {error && <p role="alert">{error}</p>}
+        <button type="submit">Save</button>
+      </form>
+    );
+  };
   const relay = {
     key: "test/relay",
     pluginId: "test",
@@ -570,7 +640,15 @@ it("reviews an agent provider change from the build view and reports failures", 
     id: "relay",
     title: "Relay",
     icon: PlugIcon,
-    defaults: () => ({ config: {} }),
+    defaults: () => ({ config: { endpoint: "wss://relay.example" } }),
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: RelaySettings,
+      },
+    ],
   } as unknown as RegisteredAgentType;
   const { agents } = setup([agent("Ada", 1)], {
     more: [relay],
@@ -582,9 +660,7 @@ it("reviews an agent provider change from the build view and reports failures", 
   expect(
     within(rail).queryByRole("button", { name: "Change provider from Echo" }),
   ).not.toBeInTheDocument();
-  agents.retype
-    .mockRejectedValueOnce(new Error("Ada is answering"))
-    .mockResolvedValueOnce(["workspace"]);
+  agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
   await user.click(screen.getByRole("button", { name: "Customize" }));
   const typeTrigger = screen.getByRole("button", {
     name: "Change provider from Echo",
@@ -624,20 +700,47 @@ it("reviews an agent provider change from the build view and reports failures", 
   );
   expect(dialog).toHaveTextContent("Anything Echo left running will stop.");
   expect(dialog).toHaveTextContent(
-    "Unsaved Settings changes will be discarded.",
+    "Unsaved Settings changes will be discarded when you continue.",
   );
-  await user.click(
-    within(dialog).getByRole("button", { name: "Move to Relay" }),
+  expect(dialog).toHaveTextContent(
+    "The provider changes when you save settings.",
   );
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(agents.retype).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "Change provider from Relay" }),
+  ).toBeVisible();
+  expect(screen.getAllByText("Relay")).toHaveLength(2);
+  expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Reply" }),
+  ).not.toBeInTheDocument();
+  const endpoint = screen.getByRole("textbox", { name: "Endpoint" });
+  expect(endpoint).toHaveValue("wss://relay.example");
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(save).toBeEnabled();
+  await user.click(save);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
     "Ada is answering",
   );
-  await user.click(
-    within(dialog).getByRole("button", { name: "Move to Relay" }),
+  expect(agents.retype).toHaveBeenCalledOnce();
+  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay", {
+    config: { endpoint: "wss://relay.example" },
+  });
+  await user.clear(endpoint);
+  await user.type(endpoint, "wss://custom.example");
+  await user.click(save);
+  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay", {
+    config: { endpoint: "wss://custom.example" },
+  });
+  expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
   );
-  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay");
-  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(screen.getByRole("status")).toHaveTextContent("Dropped: Workspace.");
+  expect(
+    screen.getByRole("button", { name: "Change provider from Relay" }),
+  ).toBeVisible();
 });
 
 it("makes a new agent in the create dialog and goes straight to building it", async () => {

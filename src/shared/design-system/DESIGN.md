@@ -966,8 +966,9 @@ collapsing them preserves local input state; leave the default for static conten
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows
 form one stack; avoid inserting form-section gaps between individual rows.
-`variant="settings"` composes a static summary with one attached prominent text
-trigger inside a panel-backed Settings boundary. Its panel retains visible field
+`variant="settings"` composes a static summary with one attached text trigger
+inside a panel-backed Settings boundary. The collapsed opening action is
+prominent; its expanded Close action is subtle. Its panel retains visible field
 labels; the trigger changes disclosure state only and does not replace the form's
 Save.
 

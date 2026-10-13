@@ -154,6 +154,13 @@ export type AgentSettingsHost = Readonly<{
   icon?: DefinedIcon;
   /** A labelled Type control supplied only by the Agents build view. */
   typeControl?: (dirty: boolean) => ReactNode;
+  /** Host-owned type change committed with the target type's settings draft. */
+  pendingSave?: (config?: unknown) => Promise<void>;
+  /** Host-owned disclosure state when its lifetime spans provider tabs. */
+  disclosure?: Readonly<{
+    expanded: boolean;
+    onExpandedChange(expanded: boolean): void;
+  }>;
 }>;
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */
@@ -420,6 +427,8 @@ export type RemoteAgentType = Readonly<{
 }>;
 export type RegisteredAgentType = Contribution<AgentType>;
 export type RetypePreview = Readonly<{
+  /** Destination settings after applying the target type's migration policy. */
+  config: unknown;
   moved: readonly (keyof Carry)[];
   dropped: readonly (keyof Carry)[];
   settings: readonly Readonly<{
@@ -488,13 +497,18 @@ export type Agents = {
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
-  /** Previews the transferable settings the same migration used by `retype`
-   * will move or drop, without changing the agent. */
+  /** Previews the destination config and transferable settings the same
+   * migration used by `retype` will produce, without changing the agent. */
   previewRetype(pubkey: string, type: string): RetypePreview;
   /** Makes it an agent of `type`, keeping its identity and attention. Its new
    * config is the type's defaults with whatever the old type carries and the
-   * new one adopts; returns what of that stayed behind. Refused mid-turn. */
-  retype(pubkey: string, type: string): Promise<readonly (keyof Carry)[]>;
+   * new one adopts, or the reviewed destination draft; returns what of the old
+   * config stayed behind. Refused mid-turn. */
+  retype(
+    pubkey: string,
+    type: string,
+    change?: Readonly<{ config: unknown }>,
+  ): Promise<readonly (keyof Carry)[]>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. A hosted agent is archived,
    * leaves its channels and is removed from its provider before this resolves.
@@ -1274,7 +1288,11 @@ export class AgentsService extends Service implements Agents {
     return { agent, remote, origin, binding };
   }
 
-  async retype(pubkey: string, type: string) {
+  async retype(
+    pubkey: string,
+    type: string,
+    change?: Readonly<{ config: unknown }>,
+  ) {
     const identity = this.live(pubkey);
     if (!this.native || !identity)
       throw new Error("No such agent on this device");
@@ -1300,7 +1318,7 @@ export class AgentsService extends Service implements Agents {
       saved.pubkey === pubkey ? { ...saved, type } : saved,
     );
     try {
-      this.write({ ...record, config: adopted });
+      this.write({ ...record, config: change ? change.config : adopted });
     } catch (error) {
       console.warn(`Agent ${identity.name} settings were not saved`, error);
       this.update();
@@ -1318,7 +1336,13 @@ export class AgentsService extends Service implements Agents {
     if (!kind) throw new Error("That agent type is not available");
     if (kind.remote)
       throw new Error("A hosted provider cannot take over a local agent key");
-    if (type === identity.type) return { moved: [], dropped: [], settings: [] };
+    if (type === identity.type)
+      return {
+        config: this.recordOf(identity).config,
+        moved: [],
+        dropped: [],
+        settings: [],
+      };
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
@@ -1669,6 +1693,7 @@ export class AgentsService extends Service implements Agents {
       record,
       adopted,
       preview: {
+        config: adopted,
         moved,
         dropped,
         settings,

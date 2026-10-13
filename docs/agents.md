@@ -45,6 +45,13 @@ settings-role tab receive a host-owned, type-only Settings tab there. Other
 callers, including profile panels, omit `settingsHost` and retain the type's
 ordinary tab presentation.
 
+A reviewed provider choice remains a host-owned draft until that Settings
+form's Save action succeeds. While it is pending, the selected provider's
+settings tab edits the destination config produced by its migration policy, and
+Save is available without another edit. Save commits the provider and that
+config together; a failed save leaves the choice and draft available to retry
+or revert.
+
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
 a read-only check, and a management-dialog body. **More → Providers** lists each
 active type once using the registered title and icon. It is a quick health view:

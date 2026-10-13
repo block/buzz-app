@@ -56,15 +56,20 @@ export function Accordion({
                 }
               >
                 <BaseAccordion.Trigger
-                  className="buzz-button buzz-accordion-settings-trigger"
-                  data-buzz-ui=""
-                  data-variant="prominent"
-                  data-size="sm"
-                  data-button-shape="control"
-                  data-highlight-expanded="false"
-                >
-                  <span className="buzz-button-label">{item.title}</span>
-                </BaseAccordion.Trigger>
+                  render={(props, state) => (
+                    <button
+                      {...props}
+                      className="buzz-button buzz-accordion-settings-trigger"
+                      data-buzz-ui=""
+                      data-variant={state.open ? "subtle" : "prominent"}
+                      data-size="sm"
+                      data-button-shape="control"
+                      data-highlight-expanded="false"
+                    >
+                      <span className="buzz-button-label">{item.title}</span>
+                    </button>
+                  )}
+                />
               </BaseAccordion.Header>
             </div>
           ) : (

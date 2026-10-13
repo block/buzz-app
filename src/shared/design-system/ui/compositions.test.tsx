@@ -11,8 +11,41 @@ import { Field } from "./Field";
 import { Tooltip } from "./Tooltip";
 import { Tabs } from "./Tabs";
 import { NavigationItem } from "./NavigationItem";
+import { Accordion } from "./Accordion";
 
 afterEach(cleanup);
+
+test("settings disclosures de-emphasize their expanded Close action", async () => {
+  function SettingsDisclosure() {
+    const [expanded, setExpanded] = useState(false);
+    return (
+      <Accordion
+        variant="settings"
+        value={expanded ? ["settings"] : []}
+        onValueChange={(value) => setExpanded(value.includes("settings"))}
+        items={[
+          {
+            value: "settings",
+            title: expanded ? "Close" : "Customize",
+            summary: <p>Codex</p>,
+            content: <p>Model</p>,
+          },
+        ]}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(<SettingsDisclosure />);
+  expect(screen.getByRole("button", { name: "Customize" })).toHaveAttribute(
+    "data-variant",
+    "prominent",
+  );
+  await user.click(screen.getByRole("button", { name: "Customize" }));
+  expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute(
+    "data-variant",
+    "subtle",
+  );
+});
 
 test.each([true, "true"] as const)(
   "expanded button hints dismiss without replacing the trigger (%s)",

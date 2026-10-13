@@ -1224,6 +1224,22 @@ function AgentBuild({
 }) {
   const [copied, setCopied] = useState(false);
   const [pictureError, setPictureError] = useState("");
+  const [pendingType, setPendingType] = useState<{
+    key: string;
+    config: unknown;
+  }>();
+  const stagedType = pendingType?.key !== agent.type ? pendingType : undefined;
+  const settingsType =
+    types.find((item) => item.key === stagedType?.key) ?? type;
+  const settingsAgent = stagedType
+    ? { ...agent, type: stagedType.key, config: stagedType.config }
+    : agent;
+  const pendingTypeSave = stagedType
+    ? async (config: unknown = stagedType.config) => {
+        await agents.retype(agent.pubkey, stagedType.key, { config });
+        setPendingType(undefined);
+      }
+    : undefined;
   const canRetype =
     agent.place === "here" &&
     types.some((item) => !item.remote && item.key !== agent.type);
@@ -1288,12 +1304,13 @@ function AgentBuild({
         )}
         <AgentTabs
           agents={agents}
-          agent={agent}
-          type={type}
+          agent={settingsAgent}
+          type={settingsType}
           channels={channels}
           settingsHost={{
-            title: type?.title ?? "Type unavailable",
-            ...(type?.icon ? { icon: type.icon } : {}),
+            title: settingsType?.title ?? "Type unavailable",
+            ...(settingsType?.icon ? { icon: settingsType.icon } : {}),
+            ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
             ...(canRetype
               ? {
                   typeControl: (dirty: boolean) => (
@@ -1303,6 +1320,8 @@ function AgentBuild({
                       type={type}
                       types={types}
                       dirty={dirty}
+                      selected={stagedType?.key ?? agent.type}
+                      onSelect={setPendingType}
                     />
                   ),
                 }
@@ -1327,28 +1346,35 @@ function TypeField({
   type,
   types,
   dirty,
+  selected,
+  onSelect,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
   dirty: boolean;
+  selected: string;
+  onSelect(type: { key: string; config: unknown } | undefined): void;
 }) {
   // A local key can move only between local runtimes. Hosted providers own
   // their agents' keys and have a separate lifecycle.
   const available =
     agent.place === "here" ? types.filter((item) => !item.remote) : [];
   const others = available.filter((item) => item.key !== agent.type);
-  const TypeIcon = type?.icon;
-  const [pending, setPending] = useState(false);
+  const selectedType = available.find((item) => item.key === selected) ?? type;
+  const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
-  const [dropped, setDropped] = useState<readonly (keyof Carry)[]>([]);
   const [migration, setMigration] = useState<{
     target: RegisteredAgentType;
     preview: ReturnType<Agents["previewRetype"]>;
   }>();
   const choose = (next: string) => {
-    if (next === agent.type) return;
+    if (next === selected) return;
+    if (next === agent.type) {
+      onSelect(undefined);
+      return;
+    }
     const target = available.find((item) => item.key === next);
     if (!target) return;
     setError("");
@@ -1361,23 +1387,16 @@ function TypeField({
       setError(message(reason));
     }
   };
-  const change = async () => {
-    if (pending || !migration) return;
-    setPending(true);
+  const stage = () => {
+    if (!migration) return;
     setError("");
-    try {
-      setDropped(await agents.retype(agent.pubkey, migration.target.key));
-      setMigration(undefined);
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setPending(false);
-    }
+    onSelect({ key: migration.target.key, config: migration.preview.config });
+    setMigration(undefined);
   };
   const value = (
     <span className="flex min-w-0 items-center gap-2">
       {TypeIcon && <TypeIcon size={20} aria-hidden="true" />}
-      {type?.title ?? "Type unavailable"}
+      {selectedType?.title ?? "Type unavailable"}
     </span>
   );
   return (
@@ -1390,13 +1409,12 @@ function TypeField({
             }}
           >
             <MenuTrigger
-              aria-label={`Change provider from ${type?.title ?? "unavailable provider"}`}
-              disabled={pending}
-              render={<FieldButton aria-busy={pending}>{value}</FieldButton>}
+              aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
+              render={<FieldButton>{value}</FieldButton>}
             />
             <MenuPopup>
               <MenuRadioGroup
-                value={agent.type}
+                value={selected}
                 onValueChange={(next) => choose(String(next))}
               >
                 {available.map((item) => {
@@ -1427,15 +1445,10 @@ function TypeField({
           {error}
         </p>
       )}
-      {dropped.length > 0 && (
-        <p role="status" className="m-0 mt-1 text-body-sm text-secondary">
-          Dropped: {dropped.map((key) => CARRY_LABELS[key]).join(" and ")}.
-        </p>
-      )}
       <Dialog
         open={Boolean(migration)}
         onOpenChange={(open) => {
-          if (!open && !pending) {
+          if (!open) {
             setMigration(undefined);
             setError("");
           }
@@ -1446,18 +1459,11 @@ function TypeField({
             : "Move agent?"
         }
         headerGap="compact"
-        preventClose={pending}
         actions={
           <>
-            <Button onClick={() => setMigration(undefined)} disabled={pending}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              loading={pending}
-              onClick={() => void change()}
-            >
-              Move to {migration?.target.title ?? "new provider"}
+            <Button onClick={() => setMigration(undefined)}>Cancel</Button>
+            <Button variant="primary" onClick={stage}>
+              Continue
             </Button>
           </>
         }
@@ -1469,11 +1475,6 @@ function TypeField({
             preview={migration.preview}
             discardDraft={dirty}
           />
-        )}
-        {error && (
-          <p role="alert" className="m-0 mt-3 text-body-sm text-danger">
-            {error}
-          </p>
         )}
       </Dialog>
     </>
@@ -1511,12 +1512,13 @@ function MigrationPreview({
         </span>
       </div>
       <p className="m-0 text-body-sm text-secondary">
-        Your agent will continue the conversation in Buzz.
+        The provider changes when you save settings. Your agent will continue
+        the conversation in Buzz.
         {warning && ` ${warning}`}
       </p>
       {discardDraft && (
         <p className="m-0 text-body-sm text-warning">
-          Unsaved Settings changes will be discarded.
+          Unsaved Settings changes will be discarded when you continue.
         </p>
       )}
       {(carry.length > 0 || preview.settings.length > 0) && (

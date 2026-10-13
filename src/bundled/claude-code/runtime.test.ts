@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
@@ -34,7 +36,11 @@ const message = (
 
 function setup(
   thread: readonly EventData[] = [],
-  options: Readonly<{ hold?: boolean; starting?: Promise<void> }> = {},
+  options: Readonly<{
+    hold?: boolean;
+    starting?: Promise<void>;
+    workflowAuthority?: string;
+  }> = {},
 ) {
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
@@ -47,6 +53,7 @@ function setup(
   const host = { spawn, request: vi.fn() } as unknown as Host;
   const read = vi.fn(async () => thread);
   const session = {
+    workflowAuthority: options.workflowAuthority,
     read,
     channels: {
       list: () => ({
@@ -624,6 +631,46 @@ it("acts only on messages from its owner and the owner's agents", async () => {
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
 });
+
+it.each([true, false])(
+  "runs a relay workflow mention only with explicit community authority (%s)",
+  async (trusted) => {
+    const relay = keypair();
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const f = setup(
+      [event],
+      trusted ? { workflowAuthority: relay.pubkey } : {},
+    );
+    try {
+      await f.deliver({ type: "mention", event });
+      if (trusted) {
+        await vi.waitFor(() =>
+          expect(f.claudes().some((process) => process.prompts.length)).toBe(
+            true,
+          ),
+        );
+        expect(f.workingUntil).toHaveBeenCalled();
+      } else {
+        expect(f.claudes()).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+      }
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 /** Asks a process for something over its in-process Buzz tool server. */
 async function mcp(

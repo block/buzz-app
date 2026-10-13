@@ -6,6 +6,8 @@ import { describe, afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
@@ -187,6 +189,7 @@ function fixture(
     status: "ready",
     scope: scope as string | undefined,
     session: {
+      workflowAuthority: undefined as string | undefined,
       read,
       agentMemories: { open: memoryOpen },
       channels: {
@@ -930,6 +933,56 @@ it("ignores non-owner messages without spawning", async () => {
   expect(ignored).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
+});
+it("runs a verified relay workflow mention for its owner", async () => {
+  const f = fixture();
+  const relay = keypair();
+  f.snapshot.session.workflowAuthority = relay.pubkey;
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(ignored).not.toHaveBeenCalled();
+  await f.complete();
+  expect(f.publish).toHaveBeenCalled();
+});
+it("ignores a relay workflow mention without explicit community authority", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({
+    ...f.delivery("work"),
+    trigger: { type: "mention", event },
+    ignored,
+  });
+  expect(ignored).toHaveBeenCalledOnce();
+  expect(f.spawn).not.toHaveBeenCalled();
 });
 it("answers another agent its owner attested, telling the owner of failures", async () => {
   const f = fixture();

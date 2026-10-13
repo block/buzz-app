@@ -6,6 +6,8 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
+import { eventDto } from "../relay/events";
+import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -1031,12 +1033,8 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
     .update(`nostr:agent-auth:${agent}:`)
     .digest();
   const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
-  const from = (pubkey: string, tags: string[][] = []) => ({
-    pubkey,
-    kind: 9,
-    created_at: 100,
-    tags,
-  });
+  const from = (pubkey: string, tags: string[][] = []) =>
+    event("gate", { pubkey, tags });
   expect(await fromOwner(from(owner), owner)).toBe(true);
   expect(await fromOwner(from(agent, [auth]), owner)).toBe(true);
   expect(await fromOwner(from(agent), owner)).toBe(false);
@@ -1045,6 +1043,25 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
   expect(
     await fromOwner(from(agent, [["auth", owner, "", "0".repeat(128)]]), owner),
   ).toBe(false);
+});
+
+it("accepts relay workflow delegation only from this agent's owner", async () => {
+  const relay = keypair();
+  const workflow = { authority: relay.pubkey, agent: bot };
+  const prompt = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@bot work",
+      tags: [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", viewer],
+        ["buzz:workflow-mention", bot],
+      ],
+    }),
+  );
+  expect(await fromOwner(prompt, viewer, workflow)).toBe(true);
+  expect(await fromOwner(prompt, other, workflow)).toBe(false);
+  expect(await fromOwner(prompt, viewer)).toBe(false);
 });
 
 it("sets and clears a picture through native, and publishes it", async () => {

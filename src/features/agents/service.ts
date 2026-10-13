@@ -4,6 +4,7 @@ import {
   type WorkOutcome,
 } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
+import { workflowMentionOwner } from "../relay/workflow-attribution";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -503,13 +504,19 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
-/** Whether an agent answers `event`: its owner's, or one by another agent the
- * owner attested (NIP-OA). Both bundled types answer nobody else. */
+/** Owner prompts, attested siblings, and verified relay workflow mentions
+ * delegated by that owner to this particular agent. */
 export async function fromOwner(
-  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
+  event: EventData,
   owner: string,
+  workflow?: { authority: string | undefined; agent: string },
 ) {
-  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+  return (
+    event.pubkey === owner ||
+    (await attestedOwner(event)) === owner ||
+    (!!workflow &&
+      workflowMentionOwner(event, workflow.authority, workflow.agent) === owner)
+  );
 }
 
 /** The model and effort the triggering message asks of this agent. Only the

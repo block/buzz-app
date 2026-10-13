@@ -19,6 +19,12 @@
         "id": "read",
         "program": "base64",
         "args": ["-i"]
+      },
+      { "id": "workspace", "program": "pwd" },
+      {
+        "id": "find",
+        "program": "grep",
+        "args": ["-rlF", "--include=*.jsonl", "-e"]
       }
     ]
   }

@@ -677,10 +677,12 @@ function ThreadMessages({
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    setInitialPositioned(true);
+    captureResizePosition();
     readingSettled.current = true;
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
-  }, [navigation, selectedOffset]);
+  }, [captureResizePosition, navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);

@@ -325,6 +325,14 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
       name: "View your profile",
     });
     await expect(profileAvatar).toBeVisible();
+    // The menu's entrance transform affects its children's measured size.
+    await profileAvatar
+      .locator("xpath=ancestor::*[@role='menu']")
+      .evaluate(async (menu) => {
+        await Promise.all(
+          menu.getAnimations().map((animation) => animation.finished),
+        );
+      });
     const avatarBox = await profileAvatar.boundingBox();
     expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
     await page.keyboard.press("Escape");

@@ -27,11 +27,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // server; switching communities or a reconnect does not.
   const sync = () => {
     const snapshot = ctx.agents.snapshot();
-    if (snapshot.status === "loading") return;
+    if (
+      snapshot.status === "loading" ||
+      providerController.snapshot().readiness === "checking"
+    )
+      return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
+  void providerController.check();
   sync();
   ctx.effect(() => () => {
     offAgents();

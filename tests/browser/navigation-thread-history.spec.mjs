@@ -648,6 +648,47 @@ test("closing a main-pane thread with Escape returns keyboard focus to its opene
   await expect(trigger).toBeFocused();
 });
 
+// Header openings reset a retained main-pane thread selection after mount;
+// only real layout-effect order shows whether that steals the tab's focus.
+test("header openings keep focus while a main-pane thread is retained", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const main = page.locator("[data-main-workspace]");
+  const topbar = page.getByRole("navigation", { name: "Topbar pages" });
+  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
+  const me = topbar.getByRole("tab", { name: "Me", exact: true });
+  const inbox = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Inbox", exact: true });
+  for (const leave of [inbox, me]) {
+    await page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      main.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
+    await leave.click();
+    await messages.focus();
+    await messages.press("Enter");
+    await expect(
+      main.getByRole("tab", { name: "Alpha", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await messages.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(resolve)),
+    );
+    await expect(messages).toBeFocused();
+  }
+});
+
 // A malformed root hint crosses real navigation/reader/store/portal wiring;
 // only the verified message ancestry may replace selection, never an old editor.
 test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({

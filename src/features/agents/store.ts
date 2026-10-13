@@ -29,9 +29,10 @@ export type AgentRecord = Readonly<{
   skipped?: Readonly<Record<string, SkippedObject>>;
   /** Plugin-owned config. The host never reads it. */
   config: unknown;
-  /** False when the owner turned attention off: its watches and timers stay
-   * stored but wake nothing, and the agent is not offered attention tools.
-   * Absent means on. */
+  /** True when the owner turned attention on. Off, its watches and timers
+   * stay stored but wake nothing, and the agent is not offered attention
+   * tools. Absent means off, so an agent has no attention until its owner
+   * turns it on. */
   attentionEnabled?: boolean;
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
@@ -101,7 +102,7 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
       skipped,
       config: record.config,
       timers,
-      ...(record.attentionEnabled === false ? { attentionEnabled: false } : {}),
+      ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
     };
   }
   return records;

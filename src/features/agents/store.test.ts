@@ -55,6 +55,23 @@ it("round-trips records and drops attention objects a reader would ignore", () =
   expect(fixed.skipped).toEqual({});
 });
 
+it("saves attention only as on; absent or anything else reads as off", () => {
+  const storage = memoryStorage();
+  writeRecords(storage, {
+    [pubkey]: { ...record, attentionEnabled: true },
+    ["b".repeat(64)]: { ...record, pubkey: "b".repeat(64) },
+    ["c".repeat(64)]: {
+      ...record,
+      pubkey: "c".repeat(64),
+      attentionEnabled: false,
+    },
+  });
+  const read = readRecords(storage);
+  expect(read[pubkey]?.attentionEnabled).toBe(true);
+  expect(read["b".repeat(64)]).not.toHaveProperty("attentionEnabled");
+  expect(read["c".repeat(64)]).not.toHaveProperty("attentionEnabled");
+});
+
 it("skips objects over the count limit in slug order, and refuses to add more", () => {
   const storage = memoryStorage();
   const attention = Object.fromEntries(

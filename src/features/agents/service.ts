@@ -1045,8 +1045,8 @@ export class AgentsService extends Service implements Agents {
     if (change.attentionEnabled !== undefined) {
       const { attentionEnabled: _, ...rest } = record;
       record = change.attentionEnabled
-        ? rest
-        : { ...rest, attentionEnabled: false };
+        ? { ...rest, attentionEnabled: true }
+        : rest;
     }
     for (const [slug, value] of Object.entries(change.attention ?? {}))
       record = setAttention(
@@ -1410,7 +1410,7 @@ export class AgentsService extends Service implements Agents {
       attention: EMPTY,
       skipped: EMPTY,
       timers: EMPTY,
-      attentionEnabled: true,
+      attentionEnabled: false,
       config: undefined,
     });
     this.shown.set(fields.pubkey, agent);
@@ -1453,7 +1453,7 @@ export class AgentsService extends Service implements Agents {
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
-      attentionEnabled: record.attentionEnabled !== false,
+      attentionEnabled: record.attentionEnabled === true,
       config: record.config,
     });
   }
@@ -1733,7 +1733,7 @@ export class AgentsService extends Service implements Agents {
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
-          prior.attentionEnabled === (record.attentionEnabled !== false) &&
+          prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config
           ? prior
           : this.view(identity, record),
@@ -1757,7 +1757,7 @@ export class AgentsService extends Service implements Agents {
       const runner = this.runners.get(identity.pubkey);
       // Turning attention off voids the watch work it queued, even if it is
       // turned on again before that work would run.
-      if (runner && this.records[identity.pubkey]?.attentionEnabled === false) {
+      if (runner && this.records[identity.pubkey]?.attentionEnabled !== true) {
         runner.epoch++;
         runner.queue = runner.queue.filter(
           (job) => job.trigger.type !== "watch",
@@ -2280,7 +2280,7 @@ export class AgentsService extends Service implements Agents {
       return this.recordOf(identity);
     };
     return Object.freeze({
-      enabled: () => record().attentionEnabled !== false,
+      enabled: () => record().attentionEnabled === true,
       classifier: () => this.classifier(),
       show: (slug: string, interest?: string) =>
         show(record(), slug, seconds(), interest),

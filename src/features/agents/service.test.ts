@@ -505,6 +505,7 @@ it("imports a shared agent as a new identity with its name and picture, adopting
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const mention = event("m", {
     tags: [
       ["h", channel],
@@ -637,6 +638,7 @@ it("keeps handed-off activity local, without publishing working reactions", asyn
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   run.mockImplementationOnce(async ({ agent }) => {
     await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
   });
@@ -1305,6 +1307,7 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, storage } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.save(bot, {
     attention: {
       "watch/tick": {
@@ -1364,6 +1367,7 @@ it("keeps at most one occurrence of a timer waiting, and never runs one removed 
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const timer = (prompt: string) =>
     ({
       type: "timer",
@@ -1400,6 +1404,7 @@ it("gives each due timer a turn when one's runs outlast its interval", async () 
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const timer = (prompt: string) =>
     ({
       type: "timer",
@@ -1434,6 +1439,7 @@ it("runs waiting events before a due timer, so a busy timer cannot starve them",
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.save(bot, {
     attention: {
       "watch/tick": {
@@ -1548,6 +1554,7 @@ it("keeps the cleanup for later when the session closes while archive state is r
 it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.save(bot, {
     attention: {
       "watch/classified": {
@@ -1587,6 +1594,7 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
 it("keeps DMs and reactions to its own messages away from watches", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.save(bot, {
     attention: {
       "watch/everything": {
@@ -1625,6 +1633,7 @@ it("keeps DMs and reactions to its own messages away from watches", async () => 
 it("wakes a watch only for channels the agent is in, even when it watches all", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.save(bot, {
     attention: {
       "watch/everything": {
@@ -1655,9 +1664,29 @@ it("wakes a watch only for channels the agent is in, even when it watches all", 
   });
 });
 
+it("keeps a new agent's attention off until its owner turns it on", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.find(bot)?.attentionEnabled).toBe(false);
+  // Its type's default watch matches, but wakes nothing while off.
+  emit({ events: [event("one", { content: "deploy" })] });
+  await settle();
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  await service.save(bot, { attentionEnabled: true });
+  expect(service.find(bot)?.attentionEnabled).toBe(true);
+  emit({ events: [event("two", { content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { id: "two".padEnd(64, "0") },
+  });
+});
+
 it("drops a queued watch run whose watch was disabled, or whose attention went off, before it ran", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   let release = () => {};
   run.mockImplementationOnce(
     () => new Promise<void>((resolve) => (release = resolve)),
@@ -1699,6 +1728,7 @@ it("drops a queued watch run whose watch was disabled, or whose attention went o
 it("drops a queued watch run when attention goes off and on, or its watch is replaced, before it ran", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
   let release = () => {};
   const hold = () =>
@@ -1743,6 +1773,7 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
 it("tells a run whose type queued its work whether that work is still current", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
   emit({ events: [event("one", { content: "deploy" })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -1773,6 +1804,7 @@ it("voids a handed-off timer occurrence once attention or the timer is reset", a
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const timer = {
     type: "timer",
     interest_id: "default",
@@ -1813,6 +1845,7 @@ it("runs a spent timer again when its owner restarts it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const once = {
     type: "timer",
     interest_id: "default",
@@ -2561,6 +2594,7 @@ async function handleOf(
 it("lets a run read and write its attention with expected-state tokens", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   const { attention } = await handleOf(run, emit);
   expect(attention.enabled()).toBe(true);
   expect(attention.classifier()).toBe("unavailable");

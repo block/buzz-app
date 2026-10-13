@@ -142,7 +142,7 @@ export class ClaudeSetup {
     this.state = { ...this.state, ...change };
     const status = this.state.status;
     this.health = Object.freeze(
-      !status || this.state.checking
+      !status
         ? { readiness: "checking" }
         : status.state === "ready"
           ? { readiness: "ready" }

@@ -63,6 +63,11 @@ it("reports the version and whether it is signed in", async () => {
     version: "2.1.3",
     account: "a@example.com · Example",
   });
+  const setup = new ClaudeSetup(ready.spawn);
+  await setup.check();
+  const refreshing = setup.check();
+  expect(setup.providerSnapshot()).toEqual({ readiness: "ready" });
+  await refreshing;
 });
 
 it("runs sign-in, shows its output, and checks again after", async () => {

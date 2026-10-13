@@ -595,7 +595,7 @@ function ManagedProviderDialog({
       preventClose={!!state.blocking}
       finalFocus={() => finalFocus.current}
     >
-      <Body />
+      <Body onClose={onClose} />
     </Dialog>
   );
 }

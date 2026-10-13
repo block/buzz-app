@@ -84,7 +84,9 @@ const portable: PortableAgent[] = [
 
 function provider(
   initial: AgentProviderSnapshot["readiness"],
-  DialogBody: () => ReactNode = () => <p>Provider controls</p>,
+  DialogBody: (props: { onClose(): void }) => ReactNode = () => (
+    <p>Provider controls</p>
+  ),
   attentionLabel = "Set up provider",
 ) {
   let state: AgentProviderSnapshot =
@@ -137,7 +139,14 @@ function setup(
     teams: [],
   };
   const listeners = new Set<() => void>();
-  const echoProvider = provider("ready", () => <p>Echo controls</p>);
+  const echoProvider = provider("ready", ({ onClose }) => (
+    <>
+      <p>Echo controls</p>
+      <button type="button" onClick={onClose}>
+        Save defaults
+      </button>
+    </>
+  ));
   const DirtySettings = ({ agent, save, settingsHost }: AgentViewProps) => {
     const [reply, setReply] = useState(
       (agent.config as { reply: string }).reply,
@@ -435,14 +444,34 @@ it("checks active providers in a health submenu and opens their host-owned dialo
         "button",
       ),
     ).toEqual([close]);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Save defaults" }),
+    );
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Providers" }),
+    );
+    const reopenedProviders = await screen.findByRole("menu", {
+      name: "Providers",
+    });
+    fireEvent.click(
+      within(reopenedProviders).getByRole("menuitem", {
+        name: "Echo, ready",
+      }),
+    );
+    const reopenedDialog = await screen.findByRole("dialog", { name: "Echo" });
     act(() => echoProvider.set({ readiness: "attention" }));
     expect(
-      within(dialog).queryByRole("button", { name: "Check again" }),
+      within(reopenedDialog).queryByRole("button", { name: "Check again" }),
     ).toBeNull();
     act(() => echoProvider.set({ readiness: "ready", blocking: true }));
     await user.keyboard("{Escape}");
-    expect(dialog).toBeInTheDocument();
-    expect(close).toBeDisabled();
+    expect(reopenedDialog).toBeInTheDocument();
+    expect(
+      within(reopenedDialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
     act(() => echoProvider.set({ readiness: "ready" }));
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,

@@ -1305,9 +1305,11 @@ export class AgentsService extends Service implements Agents {
         `${identity.name} is answering; change its type when it finishes`,
       );
     if (!runner) throw new Error("Change its type on the device that runs it");
+    if (runner.transitioning)
+      throw new Error(`${identity.name}'s provider is already changing`);
     runner.transitioning = true;
     try {
-      if (!(await this.claim(runner)))
+      if (!(await this.claimForRetype(runner)))
         throw new Error("Change its type on the device that runs it");
       if (runner.working)
         throw new Error(
@@ -2550,6 +2552,12 @@ export class AgentsService extends Service implements Agents {
       );
       return true;
     }
+  }
+  /** Claims exclusively for a provider migration. Unlike turn execution,
+   * uncertainty is unsafe here because changing native type is destructive. */
+  private async claimForRetype(runner: Runner) {
+    runner.mayHold = (await this.native?.claim(runner.pubkey)) ?? false;
+    return runner.mayHold;
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;

@@ -752,19 +752,25 @@ it("keeps a plain follow-up behind a queued differing pick instead of steering p
   await f.runtime.run(f.delivery("plain"));
   await f.complete(0, "FIRST");
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // "plain" is still queued while "deeper" runs, so this cannot steer either.
+  await f.runtime.run(f.delivery("later"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await f.complete(1, "SECOND");
   await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  await f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
   expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
   const input = (index: number) => JSON.stringify(f.starts()[index]?.params);
   expect(input(1)).toContain("deeper");
   expect(input(1)).toContain('"model":"deep-model"');
   expect(input(2)).toContain("plain");
   expect(input(2)).toContain('"model":"test-model"');
-  f.complete(2, "THIRD");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(input(3)).toContain("later");
+  f.complete(3, "FOURTH");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(4));
   expect(
     f.publish.mock.calls.map(([event]) => (event as EventData).content),
-  ).toEqual(["FIRST", "SECOND", "THIRD"]);
+  ).toEqual(["FIRST", "SECOND", "THIRD", "FOURTH"]);
 });
 it("steers a mid-turn message whose pick matches the running turn, or has none", async () => {
   const f = fixture();

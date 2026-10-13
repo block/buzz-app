@@ -70,8 +70,6 @@ type Active = {
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
   model?: string;
   effort?: string;
-  /** A later turn is queued behind this one, so steering would reorder. */
-  queued?: true;
   workspace: string;
   signal: AbortSignal;
   version: number;
@@ -83,6 +81,8 @@ type Active = {
 };
 type Lane = {
   tail: Promise<void>;
+  /** Turns waiting on `tail` to start; steering past them would reorder. */
+  queued: number;
   active?: Active;
 };
 type Entry = {
@@ -415,7 +415,7 @@ export class CodexRuntime {
     const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: entry.after };
+      lane = { tail: entry.after, queued: 0 };
       entry.lanes.set(key, lane);
     }
     if (lane.active) {
@@ -430,14 +430,14 @@ export class CodexRuntime {
           }
           // Steering cannot carry a model or effort, so a differing pick
           // waits for this turn and runs as the next one. Everything after
-          // it queues too: steering now would run later messages first.
+          // it queues too until the lane drains: steering would run later
+          // messages first.
           if (
             active.finished ||
-            active.queued ||
+            lane.queued ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
-            active.queued = true;
             this.start(request, text, key, lane, entry);
             return;
           }
@@ -509,9 +509,11 @@ export class CodexRuntime {
     entry: Entry,
   ) {
     const current = lane;
+    current.queued++;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
+        current.queued--;
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;

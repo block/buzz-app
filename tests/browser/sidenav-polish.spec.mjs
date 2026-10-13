@@ -321,18 +321,14 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
     await header
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
-    const profileAvatar = page.getByRole("menuitem", {
+    const profileMenu = page.locator(".buzz-menu-popup[data-profile-menu]");
+    const profileAvatar = profileMenu.getByRole("menuitem", {
       name: "View your profile",
     });
     await expect(profileAvatar).toBeVisible();
-    // The menu's entrance transform affects its children's measured size.
-    await profileAvatar
-      .locator("xpath=ancestor::*[@role='menu']")
-      .evaluate(async (menu) => {
-        await Promise.all(
-          menu.getAnimations().map((animation) => animation.finished),
-        );
-      });
+    // The popup enters through a translate transition; Chromium's transformed
+    // client rects carry float error, so measure the settled menu.
+    await expect(profileMenu).toHaveCSS("transform", "none");
     const avatarBox = await profileAvatar.boundingBox();
     expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
     await page.keyboard.press("Escape");

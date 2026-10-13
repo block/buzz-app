@@ -52,7 +52,7 @@ type Request = {
   model?: string;
   effort?: string;
   /** Called once a final send answers this request, or one steered after it,
-   * or a steering rejection is posted in its place. */
+   * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
@@ -76,8 +76,6 @@ type Active = {
   effort?: string;
   workspace: string;
   signal: AbortSignal;
-  version: number;
-  sentVersion?: number;
   /** Every request this turn has taken in, the first and each steered one. */
   requests: Request[];
   /** Latest acknowledged mention per Buzz thread; independent of session scope. */
@@ -567,7 +565,6 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
-          active.version++;
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -687,7 +684,6 @@ export class CodexRuntime {
     )
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
-    const version = active.version;
     const request = active.reply;
     const answering = [...active.requests];
     const client = appClient(request.agent, {
@@ -717,7 +713,6 @@ export class CodexRuntime {
     );
     const final = call.tool === "send" && args.final === true;
     if (final) {
-      active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
     return {
@@ -827,7 +822,6 @@ export class CodexRuntime {
       finished: false,
       workspace: request.settings.workspace,
       signal,
-      version: 0,
       requests: [request],
       activity: new Map(),
     };
@@ -1030,11 +1024,8 @@ export class CodexRuntime {
         );
         this.status(agent.pubkey, key, "Interrupted");
       } else {
-        if (active.sentVersion !== active.version)
-          await this.publish(
-            active.reply,
-            "Codex ended this turn without a final reply through buzz.send. Send another mention to ask it to continue.",
-          );
+        // A turn may end without a reply when there is nothing new to say.
+        for (const taken of active.requests) taken.answered();
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {

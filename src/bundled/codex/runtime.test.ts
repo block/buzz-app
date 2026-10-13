@@ -1289,29 +1289,25 @@ it("answers another agent its owner attested, telling the owner of failures", as
   await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   // A failure tells the owner: tagging the sibling would wake it to fail too.
-  f.complete(0, "");
+  f.exits.resolve(3);
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
   expect(failure.tags).toContainEqual(["p", owner]);
   expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
-it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
+it("ends a turn without a reply silently, and publishes an unexpected exit", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.complete(0, "");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("without a final reply"),
-  });
-  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
-    ok: false,
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
   });
   await f.runtime.run(f.delivery("next"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.exits.resolve(3);
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
-  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
   });
   await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({

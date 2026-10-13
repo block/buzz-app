@@ -1297,10 +1297,13 @@ export class AgentsService extends Service implements Agents {
     if (kind.remote)
       throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type) return [];
-    if (this.runners.get(pubkey)?.working)
+    const runner = this.runners.get(pubkey);
+    if (runner?.working)
       throw new Error(
         `${identity.name} is answering; change its type when it finishes`,
       );
+    if (!runner || !(await this.claim(runner)))
+      throw new Error("Change its type on the device that runs it");
     const { record, adopted, preview } = this.retypePlan(
       identity,
       kinds.get(identity.type),

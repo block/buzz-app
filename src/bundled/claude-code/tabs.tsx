@@ -8,6 +8,8 @@ import type {
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -66,13 +68,7 @@ function AuthenticatedModel({
       </span>
     );
   if (state.status.state !== "ready" || state.running)
-    return (
-      <ClaudeSetupPanel
-        setup={setup}
-        disabled={props.disabled}
-        variant="compact"
-      />
-    );
+    return <ClaudeSignIn setup={setup} disabled={props.disabled} />;
   return <ModelChoices {...props} />;
 }
 
@@ -172,6 +168,44 @@ export function Create({
   );
 }
 
+function ClaudeSignIn({
+  setup,
+  disabled,
+}: {
+  setup: ClaudeSetup;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  const missing = state.status?.state === "missing";
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="prominent"
+        disabled={disabled}
+        onClick={() => {
+          setOpen(true);
+          void setup.run(missing ? "install" : "login");
+        }}
+      >
+        {missing ? "Install Claude" : "Sign in"}
+      </Button>
+      <Dialog
+        open={open}
+        title={missing ? "Set up Claude" : "Sign in to Claude"}
+        description="Continue in your browser. If it gives you a code to paste, choose Enter a code below."
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) void setup.cancel();
+        }}
+      >
+        <ClaudeSetupPanel setup={setup} disabled={disabled} variant="compact" />
+      </Dialog>
+    </>
+  );
+}
+
 function ClaudeSetupPanel({
   setup,
   disabled = false,
@@ -249,42 +283,63 @@ function ClaudeSetupPanel({
         </p>
       )}
       {state.output && (
-        <pre
-          role="log"
-          aria-label="Setup output"
-          className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-caption"
-        >
-          {state.output}
-        </pre>
+        <Accordion
+          items={[
+            {
+              value: "details",
+              title: "Setup details",
+              content: (
+                <pre
+                  role="log"
+                  aria-label="Setup output"
+                  className="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-all text-caption"
+                >
+                  {state.output}
+                </pre>
+              ),
+            },
+          ]}
+        />
       )}
       {state.running === "login" && (
-        <div className="flex items-end gap-2">
-          <Field
-            label="Sign-in code"
-            description="If the browser shows a code to paste, enter it here."
-          >
-            <Input
-              disabled={disabled}
-              value={code}
-              onValueChange={setCode}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || !code.trim() || disabled) return;
-                event.preventDefault();
-                void setup.answer(code);
-                setCode("");
-              }}
-            />
-          </Field>
-          <Button
-            disabled={disabled || !code.trim()}
-            onClick={() => {
-              void setup.answer(code);
-              setCode("");
-            }}
-          >
-            Send
-          </Button>
-        </div>
+        <Accordion
+          items={[
+            {
+              value: "code",
+              title: "Enter a code",
+              content: (
+                <div className="flex items-end gap-2">
+                  <Field
+                    label="Sign-in code"
+                    description="If the browser shows a code to paste, enter it here."
+                  >
+                    <Input
+                      disabled={disabled}
+                      value={code}
+                      onValueChange={setCode}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || !code.trim() || disabled)
+                          return;
+                        event.preventDefault();
+                        void setup.answer(code);
+                        setCode("");
+                      }}
+                    />
+                  </Field>
+                  <Button
+                    disabled={disabled || !code.trim()}
+                    onClick={() => {
+                      void setup.answer(code);
+                      setCode("");
+                    }}
+                  >
+                    Send
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
       )}
     </section>
   );

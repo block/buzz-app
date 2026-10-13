@@ -163,6 +163,8 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   await waitFor(() => expect(signIn).toHaveAttribute("aria-busy", "true"));
   expect(signIn).toHaveFocus();
   expect(signIn).not.toHaveAttribute("disabled");
+  expect(screen.queryByLabelText("Sign-in code")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Enter a code" }));
   expect(screen.getByLabelText("Sign-in code")).toHaveAccessibleDescription(
     "If the browser shows a code to paste, enter it here.",
   );
@@ -337,9 +339,18 @@ it("shows sign-in instead of discovering models when Claude is signed out", asyn
     ),
   ).toBe(false);
   fireEvent.click(signIn);
+  expect(
+    await screen.findByRole("dialog", { name: "Sign in to Claude" }),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Sign-in code")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Enter a code" }));
   expect(await screen.findByLabelText("Sign-in code")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled(),
+    expect(
+      screen
+        .getAllByRole("button", { name: "Sign in" })
+        .every((button) => !button.hasAttribute("disabled")),
+    ).toBe(true),
   );
 });

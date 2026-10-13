@@ -744,6 +744,28 @@ it("runs a mid-turn pick that differs from the running turn as the next turn ins
     f.publish.mock.calls.map(([event]) => (event as EventData).content),
   ).toEqual(["FIRST", "SECOND", "THIRD"]);
 });
+it("keeps a plain follow-up behind a queued differing pick instead of steering past it", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...f.delivery("deeper"), model: "deep-model" });
+  await f.runtime.run(f.delivery("plain"));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
+  const input = (index: number) => JSON.stringify(f.starts()[index]?.params);
+  expect(input(1)).toContain("deeper");
+  expect(input(1)).toContain('"model":"deep-model"');
+  expect(input(2)).toContain("plain");
+  expect(input(2)).toContain('"model":"test-model"');
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).content),
+  ).toEqual(["FIRST", "SECOND", "THIRD"]);
+});
 it("steers a mid-turn message whose pick matches the running turn, or has none", async () => {
   const f = fixture();
   await f.runtime.run({

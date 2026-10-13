@@ -229,7 +229,7 @@ export function ModelPicker({
           }}
         />
         <Combobox.Popup
-          className={styles.modelOptions}
+          className={compact ? styles.modelOptions : undefined}
           empty="Type a model ID to use a custom model."
         >
           <Combobox.List>

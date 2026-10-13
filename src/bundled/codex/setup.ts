@@ -160,6 +160,8 @@ export class CodexSetup {
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
   private readonly refused = new Set<string>();
+  /** The running install, which deliveries wait for while there is no copy. */
+  private installing: Promise<void> | undefined;
 
   constructor(
     private readonly spawn: Spawn | undefined,
@@ -201,21 +203,52 @@ export class CodexSetup {
    * without a copy is left without one: the download is large. */
   async update(needed: boolean) {
     if (!this.spawn || this.state.running) return;
-    if (!needed && (await checkCodex(this.spawn)).state === "missing") return;
+    const status = await checkCodex(this.spawn);
+    this.set({ status });
+    if (!needed && status.state === "missing") return;
     await this.run("install", false);
+  }
+
+  /** Holds a delivery while Buzz downloads its first copy, so a mention sent
+   * meanwhile is answered rather than lost to a missing copy. Once a copy is
+   * in use, updates do not hold deliveries. */
+  async installed(signal: AbortSignal) {
+    const install = this.installing;
+    if (!install || this.state.status?.state !== "missing") return;
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) return abort();
+      signal.addEventListener("abort", abort, { once: true });
+      void install.then(() => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      });
+    });
   }
 
   /** Installs or updates Buzz's copy, or runs sign-in; then checks again.
    * Asked for by the person, it also retries a release that failed its test,
    * and shows only this step's output. */
-  async run(step: "install" | "login", asked = true) {
-    if (!this.spawn || this.state.running) return;
+  run(step: "install" | "login", asked = true) {
+    if (!this.spawn || this.state.running) return Promise.resolve();
+    const work = this.perform(this.spawn, step, asked);
+    if (step !== "install") return work;
+    this.installing = work.finally(() => {
+      this.installing = undefined;
+    });
+    return this.installing;
+  }
+  private async perform(
+    spawn: Spawn,
+    step: "install" | "login",
+    asked: boolean,
+  ) {
     this.cancelled = false;
     if (asked) this.refused.clear();
     this.set({ running: step, ...(asked ? { output: "" } : {}) });
     try {
-      if (step === "install") await this.install(this.spawn);
-      else await this.step(this.spawn, "codex", ["login"], "Sign-in");
+      if (step === "install") await this.install(spawn);
+      else await this.step(spawn, "codex", ["login"], "Sign-in");
     } catch (error) {
       this.log(`\n${message(error)}`);
     } finally {

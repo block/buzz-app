@@ -263,3 +263,67 @@ it("starts Codex, its app server and install steps as steps of codex.sh", async 
     { id: "platform", args: [] },
   ]);
 });
+
+/** `releases` whose download waits until `release` is called. */
+function heldDownload(disk: ReturnType<typeof releases>) {
+  let release!: () => void;
+  let started!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const downloading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const spawn = async (id: string, options?: HostProcessOptions) => {
+    if (id === "install") {
+      started();
+      await held;
+    }
+    return disk.spawn(id, options);
+  };
+  return { spawn, downloading, release };
+}
+
+it("holds a delivery while it downloads the first copy", async () => {
+  const disk = releases("0.163.0");
+  const { spawn, downloading, release } = heldDownload(disk);
+  const setup = new CodexSetup(spawn, disk.request);
+  const update = setup.update(true);
+  await downloading;
+  let delivered = false;
+  const delivery = setup.installed(new AbortController().signal).then(() => {
+    delivered = true;
+  });
+  // Settles only once the held download does, which nothing has released.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(delivered).toBe(false);
+  release();
+  await Promise.all([update, delivery]);
+  expect(disk.state.used).toEqual(["0.163.0"]);
+  expect(setup.snapshot().status).toMatchObject({ version: "0.163.0" });
+});
+
+it("stops holding a delivery when its deadline passes", async () => {
+  const disk = releases("0.163.0");
+  const { spawn, downloading, release } = heldDownload(disk);
+  const setup = new CodexSetup(spawn, disk.request);
+  const update = setup.update(true);
+  await downloading;
+  const deadline = new AbortController();
+  const delivery = setup.installed(deadline.signal);
+  deadline.abort(new Error("timed out"));
+  await expect(delivery).rejects.toThrow("timed out");
+  release();
+  await update;
+});
+
+it("does not hold deliveries while it updates a copy in use", async () => {
+  const disk = releases("0.163.0", { current: "0.162.1" });
+  const { spawn, downloading, release } = heldDownload(disk);
+  const setup = new CodexSetup(spawn, disk.request);
+  const update = setup.update(false);
+  await downloading;
+  await setup.installed(new AbortController().signal);
+  release();
+  await update;
+});

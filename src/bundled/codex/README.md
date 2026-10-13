@@ -115,7 +115,9 @@ Releases come from OpenAI's channel, `releases.openai.com/codex/channels/latest`
 as `codex-package-<target>.tar.gz` with the sha256 the channel lists. After the
 checksum check, Buzz runs `--version` and checks that `app-server` lists models;
 only then does it switch `current`. A release that fails is skipped and the
-previous copy stays in use. Only the new copy and the previous one are kept.
+previous copy stays in use. Switching takes a lock shared by every Buzz build,
+and keeps the new copy, the previous one and any newer one another build may
+be testing. A mention sent during the first download waits for it.
 Buzz checks when the agents load and every 6 hours; the first download (about
 130 MB) waits until a Codex agent is running, or **Install Codex** is clicked.
 

@@ -19,6 +19,15 @@ valid() {
   case "$1" in "" | [!0-9]* | *[!0-9.]*) return 1 ;; esac
 }
 
+# Whether release $1 is newer than release $2.
+newer() {
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 > y[i] + 0)
+    exit 1
+  }'
+}
+
 command="$1"
 shift
 case "$command" in
@@ -56,13 +65,25 @@ use)
   version="$1"
   valid "$version" || { echo "Invalid version" >&2; exit 2; }
   test -x "$dir/$version/claude"
+  # One switch at a time across Buzz builds, so none prunes the release
+  # another just switched to. The lock names its holder's process; a lock
+  # whose holder has stopped is taken over.
+  lock="$dir/.lock"
+  until ln -s "$$" "$lock" 2>/dev/null; do
+    owner=$(readlink "$lock" 2>/dev/null) &&
+      ! kill -0 "$owner" 2>/dev/null && rm -f "$lock"
+    sleep 0.1
+  done
+  trap '[ "$(readlink "$lock")" = $$ ] && rm -f "$lock"' EXIT
   previous=$(cat "$dir/current" 2>/dev/null || true)
   printf %s "$version" >"$dir/current.$$"
   mv -f "$dir/current.$$" "$dir/current"
-  # Keep the new release and the one before it, to fall back to; remove the rest.
+  # Keep the new release, the one before it to fall back to, and any newer
+  # one, which another build may be testing; remove the rest.
   for folder in "$dir"/*/; do
     folder=$(basename "$folder")
-    [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] || rm -rf "${dir:?}/$folder"
+    [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] ||
+      newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done
   ;;
 *)

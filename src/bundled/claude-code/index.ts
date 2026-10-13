@@ -74,7 +74,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       { id: "settings", title: "Settings", component: SettingsTab },
     ],
     models: (agent) => runtime.models(agent.pubkey),
-    run: (delivery) => runtime.run(delivery),
+    // A mention during the first download waits for it, within its deadline.
+    run: async (delivery) => {
+      await setup.installed(delivery.signal);
+      return runtime.run(delivery);
+    },
     timeoutMs: HANDOVER_MS,
   });
 };

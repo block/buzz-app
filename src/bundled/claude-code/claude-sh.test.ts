@@ -8,7 +8,6 @@ import {
   readdir,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,17 +56,23 @@ async function disk(releases: readonly string[], current?: string) {
   };
 }
 
-it("keeps the release in use when builds switch to different releases", async () => {
-  // A build that fetched 0.2.0 and one that fetched 0.3.0 switch in either
-  // order; neither prunes what the other made current.
+// Builds that fetched 0.2.0 and 0.3.0 switch in either order, or at once;
+// none prunes what another made current.
+it("keeps the newer release when it switches first", async () => {
   const first = await disk(["0.1.0", "0.2.0", "0.3.0"], "0.1.0");
   await first.step("use", "0.2.0");
   await first.step("use", "0.3.0");
   expect(await first.selected()).toBe("0.3.0");
+});
+
+it("keeps the newer release when an older one switches after it", async () => {
   const second = await disk(["0.1.0", "0.2.0", "0.3.0"], "0.1.0");
   await second.step("use", "0.3.0");
   await expect(second.step("use", "0.2.0")).rejects.toThrow();
   expect(await second.selected()).toBe("0.3.0");
+});
+
+it("keeps the release in use when builds switch at once", async () => {
   const both = await disk(["0.1.0", "0.2.0", "0.3.0"], "0.1.0");
   await Promise.allSettled([
     both.step("use", "0.2.0"),
@@ -86,12 +91,47 @@ it("prunes older releases but keeps a newer one another build may be testing", a
   expect(await folders()).toEqual(["0.10.0", "0.2.0", "0.3.0"]);
 });
 
-it("takes over a lock whose holder has stopped", async () => {
+/** Holds the switch lock, as a build that is switching does, until killed. */
+async function hold(dir: string) {
+  const holder = spawn("perl", [
+    "-MFcntl=:flock",
+    "-e",
+    'open(my $l, ">>", $ARGV[0]) or die; flock($l, LOCK_EX) or die; $| = 1; print "held\\n"; sleep 60',
+    join(dir, ".lock"),
+  ]);
+  await new Promise((resolve) => holder.stdout.once("data", resolve));
+  return holder;
+}
+/** Resolves once the switch with process `pid` is waiting for the lock. */
+const waiting = (pid: number | undefined) =>
+  expect
+    .poll(() =>
+      run("pgrep", ["-P", String(pid), "-x", "flock|perl"]).then(
+        () => true,
+        () => false,
+      ),
+    )
+    .toBe(true);
+
+it("waits for a switch in progress, and goes on once its holder is killed", async () => {
   const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.1.0");
-  const holder = spawn("true");
-  await new Promise((resolve) => holder.on("exit", resolve));
-  await symlink(String(holder.pid), join(dir, ".lock"));
-  await step("use", "0.2.0");
+  const holder = await hold(dir);
+  const switching = step("use", "0.2.0");
+  await waiting(switching.child.pid);
+  expect(await selected()).toBe("0.1.0");
+  holder.kill("SIGKILL");
+  await switching;
   expect(await selected()).toBe("0.2.0");
-  await expect(readdir(dir)).resolves.not.toContain(".lock");
+});
+
+it("leaves the release in use when its switch's release is pruned while it waits", async () => {
+  const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.2.0");
+  const holder = await hold(dir);
+  const switching = step("use", "0.1.0");
+  await waiting(switching.child.pid);
+  // The holder's own prune removes the older release this switch named.
+  await rm(join(dir, "0.1.0"), { recursive: true });
+  holder.kill("SIGKILL");
+  await expect(switching).rejects.toThrow("0.1.0 is no longer downloaded");
+  expect(await selected()).toBe("0.2.0");
 });

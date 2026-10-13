@@ -160,8 +160,9 @@ export class CodexSetup {
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
   private readonly refused = new Set<string>();
-  /** The running install, which deliveries wait for while there is no copy. */
-  private installing: Promise<void> | undefined;
+  /** Looking for Buzz's copy or downloading one, which deliveries wait for
+   * while Buzz has found no copy to run. */
+  private holding: Promise<void> | undefined;
 
   constructor(
     private readonly spawn: Spawn | undefined,
@@ -201,29 +202,60 @@ export class CodexSetup {
 
   /** Moves Buzz's copy to the latest release. Unless `needed`, a computer
    * without a copy is left without one: the download is large. */
-  async update(needed: boolean) {
-    if (!this.spawn || this.state.running) return;
-    const status = await checkCodex(this.spawn);
-    this.set({ status });
-    if (!needed && status.state === "missing") return;
-    await this.run("install", false);
+  update(needed: boolean) {
+    const spawn = this.spawn;
+    if (!spawn || this.state.running) return Promise.resolve();
+    // Held from the first check: until it answers, there may be no copy.
+    return this.hold(
+      (async () => {
+        const status = await checkCodex(spawn);
+        this.set({ status });
+        if (!needed && status.state === "missing") return;
+        await this.run("install", false);
+      })(),
+    );
   }
 
-  /** Holds a delivery while Buzz downloads its first copy, so a mention sent
-   * meanwhile is answered rather than lost to a missing copy. Once a copy is
-   * in use, updates do not hold deliveries. */
+  /** Holds a delivery while Buzz looks for its copy and downloads a first
+   * one, so a mention sent meanwhile is answered rather than lost to a
+   * missing copy. Once a copy is found, updating it holds nothing. */
   async installed(signal: AbortSignal) {
-    const install = this.installing;
-    if (!install || this.state.status?.state !== "missing") return;
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => reject(signal.reason);
-      if (signal.aborted) return abort();
-      signal.addEventListener("abort", abort, { once: true });
-      void install.then(() => {
-        signal.removeEventListener("abort", abort);
-        resolve();
+    const found = () => {
+      const status = this.state.status;
+      return status !== undefined && status.state !== "missing";
+    };
+    for (let work = this.holding; work && !found(); work = this.holding) {
+      const ended = work;
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          off();
+          signal.removeEventListener("abort", abort);
+        };
+        const abort = () => {
+          done();
+          reject(signal.reason);
+        };
+        const off = this.subscribe(() => {
+          if (!found()) return;
+          done();
+          resolve();
+        });
+        signal.addEventListener("abort", abort, { once: true });
+        void ended.then(() => {
+          done();
+          resolve();
+        });
+        if (signal.aborted) abort();
       });
+    }
+  }
+  /** Makes `work` what deliveries wait on, until it ends. */
+  private hold(work: Promise<void>) {
+    const held = work.finally(() => {
+      if (this.holding === held) this.holding = undefined;
     });
+    this.holding = held;
+    return held;
   }
 
   /** Installs or updates Buzz's copy, or runs sign-in; then checks again.
@@ -232,11 +264,7 @@ export class CodexSetup {
   run(step: "install" | "login", asked = true) {
     if (!this.spawn || this.state.running) return Promise.resolve();
     const work = this.perform(this.spawn, step, asked);
-    if (step !== "install") return work;
-    this.installing = work.finally(() => {
-      this.installing = undefined;
-    });
-    return this.installing;
+    return step === "install" ? this.hold(work) : work;
   }
   private async perform(
     spawn: Spawn,

@@ -116,8 +116,10 @@ as `codex-package-<target>.tar.gz` with the sha256 the channel lists. After the
 checksum check, Buzz runs `--version` and checks that `app-server` lists models;
 only then does it switch `current`. A release that fails is skipped and the
 previous copy stays in use. Switching takes a lock shared by every Buzz build,
-and keeps the new copy, the previous one and any newer one another build may
-be testing. A mention sent during the first download waits for it.
+which the system releases when the build holding it stops, and checks the copy
+again once it holds the lock. It keeps the new copy, the previous one and any
+newer one another build may be testing. A mention sent before Buzz has found a
+copy, or while it downloads the first one, waits for it.
 Buzz checks when the agents load and every 6 hours; the first download (about
 130 MB) waits until a Codex agent is running, or **Install Codex** is clicked.
 

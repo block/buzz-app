@@ -69,17 +69,19 @@ install)
 use)
   version="$1"
   valid "$version" || { echo "Invalid version" >&2; exit 2; }
-  test -x "$dir/$version/bin/codex"
   # One switch at a time across Buzz builds, so none prunes the release
-  # another just switched to. The lock names its holder's process; a lock
-  # whose holder has stopped is taken over.
-  lock="$dir/.lock"
-  until ln -s "$$" "$lock" 2>/dev/null; do
-    owner=$(readlink "$lock" 2>/dev/null) &&
-      ! kill -0 "$owner" 2>/dev/null && rm -f "$lock"
-    sleep 0.1
-  done
-  trap '[ "$(readlink "$lock")" = $$ ] && rm -f "$lock"' EXIT
+  # another just switched to. The kernel holds the lock for this process and
+  # releases it when the process ends, however it ends.
+  exec 9>>"$dir/.lock"
+  if command -v flock >/dev/null; then
+    flock 9
+  else # macOS has no flock(1)
+    perl -MFcntl=:flock -e 'open(my $lock, ">&=9") or die "$!\n";
+      flock($lock, LOCK_EX) or die "$!\n"'
+  fi
+  # Checked under the lock: another build may have pruned it meanwhile.
+  test -x "$dir/$version/bin/codex" ||
+    { echo "Codex $version is no longer downloaded" >&2; exit 1; }
   previous=$(cat "$dir/current" 2>/dev/null || true)
   printf %s "$version" >"$dir/current.$$"
   mv -f "$dir/current.$$" "$dir/current"

@@ -177,6 +177,12 @@ function fixture(
       );
       return { ...process, exited: Promise.resolve(0) };
     }
+    // The plugin's setup checks find Buzz's copy installed and signed in.
+    const step = value?.args?.slice(3).join(" ");
+    if (step === "--version" || step === "login status") {
+      value?.onStdout?.("codex-cli 0.162.1\n");
+      return { ...process, exited: Promise.resolve(0) };
+    }
     options = value;
     return process;
   });

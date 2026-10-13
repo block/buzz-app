@@ -272,32 +272,34 @@ it("starts Claude and its install steps as steps of claude.sh", async () => {
   ]);
 });
 
-/** `releases` whose download waits until `release` is called. */
-function heldDownload(disk: ReturnType<typeof releases>) {
+/** `releases` whose first `id` process waits until `release` is called. */
+function held(disk: ReturnType<typeof releases>, id: string) {
   let release!: () => void;
   let started!: () => void;
-  const held = new Promise<void>((resolve) => {
+  const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const downloading = new Promise<void>((resolve) => {
+  const waiting = new Promise<void>((resolve) => {
     started = resolve;
   });
-  const spawn = async (id: string, options?: HostProcessOptions) => {
-    if (id === "install") {
+  let first = true;
+  const spawn = async (name: string, options?: HostProcessOptions) => {
+    if (name === id && first) {
+      first = false;
       started();
-      await held;
+      await gate;
     }
-    return disk.spawn(id, options);
+    return disk.spawn(name, options);
   };
-  return { spawn, downloading, release };
+  return { spawn, waiting, release };
 }
 
 it("holds a delivery while it downloads the first copy", async () => {
   const disk = releases("2.1.300");
-  const { spawn, downloading, release } = heldDownload(disk);
+  const { spawn, waiting, release } = held(disk, "install");
   const setup = new ClaudeSetup(spawn, disk.request);
   const update = setup.update(true);
-  await downloading;
+  await waiting;
   let delivered = false;
   const delivery = setup.installed(new AbortController().signal).then(() => {
     delivered = true;
@@ -313,10 +315,10 @@ it("holds a delivery while it downloads the first copy", async () => {
 
 it("stops holding a delivery when its deadline passes", async () => {
   const disk = releases("2.1.300");
-  const { spawn, downloading, release } = heldDownload(disk);
+  const { spawn, waiting, release } = held(disk, "install");
   const setup = new ClaudeSetup(spawn, disk.request);
   const update = setup.update(true);
-  await downloading;
+  await waiting;
   const deadline = new AbortController();
   const delivery = setup.installed(deadline.signal);
   deadline.abort(new Error("timed out"));
@@ -327,11 +329,27 @@ it("stops holding a delivery when its deadline passes", async () => {
 
 it("does not hold deliveries while it updates a copy in use", async () => {
   const disk = releases("2.1.300", { current: "2.1.200" });
-  const { spawn, downloading, release } = heldDownload(disk);
+  const { spawn, waiting, release } = held(disk, "install");
   const setup = new ClaudeSetup(spawn, disk.request);
   const update = setup.update(false);
-  await downloading;
+  await waiting;
   await setup.installed(new AbortController().signal);
   release();
   await update;
+});
+
+it("holds a delivery that arrives while it first looks for its copy", async () => {
+  const disk = releases("2.1.300");
+  const { spawn, waiting, release } = held(disk, "claude");
+  const setup = new ClaudeSetup(spawn, disk.request);
+  const update = setup.update(true);
+  await waiting;
+  let used: string[] | undefined;
+  const delivery = setup.installed(new AbortController().signal).then(() => {
+    used = [...disk.state.used];
+  });
+  release();
+  await Promise.all([update, delivery]);
+  // Released only once the first copy was in use.
+  expect(used).toEqual(["2.1.300"]);
 });

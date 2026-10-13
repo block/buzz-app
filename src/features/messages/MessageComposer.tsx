@@ -1,5 +1,4 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
-import { parseSnapshotClipboard } from "../agents/snapshot-clipboard";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { useEffectEvent } from "react";
@@ -82,6 +81,8 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
+import { ComposerModels } from "./ComposerModels";
+import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
   CompletionEdit,
@@ -379,6 +380,8 @@ function Composer({
   );
   const draft = value.text;
   const valueRef = useRef(value);
+  // Model and effort picked for mentioned agents' next run; cleared by each send.
+  const [picks, setPicks] = useState<MentionPicks>({});
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
@@ -1039,6 +1042,7 @@ function Composer({
     sendAttempt.current = attempt;
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
+    const capturedPicks = picks;
     try {
       if (submission?.receiptOnly) {
         submission.submit(captured);
@@ -1132,6 +1136,13 @@ function Composer({
             )
           : [],
       );
+      // Only agents still notified by this message are asked for a model or effort.
+      const sentPicks: MentionPicks = Object.fromEntries(
+        Object.entries(capturedPicks).filter(([key]) =>
+          recipients.includes(key),
+        ),
+      );
+      const tuned = Object.keys(sentPicks).length > 0;
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
         requireCompletedSessionStart();
@@ -1142,10 +1153,13 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId || references.length ? [replyParentId] : []),
-              ...(references.length ? [references] : []),
+              ...(replyParentId || references.length || tuned
+                ? [replyParentId]
+                : []),
+              ...(references.length || tuned ? [references] : []),
+              ...(tuned ? [sentPicks] : []),
             )
-          : references.length
+          : references.length || tuned
             ? session.messages.send(
                 channelId,
                 content,
@@ -1153,6 +1167,7 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
+                ...(tuned ? [sentPicks] : []),
               )
             : session.messages.send(channelId, content, recipients, uploaded);
       };
@@ -1238,6 +1253,7 @@ function Composer({
       const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
       valueRef.current = next;
       updateDraft(next);
+      setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? next.text.length : undefined;
@@ -1360,32 +1376,6 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
-          const snapshot = parseSnapshotClipboard(
-            event.clipboardData.getData?.("text/html") ?? "",
-            session,
-          );
-          if (
-            snapshot &&
-            permitted.current &&
-            !editingDisabled &&
-            !editing.target &&
-            !voice.isCapturing() &&
-            canAttach
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-              attachments.store.addUploaded(snapshot);
-              setAttachmentError(undefined);
-            } catch (reason) {
-              setAttachmentError(
-                reason instanceof Error
-                  ? reason.message
-                  : "Could not attach files.",
-              );
-            }
-            return;
-          }
           const files = Array.from(event.clipboardData.items)
             .filter((item) => item.kind === "file")
             .map((item) => item.getAsFile())
@@ -1635,6 +1625,17 @@ function Composer({
             </ComposerFormattingTools>
           )}
           {active && !editing.target && trailingTool}
+          {active &&
+            !editing.target &&
+            !submission &&
+            !!value.recipients.length && (
+              <ComposerModels
+                pubkeys={value.recipients.map((item) => item.pubkey)}
+                value={picks}
+                disabled={editingDisabled}
+                onChange={setPicks}
+              />
+            )}
           <IconButton
             variant={
               draft.trim() || attachments.items.length ? "primary" : "ghost"

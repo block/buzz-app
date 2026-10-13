@@ -8,7 +8,7 @@ The **Desktop previews** workflow builds all supported desktop platforms from
   its `.sig`.
 - **Windows x64:** unsigned NSIS `.exe` installer and its updater `.sig`.
 - **Linux x64:** Ubuntu 24.04 `.deb` and AppImage, each with its updater `.sig`.
-- **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all ten asset files.
+- **Provenance:** `SOURCE_COMMIT` and one `SHA256SUMS` covering all nine asset files.
 
 Publication waits for all three platform jobs, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and

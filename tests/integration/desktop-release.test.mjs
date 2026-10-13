@@ -143,7 +143,7 @@ function fixture(t) {
   };
 }
 
-test("actual assembly command collects all ten assets and emits one complete checksum file", (t) => {
+test("actual assembly command collects all nine assets and emits one complete checksum file", (t) => {
   const { dir, run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr);

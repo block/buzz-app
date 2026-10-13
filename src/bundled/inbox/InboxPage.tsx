@@ -72,7 +72,6 @@ type AttentionFilter = "all" | "unread";
 const shows = [
   { value: "inbox", label: "Inbox" },
   { value: "archived", label: "Archived" },
-  { value: "all", label: "Inbox and archived" },
 ] as const;
 const activities = [
   { value: "all", label: "All activity" },
@@ -332,10 +331,9 @@ export function InboxView({
   const items = inbox.items;
   const archived = (item: InboxItem) =>
     isArchived(archives, item, activity === "mentions");
-  const viewItems =
-    show === "all"
-      ? items
-      : items.filter((item) => archived(item) === (show === "archived"));
+  const viewItems = items.filter(
+    (item) => archived(item) === (show === "archived"),
+  );
   useEffect(() => {
     try {
       reopenArchives(archiveScope, inbox.items, archiveRevision);
@@ -977,11 +975,6 @@ export function InboxView({
                                       {context}
                                     </span>
                                   </span>
-                                  {show === "all" && rowArchived && (
-                                    <span className="text-caption text-subtle">
-                                      Archived
-                                    </span>
-                                  )}
                                 </span>
                                 <span
                                   id={`${previewId}-${item.id}`}

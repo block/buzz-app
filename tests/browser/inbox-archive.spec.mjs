@@ -17,30 +17,6 @@ test.use({
 });
 
 async function choose(page, inbox, control, option) {
-  if (control === "Show" && option === "Inbox and archived") {
-    // Exercise compatibility with a combined view saved by older builds.
-    await page.evaluate(() => {
-      const key = Object.keys(localStorage).find(
-        (key) =>
-          key.startsWith("buzz-view.v1:") &&
-          JSON.parse(key.slice("buzz-view.v1:".length))[1] === "inbox:filters",
-      );
-      if (!key) throw new Error("Missing saved Inbox filters");
-      const value = JSON.stringify({
-        ...JSON.parse(localStorage.getItem(key)),
-        show: "all",
-      });
-      localStorage.setItem(key, value);
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key,
-          newValue: value,
-          storageArea: localStorage,
-        }),
-      );
-    });
-    return;
-  }
   await inbox
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();
@@ -144,9 +120,9 @@ test("Inbox status checkboxes combine with attention filters and preserve them",
   await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
     0,
   );
-  await choose(page, inbox, "Show", "Inbox and archived");
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText("Archived");
+  await expect(rows.getByRole("button", { name: /^Restore / })).toBeVisible();
   await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   await expect(
@@ -374,7 +350,7 @@ test("saved grouped archive converges with unresolved Inbox evidence across relo
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
   await expect(rows).toHaveCount(3);
-  await choose(page, inbox, "Show", "Inbox and archived");
+  await choose(page, inbox, "Show", "Inbox");
   const saved = await page.evaluate(
     ({ channel, rootId, messageIds }) => {
       const filterKey = Object.keys(localStorage).find(
@@ -410,13 +386,11 @@ test("saved grouped archive converges with unresolved Inbox evidence across relo
     await page.reload();
     await openPage(page, "Inbox");
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    await expect(rows).toHaveCount(3);
+    await expect(rows).toHaveCount(1);
     await choose(page, inbox, "Show", "Archived");
     await expect(rows).toHaveCount(2);
     await choose(page, inbox, "Show", "Inbox");
     await expect(rows).toHaveCount(1);
-    await choose(page, inbox, "Show", "Inbox and archived");
-    await expect(rows).toHaveCount(3);
     expect(
       await page.evaluate((key) => localStorage.getItem(key), saved.key),
     ).toBe(saved.revision);
@@ -562,8 +536,8 @@ test("selected row button advances and menu closes without losing the original d
 });
 
 // Browser-only: a row menu beside a live rich editor must not replace it; a
-// combined-view Archive changes the row action but not its mounted reader.
-test("unselected row menu and combined-view Archive leave the open editor alone", async ({
+// Restoring the other row preserves its unread evidence across status changes.
+test("unselected row Archive preserves the open editor and unread neighbor", async ({
   page,
   app,
 }) => {
@@ -619,24 +593,17 @@ test("unselected row menu and combined-view Archive leave the open editor alone"
   expect(
     (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
   ).toBeUndefined();
-  await choose(page, inbox, "Show", "Inbox and archived");
+  await choose(page, inbox, "Show", "Archived");
+  await expect(rows).toHaveCount(1);
+  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await next.getByRole("button", { name: /^Restore / }).click();
+  await expect(rows).toHaveCount(0);
+  await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(2);
   await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
-  await thread.getByRole("button", { name: /^Open / }).click();
-  await editor.evaluate((el) => {
-    el.dataset.retentionMarker = "combined-editor";
-  });
-  await expect(list).toHaveAttribute("aria-busy", "false");
-  await thread.getByRole("button", { name: /^Archive / }).click();
-  await expect(thread.getByRole("button", { name: /^Restore / })).toBeVisible();
-  await expect(rows).toHaveCount(2);
-  await expect(thread).toHaveAttribute("data-selected", "true");
-  await expect(editor).toHaveText("Keep the unselected archive draft");
-  await expect(editor).toHaveAttribute(
-    "data-retention-marker",
-    "combined-editor",
-  );
-  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  expect(
+    (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
+  ).toBeUndefined();
 });
 
 test("reply and fresh mention reopen their filters without replacing composer draft", async ({

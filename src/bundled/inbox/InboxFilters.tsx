@@ -19,7 +19,7 @@ import {
   NotificationFilledIcon,
 } from "../../shared/design-system/icons";
 
-export type ShowFilter = "inbox" | "archived" | "all";
+export type ShowFilter = "inbox" | "archived";
 export type ActivityFilter = "all" | "threads" | "mentions" | "dms";
 export type SenderFilter = "everyone" | "humans" | "agents";
 const views = [
@@ -58,11 +58,7 @@ export function InboxFilters({
     ? label
     : [
         view === "all" && show === "archived" ? undefined : label,
-        show === "archived"
-          ? "Archived"
-          : show === "all"
-            ? "Inbox and archived"
-            : undefined,
+        show === "archived" ? "Archived" : undefined,
         sender === "everyone"
           ? undefined
           : sender === "humans"

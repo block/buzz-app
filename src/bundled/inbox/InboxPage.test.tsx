@@ -13,7 +13,6 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
-import { writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { createRelaySession } from "../../features/relay/session";
@@ -1059,7 +1058,7 @@ it("reconciles saved preferences from another window", async () => {
   });
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Inbox and archived");
+  ).not.toHaveTextContent("Inbox and archived");
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
   ).toHaveTextContent("All");
@@ -1657,19 +1656,6 @@ async function chooseFilter(label: string, control = "Activity type") {
       "aria-pressed",
       String(label === "Unread only"),
     );
-    return;
-  }
-  if (control === "Show" && label === "Inbox and archived") {
-    // Preserve coverage of saved combined views from older builds.
-    const scope = owners.at(-1)?.session.scope;
-    if (!scope) throw new Error("Missing Inbox fixture owner");
-    const key = `buzz-view.v1:${JSON.stringify([scope, "inbox:filters"])}`;
-    await act(async () => {
-      writeView(scope, "inbox:filters", {
-        ...JSON.parse(localStorage.getItem(key) ?? "{}"),
-        show: "all",
-      });
-    });
     return;
   }
   const user = userEvent.setup();
@@ -2553,24 +2539,18 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   await chooseFilter("Inbox", "Show");
   await waitFor(() => expect(rows()).toHaveLength(1));
   expectKept();
-  await chooseFilter("Inbox and archived", "Show");
-  await waitFor(() => expect(rows()).toHaveLength(2));
+  await chooseFilter("Archived", "Show");
+  await waitFor(() => expect(rows()).toHaveLength(1));
   expectKept();
-  const archivedRow = rows().find((row) =>
-    row.textContent?.includes("Agent mention"),
-  );
-  if (!archivedRow) throw new Error("Missing archived row in combined view");
-  expect(within(archivedRow).getByText("Archived")).toBeInTheDocument();
+  const archivedRow = rows()[0];
+  if (!archivedRow) throw new Error("Missing archived row");
   fireEvent.click(
     within(archivedRow).getByRole("button", { name: /^Restore / }),
   );
-  await waitFor(() =>
-    expect(within(archivedRow).queryByText("Archived")).toBeNull(),
-  );
-  expect(rows()).toHaveLength(2);
-  expect(
-    within(archivedRow).getByRole("button", { name: /^Archive / }),
-  ).toBeInTheDocument();
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  await chooseFilter("Inbox", "Show");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expectKept();
 });
 
 it("combines the existing filter choices without placeholder actions", async () => {

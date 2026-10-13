@@ -356,6 +356,8 @@ it("merges the threads other builds started, found by tag or by their earlier na
   ).toEqual([
     { searchTerm: tag, limit: 50 },
     { searchTerm: title, limit: 50 },
+    { searchTerm: tag, limit: 50 },
+    { searchTerm: title, limit: 50 },
   ]);
   // With no saved thread, the newest one found for it is the conversation's.
   await expect(
@@ -430,4 +432,29 @@ it("discovers conversations in both stores and returns the newest owning store",
     "isolated",
     "legacy",
   ]);
+});
+
+it("merges display history across stores while activity belongs to the saved thread", async () => {
+  const tagged = `${sessionTitle(agent.name, lookup)} · ${sessionTag(agent.pubkey, lookup)}`;
+  const isolated = server(
+    paged([turn({ id: "new", startedAt: 200, status: "completed" })]),
+    [{ id: "private", name: tagged, updatedAt: 2 }],
+  );
+  const legacy = server(
+    paged([turn({ id: "old", startedAt: 100, status: "inProgress" })]),
+    [{ id: "shared", name: tagged, updatedAt: 1 }],
+  );
+  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
+    (options?.args?.at(-1) === "isolated" ? isolated : legacy).spawn(
+      id,
+      options,
+    ),
+  );
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "private", store: "isolated" },
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((turn) => turn.turnId)).toEqual(["old", "new"]);
+  expect(read?.working).toBe(false);
 });

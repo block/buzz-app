@@ -372,38 +372,45 @@ export async function readTranscript(
   signal: AbortSignal,
   name?: Names,
 ): Promise<CodexTranscript | undefined> {
-  return withServer(
-    spawn,
-    signal,
-    async (rpc) => {
-      // The saved thread is the conversation's; a found one by its name.
-      const threads = new Map<string, boolean>(
-        lookup.threadId ? [[lookup.threadId, false]] : [],
-      );
-      for (const thread of await findThreads(rpc, lookup))
-        if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
-      const all: Turn[] = [];
-      let found = false;
-      let more = false;
-      let working = false;
-      for (const [threadId, legacy] of threads) {
-        const read = await page(rpc, threadId, TURN_LIMIT);
-        if (!read || (legacy && !startedFor(read.data, lookup))) continue;
-        found = true;
-        more ||= read.more;
-        if (threadId === lookup.threadId)
-          working = read.data[0]?.status === "inProgress";
-        all.push(...[...read.data].reverse());
-      }
-      if (!found) return undefined;
-      all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-      return {
-        turns: codexTurns(all.slice(-TURN_LIMIT), lookup, name),
-        unknownThread: 0,
-        more: more || all.length > TURN_LIMIT,
-        working,
-      };
-    },
-    lookup.store ?? "legacy",
-  );
+  const all: Turn[] = [];
+  const seen = new Set<string>();
+  let found = false;
+  let more = false;
+  let working = false;
+  const owner = lookup.store ?? "legacy";
+  for (const store of [
+    owner,
+    owner === "legacy" ? "isolated" : "legacy",
+  ] as const)
+    await withServer(
+      spawn,
+      signal,
+      async (rpc) => {
+        const threads = new Map<string, boolean>(
+          store === owner && lookup.threadId ? [[lookup.threadId, false]] : [],
+        );
+        for (const thread of await findThreads(rpc, lookup))
+          if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
+        for (const [threadId, legacy] of threads) {
+          if (seen.has(threadId)) continue;
+          const read = await page(rpc, threadId, TURN_LIMIT);
+          if (!read || (legacy && !startedFor(read.data, lookup))) continue;
+          seen.add(threadId);
+          found = true;
+          more ||= read.more;
+          if (store === owner && threadId === lookup.threadId)
+            working = read.data[0]?.status === "inProgress";
+          all.push(...[...read.data].reverse());
+        }
+      },
+      store,
+    );
+  if (!found) return undefined;
+  all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+  return {
+    turns: codexTurns(all.slice(-TURN_LIMIT), lookup, name),
+    unknownThread: 0,
+    more: more || all.length > TURN_LIMIT,
+    working,
+  };
 }

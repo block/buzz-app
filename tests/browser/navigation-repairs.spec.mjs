@@ -56,38 +56,39 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   page,
   app,
 }) => {
-  // Hidden profile settings also read the session, so fail every opening read
-  // and count only those made by Retry.
-  let failing = true;
   let requests = 0;
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
   });
   await page.route("**/api/relay/primary/session", async (route) => {
-    if (failing) return route.fulfill({ json: {} });
     requests++;
+    if (requests === 1) return route.fulfill({ json: {} });
     await held;
     return route.continue();
   });
   // Start outside Messages so its header activation owns preserve-focus intent.
+  // Settings also reads the community profile through /session, racing this gate.
   await page.goto(
-    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "settings" }))}`,
+    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.me", pageId: "me" }))}`,
   );
+  await expect(
+    page.getByRole("tab", { name: "Me", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const messages = page.getByRole("tab", { name: "Messages", exact: true });
   await messages.focus();
   await messages.press("Enter");
   await expect(
     page.getByRole("heading", { name: "This destination couldn’t open" }),
   ).toBeVisible();
+  expect(requests).toBe(1);
   const visit = await entry(page);
   const retry = button(page, "Retry navigation");
   const main = page.getByRole("main");
   try {
     await retry.focus();
-    failing = false;
     await retry.press("Enter");
-    await expect.poll(() => requests, { timeout: 1500 }).toBe(1);
+    await expect.poll(() => requests, { timeout: 1500 }).toBe(2);
     await expect(retry).toHaveCount(0);
     await expect(main).toBeFocused();
   } finally {

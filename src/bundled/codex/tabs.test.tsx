@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { RelayData } from "../../features/relay/service";
+import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuPopup,
@@ -20,6 +21,7 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { defaults, type Config } from "./config";
+import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
@@ -50,10 +52,12 @@ function fixture({
   signedIn = true,
   saved = {},
   turns = () => ({ result: { data: [] } }),
+  threads = [],
 }: {
   signedIn?: boolean;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
+  threads?: { id: string; name: string; updatedAt: number }[] | string;
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
@@ -68,8 +72,22 @@ function fixture({
           return;
         }
         let result: unknown = {};
-        if (wire.method === "thread/list")
-          result = { data: [], nextCursor: null };
+        if (wire.method === "thread/list") {
+          if (typeof threads === "string") {
+            options?.onStdout?.(
+              `${JSON.stringify({
+                id: wire.id,
+                error: { code: -32603, message: threads },
+              })}\n`,
+            );
+            return;
+          }
+          const { searchTerm } = wire.params as { searchTerm: string };
+          result = {
+            data: threads.filter((thread) => thread.name.includes(searchTerm)),
+            nextCursor: null,
+          };
+        }
         if (wire.method === "account/read")
           result = {
             account: signedIn
@@ -249,6 +267,133 @@ it("sets the conversation the profile was opened from apart from recent conversa
   ).toBeVisible();
   expect(screen.getByText(/#general · channel/)).toBeVisible();
   expect(screen.queryByText(/thread eeeeeeee/)).toBeNull();
+});
+
+it("brings an open transcript's tab back, and closes it when the profile moves", async () => {
+  const root = "e".repeat(64);
+  const f = fixture({
+    saved: {
+      [JSON.stringify(["channel", root])]: {
+        threadId: "kept",
+        workspace: "/w",
+        at: 2,
+      },
+    },
+  });
+  const Panel = ({
+    conversation,
+  }: {
+    conversation: { channelId: string; rootId?: string };
+  }) => (
+    <PanelWorkspace
+      value="profile"
+      select={() => undefined}
+      items={[
+        {
+          id: "profile",
+          label: "Sol",
+          close: () => undefined,
+          content: (
+            <f.tabs.SettingsTab {...f.props()} conversation={conversation} />
+          ),
+        },
+      ]}
+    />
+  );
+  const user = userEvent.setup();
+  const view = render(
+    <Panel conversation={{ channelId: "channel", rootId: root }} />,
+  );
+  const tab = (name: string) => screen.getByRole("tab", { name });
+  const viewHere = () =>
+    user.click(
+      within(screen.getByRole("region", { name: "This thread" })).getByRole(
+        "button",
+        { name: "View transcript" },
+      ),
+    );
+  const transcript = "#general · thread eeeeeeee";
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+  await user.click(tab("Sol"));
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+  view.rerender(<Panel conversation={{ channelId: "channel" }} />);
+  expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+  expect(tab("Sol")).toHaveAttribute("aria-selected", "true");
+  view.rerender(
+    <Panel conversation={{ channelId: "channel", rootId: root }} />,
+  );
+  expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+});
+
+it("finds the thread's Codex session another build started", async () => {
+  const root = "f".repeat(64);
+  const tag = sessionTag("a".repeat(64), { channelId: "channel", root });
+  const f = fixture({
+    turns: (threadId) => ({
+      result: {
+        data:
+          threadId === "elsewhere"
+            ? [
+                {
+                  id: "turn-1",
+                  status: "completed",
+                  error: null,
+                  startedAt: 1,
+                  completedAt: 2,
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "u",
+                      content: [
+                        { type: "text", text: 'Request: "what changed?"' },
+                      ],
+                    },
+                  ],
+                },
+              ]
+            : [],
+        nextCursor: null,
+      },
+    }),
+    threads: [
+      {
+        id: "elsewhere",
+        name: `Buzz #general · Sol · ${tag}`,
+        updatedAt: 5,
+      },
+    ],
+  });
+  render(
+    <f.tabs.SettingsTab
+      {...f.props()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  const opened = screen.getByRole("region", { name: "This thread" });
+  fireEvent.click(
+    await within(opened).findByRole("button", { name: "View transcript" }),
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
+});
+
+it("reports when looking for another build's Codex session fails", async () => {
+  const f = fixture({ threads: "database is locked" });
+  render(
+    <f.tabs.SettingsTab
+      {...f.props()}
+      conversation={{ channelId: "channel" }}
+    />,
+  );
+  expect(
+    await within(
+      screen.getByRole("region", { name: "This channel" }),
+    ).findByRole("alert"),
+  ).toHaveTextContent("Could not look for a Codex session: database is locked");
 });
 
 it("keeps provider readiness quiet and shows recovery when needed", async () => {

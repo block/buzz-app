@@ -74,6 +74,27 @@ function applied({
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (_id: string, options: HostProcessOptions = {}) => {
     const args = (options.args ?? []).join(" ");
+    if (_id === "find") {
+      const project = options.cwd?.split("/").pop();
+      const [pattern = ""] = options.args ?? [];
+      const found = Object.keys(files).filter(
+        (path) =>
+          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
+      );
+      queueMicrotask(() =>
+        options.onStdout?.(
+          found.map((path) => `./${path.split("/").pop()}\n`).join(""),
+        ),
+      );
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(found.length ? 0 : 1), 0),
+        ),
+      };
+    }
     if (_id === "workspace" || _id === "read") {
       const file = files[args];
       queueMicrotask(() =>
@@ -300,6 +321,35 @@ it("sets the conversation the profile was opened from apart from recent conversa
   ).toBeVisible();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByText(/channel · channel/)).toBeVisible();
+});
+
+it("finds the thread's Claude session another build started", async () => {
+  const root = "f".repeat(64);
+  const started = JSON.stringify({
+    type: "user",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:00Z",
+    message: {
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+    },
+  });
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
+    0,
+  );
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  const opened = screen.getByRole("region", { name: "This thread" });
+  fireEvent.click(
+    await within(opened).findByRole("button", { name: "View transcript" }),
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
 });
 
 it("is an agent type on the desktop app", () => {

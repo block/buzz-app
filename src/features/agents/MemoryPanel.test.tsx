@@ -1,13 +1,24 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { formatFullTimestamp } from "../../shared/datetime";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
 import { MemoryPanel } from "./MemoryPanel";
 import type { Agent } from "./service";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const pubkey = "a".repeat(64);
 const agent = { pubkey, name: "Ada" } as Agent;
@@ -22,30 +33,192 @@ function setup(read: () => Promise<MemoryListing>) {
   const memories = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
   return {
     memories: memories.capability,
-    ...render(<MemoryPanel agent={agent} memories={memories.capability} />),
+    ...render(<MemoryPanel agent={agent} memories={memories.capability} />, {
+      wrapper: ToastProvider,
+    }),
   };
 }
 
-it("shows core first, then the agent's other memories", async () => {
+it("shows core first, then other memories in Markdown accordions", async () => {
+  const user = userEvent.setup();
   setup(async () => ({
     entries: [
       entry("mem/notes", "Cold detail."),
-      entry("core", "I am Ada.\nKeep it short."),
+      entry("core", "I am **Ada**.\n\nKeep it short."),
     ],
     partial: false,
   }));
-  const core = await screen.findByRole("region", { name: "Core" });
-  expect(within(core).getByText(/I am Ada\./)).toBeInTheDocument();
-  const other = screen.getByRole("region", { name: "Other memories" });
-  expect(within(other).getByText("mem/notes")).toBeInTheDocument();
-  expect(within(other).getByText("Cold detail.")).toBeInTheDocument();
-  expect(within(other).queryByText("core")).not.toBeInTheDocument();
+  const intro = screen.getByText(
+    "These memories help this agent maintain context. Core memories are always available; other memories are recalled as needed. Only the agent can update them.",
+  );
+  expect(intro.querySelector("code")).toBeNull();
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  expect(
+    within(core).getByRole("button", { name: "Refresh" }),
+  ).toBeInTheDocument();
+  const coreTrigger = within(core).getByRole("button", { name: "core" });
+  expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
+  await user.click(within(core).getByText("core"));
+  expect(coreTrigger).toHaveAttribute("aria-expanded", "true");
+  expect(within(core).getByText("Ada").tagName).toBe("STRONG");
+  const references = screen.getByRole("region", {
+    name: "Memories",
+  });
+  expect(
+    within(references).getByRole("button", { name: "mem/notes" }),
+  ).toBeInTheDocument();
+  expect(
+    within(references).queryByTitle(formatFullTimestamp(1_700_000_000)),
+  ).not.toBeInTheDocument();
+  expect(within(references).getByText("Cold detail.")).toBeInTheDocument();
+  expect(within(references).queryByText("core")).not.toBeInTheDocument();
+});
+
+it("shows a spinner while memories load", async () => {
+  setup(() => new Promise<MemoryListing>(() => {}));
+  const loading = await screen.findByRole("status", {
+    name: "Loading memories",
+  });
+  expect(loading.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+  expect(screen.queryByText("Loading memory…")).not.toBeInTheDocument();
+});
+
+it("sorts memories alphabetically or chronologically", async () => {
+  const user = userEvent.setup();
+  setup(async () => ({
+    entries: [
+      entry("core", "Core.", 400),
+      entry("mem/alpha", "First.", 100),
+      entry("mem/zulu", "Last.", 300),
+      entry("mem/middle", "Middle.", 200),
+    ],
+    partial: false,
+  }));
+  const references = await screen.findByRole("region", {
+    name: "Memories",
+  });
+  const core = screen.getByRole("region", { name: "Core memories" });
+  const titles = () =>
+    [
+      ...references.querySelectorAll<HTMLButtonElement>(
+        "button[aria-controls]",
+      ),
+    ].map((button) => button.textContent);
+  expect(titles()).toEqual([
+    expect.stringContaining("mem/alpha"),
+    expect.stringContaining("mem/middle"),
+    expect.stringContaining("mem/zulu"),
+  ]);
+  expect(
+    within(references).queryByTitle(formatFullTimestamp(300)),
+  ).not.toBeInTheDocument();
+  expect(
+    within(core).queryByTitle(formatFullTimestamp(400)),
+  ).not.toBeInTheDocument();
+
+  await user.click(
+    within(core).getByRole("button", {
+      name: "Organize memories",
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
+  );
+  expect(titles()).toEqual([
+    expect.stringContaining("mem/zulu"),
+    expect.stringContaining("mem/middle"),
+    expect.stringContaining("mem/alpha"),
+  ]);
+  expect(
+    within(references).getByTitle(formatFullTimestamp(300)),
+  ).toBeInTheDocument();
+  expect(within(core).getByTitle(formatFullTimestamp(400))).toBeInTheDocument();
+});
+
+it("copies a memory from its action or context menu", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  setup(async () => ({
+    entries: [entry("core", "Complete **Markdown** body.")],
+    partial: false,
+  }));
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  const actions = within(core).getByRole("button", {
+    name: "Actions for core",
+  });
+
+  await user.click(actions);
+  await user.click(await screen.findByRole("menuitem", { name: "Copy name" }));
+  expect(write).toHaveBeenLastCalledWith("core");
+  expect(screen.getByText("Memory name copied.")).toBeVisible();
+
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy full body" }),
+  );
+  expect(write).toHaveBeenLastCalledWith("Complete **Markdown** body.");
+  expect(screen.getByText("Memory body copied.")).toBeVisible();
+
+  write.mockRejectedValueOnce(new Error("denied"));
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy full body" }),
+  );
+  expect(screen.getByText("Couldn’t copy the memory body.")).toBeVisible();
+
+  fireEvent.contextMenu(within(core).getByRole("button", { name: "core" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Copy name" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Copy ID" }),
+  ).not.toBeInTheDocument();
 });
 
 it("says when the agent has no memory yet", async () => {
   setup(async () => ({ entries: [], partial: false }));
   expect(await screen.findByText(/No core memory yet/)).toBeInTheDocument();
-  expect(screen.getByText("No other memories.")).toBeInTheDocument();
+  expect(screen.getByText("No memories yet.")).toBeInTheDocument();
+});
+
+it("shows memories from the first month in weeks", async () => {
+  const user = userEvent.setup();
+  const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
+  vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
+  setup(async () => ({
+    entries: [entry("core", "Remember.", now - 21 * 24 * 60 * 60)],
+    partial: false,
+  }));
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  await user.click(
+    within(core).getByRole("button", {
+      name: "Organize memories",
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
+  );
+  expect(await screen.findByText("3 weeks ago")).toBeInTheDocument();
+});
+
+it("shows memories from the second month as one month ago", async () => {
+  const user = userEvent.setup();
+  const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
+  vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
+  setup(async () => ({
+    entries: [entry("core", "Remember.", now - 45 * 24 * 60 * 60)],
+    partial: false,
+  }));
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  await user.click(
+    within(core).getByRole("button", {
+      name: "Organize memories",
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
+  );
+  expect(await screen.findByText("1 month ago")).toBeInTheDocument();
 });
 
 it("reports a failed read and reads again on refresh", async () => {
@@ -61,6 +234,49 @@ it("reports a failed read and reads again on refresh", async () => {
   fail = false;
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText("Back.")).toBeInTheDocument();
+});
+
+it("keeps the core-memory actions visible while refreshing", async () => {
+  const user = userEvent.setup();
+  let reads = 0;
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  setup(async () => {
+    reads += 1;
+    if (reads > 1) await pending;
+    return {
+      entries: [
+        entry("core", "Remember."),
+        entry("mem/alpha", "Alpha."),
+        entry("mem/beta", "Beta."),
+      ],
+      partial: false,
+    };
+  });
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  await user.click(within(core).getByRole("button", { name: "Refresh" }));
+  expect(reads).toBe(2);
+  expect(
+    within(core).getByRole("button", { name: "Refresh" }),
+  ).toBeInTheDocument();
+  expect(
+    within(core).getByRole("button", {
+      name: "Organize memories",
+    }),
+  ).toBeInTheDocument();
+  expect(within(core).getByRole("button", { name: "Refresh" })).toHaveAttribute(
+    "data-refreshing",
+    "true",
+  );
+  expect(
+    within(core).getByRole("button", { name: "Refresh" }).querySelector("svg"),
+  ).toHaveClass("animate-spin");
+  expect(
+    core.querySelector("[data-memory-list][data-refreshing='true']"),
+  ).toHaveClass("opacity-50");
+  release();
 });
 
 it("shows nothing to read without a session", () => {

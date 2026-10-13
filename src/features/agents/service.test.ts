@@ -2061,23 +2061,85 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
-it("keeps a hosted agent made without its picture when the picture fails to save", async () => {
+it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
+  const { service, plugin, session } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.profile.mockRejectedValueOnce(new Error("not supported"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const picture = "https://example.test/sky.png";
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture,
+  });
+  expect(records.publish).toHaveBeenCalledExactlyOnceWith(
+    session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(remote.profile).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sky",
+    picture,
+    signal: expect.any(AbortSignal),
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted", picture });
+  expect(service.find(hostedKey)?.picture).toBe(picture);
+  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent Sky picture was not published",
+    expect.any(Error),
+  );
+  warn.mockRestore();
+});
+
+it("keeps a hosted agent's picture through a setup that failed, and lists it once finished", async () => {
+  const storage = memoryStorage();
+  const { service, plugin, session } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  const picture = "https://example.test/sky.png";
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky", picture }),
+  ).rejects.toThrow("provider down");
+  expect(service.find(hostedKey)).toMatchObject({ unfinished: true, picture });
+  expect(remote.profile).not.toHaveBeenCalled();
+  // A restart keeps it.
+  const again = await setup({ storage });
+  again.plugin.agents.register(cloud().type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)).toMatchObject({
+      unfinished: true,
+      picture,
+    }),
+  );
+  const agent = await service.finish(hostedKey);
+  expect(agent).toMatchObject({ picture });
+  expect(agent.unfinished).toBeUndefined();
+  expect(records.publish).toHaveBeenCalledExactlyOnceWith(
+    session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+});
+
+it("makes a hosted agent without a picture that is not an HTTPS image URL", async () => {
   const { service, plugin } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
-  remote.profile.mockRejectedValueOnce(new Error("provider down"));
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const agent = await service.create({
     type: "example/cloud",
     name: "Sky",
-    picture: "https://example.test/sky.png",
+    picture: "data:image/png;base64,AAAA",
   });
-  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
   expect(agent.picture).toBeUndefined();
-  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(remote.profile).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledWith(
-    "Agent Sky picture was not saved",
-    expect.any(Error),
+    "Agent Sky picture is not an HTTPS image URL",
   );
   warn.mockRestore();
 });

@@ -7,7 +7,9 @@ import {
   type Models,
 } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
+import type { MemoryEntry } from "../../features/agents/memory";
 import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
@@ -121,6 +123,22 @@ function textOf(event: EventData, name: string) {
   if (text.startsWith(`@${name}`)) text = text.slice(name.length + 1).trim();
   return text;
 }
+async function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      try {
+        signal.throwIfAborted();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 /** Agents owns admission/identity. This plugin owns work after hand-over, and
  * uses one app-server for every agent. Each conversation is its own Codex
@@ -134,6 +152,11 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  /** One owner-view read per session and agent; concurrent turns share it. */
+  private memoryReads = new WeakMap<
+    RelaySession,
+    Map<string, Promise<readonly MemoryEntry[]>>
+  >();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
@@ -731,20 +754,42 @@ export class CodexRuntime {
     const snapshot = this.relay(request.agent.pubkey)?.snapshot();
     if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
-    const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-    const abort = () => view.dispose();
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      await view.refresh();
-      signal.throwIfAborted();
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      signal.removeEventListener("abort", abort);
-      view.dispose();
+    const { session } = snapshot;
+    let reads = this.memoryReads.get(session);
+    if (!reads) {
+      reads = new Map();
+      this.memoryReads.set(session, reads);
     }
+    let read = reads.get(request.agent.pubkey);
+    if (!read) {
+      read = (async () => {
+        const view = session.agentMemories.open(request.agent.pubkey);
+        try {
+          await view.refresh();
+          const { status, listing } = view.snapshot();
+          if (status !== "ready" || !listing)
+            throw new Error(`Memory unavailable (${status})`);
+          return listing.entries;
+        } finally {
+          view.dispose();
+        }
+      })();
+      reads.set(request.agent.pubkey, read);
+      void read.then(
+        () => reads?.delete(request.agent.pubkey),
+        () => reads?.delete(request.agent.pubkey),
+      );
+    }
+    const entries = await abortable(read, signal);
+    signal.throwIfAborted();
+    const current = this.relay(request.agent.pubkey)?.snapshot();
+    if (
+      current?.status !== "ready" ||
+      current.scope !== request.scope ||
+      current.session !== session
+    )
+      throw new Error("Buzz is not connected to this community");
+    return entries;
   }
   /** The agent's `core` memory for a turn: its text, `null` when it has none,
    * or undefined when it could not be read, so the turn goes on without it. */

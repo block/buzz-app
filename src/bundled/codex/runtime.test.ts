@@ -10,6 +10,7 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -1810,6 +1811,49 @@ it("gives each turn the agent's current core memory, and goes on without it when
   f.complete(2, "THIRD");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
   warn.mockRestore();
+});
+
+it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const read = vi.fn(async () => {
+    await gate.promise;
+    return {
+      entries: [
+        {
+          slug: "core",
+          body: "CONCURRENT CORE",
+          eventId: "6".repeat(64),
+          createdAt: 1,
+        },
+      ],
+      partial: false,
+    };
+  });
+  const memories = createAgentMemories(read, owner, () => true);
+  f.snapshot.session.agentMemories =
+    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
+
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      f.runtime.run(
+        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
+      ),
+    ),
+  );
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  expect(f.starts()).toHaveLength(0);
+
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
+  for (const start of f.starts())
+    expect(start.params).toMatchObject({
+      additionalContext: {
+        "buzz.instructions": {
+          value: expect.stringContaining("CONCURRENT CORE"),
+        },
+      },
+    });
 });
 
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {

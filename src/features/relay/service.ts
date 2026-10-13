@@ -1,3 +1,4 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 import { readView } from "../../shared/view-state";
 import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
@@ -50,6 +51,7 @@ export function provideRelay(
   identityNames?: IdentityNames,
   agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
+  localAgents?: LocalAgentSource,
 ) {
   let disposed = false;
   let generation = 0;
@@ -211,6 +213,7 @@ export function provideRelay(
           const successor = createRelaySession(transport, {
             identityNames,
             agentChoices,
+            localAgents,
             ...(presenceActivity ? { presenceActivity } : {}),
             prepared: true,
             // Keep intent preparation, but do not fetch every unopened channel.

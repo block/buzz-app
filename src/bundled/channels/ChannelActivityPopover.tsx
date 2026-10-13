@@ -226,7 +226,12 @@ export function ChannelActivityPopover({
       getTargets,
       getTargets,
     ),
-  ) as ({ startedAt: number; messageId?: string } | null)[];
+  ) as ({
+    startedAt: number;
+    messageId?: string;
+    label?: string;
+    local?: boolean;
+  } | null)[];
   // Typing alone lists an agent while the Agent Activity plugin is off, when
   // no activity panel is registered to open.
   const openAgentActivity = useSyncExternalStore(
@@ -314,7 +319,8 @@ export function ChannelActivityPopover({
                 {activeAgents.map((agent, index) => {
                   const profile = agentProfiles?.get(agent);
                   const name = profile?.name ?? keyLabels.get(agent) ?? "Agent";
-                  const { messageId, startedAt } = details[index] ?? {};
+                  const { messageId, startedAt, label, local } =
+                    details[index] ?? {};
                   return (
                     <AgentActivityRow
                       key={agent}
@@ -324,7 +330,7 @@ export function ChannelActivityPopover({
                           ? session.media(profile.picture, "small")
                           : undefined
                       }
-                      status="Working"
+                      status={label ?? "Working"}
                       meta={
                         startedAt === undefined
                           ? "—"
@@ -336,7 +342,7 @@ export function ChannelActivityPopover({
                         onOpenWorkingAgent?.(channelId, agent, messageId);
                       }}
                       onOpenActivity={
-                        openAgentActivity
+                        openAgentActivity && !local
                           ? () => {
                               close();
                               openAgentActivity(channelId, agent);

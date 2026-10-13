@@ -43,7 +43,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const draft = () =>
       page.getByRole("textbox", { name: /Message #general|Reply to thread/ });
     const picker = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFS",
       exact: true,
     });
     await expect(

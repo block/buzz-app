@@ -626,7 +626,9 @@ it("profile activity opens the exact agent and originating channel before its fi
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
-  await expect(profile).toHaveCount(0);
+  await expect(
+    profile.getByRole("tab", { name: "Activity", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const panel = page.getByRole("region", {
     name: "Agent activity",
     exact: true,
@@ -680,12 +682,16 @@ it("profile activity opens the exact agent and originating channel before its fi
     panel.getByRole("button", { name: /session_resolved/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
-  await panel.press("Escape");
-  await expect(profile).toBeVisible();
+  // Activity is the profile's tab, not a nested panel. Info returns to the preview.
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toBeVisible();
   const profileTab = page
     .getByRole("tablist", { name: "Panel tabs" })
     .getByRole("tab", { selected: true });
-  await expect(profileTab).toBeFocused();
+  await profileTab.focus();
   await profileTab.press("Escape");
   await expect(profile).toBeHidden();
   await expect(avatar).toBeFocused();

@@ -258,7 +258,7 @@ export function useChannelTabState(
           requested,
           requested,
           "select",
-          threadPlacementPreference(),
+          tabPane(tab),
         );
         return visible
           ? next

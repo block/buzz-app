@@ -1,5 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
+import manifest from "./manifest.json";
 import { claudeTurns, projectName, readTranscript } from "./transcript";
 
 const root = "c".repeat(64);
@@ -181,9 +186,9 @@ function host(files: Record<string, string>) {
     if (id === "find") {
       const project = options.cwd?.split("/").pop();
       const matches = Object.entries(files).flatMap(([path, content]) =>
-        path.startsWith(`${project}/`) &&
+        path.startsWith(`./${project}/`) &&
         content.includes(options.args?.[0] ?? "")
-          ? [`./${path.slice(project?.length ?? 0).replace(/^\//, "")}`]
+          ? [`./${path.split("/").pop()}`]
           : [],
       );
       if (matches.length) options.onStdout?.(`${matches.join("\n")}\n`);
@@ -210,7 +215,7 @@ function host(files: Record<string, string>) {
 
 it("reads the session file from the project of the agent's workspace", async () => {
   const { spawn, reads } = host({
-    "-Users-me--buzz/session-1.jsonl": file(),
+    "./-Users-me--buzz/session-1.jsonl": file(),
   });
   const read = await readTranscript(
     spawn,
@@ -223,7 +228,10 @@ it("reads the session file from the project of the agent's workspace", async () 
     "workspace",
     expect.objectContaining({ cwd: "~/.buzz" }),
   );
-  expect(reads[0]?.cwd).toBe("~/.claude/projects");
+  expect(reads[0]).toMatchObject({
+    cwd: "~/.claude/projects",
+    args: ["./-Users-me--buzz/session-1.jsonl"],
+  });
   expect(read).toMatchObject({ more: false, unknownThread: 0 });
   expect(read?.turns).toHaveLength(2);
 });
@@ -254,20 +262,20 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
   };
   const thread = `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}`;
   const { spawn } = host({
-    "-Users-me--buzz/session-1.jsonl": session(20, thread, "latest"),
-    "-Users-me--buzz/earlier.jsonl": session(
+    "./-Users-me--buzz/session-1.jsonl": session(20, thread, "latest"),
+    "./-Users-me--buzz/earlier.jsonl": session(
       10,
       `${thread}\nAgent: ${agent}`,
       "first",
     ),
     // Started before agents were named.
-    "-Users-me--buzz/unnamed.jsonl": session(15, thread, "second"),
-    "-Users-me--buzz/other-agent.jsonl": session(
+    "./-Users-me--buzz/unnamed.jsonl": session(15, thread, "second"),
+    "./-Users-me--buzz/other-agent.jsonl": session(
       12,
       `${thread}\nAgent: ${"b".repeat(64)}`,
       "not ours",
     ),
-    "-Users-me--buzz/channel.jsonl": session(
+    "./-Users-me--buzz/channel.jsonl": session(
       13,
       `Session scope: channel\nChannel: dev (#channel)\nThread root: ${root}`,
       "shared",
@@ -306,4 +314,33 @@ it("merges the agent's other sessions for the thread, oldest turn first", async 
     "unnamed",
     "session-1",
   ]);
+});
+
+it("passes this platform's base64 a session path it reads as a file", async () => {
+  const { spawn, reads } = host({});
+  await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  const path = reads[0]?.args?.[0] ?? "";
+  const read = manifest.host.processes.find((process) => process.id === "read");
+  const root = mkdtempSync(join(tmpdir(), "claude-projects-"));
+  try {
+    mkdirSync(join(root, "-Users-me--buzz"));
+    writeFileSync(join(root, "-Users-me--buzz", "session-1.jsonl"), "{}\n");
+    const output = execFileSync(
+      read?.program ?? "",
+      [...(read?.args ?? []), path],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
+    expect(atob(output.replace(/\s/g, ""))).toBe("{}\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -67,7 +67,7 @@ function applied({
       const [pattern = ""] = options.args ?? [];
       const found = Object.keys(files).filter(
         (path) =>
-          path.startsWith(`${project}/`) && files[path]?.includes(pattern),
+          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
       );
       queueMicrotask(() =>
         options.onStdout?.(
@@ -158,7 +158,7 @@ async function choose(label: string, option: string) {
 it("is an agent type on the desktop app", () => {
   expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
-  expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
+  expect(type).toMatchObject({ id: "claude-code", title: "Claude" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
   expect(
     type.adopt?.(
@@ -187,12 +187,12 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("shows that Claude Code is ready and that nothing is running yet", async () => {
+it("shows that Claude is ready and that nothing is running yet", async () => {
   const Claude = tab(installed().type, 0);
   render(<Claude agent={agent()} save={vi.fn()} />);
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude Code 2.1.292 is ready (me@example.com).",
+      "Claude 2.1.292 is ready (me@example.com).",
     ),
   );
   expect(
@@ -230,7 +230,7 @@ it("saves settings as one config", async () => {
   );
   await choose("Model", "Sonnet");
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
-    "The folder Claude Code works in. Use ~/ for your home folder.",
+    "The folder Claude works in. Use ~/ for your home folder.",
   );
   await user.clear(screen.getByLabelText("Workspace"));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -297,7 +297,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     }),
   ].join("\n");
   const Claude = tab(
-    installed({ files: { "-Users-me--buzz/kept.jsonl": transcript } }).type,
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
     0,
   );
   render(<Claude agent={agent()} save={vi.fn()} />);
@@ -361,9 +361,9 @@ it("sets the conversation the profile was opened from apart from the recent ones
     />,
   );
   const empty = screen.getByRole("region", { name: "This channel" });
-  expect(empty).toHaveTextContent("Looking for a Claude Code session…");
+  expect(empty).toHaveTextContent("Looking for a Claude session…");
   await waitFor(() =>
-    expect(empty).toHaveTextContent("No Claude Code session here yet"),
+    expect(empty).toHaveTextContent("No Claude session here yet"),
   );
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
 });
@@ -379,7 +379,7 @@ it("finds the thread's session another build of the app started", async () => {
     },
   });
   const Claude = tab(
-    installed({ files: { "-Users-me--buzz/elsewhere.jsonl": started } }).type,
+    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
     0,
   );
   const user = userEvent.setup();

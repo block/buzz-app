@@ -1,3 +1,4 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
@@ -205,6 +206,7 @@ export function createRelaySession(
   options: ChannelStoreOptions & {
     identityNames?: IdentityNames | undefined;
     agentChoices?: LocalAgents | undefined;
+    localAgents?: LocalAgentSource | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -553,6 +555,8 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
+        activity.messagesChanged(visible);
+        if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
@@ -684,6 +688,10 @@ export function createRelaySession(
           host: transport.activityArchive,
           canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
         }
+      : undefined,
+    (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    options.localAgents && transport
+      ? { source: options.localAgents, scope: transportPartition(transport) }
       : undefined,
   );
   const channelActivity = createChannelActivity(
@@ -2411,6 +2419,7 @@ export function createRelaySession(
         catchupQueue.clear();
         dropHintConfirmations();
         requests.invalidate();
+        projects.clearHomes();
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -2574,6 +2583,7 @@ export function createRelaySession(
         unread.clear();
         inboxFeed.clear();
         requests.invalidate();
+        projects.clearHomes();
         profiles.clear();
         emoji.clear();
         statuses.clear();
@@ -2594,6 +2604,7 @@ export function createRelaySession(
     dispose() {
       stopSidebarGroups();
       closed = true;
+      projects.clearHomes();
       typing.dispose();
       lifetime.abort();
       activity.dispose();

@@ -1,4 +1,4 @@
-// The type's tabs: Claude Code's setup on this computer, and the agent's
+// The type's tabs: Claude's setup on this computer, and the agent's
 // settings; and its part of the New agent dialog.
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
@@ -43,13 +43,13 @@ type Read =
 const options = (choices: readonly (readonly [string, string])[]) => [
   { label: "", options: choices.map(([value, label]) => ({ value, label })) },
 ];
-// ModelPicker adds Claude Code's own default to these.
+// ModelPicker adds Claude's own default to these.
 const MODELS = [
   { id: "opus", label: "Opus" },
   { id: "sonnet", label: "Sonnet" },
   { id: "haiku", label: "Haiku" },
 ];
-const DEFAULT_MODEL = "Claude Code default";
+const DEFAULT_MODEL = "Claude default";
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
@@ -142,17 +142,16 @@ export function createTabs({
         <h3 className="m-0 text-body">{label(conversation)}</h3>
         {!read ? (
           <p role="status" className="m-0">
-            Reading the Claude Code session…
+            Reading the Claude session…
           </p>
         ) : read.status === "missing" ? (
           <p className="m-0 text-body-sm text-subtle">
-            Claude Code has no transcript for this conversation on this
-            computer. It may have been deleted, or the session ran in a
-            different workspace.
+            Claude has no transcript for this conversation on this computer. It
+            may have been deleted, or the session ran in a different workspace.
           </p>
         ) : read.status === "error" ? (
           <p role="alert" className="m-0">
-            Could not read the Claude Code session: {read.error}
+            Could not read the Claude session: {read.error}
           </p>
         ) : (
           <ActivityTranscript
@@ -172,7 +171,7 @@ export function createTabs({
     );
   }
 
-  /** Claude Code on this computer, and this agent's conversations. */
+  /** Claude on this computer, and this agent's conversations. */
   function ClaudeTab({ agent, conversation }: AgentViewProps<Config>) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
     const sessions = useSyncExternalStore(
@@ -217,19 +216,19 @@ export function createTabs({
     const status = state.status;
     const line =
       !status || state.checking
-        ? "Checking Claude Code…"
+        ? "Checking Claude…"
         : status.state === "missing"
-          ? "Claude Code is not installed."
+          ? "Claude is not installed."
           : status.state === "signed-out"
-            ? `Claude Code ${status.version} needs you to sign in.`
+            ? `Claude ${status.version} needs you to sign in.`
             : status.state === "ready"
-              ? `Claude Code ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
+              ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
               : status.message;
     // One button per slot, so focus stays put as Install becomes Sign in and
     // Cancel becomes Check again.
     const action =
       status?.state === "missing"
-        ? ({ step: "install", label: "Install Claude Code" } as const)
+        ? ({ step: "install", label: "Install Claude" } as const)
         : status?.state === "signed-out"
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;
@@ -301,7 +300,7 @@ export function createTabs({
         {conversation && (
           <OpenedConversation
             conversation={conversation}
-            harness="Claude Code"
+            harness="Claude"
             session={here}
             searching={searching}
             error={lookupError}
@@ -379,7 +378,7 @@ export function createTabs({
         />
         <Field
           label="Workspace"
-          description="The folder Claude Code works in. Use ~/ for your home folder."
+          description="The folder Claude works in. Use ~/ for your home folder."
         >
           <Input
             value={draft.workspace}

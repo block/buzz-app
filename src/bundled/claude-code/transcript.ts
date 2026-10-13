@@ -314,7 +314,8 @@ export async function readTranscript(
         await readFile(
           spawn,
           "~/.claude/projects",
-          `${project}/${name}`,
+          // Project names start with `-`; GNU base64 would read one as options.
+          `./${project}/${name}`,
           signal,
         ),
       );

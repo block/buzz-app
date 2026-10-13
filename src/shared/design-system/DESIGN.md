@@ -1170,6 +1170,22 @@ inside a group than between groups.
 Use motion to explain a change in state, position, or structure. Remove animation
 that adds no useful information.
 
+### Activity dots
+
+`TypingDots` owns the shared decorative activity motion. `state="waiting"`
+breathes all three dots together over 2.4 seconds for a received request waiting
+to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
+Switching state keeps the same footprint. These named component rhythms are
+continuous status motion, not the short state-transition durations.
+
+The feature must supply reliable receipt/work evidence; rendering the waiting
+variant does not establish that an agent received a message. Keep visible or
+accessible state text with the owning surface. The dots are hidden from assistive
+technology and stay static under reduced motion, so motion alone must never be
+the only way to distinguish lifecycle states. The component viewer includes both
+states and an interactive transition. Agents2 waiting/working presentations reuse
+these states in messages, thread summaries and navigation.
+
 Direct manipulation follows the pointer without easing. Apply settling motion
 after release, and prevent a drag from selecting text it passes over.
 
@@ -1194,6 +1210,21 @@ Add roles for real uses and their required states; document the intended surface
 and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
+
+`ShimmerText` gives a short live-work label (an agent's current step) a slow
+sheen between the subtle and standard text roles. Use it only while that work is
+live, never on finished, failed or waiting text. Reduced motion shows plain text.
+
+Activity indicators that appear while work is live (the message activity pill,
+thread-summary dots, sidebar working badge) use the `buzz-arrive` recipe.
+Inline indicators beside text get a quiet fade at `--duration-state`.
+Standalone pills add `data-arrive="grow"`: they open their space while fading
+in, with `--duration-settle` and `--easing-settle`, so content below moves
+instead of jumping. When work ends, the owner may set `data-leaving` and keep
+the pill mounted until its animation finishes; it fades and closes its space.
+Growing and closing resize the row for a few frames, so reserve them for
+indicators that start and end with work, never for revoked access. Reduced
+motion disables all of it.
 
 ### Changing a color
 

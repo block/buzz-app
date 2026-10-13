@@ -257,6 +257,37 @@ test("a restored workspace leaves existing focus alone but fresh selections and 
   expect(tab("Harness log")).toHaveFocus();
 });
 
+test("choosing a tab with the pointer resumes its composer; the keyboard stays in the tabs", async () => {
+  const user = userEvent.setup();
+  function Harness() {
+    const [value, select] = useState("One");
+    return (
+      <PanelWorkspace
+        value={value}
+        select={select}
+        items={["One", "Two"].map((id) => ({
+          id,
+          label: id,
+          content: (
+            <>
+              <button type="button">{`${id} action`}</button>
+              <input aria-label={`${id} reply`} data-tab-focus="" />
+            </>
+          ),
+        }))}
+      />
+    );
+  }
+  render(<Harness />);
+  await user.click(tab("Two"));
+  expect(screen.getByRole("textbox", { name: "Two reply" })).toHaveFocus();
+  await user.click(tab("One"));
+  expect(screen.getByRole("textbox", { name: "One reply" })).toHaveFocus();
+  act(() => tab("One").focus());
+  await user.keyboard("{ArrowRight}{Enter}");
+  expect(tab("Two")).toHaveFocus();
+});
+
 test("Escape cancelling IME composition does not close the tab", () => {
   render(<Fixture />);
   const draft = screen.getByRole("textbox", { name: "Thread draft" });

@@ -1318,17 +1318,30 @@ export class AgentsService extends Service implements Agents {
         kinds.get(identity.type),
         kind,
       );
+      const nextRecord = {
+        ...record,
+        config: change ? change.config : adopted,
+      };
       await this.native.setType(pubkey, type);
-      // Its new type and config apply together, so neither type runs it with the
-      // other's settings; the list then confirms the type.
-      this.identities = this.identities.map((saved) =>
-        saved.pubkey === pubkey ? { ...saved, type } : saved,
-      );
       try {
-        this.write({ ...record, config: change ? change.config : adopted });
-      } catch (error) {
-        console.warn(`Agent ${identity.name} settings were not saved`, error);
+        const records = { ...this.records, [pubkey]: nextRecord };
+        writeRecords(this.storage, records);
+        // Publish the in-memory pair only after its config is durable.
+        this.records = records;
+        this.identities = this.identities.map((saved) =>
+          saved.pubkey === pubkey ? { ...saved, type } : saved,
+        );
         this.update();
+      } catch (error) {
+        try {
+          await this.native.setType(pubkey, identity.type);
+        } catch (rollback) {
+          throw new AggregateError(
+            [error, rollback],
+            `Could not save or restore ${identity.name}'s provider`,
+          );
+        }
+        throw error;
       }
       await this.refresh();
       return preview.dropped;

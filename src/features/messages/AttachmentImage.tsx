@@ -37,9 +37,10 @@ export function AttachmentImage({
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
   const [decoded, setDecoded] = useState<{
-    source: string;
-    dimensions: NonNullable<Attachment["dimensions"]>;
-  }>();
+    source: string | undefined;
+    dimensions?: NonNullable<Attachment["dimensions"]>;
+  }>({ source });
+  if (decoded.source !== source) setDecoded({ source });
   const onDecoded = useCallback(
     (dimensions: NonNullable<Attachment["dimensions"]>) => {
       if (source) setDecoded({ source, dimensions });
@@ -47,7 +48,7 @@ export function AttachmentImage({
     [source],
   );
   const decodedDimensions =
-    decoded?.source === source ? decoded?.dimensions : undefined;
+    decoded.source === source ? decoded.dimensions : undefined;
   const dimensions = decodedDimensions ?? attachment.dimensions;
   const width = dimensions
     ? Math.min(

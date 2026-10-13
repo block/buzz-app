@@ -102,6 +102,7 @@ async function holdDecodes(page, holdVisibility = false) {
       const realDecode = HTMLImageElement.prototype.decode;
       const pending = new Map();
       const completed = new Map();
+      const rejected = new Map();
       const paints = [];
       const realPaint = CanvasRenderingContext2D.prototype.putImageData;
       CanvasRenderingContext2D.prototype.putImageData = function (...args) {
@@ -112,11 +113,16 @@ async function holdDecodes(page, holdVisibility = false) {
         await realDecode.call(this);
         if (!this.src.startsWith("https://image.test/")) return;
         const key = this.src;
-        await new Promise((resolve, reject) => {
-          const list = pending.get(key) ?? [];
-          list.push({ resolve, reject });
-          pending.set(key, list);
-        });
+        try {
+          await new Promise((resolve, reject) => {
+            const list = pending.get(key) ?? [];
+            list.push({ resolve, reject });
+            pending.set(key, list);
+          });
+        } catch (error) {
+          rejected.set(key, (rejected.get(key) ?? 0) + 1);
+          throw error;
+        }
         completed.set(key, (completed.get(key) ?? 0) + 1);
       };
       const observers = [];
@@ -144,6 +150,7 @@ async function holdDecodes(page, holdVisibility = false) {
         paints,
         completed: (name) =>
           completed.get(`https://image.test/${name}.svg`) ?? 0,
+        rejected: (name) => rejected.get(`https://image.test/${name}.svg`) ?? 0,
         observed: (canvas) => observedCanvases.has(canvas),
         waiting: (name) => pending.has(`https://image.test/${name}.svg`),
         release(name) {
@@ -272,6 +279,22 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await waiting(page, "next");
     await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Restore original", exact: true })
+      .click();
+    await waiting(page, "first");
+    expect(await frame(page).boundingBox()).toEqual(bounds);
+    await expect(frame(page)).not.toHaveAttribute("data-image-ready");
+    await page.evaluate(() => window.imageTest.reject("first"));
+    await expect
+      .poll(() => page.evaluate(() => window.imageTest.rejected("first")))
+      .toBeGreaterThan(0);
+    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("canvas")).toHaveCount(1);
+    expect(await frame(page).boundingBox()).toEqual(bounds);
+    await expect(frame(page)).not.toHaveAttribute("data-image-ready");
+    await page.getByRole("button", { name: "Retarget", exact: true }).click();
+    await waiting(page, "next");
     await page
       .getByRole("button", { name: "Fail original", exact: true })
       .click();

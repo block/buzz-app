@@ -21,6 +21,10 @@ import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
+import {
+  CoreMemory,
+  readMemories,
+} from "../../features/agent-harness/core-memory";
 import { Lanes } from "./lanes";
 import {
   ATTENTION_REVIEW,
@@ -73,8 +77,6 @@ export type SavedConversation = Conversation & {
   at: number;
 };
 
-/** How long a read of the agent's core memory is reused. */
-const MEMORY_TTL_MS = 5 * 60_000;
 const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
@@ -91,7 +93,7 @@ type Entry = {
   attention: boolean;
   /** Watch and timer turns, one lane per Interest. */
   lanes: Lanes;
-  memory?: { value: string | null | undefined; at: number };
+  memory: CoreMemory;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
@@ -367,7 +369,7 @@ export class ClaudeRuntime {
     entry.team = team ?? "";
     // Read while the turn's prompt is built, not after: a new session's prompt
     // needs it, and a spare is only faster if nothing else is awaited.
-    void this.memory(agent.pubkey, entry);
+    void entry.memory.get();
     if (trigger.type !== "mention") {
       workingUntil(this.wake(entry, agent, trigger, current));
       return;
@@ -644,6 +646,7 @@ export class ClaudeRuntime {
       lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      memory: new CoreMemory(() => this.memories(pubkey)),
     };
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
@@ -659,7 +662,7 @@ export class ClaudeRuntime {
           }),
           remember: async (slug: string, body: string, after: number) => {
             await handle.remember(slug, body, after);
-            if (slug === "core") delete entry.memory;
+            if (slug === "core") entry.memory.forget();
           },
         };
         const context =
@@ -687,7 +690,7 @@ export class ClaudeRuntime {
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
         const { attention } = entry;
-        const memory = await this.memory(pubkey, entry);
+        const memory = await entry.memory.get();
         return {
           ...where(entry.config),
           tools: tools(workspace, attention),
@@ -707,22 +710,6 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's `core` memory, as the harness injects it into a new session:
-   * its text, `null` when it has none, or undefined when it could not be read. */
-  private async memory(pubkey: string, entry: Entry) {
-    if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
-      return entry.memory.value;
-    let value: string | null | undefined;
-    try {
-      const memories = await this.memories(pubkey);
-      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
-    } catch (error) {
-      console.warn("Claude could not read the agent's memory", error);
-    }
-    entry.memory = { value, at: Date.now() };
-    return value;
-  }
-
   /** The agent's memory, read back through the owner's session: it is
    * encrypted to the owner, so no agent key is needed to read it. */
   private memories(pubkey: string): Promise<readonly Memory[]> {
@@ -739,31 +726,11 @@ export class ClaudeRuntime {
   private async readMemories(pubkey: string): Promise<readonly Memory[]> {
     const snapshot = this.relay(pubkey)?.snapshot();
     if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const view = snapshot.session.agentMemories.open(pubkey);
-    try {
-      const done = new Promise<void>((resolve) => {
-        const settled = () =>
-          !["idle", "loading"].includes(view.snapshot().status) && resolve();
-        view.subscribe(settled);
-        settled();
-      });
-      void view.refresh();
-      await Promise.race([
-        done,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Memory read timed out")),
-            MEMORY_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      view.dispose();
-    }
+    return readMemories(
+      snapshot.session.agentMemories,
+      pubkey,
+      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+    );
   }
 }
 

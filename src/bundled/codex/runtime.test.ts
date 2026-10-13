@@ -495,7 +495,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     additionalContext: {
       "buzz.instructions": {
         value: expect.stringContaining(
-          "Read your `core` memory with `mem_get` at the start of a session",
+          "The current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
         ),
       },
     },
@@ -515,6 +515,31 @@ it("hands over promptly and runs conversations independently on one server", asy
     content: "FIRST",
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
+});
+it("gives each turn the agent's core memory, read again after the agent writes it", async () => {
+  const f = fixture();
+  await f.remember("core", "I am Codex.", 0);
+  const core = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext: { "buzz.instructions": { value: string } } }
+        | undefined
+    )?.additionalContext["buzz.instructions"].value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(core(0)).toContain(
+    "replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  expect(
+    (await f.tool("mem_set", { slug: "core", text: "I am Codex, renamed." }))
+      ?.result,
+  ).toMatchObject({ success: true });
+  await f.complete(0);
+  await f.runtime.run(f.delivery("@Codex again", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(core(1)).toContain(
+    "<core-memory>\nI am Codex, renamed.\n</core-memory>",
+  );
 });
 /** A second agent on the same runtime, with its own identity and publisher. */
 function second(f: ReturnType<typeof fixture>) {
@@ -1807,7 +1832,8 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
+  // The turn's core memory read, then the two tool reads.
+  expect(f.memoryView.dispose).toHaveBeenCalledTimes(3);
   expect(
     (
       await f.tool("send", {

@@ -1,5 +1,5 @@
-// The Buzz system prompt every agent plugin starts from; each appends its
-// harness's own instructions after it.
+// The Buzz tools' posting conventions, which every agent plugin gives its
+// agents after the shared base prompt (features/agent-harness).
 import buzzPrompt from "./prompt.md?raw";
 
 export const BUZZ_PROMPT = buzzPrompt.trim();

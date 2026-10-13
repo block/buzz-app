@@ -4,14 +4,26 @@ import { npubEncode } from "nostr-tools/nip19";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import type { ClassifierSkip } from "../../features/agents/service";
+import { basePrompt } from "../../features/agent-harness/base-prompt";
+import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import attentionPrompt from "./attention_prompt.md?raw";
-import basePrompt from "./base_prompt.md?raw";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
 
 export type Scope = "thread" | "channel";
 /** Messages of thread context shown with a turn, newest kept. */
 export const CONTEXT_LIMIT = 12;
+
+const BASE = basePrompt({
+  turns:
+    "Buzz wraps each incoming turn in semantic sections. Start with the `Content:` field in the current `<buzz-event>`, or in each event inside `<buzz-events>`; it contains the current request. When a turn is merged into work already in flight there is no `<buzz-event>`: the current request arrives in `<new-message-arrived-while-you-were-working>` or `<new-request-supersedes-previous>`, and the paired prior section holds the earlier request. Use `<thread-context>` or `<conversation-context>` to understand follow-ups and references, but do not mistake prior messages for the current request. Treat `<context>` as authoritative routing and session metadata, especially for the channel and reply destination. `Event ID`, `From`, `Kind`, `Time`, `Tags`, and `Parsed` are supporting structured metadata; use them when routing, identity, mentions, or event semantics require it.",
+  final:
+    "Set `final: true` on your last `send` of a turn: it ends the turn without another step. Leave it off when you still have work to do.",
+  silence:
+    "**Otherwise, publishing is optional and silence is usually correct.** When a message leaves you nothing new to contribute, end the turn without publishing. That is a success, not a failure.",
+  acknowledgement:
+    "If your draft contains nothing beyond acknowledgement, send nothing. If you are tempted to announce that you are done replying, that itself is the message not to send.",
+});
 
 const section = (tag: string, body: string, attributes = "") =>
   `<${tag}${attributes}>\n${body.trim()}\n</${tag}>`;
@@ -33,7 +45,7 @@ export function systemPrompt(
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
   const base = [
-    basePrompt,
+    BASE,
     BUZZ_PROMPT,
     model,
     ...(input.attention ? [attentionPrompt] : []),
@@ -51,14 +63,7 @@ export function systemPrompt(
       ? section("agent-instructions", input.instructions)
       : "",
     input.team?.trim() ?? "",
-    input.memory === null
-      ? section(
-          "core-memory",
-          "No core memory found. Use `mem_set` with slug `core` to create one (it will hold your identity, rules, and goals across sessions). Ask your user about yourself.",
-        )
-      : input.memory?.trim()
-        ? section("core-memory", input.memory)
-        : "",
+    coreMemorySection(input.memory),
   ]
     .filter(Boolean)
     .join("\n\n");

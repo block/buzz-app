@@ -111,8 +111,10 @@ and cleanup.
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
-  publish through the Buzz CLI. The Buzz base prompt and custom instructions are
-  supplied as developer instructions, preserving Codex’s native coding prompt.
+  publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
+  and the agent's `core` memory are supplied as developer instructions, preserving
+  Codex’s native coding prompt. Like Claude, each turn reads `core` again after five
+  minutes or after the agent writes it.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins

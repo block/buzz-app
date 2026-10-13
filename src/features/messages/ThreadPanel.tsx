@@ -525,6 +525,11 @@ function ThreadMessages({
     );
     return row.workflowOwnerId ? workflowLabel(name) : name;
   };
+  // Never address the viewer: threads they started (every agent exchange) stay neutral.
+  const replyPlaceholder = (root: ChannelMessage) =>
+    (root.workflowOwnerId ?? root.authorId) === session.viewer
+      ? "Reply in thread"
+      : `Reply in thread to ${senderName(root)}`;
   const rows = useMemo(
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
@@ -1314,7 +1319,7 @@ function ThreadMessages({
             scope={scope}
             channelId={channelId}
             channelName={channelName}
-            placeholder={`Reply in thread to ${senderName(snapshot.root)}`}
+            placeholder={replyPlaceholder(snapshot.root)}
             threadRootId={snapshot.root.id}
             replyParentId={replyParent}
             disabled={

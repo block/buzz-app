@@ -15,6 +15,7 @@ import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
+import { CodexSetup } from "./setup";
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -91,7 +92,7 @@ function fixture() {
     return process;
   });
   const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
-  const tabs = createTabs(spawn, runtime);
+  const tabs = createTabs(spawn, runtime, new CodexSetup(spawn));
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
       agent: { pubkey: "a".repeat(64), config: settings },
@@ -192,7 +193,7 @@ it("preserves unavailable saved choices and closes a process returned after unmo
   );
   view.unmount();
   const held = await holdSpawn(f);
-  const pending = render(<f.tabs.CodexTab {...f.props(saved)} />);
+  const pending = render(<f.tabs.SettingsTab {...f.props(saved)} />);
   await held.started;
   pending.unmount();
   held.release();
@@ -290,4 +291,43 @@ it("shows the default workspace and restores it when the field is cleared", asyn
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
+});
+
+it("offers to install Codex until Buzz has a copy, then shows its account", async () => {
+  const f = fixture();
+  let installed = false;
+  // `codex` answers as Buzz's launcher does; the catalog uses the app server.
+  const spawn = async (id: string, options?: HostProcessOptions) => {
+    if (id !== "codex") return f.spawn(id, options);
+    const args = options?.args?.join(" ");
+    const version = args === "--version";
+    queueMicrotask(() => {
+      if (version && installed) options?.onStdout?.("codex-cli 0.162.1\n");
+    });
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(version && !installed ? 127 : 0),
+    };
+  };
+  const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
+  const { CodexTab } = createTabs(spawn, runtime, new CodexSetup(spawn));
+  render(<CodexTab {...f.props()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Codex is not installed.",
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Install Codex" })).toBeVisible();
+  installed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Codex 0.162.1 is ready (test@example.com).",
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Install Codex" }),
+  ).not.toBeInTheDocument();
 });

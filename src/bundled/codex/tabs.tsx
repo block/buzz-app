@@ -21,6 +21,7 @@ import {
 } from "./config";
 import { AppServer, listModels, type Spawn } from "./rpc";
 import type { CodexRuntime } from "./runtime";
+import type { CodexSetup } from "./setup";
 
 type Catalog = { models: Model[]; account: string };
 /** Read-only setup/catalog discovery uses the same declared native transport. */
@@ -39,7 +40,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     }>("account/read");
     if (!account.account)
       throw new Error(
-        "Codex needs you to sign in. Run codex login in a terminal, then check again.",
+        "Codex needs you to sign in on the agent's Codex tab, then check again.",
       );
     const models = await listModels(rpc);
     return { models, account: account.account.email ?? account.account.type };
@@ -81,15 +82,21 @@ const modelChange = (model: string, data?: Catalog) => ({
       ?.defaultReasoningEffort ?? "",
 });
 
-export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
-  /** The catalog check starts with the view and aborts when it unmounts. */
-  function useCatalog() {
+export function createTabs(
+  spawn: Spawn,
+  runtime: CodexRuntime,
+  setup: CodexSetup,
+) {
+  /** The catalog check starts with the view, runs again when `key` changes,
+   * and aborts when it unmounts; a `null` key waits. */
+  function useCatalog(key?: string | null) {
     const [data, setData] = useState<Catalog>();
     const [error, setError] = useState("");
     const [checking, setChecking] = useState(true);
     const [attempt, setAttempt] = useState(0);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: Check again re-runs the check.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Check again and a changed key re-run the check.
     useEffect(() => {
+      if (key === null) return;
       let current = true;
       const abort = new AbortController();
       setChecking(true);
@@ -113,7 +120,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
         current = false;
         abort.abort();
       };
-    }, [attempt]);
+    }, [attempt, key]);
     return {
       data,
       error,
@@ -154,39 +161,90 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
 
   /** Codex on this computer, and what this agent has running. */
   function CodexTab({ agent }: AgentViewProps<Config>) {
-    const { data, error, checking, retry } = useCatalog();
+    const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+    const status = state.status;
+    // The account and models, once Buzz's copy is installed and signed in.
+    const ready = status?.state === "ready";
+    const { data, error, checking, retry } = useCatalog(
+      ready ? status.version : null,
+    );
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
     );
+    useEffect(() => {
+      void setup.check();
+    }, []);
+    const line =
+      !status || state.checking
+        ? "Checking Codex…"
+        : status.state === "missing"
+          ? "Codex is not installed."
+          : status.state === "signed-out"
+            ? `Codex ${status.version} needs you to sign in.`
+            : status.state === "ready"
+              ? `Codex ${status.version} is ready${data ? ` (${data.account})` : ""}.`
+              : status.message;
+    // One button per slot, so focus stays put as Install becomes Sign in and
+    // Cancel becomes Check again.
+    const action =
+      status?.state === "missing"
+        ? ({ step: "install", label: "Install Codex" } as const)
+        : status?.state === "signed-out"
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
     return (
       <div className="grid gap-4">
         <section className="grid gap-2">
           <p role="status" className="m-0">
-            {checking
-              ? "Checking Codex…"
-              : data
-                ? `Codex is ready (${data.account}).`
-                : "Codex needs attention."}
+            {line}
           </p>
-          {error && (
+          {ready && !checking && error && (
             <p role="alert" className="m-0">
               {error}
             </p>
           )}
-          <div>
+          <div className="flex flex-wrap gap-2">
+            {action && (
+              <Button
+                variant="prominent"
+                loading={state.running === action.step}
+                disabled={!!state.running && state.running !== action.step}
+                onClick={() => void setup.run(action.step)}
+              >
+                {action.label}
+              </Button>
+            )}
             <Button
               variant="ghost"
-              disabled={checking}
+              disabled={!state.running && state.checking}
               focusableWhenDisabled
-              onClick={retry}
+              onClick={() => {
+                if (state.running) return void setup.cancel();
+                void setup.check();
+                if (ready) retry();
+              }}
             >
-              Check again
+              {state.running ? "Cancel" : "Check again"}
             </Button>
           </div>
-          <p className="m-0 text-body-sm text-subtle">
-            Uses your existing Codex sign-in. Install Codex and run codex login
-            in a terminal if needed.
-          </p>
+          {state.notice && <p className="m-0 text-body-sm">{state.notice}</p>}
+          {status?.state === "missing" && (
+            <p className="m-0 text-body-sm text-subtle">
+              Downloads Buzz's own copy of Codex (about 130 MB) from
+              releases.openai.com and keeps it on the latest release. It does
+              not change the <code>codex</code> in your terminal, and uses the
+              same sign-in and settings.
+            </p>
+          )}
+          {state.output && (
+            <pre
+              role="log"
+              aria-label="Setup output"
+              className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-caption"
+            >
+              {state.output}
+            </pre>
+          )}
         </section>
         <section className="grid gap-1">
           <h3 className="m-0 text-body">Conversations</h3>

@@ -89,7 +89,7 @@ export function claudeTurns(
 ): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
   const tools = new Map<string, ToolItem>();
-  /** Messages posted with send, until their result says whether they went. */
+  /** Messages sent with send, until their result says whether they were posted. */
   const sends = new Map<
     string,
     { turn: TranscriptTurn; message: { posted?: boolean } }
@@ -145,8 +145,8 @@ export function claudeTurns(
     last = at;
     for (const result of results) {
       const sent = sends.get(str(result.tool_use_id));
-      if (sent && result.is_error) {
-        delete sent.message.posted;
+      if (sent && !result.is_error) sent.message.posted = true;
+      else if (sent) {
         sent.turn.items.push({
           id: `${id}:${str(result.tool_use_id)}`,
           at,
@@ -180,13 +180,12 @@ export function claudeTurns(
         const name = str(block.name);
         const input = object(block.input) ?? {};
         if (name === "mcp__buzz__send" && str(input.text).trim()) {
-          const message = {
+          const message: TranscriptItem & { posted?: boolean } = {
             id: key,
             at,
             type: "message",
             text: str(input.text),
-            posted: true,
-          } as const satisfies TranscriptItem;
+          };
           current.items.push(message);
           sends.set(str(block.id), { turn: current, message });
           return;

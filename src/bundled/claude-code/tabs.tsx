@@ -9,6 +9,7 @@ import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
   useOpenedSession,
+  useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
   AgentCreateProps,
@@ -194,7 +195,7 @@ export function createTabs({
       const running = busy.get(key);
       return running === undefined ? undefined : running ? "Working" : "Idle";
     };
-    const [open, setOpen] = useState<SavedConversation>();
+    const { open, show, back } = useOpenTranscript(conversation, label);
     const [code, setCode] = useState("");
     useEffect(() => {
       void setup.check();
@@ -291,7 +292,7 @@ export function createTabs({
             searching={searching}
             error={lookupError}
             status={here && activity(here.key)}
-            onView={() => here && setOpen(here)}
+            onView={() => here && show(here)}
           />
         )}
         <section>
@@ -311,7 +312,7 @@ export function createTabs({
                         .join(" · ")}
                     </span>
                   </span>
-                  <Button variant="ghost" onClick={() => setOpen(item)}>
+                  <Button variant="ghost" onClick={() => show(item)}>
                     View transcript
                   </Button>
                 </li>
@@ -327,7 +328,7 @@ export function createTabs({
           <PanelSubview
             title={label(open)}
             backLabel="Back to profile"
-            onBack={() => setOpen(undefined)}
+            onBack={back}
           >
             <TranscriptView
               agent={agent}

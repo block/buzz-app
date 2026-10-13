@@ -15,6 +15,7 @@ import type { HostProcessOptions } from "../../features/host/service";
 import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
 import { PanelSubviewHost } from "../../features/panels/PanelSubview";
+import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import { sessionTag } from "./prompt";
@@ -457,6 +458,61 @@ it("sets the conversation the profile was opened from apart from the recent ones
   expect(
     screen.getAllByRole("button", { name: "View transcript" }),
   ).toHaveLength(2);
+});
+
+it("brings an open transcript's tab back, and closes it when the profile is opened from elsewhere", async () => {
+  const root = "e".repeat(64);
+  const f = fixture(
+    {
+      [JSON.stringify(["channel", root])]: {
+        threadId: "kept",
+        workspace: "/w",
+        at: 2,
+      },
+    },
+    () => ({ result: { data: [], nextCursor: null } }),
+  );
+  const Panel = ({
+    conversation,
+  }: {
+    conversation: { channelId: string; rootId?: string };
+  }) => (
+    <PanelWorkspace
+      value="profile"
+      select={() => undefined}
+      items={[
+        {
+          id: "profile",
+          label: "Sol",
+          close: () => undefined,
+          content: (
+            <f.tabs.CodexTab {...f.props()} conversation={conversation} />
+          ),
+        },
+      ]}
+    />
+  );
+  const user = userEvent.setup();
+  const view = render(
+    <Panel conversation={{ channelId: "channel", rootId: root }} />,
+  );
+  const tab = (name: string) => screen.getByRole("tab", { name });
+  const viewHere = () =>
+    user.click(
+      within(screen.getByRole("region", { name: "This thread" })).getByRole(
+        "button",
+        { name: "View transcript" },
+      ),
+    );
+  const transcript = "#general · thread eeeeeeee";
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+  await user.click(tab("Sol"));
+  await viewHere();
+  expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
+  view.rerender(<Panel conversation={{ channelId: "channel" }} />);
+  expect(screen.queryByRole("tab", { name: transcript })).toBeNull();
+  expect(tab("Sol")).toHaveAttribute("aria-selected", "true");
 });
 
 it("finds the thread's Codex thread another build of the app started", async () => {

@@ -8,6 +8,7 @@ import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
   useOpenedSession,
+  useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
   AgentCreateProps,
@@ -262,7 +263,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
     } = useOpenedSession(conversations, conversation, (place, signal) =>
       runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
     );
-    const [open, setOpen] = useState<SavedConversation>();
+    const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const recent = conversations
@@ -311,7 +312,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
             searching={searching}
             error={lookupError}
             status={here && views.get(here.key)?.status}
-            onView={() => here && setOpen(here)}
+            onView={() => here && show(here)}
           />
         )}
         <section className="grid gap-1">
@@ -345,7 +346,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
                     </p>
                     {view?.detail && detail(view.detail)}
                     <div>
-                      <Button variant="ghost" onClick={() => setOpen(row)}>
+                      <Button variant="ghost" onClick={() => show(row)}>
                         View transcript
                       </Button>
                     </div>
@@ -368,7 +369,7 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
           <PanelSubview
             title={label(open)}
             backLabel="Back to profile"
-            onBack={() => setOpen(undefined)}
+            onBack={back}
           >
             <TranscriptView agent={agent} conversation={open} />
           </PanelSubview>

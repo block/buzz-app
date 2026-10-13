@@ -117,7 +117,7 @@ it("groups a session file into prompted turns with steering, tools and replies",
   );
 });
 
-it("shows what the agent posted as its reply, and names Buzz tools as Codex does", () => {
+it("shows what the agent posted as its reply once sent, and names Buzz tools as Codex does", () => {
   clock = 0;
   const send = (id: string, text: string) =>
     line("assistant", [
@@ -141,6 +141,8 @@ it("shows what the agent posted as its reply, and names Buzz tools as Codex does
       result("s1", "sent"),
       send("s2", "One more thing."),
       result("s2", "channel not found", true),
+      // Not finished when the session was read, or never: it ended mid-send.
+      send("s3", "Still sending."),
     ].join("\n"),
     conversation,
     false,
@@ -158,6 +160,7 @@ it("shows what the agent posted as its reply, and names Buzz tools as Codex does
       type: "status",
       text: "The message above was not posted: channel not found",
     }),
+    expect.not.objectContaining({ posted: true }),
   ]);
 });
 

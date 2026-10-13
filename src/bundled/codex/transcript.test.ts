@@ -134,21 +134,29 @@ it("shows the command the model wrote, not the login shell running it", () => {
   expect(shellCommand("pnpm test")).toBe("pnpm test");
 });
 
-it("keeps a send that failed as a failed tool call", () => {
+it("keeps a send that failed or has not finished as a tool call", () => {
+  const send = (id: string, patch: Record<string, unknown>) => ({
+    type: "dynamicToolCall",
+    id,
+    namespace: "buzz",
+    tool: "send",
+    arguments: { text: "Done" },
+    ...patch,
+  });
   const [mapped] = codexTurns(
     [
       turn({
         items: [
-          {
-            type: "dynamicToolCall",
-            id: "d1",
-            namespace: "buzz",
-            tool: "send",
-            arguments: { text: "Done" },
+          send("d1", {
             status: "completed",
             contentItems: [{ type: "inputText", text: "channel not found" }],
             success: false,
-          },
+          }),
+          send("d2", {
+            status: "inProgress",
+            contentItems: null,
+            success: null,
+          }),
         ],
       }),
     ],
@@ -160,6 +168,11 @@ it("keeps a send that failed as a failed tool call", () => {
       title: "buzz.send",
       status: "failed",
       output: "channel not found",
+    }),
+    expect.objectContaining({
+      type: "tool",
+      title: "buzz.send",
+      status: "in_progress",
     }),
   ]);
 });

@@ -152,7 +152,7 @@ function item(
       if (
         value.namespace === "buzz" &&
         value.tool === "send" &&
-        value.success !== false &&
+        value.success === true &&
         str(args.text).trim()
       )
         return { id, at, type: "message", text: str(args.text), posted: true };

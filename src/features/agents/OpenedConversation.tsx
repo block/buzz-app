@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { usePanelTabHost } from "../panels/PanelWorkspace";
 import type { AgentConversation } from "./service";
 
 type Saved = Readonly<{
@@ -76,6 +77,30 @@ export function useOpenedSession<T extends Saved>(
   if (found?.key !== key) return { searching: true };
   const { key: _, ...result } = found;
   return result;
+}
+
+/** The transcript a type's tab shows over itself as a panel subview, titled
+ * `title(row)`. It closes when the profile is retargeted to another
+ * conversation, and viewing it again brings its tab back in a tabbed host. */
+export function useOpenTranscript<T>(
+  conversation: AgentConversation | undefined,
+  title: (row: T) => string,
+) {
+  const place = conversation
+    ? `${conversation.channelId}/${conversation.rootId ?? ""}`
+    : "";
+  const [shown, setShown] = useState<{ place: string; row: T }>();
+  const tabs = usePanelTabHost();
+  return {
+    open: shown?.place === place ? shown.row : undefined,
+    show(row: T) {
+      setShown({ place, row });
+      tabs?.activate(tabs.owner, title(row));
+    },
+    back() {
+      setShown(undefined);
+    },
+  };
 }
 
 export function OpenedConversation({

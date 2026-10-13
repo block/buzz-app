@@ -23,6 +23,7 @@ import {
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
+import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -531,10 +532,15 @@ function Composer({
   );
   useEffect(() => {
     if (disabled) attachments.store.cancel();
+    else attachments.store.resume();
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,
-    canAttach && !editingDisabled && !editing.target && !voice.capturing,
+    active &&
+      canAttach &&
+      !editingDisabled &&
+      !editing.target &&
+      !voice.capturing,
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
@@ -1005,8 +1011,14 @@ function Composer({
           );
           return;
         }
-        if (requestDeletion && session.outbox?.supports(5))
-          requestDeletion(editing.target, editing.close);
+        if (requestDeletion && session.outbox?.supports(5)) {
+          const checkpoint = beforeEdit.current;
+          requestDeletion(editing.target, (focus) => {
+            if (beforeEdit.current !== checkpoint) return;
+            editing.close();
+            focusRestoredDraft.current = focus;
+          });
+        }
         return;
       }
       editing.save(
@@ -1100,7 +1112,10 @@ function Composer({
               attempt.signal,
               () =>
                 valueRef.current === captured &&
-                attachments.store.snapshot() === capturedAttachments &&
+                sameAttachmentSelection(
+                  attachments.store.snapshot(),
+                  capturedAttachments,
+                ) &&
                 permitted.current,
             );
             if (decision === null) return;
@@ -1110,6 +1125,8 @@ function Composer({
         }
       }
       attempt.signal.throwIfAborted();
+      if (attachments.store.snapshot().some((item) => item.status === "error"))
+        return;
       if (
         valueRef.current !== captured ||
         !sameAttachmentSelection(
@@ -1246,6 +1263,7 @@ function Composer({
             });
             return true;
           },
+          attachments.store,
         );
       } else id = publish([]);
       const pending = { next, revision: savedRevision };
@@ -1433,7 +1451,7 @@ function Composer({
           />
         )}
         <BackgroundUploadStatus session={session} focusTarget={input} />
-        {dragging && <p role="status">Drop files to attach</p>}
+        {dragging && <FileDropOverlay composer={form} />}
         {attachmentError && (
           <ToastNotice
             title="Could not attach file"

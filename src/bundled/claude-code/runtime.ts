@@ -33,6 +33,7 @@ import {
   watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
+import { readTranscript, type Conversation } from "./transcript";
 
 /** What a session can switch to between turns. Claude runs `max` as
  * `xhigh` in a stream-json session, so it is not offered. */
@@ -62,6 +63,16 @@ export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
+
+/** A saved session, for the owner's transcript list. */
+export type SavedConversation = Conversation & {
+  key: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  at: number;
+};
+/** Saved sessions listed for the owner. */
+const CONVERSATION_LIMIT = 30;
 
 /** How long a read of the agent's core memory is reused. */
 const MEMORY_TTL_MS = 5 * 60_000;
@@ -222,6 +233,38 @@ export class ClaudeRuntime {
     }
     return view;
   }
+  /** The agent's most recently used saved sessions. */
+  conversations(pubkey: string): SavedConversation[] {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const channels =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels.list().channels
+        : [];
+    return localSessions(this.storage, pubkey)
+      .list()
+      .slice(0, CONVERSATION_LIMIT)
+      .map(([key, saved]) => {
+        const [channelId = key, root] = key.split("/");
+        const name = channels.find((row) => row.id === channelId)?.name;
+        return {
+          key,
+          sessionId: saved.id,
+          channelId,
+          ...(root ? { root } : {}),
+          ...(name ? { name } : {}),
+          at: saved.at,
+        };
+      });
+  }
+  /** A saved session's transcript, found from the workspace it ran in. */
+  transcript(
+    conversation: SavedConversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+  ) {
+    return readTranscript(this.spawn, workspace, conversation, working, signal);
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
@@ -252,21 +295,35 @@ export class ClaudeRuntime {
     team,
     workingUntil,
     ignored,
+    signal,
     step,
     acknowledged,
     superseded,
     current,
   }: Delivery) {
     const settings = config(raw);
-    // Claude runs commands as you, so only you and your agents can ask it.
+    // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(trigger.event, agent.owner))
-    ) {
-      ignored?.();
-      return;
+    if (trigger.type === "mention") {
+      const snapshot = this.relay(agent.pubkey)?.snapshot();
+      if (
+        !(await fromOwner(trigger.event, agent.owner, {
+          agent: agent.pubkey,
+          authority:
+            snapshot?.status === "ready"
+              ? snapshot.session.workflowAuthority
+              : undefined,
+          profiles:
+            snapshot?.status === "ready"
+              ? snapshot.session.profiles
+              : undefined,
+        }))
+      ) {
+        ignored?.();
+        return;
+      }
+      signal.throwIfAborted();
     }
     const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
     entry.handle = agent;

@@ -227,7 +227,7 @@ export const RobotIcon = defineIcon("custom", RobotArtwork, {
   meaning: "AI agent",
   category: "Product mark",
   provenance:
-    "Original Buzz Soft & wide robot, selected by the designer from the agent icon study",
+    "Original Buzz Soft & wide robot, Fuller canvas refinement with inward ears, selected by the designer",
   intendedSizes: [
     { width: 14, height: 14 },
     { width: 16, height: 16 },

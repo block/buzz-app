@@ -1,15 +1,48 @@
-// Claude on this computer: whether it is installed and signed in, and the
-// installer and sign-in, each run as a declared process.
-import type { HostProcess } from "../../features/host/service";
-import { ENV, type Spawn } from "./claude";
+// Claude on this computer: Buzz's own copy, whether it is signed in, and
+// keeping that copy on the latest release. Each step runs as a declared
+// process; the copy lives apart from any `claude` the user installed, and
+// shares their `~/.claude` sign-in and settings.
+import type {
+  HostProcess,
+  HostRequest,
+  HostResponse,
+} from "../../features/host/service";
+import { ClaudeProcess, ENV, type Spawn } from "./claude";
 
 export type ClaudeStatus =
   | Readonly<{ state: "missing" }>
+  /** Older than Buzz drives; Install updates it. */
+  | Readonly<{ state: "outdated"; version: string }>
   | Readonly<{ state: "signed-out"; version: string }>
   | Readonly<{ state: "ready"; version: string; account?: string }>
   | Readonly<{ state: "error"; message: string }>;
 
 const CHECK_TIMEOUT_MS = 15_000;
+export type Request = (input: HostRequest) => Promise<HostResponse>;
+
+/** Where Anthropic publishes each release with its checksums. */
+const RELEASES = "https://downloads.claude.ai/claude-code-releases";
+/** The oldest release Buzz drives: MCP servers marked `alwaysLoad`, which the
+ * Buzz tools are, arrived in 2.1.121. */
+export const MIN_VERSION = "2.1.121";
+/** `uname -sm` to the release's platform name. */
+const PLATFORMS: Readonly<Record<string, string>> = {
+  "Darwin arm64": "darwin-arm64",
+  "Darwin x86_64": "darwin-x64",
+  "Linux aarch64": "linux-arm64",
+  "Linux x86_64": "linux-x64",
+};
+
+/** Orders `a.b.c` versions; negative when `a` is older. */
+export function compareVersions(a: string, b: string) {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
 
 /** Runs a short process and returns its exit code and output. */
 async function collect(spawn: Spawn, id: string, args: readonly string[]) {
@@ -31,10 +64,15 @@ async function collect(spawn: Spawn, id: string, args: readonly string[]) {
   return { code, stdout, stderr };
 }
 
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
   let version: string;
   try {
     const result = await collect(spawn, "claude", ["--version"]);
+    // The launcher's answer when Buzz has no copy yet.
+    if (result.code === 127) return { state: "missing" };
     if (result.code !== 0)
       return {
         state: "error",
@@ -42,12 +80,10 @@ export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
       };
     version = result.stdout.trim().split(/\s/)[0] ?? "";
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // Native reports a program it cannot find as a failure to start it.
-    return /could not start/i.test(message)
-      ? { state: "missing" }
-      : { state: "error", message };
+    return { state: "error", message: message(error) };
   }
+  if (compareVersions(version, MIN_VERSION) < 0)
+    return { state: "outdated", version };
   try {
     const { stdout } = await collect(spawn, "claude", [
       "auth",
@@ -67,18 +103,44 @@ export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
   }
 }
 
-/** A setup step whose output is shown as it runs. */
-export async function runStep(
-  spawn: Spawn,
-  step: "install" | "login",
-  onOutput: (text: string) => void,
-): Promise<HostProcess> {
-  return spawn(step === "install" ? "install" : "claude", {
-    ...(step === "login" ? { args: ["auth", "login"] } : {}),
-    env: ENV,
-    onStdout: onOutput,
-    onStderr: onOutput,
+/** Runs `claude` as the given release rather than the one in use. */
+const pinned =
+  (spawn: Spawn, version: string): Spawn =>
+  (id, options) =>
+    spawn(id, {
+      ...options,
+      env: { ...options?.env, BUZZ_CLAUDE_VERSION: version },
+    });
+
+/** A downloaded release must start and answer the protocol Buzz drives it
+ * with, listing its models without a turn, before any session uses it. */
+async function testRelease(spawn: Spawn, version: string) {
+  const release = pinned(spawn, version);
+  const { code, stdout, stderr } = await collect(release, "claude", [
+    "--version",
+  ]);
+  if (code !== 0 || !stdout.startsWith(version))
+    throw new Error(stderr.trim() || "it did not report its version");
+  const claude = await ClaudeProcess.start(release, {
+    cwd: "~",
+    systemPrompt: "",
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const models = await Promise.race([
+      claude.models(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("it did not list its models")),
+          CHECK_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (!models.length) throw new Error("it did not list its models");
+  } finally {
+    clearTimeout(timer);
+    void claude.kill();
+  }
 }
 
 export type SetupState = Readonly<{
@@ -87,6 +149,8 @@ export type SetupState = Readonly<{
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
   output: string;
+  /** Why the latest release is not the one in use, after it failed its test. */
+  notice: string | undefined;
 }>;
 const OUTPUT_LIMIT = 20_000;
 
@@ -97,13 +161,19 @@ export class ClaudeSetup {
     checking: false,
     running: undefined,
     output: "",
+    notice: undefined,
   };
   private readonly listeners = new Set<() => void>();
   private process: HostProcess | undefined;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
+  /** Releases that failed their test, not downloaded again until restart. */
+  private readonly refused = new Set<string>();
 
-  constructor(private readonly spawn: Spawn | undefined) {}
+  constructor(
+    private readonly spawn: Spawn | undefined,
+    private readonly request?: Request,
+  ) {}
 
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
@@ -115,6 +185,9 @@ export class ClaudeSetup {
   private set(change: Partial<SetupState>) {
     this.state = { ...this.state, ...change };
     for (const listener of this.listeners) listener();
+  }
+  private log(text: string) {
+    this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
   }
 
   async check() {
@@ -133,30 +206,101 @@ export class ClaudeSetup {
     this.set({ status, checking: false });
   }
 
-  /** Runs the installer or sign-in, then checks again. */
+  /** Moves Buzz's copy to the latest release. Unless `needed`, a computer
+   * without a copy is left without one: the download is large. */
+  async update(needed: boolean) {
+    if (!needed) {
+      await this.check();
+      if (this.state.status?.state === "missing") return;
+    }
+    await this.run("install");
+  }
+
+  /** Installs or updates Buzz's copy, or runs sign-in; then checks again. */
   async run(step: "install" | "login") {
     if (!this.spawn || this.state.running) return;
     this.cancelled = false;
     this.set({ running: step, output: "" });
     try {
-      this.process = await runStep(this.spawn, step, (text) =>
-        this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) }),
-      );
-      if (this.cancelled) void this.process.kill();
-      const code = await this.process.exited;
-      if (code !== 0)
-        this.set({
-          output: `${this.state.output}\n${step === "install" ? "Install" : "Sign-in"} ended (${code ?? "stopped"}).`,
-        });
+      if (step === "install") await this.install(this.spawn);
+      else await this.step(this.spawn, "claude", ["auth", "login"], "Sign-in");
     } catch (error) {
-      this.set({
-        output: `${this.state.output}\n${error instanceof Error ? error.message : String(error)}`,
-      });
+      this.log(`\n${message(error)}`);
     } finally {
       this.process = undefined;
       this.set({ running: undefined });
     }
     await this.check();
+  }
+
+  /** Runs one process with its output shown; throws unless it succeeds. */
+  private async step(
+    spawn: Spawn,
+    id: string,
+    args: readonly string[],
+    label: string,
+  ) {
+    this.process = await spawn(id, {
+      args,
+      env: ENV,
+      onStdout: (text) => this.log(text),
+      onStderr: (text) => this.log(text),
+    });
+    if (this.cancelled) void this.process.kill();
+    const code = await this.process.exited;
+    this.process = undefined;
+    if (code !== 0) throw new Error(`${label} ended (${code ?? "stopped"}).`);
+  }
+
+  private async fetch(path: string) {
+    if (!this.request) throw new Error("Claude downloads need the desktop app");
+    const response = await this.request({ url: `${RELEASES}/${path}` });
+    if (response.status !== 200)
+      throw new Error(`downloads.claude.ai answered ${response.status}`);
+    return response.body;
+  }
+
+  /** Downloads the latest release, checks it against its published checksum,
+   * tests it, and only then makes it the one new sessions start. */
+  private async install(spawn: Spawn) {
+    const status = await checkClaude(spawn);
+    const current = "version" in status ? status.version : undefined;
+    const latest = (await this.fetch("latest")).trim();
+    if (!/^\d+\.\d+\.\d+$/.test(latest))
+      throw new Error("downloads.claude.ai did not name a release");
+    if (latest === current || this.refused.has(latest) || this.cancelled)
+      return;
+    if (compareVersions(latest, MIN_VERSION) < 0)
+      throw new Error(
+        `Claude ${latest} is older than Buzz needs (${MIN_VERSION}).`,
+      );
+    const platform =
+      PLATFORMS[(await collect(spawn, "platform", [])).stdout.trim()];
+    if (!platform) throw new Error("Claude is not available for this computer");
+    const manifest = JSON.parse(
+      await this.fetch(`${latest}/manifest.json`),
+    ) as {
+      platforms?: Record<string, { checksum?: unknown } | undefined>;
+    };
+    const checksum = manifest.platforms?.[platform]?.checksum;
+    if (typeof checksum !== "string" || !/^[0-9a-f]{64}$/.test(checksum))
+      throw new Error(`Claude ${latest} lists no checksum for ${platform}`);
+    this.log(`Downloading Claude ${latest}…\n`);
+    await this.step(spawn, "install", [latest, platform, checksum], "Download");
+    this.log(`Testing Claude ${latest}…\n`);
+    try {
+      await testRelease(spawn, latest);
+    } catch (error) {
+      this.refused.add(latest);
+      const reason = `Claude ${latest} failed its test: ${message(error)}`;
+      this.set({
+        notice: current ? `${reason}. Buzz keeps using ${current}.` : reason,
+      });
+      throw new Error(reason);
+    }
+    await this.step(spawn, "use", [latest], "Switching");
+    this.set({ notice: undefined });
+    this.log(`Claude ${latest} is installed.\n`);
   }
 
   /** Sends a line to the running step, such as a sign-in code. */

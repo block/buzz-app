@@ -86,19 +86,23 @@ export function createTabs({
         ? "Checking Claude…"
         : status.state === "missing"
           ? "Claude is not installed."
-          : status.state === "signed-out"
-            ? `Claude ${status.version} needs you to sign in.`
-            : status.state === "ready"
-              ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
-              : status.message;
+          : status.state === "outdated"
+            ? `Claude ${status.version} is older than Buzz needs.`
+            : status.state === "signed-out"
+              ? `Claude ${status.version} needs you to sign in.`
+              : status.state === "ready"
+                ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
+                : status.message;
     // One button per slot, so focus stays put as Install becomes Sign in and
     // Cancel becomes Check again.
     const action =
       status?.state === "missing"
         ? ({ step: "install", label: "Install Claude" } as const)
-        : status?.state === "signed-out"
-          ? ({ step: "login", label: "Sign in" } as const)
-          : undefined;
+        : status?.state === "outdated"
+          ? ({ step: "install", label: "Update Claude" } as const)
+          : status?.state === "signed-out"
+            ? ({ step: "login", label: "Sign in" } as const)
+            : undefined;
     return (
       <div className="grid gap-4">
         <section className="grid gap-2">
@@ -127,11 +131,13 @@ export function createTabs({
               {state.running ? "Cancel" : "Check again"}
             </Button>
           </div>
+          {state.notice && <p className="m-0 text-body-sm">{state.notice}</p>}
           {status?.state === "missing" && (
             <p className="m-0 text-body-sm text-subtle">
-              Runs the official installer,{" "}
-              <code>curl -fsSL https://claude.ai/install.sh | bash</code>, which
-              puts <code>claude</code> in <code>~/.local/bin</code>.
+              Downloads Buzz's own copy of Claude (about 250 MB) from
+              downloads.claude.ai and keeps it on the latest release. It does
+              not change the <code>claude</code> in your terminal, and uses the
+              same sign-in and settings.
             </p>
           )}
           {state.output && (

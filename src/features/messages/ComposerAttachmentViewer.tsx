@@ -212,15 +212,28 @@ function DraftMedia({
   activeVideo?: RefObject<HTMLVideoElement | null> | undefined;
   initialSource?: string | undefined;
 }) {
+  const [openedItem] = useState(item);
+  const [failed, setFailed] = useState<string>();
+  const openedMedia = draftAttachmentMedia(openedItem);
+  // A mounted slide owns its local URL until it closes. Failed local decoding
+  // can recover through the uploaded representation once it is available.
+  const keepLocal =
+    !openedItem.uploaded &&
+    !failed &&
+    (openedMedia.image ||
+      openedMedia.video ||
+      openedMedia.type.startsWith("audio/") ||
+      !!openedItem.voice);
+  const previewItem = keepLocal ? openedItem : item;
   const {
     source: resolvedSource,
     type,
     image,
     video: isVideo,
-  } = useDraftAttachmentSource(item, media);
-  const source = item.uploaded
+  } = useDraftAttachmentSource(previewItem, media);
+  const source = previewItem.uploaded
     ? resolvedSource
-    : (initialSource ?? resolvedSource);
+    : (resolvedSource ?? initialSource);
   const sourceUnavailable = useMediaElementSource(
     isVideo ? source : undefined,
   ).unavailable;
@@ -232,9 +245,8 @@ function DraftMedia({
       if (activeVideo.current === element) activeVideo.current = null;
     };
   }, [source, activeVideo, video]);
-  const [failed, setFailed] = useState<string>();
   const attachment: Attachment = {
-    url: item.uploaded?.url ?? source ?? item.id,
+    url: previewItem.uploaded?.url ?? source ?? item.id,
     name: item.uploaded?.name ?? item.file.name,
     mime: type,
     size: item.uploaded?.size ?? item.file.size,

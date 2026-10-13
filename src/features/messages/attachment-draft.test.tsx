@@ -92,38 +92,69 @@ it("starts uploading on add and send preparation reuses the in-flight upload", a
   expect(draft.result.current.items[0]?.status).toBe("ready");
 });
 
-it("retains cancelled files across navigation and restarts on explicit retry", async () => {
+it.each(["preparing", "uploading"] as const)(
+  "resumes %s and queued files after navigation and sends without Retry",
+  async (phase) => {
+    const h = fixture();
+    const first = renderHook(() =>
+      useAttachmentDraft(h.session, "channel-one", "one"),
+    );
+    act(() => first.result.current.store.add([file("1.txt"), file("2.txt")]));
+    if (phase === "uploading")
+      await waitFor(() => expect(h.calls).toHaveLength(1));
+    else expect(h.calls).toHaveLength(0);
+    const interrupted = h.calls.length;
+    first.unmount();
+    if (interrupted) expect(h.calls[0]?.signal.aborted).toBe(true);
+    expect(
+      first.result.current.store.snapshot().map((item) => item.status),
+    ).toEqual(["queued", "queued"]);
+    const returned = renderHook(() =>
+      useAttachmentDraft(h.session, "channel-one", "one"),
+    );
+    expect(returned.result.current.blocked).toBe(false);
+    await waitFor(() => expect(h.calls).toHaveLength(interrupted + 1));
+    let work!: Promise<readonly UploadedAttachment[]>;
+    await act(async () => {
+      work = returned.result.current.store.prepareForSend(
+        new AbortController().signal,
+      );
+    });
+    expect(h.calls).toHaveLength(interrupted + 1);
+    // A late result from the aborted owner must not replace resumed work.
+    if (interrupted)
+      await act(async () => h.calls[0]?.result.resolve(uploaded("stale.txt")));
+    expect(returned.result.current.items[0]?.uploaded).toBeUndefined();
+    await act(async () =>
+      h.calls[interrupted]?.result.resolve(uploaded("1.txt")),
+    );
+    await waitFor(() => expect(h.calls).toHaveLength(interrupted + 2));
+    await act(async () => {
+      h.calls[interrupted + 1]?.result.resolve(uploaded("2.txt"));
+      expect(await work).toEqual([uploaded("1.txt"), uploaded("2.txt")]);
+    });
+    expect(returned.result.current.blocked).toBe(false);
+  },
+);
+
+it("preserves real upload errors while resuming unfinished siblings on return", async () => {
   const h = fixture();
-  const first = renderHook(() =>
-    useAttachmentDraft(h.session, "channel-one", "one"),
+  const first = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() =>
+    first.result.current.store.add([file("failed.txt"), file("pending.txt")]),
   );
-  act(() => first.result.current.store.add([file()]));
-  first.unmount();
-  expect(h.upload).not.toHaveBeenCalled();
-
-  const returned = renderHook(() =>
-    useAttachmentDraft(h.session, "channel-one", "one"),
-  );
-  const queued = returned.result.current.items[0];
-  assert.exists(queued);
-  expect(queued.status).toBe("error");
-  expect(returned.result.current.blocked).toBe(true);
-  act(() => returned.result.current.store.retry(queued.id));
   await waitFor(() => expect(h.calls).toHaveLength(1));
-  expect(returned.result.current.items[0]?.status).toBe("uploading");
-
-  const send = new AbortController();
-  let work: Promise<readonly UploadedAttachment[]>;
-  await act(async () => {
-    work = returned.result.current.store.prepareForSend(send.signal);
-  });
-  expect(h.calls).toHaveLength(1);
-  await act(async () => {
-    h.calls[0]?.result.resolve(uploaded());
-    await work;
-  });
-  expect(returned.result.current.items[0]?.uploaded?.name).toBe("notes.txt");
-  expect(returned.result.current.blocked).toBe(false);
+  await act(async () => h.calls[0]?.result.reject(new Error("relay down")));
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  first.unmount();
+  const returned = renderHook(() =>
+    useAttachmentDraft(h.session, "one", "one"),
+  );
+  await waitFor(() => expect(h.calls).toHaveLength(3));
+  expect(returned.result.current.items[0]?.error).toBe("relay down");
+  expect(returned.result.current.items[0]?.status).toBe("error");
+  expect(returned.result.current.blocked).toBe(true);
+  expect(h.calls[2]?.file.name).toBe("pending.txt");
 });
 
 it("ignores a host progress report after an upload fails", async () => {

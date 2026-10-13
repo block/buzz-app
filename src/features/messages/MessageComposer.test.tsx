@@ -1083,6 +1083,35 @@ async function mountUploadComposer(
   };
 }
 
+it("pauses while disabled and resumes attachment Send without Retry when re-enabled", async () => {
+  const h = await mountUploadComposer();
+  fireEvent.change(h.input(), { target: { value: "Keep my files" } });
+  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const tree = (disabled: boolean) => (
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      disabled={disabled}
+    />
+  );
+  h.rerender(tree(true));
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  expect(screen.queryByRole("button", { name: "Retry paused.txt" })).toBeNull();
+  expect(h.send()).toBeDisabled();
+  h.rerender(tree(false));
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.send()).toBeEnabled();
+  fireEvent.click(h.send());
+  await act(async () =>
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt")),
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.uploadCalls).toHaveLength(2);
+});
+
 it("starts picker, paste and drop uploads eagerly and publishes only after Send", async () => {
   const h = await mountUploadComposer();
   const picker =

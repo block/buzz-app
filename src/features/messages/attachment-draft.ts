@@ -28,6 +28,7 @@ export type AttachmentDraft = {
   remove(id: string): void;
   retry(id: string): void;
   cancel(): void;
+  resume(): void;
   clear(): void;
 };
 type UploadTask = {
@@ -107,7 +108,7 @@ export function attachmentDraft(
     );
     emit();
   };
-  function cancelActive() {
+  function cancelActive(retryRequired = true) {
     paused = true;
     for (const task of active.values()) task.controller.abort();
     active.clear();
@@ -118,8 +119,10 @@ export function attachmentDraft(
       item.status === "uploading"
         ? {
             ...item,
-            status: "error",
-            error: "Upload paused. Retry to continue.",
+            status: retryRequired ? "error" : "queued",
+            error: retryRequired
+              ? "Upload paused. Retry to continue."
+              : undefined,
             transfer: undefined,
           }
         : item,
@@ -240,10 +243,11 @@ export function attachmentDraft(
     subscribe(listener: () => void) {
       owners.set(key, store);
       listeners.add(listener);
+      if (listeners.size === 1) store.resume();
       return () => {
         listeners.delete(listener);
         if (!listeners.size) {
-          cancelActive();
+          cancelActive(false);
           if (!items.length && owners.get(key) === store) owners.delete(key);
         }
       };
@@ -359,7 +363,11 @@ export function attachmentDraft(
       paused = false;
       pump();
     },
-    cancel: cancelActive,
+    cancel: () => cancelActive(false),
+    resume() {
+      paused = false;
+      pump();
+    },
     clear() {
       cancelActive();
       items = [];

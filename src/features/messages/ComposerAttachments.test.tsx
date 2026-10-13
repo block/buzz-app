@@ -421,7 +421,7 @@ it("navigates local image and video previews while uploading without sent-messag
   );
   expect(
     screen.getByRole("dialog").querySelector("video")?.getAttribute("src"),
-  ).toBe("/canonical?url=https://relay.test/clip.mp4");
+  ).toBe("blob:clip.mp4");
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
   await waitFor(() =>
@@ -511,4 +511,111 @@ it("returns focus to the selected generic attachment after viewer navigation", a
       screen.getByRole("button", { name: "Preview report.pdf" }),
     ),
   );
+});
+
+it("keeps the playing video and its owned blob alive when its upload completes", async () => {
+  let sequence = 0;
+  const revoke = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => `blob:owned-${++sequence}`),
+      revokeObjectURL: revoke,
+    }),
+  );
+  const item: DraftAttachment = {
+    id: "video",
+    file: new File(["video"], "clip.mp4", { type: "video/mp4" }),
+    status: "uploading",
+  };
+  const props = {
+    items: [item],
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: (url: string) => `/canonical?url=${url}`,
+  };
+  const view = render(<ComposerAttachments {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }));
+  const video = screen.getByRole("dialog").querySelector("video");
+  assert.exists(video);
+  video.currentTime = 12;
+  Object.defineProperty(video, "paused", {
+    configurable: true,
+    get: () => false,
+  });
+  fireEvent.play(video);
+  const source = video.getAttribute("src");
+  vi.mocked(HTMLMediaElement.prototype.pause).mockClear();
+  const ready: DraftAttachment = {
+    ...item,
+    status: "ready",
+    uploaded: {
+      url: "https://relay.test/clip.mp4",
+      name: "clip.mp4",
+      type: "video/mp4",
+      size: 8,
+      sha256: "a".repeat(64),
+    },
+  };
+  view.rerender(<ComposerAttachments {...props} items={[ready]} />);
+  expect(screen.getByRole("dialog").querySelector("video")).toBe(video);
+  expect(video.currentTime).toBe(12);
+  expect(video.paused).toBe(false);
+  expect(video.getAttribute("src")).toBe(source);
+  expect(revoke).not.toHaveBeenCalledWith(source);
+  expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(revoke).toHaveBeenCalledWith(source);
+  fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }));
+  expect(
+    screen.getByRole("dialog").querySelector("video")?.getAttribute("src"),
+  ).toBe(props.media("https://relay.test/clip.mp4"));
+});
+
+it("keeps the open image when upload replaces PNG with canonical WebP", () => {
+  let sequence = 0;
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => `blob:image-${++sequence}`),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const item: DraftAttachment = {
+    id: "image",
+    file: new File(["png"], "photo.png", { type: "image/png" }),
+    status: "uploading",
+  };
+  const props = {
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: (url: string) => url,
+  };
+  const view = render(<ComposerAttachments {...props} items={[item]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Preview photo.png" }));
+  const image = screen.getByRole("dialog").querySelector("img");
+  assert.exists(image);
+  const source = image.getAttribute("src");
+  view.rerender(
+    <ComposerAttachments
+      {...props}
+      items={[
+        {
+          ...item,
+          status: "ready",
+          uploaded: {
+            url: "https://relay.test/photo.webp",
+            name: "photo.webp",
+            type: "image/webp",
+            size: 8,
+            sha256: "a".repeat(64),
+          },
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByRole("dialog").querySelector("img")).toBe(image);
+  expect(image.getAttribute("src")).toBe(source);
 });

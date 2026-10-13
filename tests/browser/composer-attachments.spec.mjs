@@ -815,6 +815,9 @@ test("local previews stay interactive during eager upload and removal collapses 
         return animate.call(this, frames, options);
       };
     });
+    const beforeFailure = await form.evaluate(
+      (el) => el.getBoundingClientRect().height,
+    );
     await trigger.click();
     const dialog = page.getByRole("dialog", { name: "Attachment preview" });
     await expect
@@ -850,6 +853,25 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => video.evaluate((el) => el.currentTime))
       .toBeGreaterThan(0);
+    await video.evaluate((el) => {
+      window.openDraftVideo = el;
+      el.loop = true;
+    });
+    const openedSource = await video.getAttribute("src");
+    // Finish the held eager queue while the local video is actually playing.
+    release();
+    // The modal intentionally hides its background form from accessibility.
+    const backgroundForm = page.getByRole("form", {
+      name: "Send a message to General",
+      exact: true,
+      includeHidden: true,
+    });
+    await expect(backgroundForm.getByText(/Ready$/)).toHaveCount(1);
+    expect(await video.evaluate((el) => el === window.openDraftVideo)).toBe(
+      true,
+    );
+    await expect(video).toHaveAttribute("src", openedSource);
+    expect(await video.evaluate((el) => el.paused)).toBe(false);
     await expect(
       dialog.getByRole("button", { name: /Playback speed/ }),
     ).toBeVisible();
@@ -917,10 +939,6 @@ test("local previews stay interactive during eager upload and removal collapses 
       document.documentElement.style.fontSize = "";
     });
     await page.setViewportSize({ width: 1440, height: 950 });
-    const beforeFailure = await form.evaluate(
-      (el) => el.getBoundingClientRect().height,
-    );
-    release();
     const retry = form.getByRole("button", { name: "Retry photo.png" });
     await expect(retry).toBeVisible();
     await expect

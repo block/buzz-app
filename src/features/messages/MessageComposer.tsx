@@ -532,6 +532,7 @@ function Composer({
   );
   useEffect(() => {
     if (disabled) attachments.store.cancel();
+    else attachments.store.resume();
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,

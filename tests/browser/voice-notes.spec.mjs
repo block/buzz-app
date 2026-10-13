@@ -99,6 +99,11 @@ test.beforeEach(async ({ page }) => {
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
 });
+test.afterEach(async ({ page }) => {
+  // Media routes evaluate in the page; finish them before its fixture closes.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 async function record(page) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
@@ -392,6 +397,10 @@ test("rejects a full attachment draft before opening the microphone", async ({
       buffer: Buffer.from("test"),
     })),
   );
+  // Wait for attachment layout and uploads before targeting the toolbar.
+  await expect(
+    page.getByRole("status").filter({ hasText: /· Ready$/ }),
+  ).toHaveCount(10);
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();

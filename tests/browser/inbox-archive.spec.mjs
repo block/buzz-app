@@ -417,6 +417,9 @@ test("Inbox sending keeps the conversation open until manually archived", async 
   const rows = inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
+  await expect(
+    inbox.getByText("Checking recent activity…", { exact: true }),
+  ).toHaveCount(0);
   await expect(rows).toHaveCount(1);
   await rows.getByRole("button", { name: /^Open / }).click();
   await expect(
@@ -426,6 +429,9 @@ test("Inbox sending keeps the conversation open until manually archived", async 
   await editor.fill("Keep this conversation");
   await inbox.getByRole("button", { name: "Send message" }).click();
   await expect(editor).toHaveText("");
+  await expect(
+    inbox.getByText("Keep this conversation", { exact: true }),
+  ).toBeVisible();
   await expect(rows).toHaveCount(1);
   await expect(editor).toBeVisible();
   await inbox.getByRole("button", { name: "Archive conversation" }).click();

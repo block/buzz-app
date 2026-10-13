@@ -61,7 +61,7 @@ async function choose(page, inbox, control, option) {
   await expect(menu).toHaveCount(0);
 }
 
-test("Inbox status checkboxes combine with attention filters and preserve them", async ({
+test("Inbox status choices combine with attention filters and preserve them", async ({
   page,
   app,
 }) => {

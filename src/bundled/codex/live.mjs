@@ -1,11 +1,15 @@
 // Opt-in real Codex acceptance. Disposable workspace, simulated relay, no messages sent.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { spawn, execFileSync } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "rolldown";
 import { JSDOM } from "jsdom";
+import manifest from "./manifest.json" with { type: "json" };
+const declaration = manifest.host.processes.find(
+  (row) => row.id === "app-server",
+);
 globalThis.document = new JSDOM("").window.document;
 
 const workspace = await mkdtemp(join(tmpdir(), "buzz-codex-agents-"));
@@ -16,6 +20,27 @@ await build({
   },
   output: { dir: workspace, entryFileNames: "[name].mjs", format: "esm" },
 });
+// A fixture executable supplies CLI overrides while the production launcher
+// still owns store setup and process replacement.
+const executables = join(workspace, "bin");
+await mkdir(executables);
+const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+const overrides = [
+  "-c",
+  "include_collaboration_mode_instructions=false",
+  "-c",
+  'web_search="live"',
+  "-c",
+  `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
+];
+const executable = execFileSync("which", ["codex"], {
+  encoding: "utf8",
+}).trim();
+await writeFile(
+  join(executables, "codex"),
+  `#!/bin/sh\nexec ${quote(executable)} "$@" ${overrides.map(quote).join(" ")}\n`,
+  { mode: 0o755 },
+);
 const { CodexRuntime } = await import(join(workspace, "runtime.mjs"));
 const { AppServer } = await import(join(workspace, "rpc.mjs"));
 const children = new Set();
@@ -49,25 +74,20 @@ const nativeSpawn = async (_id, options = {}) => {
   }
   servers++;
   const child = spawn(
-    "codex",
-    [
-      "app-server",
-      "-c",
-      "include_collaboration_mode_instructions=false",
-      "-c",
-      'web_search="live"',
-      "-c",
-      `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
-    ],
+    declaration.program,
+    [...declaration.args, ...(options.args ?? [])],
     {
       // Like the desktop host, expand ~ in a process's working directory.
       cwd: options.cwd?.replace(/^~(?=\/|$)/, homedir()),
       detached: true,
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([key]) => !key.startsWith("BUZZ_") && !key.startsWith("NOSTR_"),
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("BUZZ_") && !key.startsWith("NOSTR_"),
+          ),
         ),
-      ),
+        PATH: `${executables}:${process.env.PATH}`,
+      },
       stdio: ["pipe", "pipe", "pipe"],
     },
   );

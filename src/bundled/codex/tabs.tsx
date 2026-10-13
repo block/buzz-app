@@ -41,7 +41,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     }>("account/read");
     if (!account.account)
       throw new Error(
-        "Codex needs you to sign in. Run codex login in a terminal, then check again.",
+        `Codex needs a sign-in for Buzz. Run ${/Mac/i.test(navigator.platform) ? 'CODEX_HOME="$HOME/Library/Application Support/Buzz/codex"' : `CODEX_HOME="\${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex"`} codex login in a terminal, then check again.`,
       );
     const models = await listModels(rpc);
     return { models, account: account.account.email ?? account.account.type };
@@ -295,8 +295,10 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
             </Button>
           </div>
           <p className="m-0 text-body-sm text-subtle">
-            Uses your existing Codex sign-in. Install Codex and run codex login
-            in a terminal if needed.
+            New conversations stay in Buzz’s Codex store. File-based sign-in,
+            settings, and skills are shared with Codex. Keyring sign-in is
+            separate for Buzz. Existing conversations keep their original store
+            and history.
           </p>
         </section>
         <section className="grid gap-1">

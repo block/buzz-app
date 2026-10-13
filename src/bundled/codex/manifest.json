@@ -10,8 +10,12 @@
       },
       {
         "id": "app-server",
-        "program": "codex",
-        "args": ["app-server"]
+        "program": "sh",
+        "args": [
+          "-c",
+          "set -eu\nif [ \"$1\" = legacy ]; then exec codex app-server; fi\n[ \"$1\" = isolated ] || exit 1\nsharedHome=${CODEX_HOME:-\"$HOME/.codex\"}\nmkdir -p \"$sharedHome\"\nsharedHome=$(cd \"$sharedHome\" && pwd -P)\numask 077\ncase \"$(uname -s)\" in\n  Darwin) dataHome=\"$HOME/Library/Application Support/Buzz\" ;;\n  *) dataHome=\"${XDG_DATA_HOME:-$HOME/.local/share}/buzz\" ;;\nesac\nmkdir -p \"$dataHome/codex\"\nprivateHome=$(cd \"$dataHome/codex\" && pwd -P)\nif [ \"$privateHome\" = \"$sharedHome\" ]; then\n  echo \"Buzz's Codex store must differ from the shared Codex home\" >&2\n  exit 1\nfi\nfor name in config.toml auth.json AGENTS.md rules skills; do\n  target=\"$sharedHome/$name\"\n  link=\"$privateHome/$name\"\n  if [ ! -e \"$link\" ] && [ ! -L \"$link\" ]; then\n    ln -s \"$target\" \"$link\" || true\n  fi\n  if [ ! -L \"$link\" ] || [ \"$(readlink \"$link\")\" != \"$target\" ]; then\n    echo \"Buzz's Codex setup conflicts with $link\" >&2\n    exit 1\n  fi\ndone\nexec env CODEX_HOME=\"$privateHome\" codex app-server -c \"sqlite_home=$privateHome\"\n",
+          "buzz-codex"
+        ]
       },
       {
         "id": "read",

@@ -2,8 +2,7 @@
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
 Agents owns the identity, admission, configuration, and signed Buzz actions. This plugin
-owns Codex work after delivery handover. It starts one `codex app-server` for all
-agents and uses an independent Codex thread for each agent's Buzz conversation.
+owns Codex work after delivery handover. Agents share one `codex app-server` per storage home, with an independent Codex thread for each agent's Buzz conversation.
 Each thread carries its agent's workspace, instructions and tools, so one crash
 fails every agent's current turn; the next mention reopens the server.
 
@@ -22,8 +21,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
    optionally pick a model beside it and add instructions. Name the agent and
    click **Create agent**. The Codex tab checks the installed CLI and existing
-   account. If needed, install Codex
-   and run `codex login` in a terminal, then click **Check again**.
+   account. Install Codex if needed. File-based sign-in is shared with the existing Codex home. For keyring sign-in, use the Buzz-specific login command shown in the Codex tab, then click **Check again**.
 3. The **Workspace** defaults to `~/.buzz`, like Claude. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,
@@ -77,12 +75,23 @@ the workspace. Expect agent-signed actions, correct thread routing, and one fina
 reply. During a long task, send a new mention and confirm it incorporates the
 follow-up before its final reply.
 
+## Conversation storage
+
+New conversations use `~/Library/Application Support/Buzz/codex` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex` on Linux. The launcher links only `config.toml`, `auth.json`, `AGENTS.md`, `rules`, and `skills` from the existing `CODEX_HOME` (default `~/.codex`); credentials are not copied. An explicit private `sqlite_home` override prevents shared configuration or `CODEX_SQLITE_HOME` from routing new database state back to desktop. Rollouts, paginated history and other runtime state remain private. File-based sign-in and refresh retain the existing shared file. Keyring credentials are scoped to the home and may require a separate Buzz sign-in.
+
+Existing v4 bindings without a store marker keep their original home, native context, tool history and transcript. Those conversations remain visible in Codex desktop and continue updating there. Codex has no complete supported migration for their paginated history, so this change neither moves nor resets them. New bindings persist their store marker; workspace changes and recovery from a genuinely deleted thread create an isolated session. Thread/channel/DM scope and steering remain unchanged. Legacy and isolated servers start lazily and retain background terminals until the existing agent/plugin shutdown boundary.
+
+Conflicting private configuration files or links to a different shared home stop setup with a diagnostic instead of overwriting either setup. The private home lives outside the default agent workspace.
+
 ## Checks
 
 ```sh
 bin/pnpm exec vitest run src/bundled/codex
+bin/node src/bundled/codex/isolation-live.mjs
 bin/node src/bundled/codex/live.mjs
 ```
+
+The isolation check runs real Codex processes against disposable homes, a synthetic file-based account and a loopback fixture model. It verifies independent thread listings, private SQLite state despite inherited overrides, shared sign-in/configuration, persistence after restart, and unchanged legacy history. It sends no external model or relay requests.
 
 The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell

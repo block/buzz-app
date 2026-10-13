@@ -182,3 +182,20 @@ it("treats a thread Codex no longer has as missing, and other failures as errors
     readTranscript(broken.spawn, "thread-1", conversation, signal),
   ).rejects.toThrow("database is locked");
 });
+
+it.each(["legacy", "isolated"] as const)(
+  "reads native history from its %s owning store",
+  async (store) => {
+    const f = server(() => ({ result: { data: [turn()], nextCursor: null } }));
+    const read = await readTranscript(
+      f.spawn,
+      "thread-1",
+      { ...conversation, store },
+      new AbortController().signal,
+    );
+    expect(f.spawn.mock.calls[0]?.[1]?.args?.at(-1)).toBe(store);
+    expect(read?.turns[0]?.items).toContainEqual(
+      expect.objectContaining({ type: "message", text: "Fixed." }),
+    );
+  },
+);

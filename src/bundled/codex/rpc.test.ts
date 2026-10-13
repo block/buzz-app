@@ -30,8 +30,14 @@ function fixture() {
       options = value;
       return process;
     });
-  return { rpc, open, raw, emit, sent, process };
+  return { rpc, open, raw, emit, sent, process, options: () => options };
 }
+it("launches new Codex sessions in the isolated store", async () => {
+  const f = fixture();
+  await f.open();
+  expect(f.options()?.args).toEqual(["isolated"]);
+  await f.rpc.close();
+});
 it("correlates out-of-order JSONL responses across chunk boundaries and rejects interactive requests once", async () => {
   const f = fixture();
   await f.open();

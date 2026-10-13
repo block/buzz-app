@@ -30,8 +30,10 @@ import {
   AppServer,
   listModels,
   type Spawn,
+  type Store,
   type ToolCall,
   type ToolReply,
+  type Wire,
 } from "./rpc";
 
 type Request = {
@@ -59,10 +61,15 @@ type Request = {
 };
 /** `at` is when the binding last started a turn; bindings saved before it
  * existed have none. */
-type Saved = { threadId: string; workspace: string; at?: number };
+type Saved = {
+  threadId: string;
+  workspace: string;
+  at?: number;
+  store?: Store;
+};
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
-  rpc: AppServer;
+  rpc?: AppServer;
   threadId?: string;
   turnId?: string;
   ready: Promise<void>;
@@ -110,6 +117,7 @@ export type SavedConversation = {
   name?: string;
   root?: string;
   threadId: string;
+  store: Store;
   at?: number;
 };
 /** Bindings listed for the owner. */
@@ -124,12 +132,12 @@ function textOf(event: EventData, name: string) {
 }
 
 /** Agents owns admission/identity. This plugin owns work after hand-over, and
- * uses one app-server for every agent. Each conversation is its own Codex
+ * shares an app-server per store across agents. Each conversation is its own Codex
  * thread carrying its agent's workspace, instructions and tools, and tool
  * calls find their agent by thread and turn. */
 export class CodexRuntime {
   private entries = new Map<string, Entry>();
-  private server: Server | undefined;
+  private servers = new Map<Store, Server>();
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
@@ -240,7 +248,7 @@ export class CodexRuntime {
         entry.abort.abort();
         this.entries.delete(pubkey);
         this.views.delete(pubkey);
-        if (this.server) this.stop(this.server, pubkey, entry);
+        this.stop([...this.servers.values()], pubkey, entry);
       }
     if (!present.size) this.close();
     for (const listener of this.listeners) listener();
@@ -249,20 +257,21 @@ export class CodexRuntime {
    * themselves. Then the shells its finished turns left are ended, which its
    * own process used to do by exiting. Until then, the same agent starting
    * again waits rather than resuming a thread that is still letting go. */
-  private stop(server: Server, pubkey: string, entry: Entry) {
+  private stop(servers: readonly Server[], pubkey: string, entry: Entry) {
     const stopped = (async () => {
       await Promise.all(
         [...entry.lanes.values()].map((lane) =>
           lane.tail.catch(() => undefined),
         ),
       );
-      for (const [threadId, owner] of server.threads)
-        if (owner === pubkey) {
-          server.threads.delete(threadId);
-          await server.rpc
-            .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
-        }
+      for (const server of servers)
+        for (const [threadId, owner] of server.threads)
+          if (owner === pubkey) {
+            server.threads.delete(threadId);
+            await server.rpc
+              .request("thread/backgroundTerminals/clean", { threadId })
+              .catch(() => undefined);
+          }
     })();
     this.stopping.set(pubkey, stopped);
     void stopped.finally(() => {
@@ -278,28 +287,32 @@ export class CodexRuntime {
     this.close();
   }
   private close() {
-    void this.server?.rpc.close();
-    this.server = undefined;
+    for (const server of this.servers.values()) void server.rpc.close();
+    this.servers.clear();
   }
-  private open() {
-    if (this.server) return this.server;
+  private open(store: Store = "isolated") {
+    const existing = this.servers.get(store);
+    if (existing) return existing;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
     const server: Server = {
       rpc,
-      opening: rpc.open(this.spawn, defaults.workspace),
+      opening: rpc.open(this.spawn, defaults.workspace, store),
       threads: new Map(),
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
-      if (wire.method === "connection/closed" && this.server === server)
-        this.server = undefined;
+      if (
+        wire.method === "connection/closed" &&
+        this.servers.get(store) === server
+      )
+        this.servers.delete(store);
     });
     void server.opening.catch(() => {
-      if (this.server === server) this.server = undefined;
+      if (this.servers.get(store) === server) this.servers.delete(store);
       void rpc.close();
     });
-    this.server = server;
+    this.servers.set(store, server);
     return server;
   }
   private entry(request: Request) {
@@ -328,7 +341,10 @@ export class CodexRuntime {
             ([, value]) =>
               value &&
               typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
+              typeof value.workspace === "string" &&
+              (value.store === undefined ||
+                value.store === "legacy" ||
+                value.store === "isolated"),
           ),
         ) as Record<string, Saved>;
     } catch {
@@ -347,7 +363,7 @@ export class CodexRuntime {
     // Untimestamped bindings keep save order, newest last; listed newest first.
     return Object.entries(saved)
       .reverse()
-      .flatMap(([key, { threadId, at }]) => {
+      .flatMap(([key, { threadId, at, store }]) => {
         try {
           const [channelId, root] = JSON.parse(key) as unknown[];
           if (typeof channelId !== "string" || typeof root !== "string")
@@ -360,6 +376,7 @@ export class CodexRuntime {
               ...(name ? { name } : {}),
               ...(root === "channel" ? {} : { root }),
               threadId,
+              store: store ?? "legacy",
               ...(at === undefined ? {} : { at }),
             },
           ];
@@ -514,6 +531,7 @@ export class CodexRuntime {
             this.start(request, text, key, lane, entry);
             return;
           }
+          if (!active.rpc) throw new Error("Codex has no active server");
           await active.rpc.request("turn/steer", {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
@@ -745,11 +763,12 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
-    const server = this.open();
+    let server: Server | undefined;
+    let off = () => {};
+    let store: Store = "isolated";
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {
-      rpc: server.rpc,
       ready: new Promise((resolve, reject) => {
         ready = resolve;
         notReady = reject;
@@ -775,7 +794,7 @@ export class CodexRuntime {
     void completed.catch(() => undefined);
     const abort = () => fail(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
-    const off = server.rpc.onMessage((wire) => {
+    const onMessage = (wire: Wire) => {
       const p = wire.params as
         | {
             threadId?: string;
@@ -819,16 +838,25 @@ export class CodexRuntime {
           fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
         else finish(p.turn.status);
       }
-    });
+    };
+    const connect = async (target: Store) => {
+      off();
+      store = target;
+      server = this.open(store);
+      active.rpc = server.rpc;
+      off = server.rpc.onMessage(onMessage);
+      return server.opening;
+    };
     try {
-      const rpc = await server.opening;
-      signal.throwIfAborted();
-      // The process host expands ~/.buzz and creates it; Codex's RPC needs
-      // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
+      const resuming = existing?.workspace === workspace;
+      let rpc = await connect(
+        resuming ? (existing.store ?? "legacy") : "isolated",
+      );
+      signal.throwIfAborted();
       const normalized = await rpc.request<{
         config: {
           model?: string | null;
@@ -886,7 +914,6 @@ export class CodexRuntime {
           "features.apps": false,
         },
       };
-      const resuming = existing?.workspace === workspace;
       let started: { thread: { id: string; cwd: string } };
       try {
         started = await rpc.request<typeof started>(
@@ -907,13 +934,15 @@ export class CodexRuntime {
             `no rollout found for thread id ${existing?.threadId}`
         )
           throw error;
+        rpc = await connect("isolated");
+        signal.throwIfAborted();
         started = await rpc.request<typeof started>("thread/start", {
           ...params,
           dynamicTools: DYNAMIC_TOOLS,
         });
       }
       active.threadId = started.thread.id;
-      server.threads.set(active.threadId, agent.pubkey);
+      server?.threads.set(active.threadId, agent.pubkey);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
@@ -942,6 +971,7 @@ export class CodexRuntime {
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
+        store,
         at: Date.now(),
       });
       ready();
@@ -974,7 +1004,13 @@ export class CodexRuntime {
       await active.steering;
       // Other agents share the server, so even a stopped agent interrupts
       // its turn rather than ending the process.
-      if (signal.aborted && !ended && active.threadId && active.turnId) {
+      if (
+        server &&
+        signal.aborted &&
+        !ended &&
+        active.threadId &&
+        active.turnId
+      ) {
         try {
           await server.rpc.request("turn/interrupt", {
             threadId: active.threadId,
@@ -1000,10 +1036,11 @@ export class CodexRuntime {
       off();
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
-      if (active.threadId)
-        await server.rpc
+      const rpc = active.rpc;
+      if (rpc && active.threadId)
+        await rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
-          .catch(() => server.rpc.close());
+          .catch(() => rpc.close());
       if (lane.active === active) delete lane.active;
     }
   }

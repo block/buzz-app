@@ -7,7 +7,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import { AppServer, type Spawn } from "./rpc";
+import { AppServer, type Spawn, type Store } from "./rpc";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
 export const TURN_LIMIT = 20;
@@ -181,7 +181,7 @@ const missing = (error: unknown) =>
 export async function readTranscript(
   spawn: Spawn,
   threadId: string,
-  conversation: { channelId: string; root?: string },
+  conversation: { channelId: string; root?: string; store?: Store },
   signal: AbortSignal,
 ): Promise<CodexTranscript | undefined> {
   const rpc = new AppServer();
@@ -189,7 +189,7 @@ export async function readTranscript(
   signal.addEventListener("abort", abort, { once: true });
   try {
     signal.throwIfAborted();
-    await rpc.open(spawn);
+    await rpc.open(spawn, undefined, conversation.store ?? "legacy");
     signal.throwIfAborted();
     let page: { data: Turn[]; nextCursor: string | null };
     try {

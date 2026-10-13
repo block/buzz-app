@@ -1252,6 +1252,11 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   expect(
     restored.sent.find((w) => w.method === "thread/resume")?.params,
   ).toMatchObject({ excludeTurns: true });
+  expect(
+    restored.spawn.mock.calls
+      .find(([id]) => id === "app-server")?.[1]
+      ?.args?.at(-1),
+  ).toBe("isolated");
   restored.complete();
   await vi.waitFor(() =>
     expect(restored.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -1281,6 +1286,134 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   });
   restored.complete();
   await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledTimes(3));
+});
+
+it.each(["thread", "channel"] as const)(
+  "keeps an unmarked v4 %s binding and its native history on the legacy server",
+  async (scopeMode) => {
+    const f = fixture();
+    const key = JSON.stringify([
+      "channel",
+      scopeMode === "channel" ? "channel" : root,
+    ]);
+    f.storage.set(
+      `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+      JSON.stringify({
+        [key]: { threadId: "legacy-thread", workspace: "/tmp/codex-test" },
+      }),
+    );
+    const delivery = f.delivery("continue the existing conversation");
+    await f.runtime.run({
+      ...delivery,
+      config: { workspace: "/tmp/codex-test", scope: scopeMode },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.spawn.mock.calls.find(([id]) => id === "app-server")?.[1]?.args?.at(-1),
+    ).toBe("legacy");
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ threadId: "legacy-thread" });
+    expect(JSON.parse([...f.storage.values()][0] ?? "{}")[key]).toMatchObject({
+      threadId: "legacy-thread",
+      store: "legacy",
+    });
+    expect(f.runtime.conversations(pubkey)[0]?.store).toBe("legacy");
+    await f.complete();
+  },
+);
+it("uses the isolated store after a legacy binding changes workspace", async () => {
+  const f = fixture();
+  f.storage.set(
+    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+    JSON.stringify({
+      [JSON.stringify(["channel", root])]: {
+        threadId: "legacy-thread",
+        workspace: "/tmp/old-workspace",
+      },
+    }),
+  );
+  await f.runtime.run(f.delivery("new workspace"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.spawn.mock.calls.find(([id]) => id === "app-server")?.[1]?.args?.at(-1),
+  ).toBe("isolated");
+  expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(false);
+  await f.complete();
+});
+it("steers a follow-up arriving while the default workspace is still resolving", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing fixture spawn");
+  f.spawn.mockImplementation(async (id, options) => {
+    if (id === "workspace") {
+      entered.resolve();
+      await gate.promise;
+    }
+    return spawn(id, options);
+  });
+  const first = f.delivery("first");
+  const second = f.delivery("follow-up");
+  await f.runtime.run({
+    ...first,
+    config: { workspace: "~/.buzz", model: "test-model", effort: "low" },
+  });
+  await entered.promise;
+  await f.runtime.run({
+    ...second,
+    config: { workspace: "~/.buzz", model: "test-model", effort: "low" },
+  });
+  gate.resolve();
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  expect(f.starts()).toHaveLength(1);
+  await f.complete();
+});
+it("replaces a deleted legacy thread in the isolated store while retaining other legacy bindings", async () => {
+  const f = fixture();
+  const key = JSON.stringify(["channel", root]);
+  f.storage.set(
+    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+    JSON.stringify({
+      [key]: { threadId: "missing", workspace: "/tmp/codex-test" },
+    }),
+  );
+  const write = f.process.write;
+  f.process.write = async (text) => {
+    const wire = JSON.parse(text);
+    if (wire.method === "thread/resume") {
+      f.sent.push(wire);
+      f.emit({
+        id: wire.id,
+        error: { message: "no rollout found for thread id missing" },
+      });
+    } else await write(text);
+  };
+  await f.runtime.run(f.delivery("recover"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.spawn.mock.calls
+      .filter(([id]) => id === "app-server")
+      .map(([, options]) => options?.args?.at(-1)),
+  ).toEqual(["legacy", "isolated"]);
+  expect(JSON.parse([...f.storage.values()][0] ?? "{}")[key].store).toBe(
+    "isolated",
+  );
+  await f.complete();
+});
+it("records the owning store on new bindings so reload never resumes them in desktop", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("new conversation"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(JSON.parse([...f.storage.values()][0] ?? "{}")).toMatchObject({
+    [JSON.stringify(["channel", root])]: { store: "isolated" },
+  });
+  await f.complete();
 });
 
 it("waits for terminal termination after asynchronous clean acknowledgement before reporting interruption", async () => {
@@ -2078,6 +2211,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       channelId: "unlisted",
       root,
       threadId: "newer",
+      store: "legacy",
       at: 2,
     },
     {
@@ -2086,6 +2220,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       name: "test",
       root,
       threadId: "older",
+      store: "legacy",
       at: 1,
     },
     {
@@ -2093,6 +2228,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       channelId: "channel",
       name: "test",
       threadId: "before-timestamps",
+      store: "legacy",
     },
   ]);
   await f.runtime.run(f.delivery("work"));

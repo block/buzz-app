@@ -850,7 +850,15 @@ export class AgentsService extends Service implements Agents {
   /** By origin: the agents last said to be online there, and when. */
   private presence = new Map<
     string,
-    { session: RelaySession; online: ReadonlySet<string>; at: number }
+    {
+      session: RelaySession;
+      online: ReadonlySet<string>;
+      at: number;
+      /** The last send failed, so it is tried again sooner. */
+      failed?: boolean;
+      /** The session cannot send presence, so it is not tried again. */
+      unable?: boolean;
+    }
   >();
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
@@ -2135,44 +2143,60 @@ export class AgentsService extends Service implements Agents {
       if (!binding || this.announcing.has(origin)) continue;
       const next = online.get(origin) ?? new Set<string>();
       const prior = this.presence.get(origin);
-      const was = prior?.online ?? new Set<string>();
+      const same = prior?.session === binding.session;
+      if (same && prior.unable) continue;
       // Another copy that took an agent over says it is online; offline from
-      // this one could arrive after that.
-      const gone = [...was].filter(
-        (pubkey) => !next.has(pubkey) && !this.yielded(pubkey),
+      // this one could arrive after that, so forget it was online here.
+      const was = new Set(
+        [...(prior?.online ?? [])].filter(
+          (pubkey) => next.has(pubkey) || !this.yielded(pubkey),
+        ),
       );
+      if (prior && was.size < prior.online.size)
+        this.presence.set(origin, { ...prior, online: was });
+      const gone = [...was].filter((pubkey) => !next.has(pubkey));
       const due =
-        prior?.session !== binding.session || now - prior.at >= PRESENCE_MS;
+        !same || now - prior.at >= (prior.failed ? RETRY_MS : PRESENCE_MS);
       const changed =
         gone.length > 0 || [...next].some((pubkey) => !was.has(pubkey));
+      // After a failure, wait for the retry even if something changed.
+      if (same && prior.failed && !due) continue;
       if (!changed && (!due || !next.size)) continue;
       this.announcing.add(origin);
-      this.presence.set(origin, {
-        session: binding.session,
-        online: next,
-        at: now,
-      });
+      const sent = { session: binding.session, online: next, at: now };
+      this.presence.set(origin, sent);
       void (async () => {
         for (const [status, agents] of [
           ["offline", gone],
           ["online", [...next]],
         ] as const)
           for (let at = 0; at < agents.length; at += PRESENCE_BATCH)
-            await binding.session.publishAgentPresence(
-              status,
-              agents.slice(at, at + PRESENCE_BATCH),
-              binding.controller.signal,
-            );
+            if (
+              !(await binding.session.publishAgentPresence(
+                status,
+                agents.slice(at, at + PRESENCE_BATCH),
+                binding.controller.signal,
+              ))
+            )
+              return false;
+        return true;
       })()
+        .then((ok) => {
+          if (ok || this.presence.get(origin) !== sent) return;
+          console.warn("Agent presence cannot be sent on this connection");
+          this.presence.set(origin, { ...sent, unable: true });
+        })
         .catch((error) => {
           if (binding.controller.signal.aborted) return;
           console.warn("Agent presence was not sent", error);
-          // Try again sooner than the minute, but not every tick.
-          const current = this.presence.get(origin);
-          if (current?.online === next)
+          // Keep the agents not yet said to be offline, and try again sooner
+          // than the minute, but not every tick.
+          if (this.presence.get(origin) === sent)
             this.presence.set(origin, {
-              ...current,
-              at: Date.now() - PRESENCE_MS + RETRY_MS,
+              ...sent,
+              online: new Set([...next, ...gone]),
+              at: Date.now(),
+              failed: true,
             });
         })
         .finally(() => this.announcing.delete(origin));

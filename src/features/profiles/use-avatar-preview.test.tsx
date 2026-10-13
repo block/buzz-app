@@ -117,7 +117,8 @@ it.each(["card", "editor"] as const)(
       expect(requests).toEqual(["/api/relay/register"]); // No session, membership, or discovery dependency.
       const image = document.querySelector("img");
       if (!image) throw new Error("Registered avatar did not mount");
-      fireEvent.load(image);
+      image.decode = vi.fn().mockResolvedValue(undefined);
+      await act(async () => fireEvent.load(image));
       expect(document.querySelector("img")).toHaveAttribute(
         "data-loaded",
         "true",

@@ -736,7 +736,9 @@ test("local previews stay interactive during eager upload and removal collapses 
         )
         .toEqual([percent, 100]);
       if (percent === 40)
-        await page.screenshot({ path: test.info().outputPath("composer-upload.png") });
+        await page.screenshot({
+          path: test.info().outputPath("composer-upload.png"),
+        });
       await pendingRing.screenshot({
         path: test.info().outputPath(`upload-ring-${percent}.png`),
       });
@@ -813,8 +815,19 @@ test("local previews stay interactive during eager upload and removal collapses 
       )
       .toBe(true);
     await expect(dialog).not.toHaveAttribute("data-review-pending", "");
-    await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).filter((animation) => animation.playState === "running").length)).toBe(0);
-    await dialog.screenshot({ path: test.info().outputPath("attachment-viewer.png") });
+    await expect
+      .poll(() =>
+        dialog.evaluate(
+          (el) =>
+            el
+              .getAnimations({ subtree: true })
+              .filter((animation) => animation.playState === "running").length,
+        ),
+      )
+      .toBe(0);
+    await dialog.screenshot({
+      path: test.info().outputPath("attachment-viewer.png"),
+    });
     const video = dialog.locator("video");
     await expect
       .poll(() => video.evaluate((el) => el.readyState))

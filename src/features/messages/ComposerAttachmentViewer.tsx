@@ -18,7 +18,10 @@ import type {
 } from "../conversation/contracts";
 import type { Attachment } from "../relay/contracts";
 import type { DraftAttachment } from "./attachment-draft";
-import { draftAttachmentMedia, useDraftAttachmentSource } from "./use-draft-attachment-source";
+import {
+  draftAttachmentMedia,
+  useDraftAttachmentSource,
+} from "./use-draft-attachment-source";
 import { readReviewOrigin } from "./use-review-entrance";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {

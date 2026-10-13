@@ -179,13 +179,19 @@ values do not acquire the owner's prompt authority.
 
 Claude Code and Codex also use this proof to authorize delegated workflow mentions.
 The receiving agent's ready community session must supply the explicit relay
-authority, and the workflow owner must equal that agent's owner. The event must
-contain a canonical `buzz:workflow-mention` for the receiving agent; all such tags
+authority. The workflow owner must be that agent's owner, or an agent whose
+admitted kind-0 profile cryptographically proves the same owner through NIP-OA.
+The profile comes from the receiving agent's community profile directory;
+display metadata and saved inventories do not prove sibling ownership. Missing,
+invalid or failed profile reads deny the mention; a later mention can retry.
+The event must contain a canonical `buzz:workflow-mention` for the receiving
+agent; all such tags
 must have exactly two fields, a lowercase-hex pubkey, and no duplicate targets.
 The relay emits these tags only for targets present in the owner-authored template
 and the rendered output. Legacy `p` tags route mentions but do not authorize them.
-Workflows created under an owned agent's own key are owned by that agent, rather
-than its human owner, and do not satisfy this equality check.
+Workflows created and maintained under an owned agent's own key remain owned by
+that agent and can wake agents with the same proven human owner. This does not
+grant an agent permission to edit a workflow owned by a different signing identity.
 
 Cached-only startup intentionally shows the actual signer until a live connection
 establishes explicit relay authority. Saved operator-contact `relayAuthor` is not

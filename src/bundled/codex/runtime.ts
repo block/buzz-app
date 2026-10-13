@@ -349,6 +349,8 @@ export class CodexRuntime {
           snapshot?.status === "ready"
             ? snapshot.session.workflowAuthority
             : undefined,
+        profiles:
+          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
       }))
     ) {
       delivery.ignored?.();

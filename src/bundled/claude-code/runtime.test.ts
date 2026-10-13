@@ -68,6 +68,7 @@ function setup(
     profiles: {
       ensure: async () => undefined,
       snapshot: () => new Map(),
+      event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
   };
   const relay = {
@@ -160,6 +161,7 @@ function setup(
     attention,
     objects,
     stale,
+    session,
   };
 }
 
@@ -671,6 +673,53 @@ it.each([true, false])(
     }
   },
 );
+
+it("runs a verified sibling-owned workflow mention", async () => {
+  const relay = keypair(),
+    human = keypair(),
+    creator = keypair();
+  const attestation = [
+    "auth",
+    human.pubkey,
+    "",
+    bytesToHex(
+      schnorr.sign(
+        createHash("sha256")
+          .update(`nostr:agent-auth:${creator.pubkey}:`)
+          .digest(),
+        human.secret,
+      ),
+    ),
+  ];
+  const profile = eventDto(
+    signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
+  );
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Claude workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", creator.pubkey],
+        ["buzz:workflow-mention", self],
+      ],
+    }),
+  );
+  const f = setup([event], { workflowAuthority: relay.pubkey });
+  f.agent.owner = human.pubkey;
+  f.session.profiles.event.mockReturnValue(profile);
+  try {
+    await f.deliver({ type: "mention", event });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((process) => process.prompts.length)).toBe(true),
+    );
+    expect(f.workingUntil).toHaveBeenCalled();
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 /** Asks a process for something over its in-process Buzz tool server. */
 async function mcp(

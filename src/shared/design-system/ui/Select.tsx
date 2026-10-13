@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { CheckIcon, CaretDownIcon } from "../icons/index";
@@ -6,14 +6,7 @@ import { Button } from "./Button";
 
 export type SelectGroup = {
   label: string;
-  options: readonly {
-    value: string;
-    label: string;
-    description?: ReactNode;
-    /** Decorative identity artwork shown before the option's text. */
-    leading?: ReactNode;
-    disabled?: boolean;
-  }[];
+  options: readonly { value: string; label: string; disabled?: boolean }[];
 };
 
 /** A compact, labelled single-choice control with accessible option groups. */
@@ -23,6 +16,7 @@ export function Select({
   groups,
   onValueChange,
   variant = "inline",
+  appearance = "outlined",
   disabled = false,
   description,
   error,
@@ -31,8 +25,8 @@ export function Select({
   readOnly,
   placeholder,
   valueLabel,
-  valueTitle,
   leading,
+  valueTitle,
   align = "start",
 }: {
   label: string;
@@ -44,18 +38,19 @@ export function Select({
   placeholder?: string;
   /** Compact display text; option labels retain their full meaning. */
   valueLabel?: string;
-  valueTitle?: string;
-  /** Decorative identity artwork shown before the selected value. */
+  /** Optional identity icon before the selected value. */
   leading?: ReactNode;
+  valueTitle?: string;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact";
+  /** Compact card choice: a filled button without a chevron. */
+  appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
   onValueChange: (value: string) => void;
 }) {
-  const optionDescriptionId = useId();
   const items = groups.flatMap((group) => group.options);
   const selectedValue =
     value === "" && !items.some((option) => option.value === "") ? null : value;
@@ -88,20 +83,11 @@ export function Select({
             data-buzz-ui=""
             className="buzz-input buzz-select-trigger"
           >
-            <span className="buzz-select-value-content">
-              {leading && (
-                <span className="buzz-select-leading" aria-hidden="true">
-                  {leading}
-                </span>
-              )}
-              <BaseSelect.Value
-                className="buzz-select-value"
-                placeholder={selectedValue === null ? placeholder : undefined}
-                data-placeholder={selectedValue === null ? "" : undefined}
-              >
-                {valueLabel}
-              </BaseSelect.Value>
-            </span>
+            <BaseSelect.Value
+              className="buzz-select-value"
+              placeholder={selectedValue === null ? placeholder : undefined}
+              data-placeholder={selectedValue === null ? "" : undefined}
+            />
             <BaseSelect.Icon>
               <CaretDownIcon
                 size={16}
@@ -118,40 +104,41 @@ export function Select({
             render={(props) => (
               <Button
                 {...props}
-                variant={variant === "compact" ? "outline" : "ghost"}
+                variant={
+                  variant === "compact"
+                    ? appearance === "subtle"
+                      ? "subtle"
+                      : "outline"
+                    : "ghost"
+                }
                 size={variant === "compact" ? "sm" : "md"}
+                shape={variant === "compact" ? "control" : "capsule"}
               >
-                <span className="buzz-select-value-content">
-                  {leading && (
-                    <span className="buzz-select-leading" aria-hidden="true">
-                      {leading}
-                    </span>
-                  )}
-                  <BaseSelect.Value
-                    className={
-                      variant === "compact" ? "buzz-select-value" : undefined
-                    }
-                    title={
-                      variant === "compact"
-                        ? (valueTitle ??
-                          items.find((item) => item.value === value)?.label)
-                        : undefined
-                    }
-                    placeholder={
-                      selectedValue === null ? placeholder : undefined
-                    }
-                    data-placeholder={selectedValue === null ? "" : undefined}
-                  >
-                    {valueLabel}
-                  </BaseSelect.Value>
-                </span>
-                <BaseSelect.Icon>
-                  <CaretDownIcon
-                    size={14}
-                    className="buzz-dropdown-chevron"
-                    aria-hidden="true"
-                  />
-                </BaseSelect.Icon>
+                {leading}
+                <BaseSelect.Value
+                  className={
+                    variant === "compact" ? "buzz-select-value" : undefined
+                  }
+                  title={
+                    variant === "compact"
+                      ? (valueTitle ??
+                        items.find((item) => item.value === value)?.label)
+                      : undefined
+                  }
+                  placeholder={selectedValue === null ? placeholder : undefined}
+                  data-placeholder={selectedValue === null ? "" : undefined}
+                >
+                  {valueLabel}
+                </BaseSelect.Value>
+                {appearance !== "subtle" && (
+                  <BaseSelect.Icon>
+                    <CaretDownIcon
+                      size={14}
+                      className="buzz-dropdown-chevron"
+                      aria-hidden="true"
+                    />
+                  </BaseSelect.Icon>
+                )}
               </Button>
             )}
           />
@@ -169,58 +156,31 @@ export function Select({
               data-variant={variant}
             >
               <BaseSelect.List>
-                {groups.map((group, groupIndex) => (
+                {groups.map((group) => (
                   <BaseSelect.Group key={group.label}>
                     {group.label && (
                       <BaseSelect.GroupLabel className="buzz-select-group-label text-secondary">
                         {group.label}
                       </BaseSelect.GroupLabel>
                     )}
-                    {group.options.map((option, optionIndex) => {
-                      const descriptionId = `${optionDescriptionId}-${groupIndex}-${optionIndex}`;
-                      return (
-                        <BaseSelect.Item
-                          key={option.value}
-                          value={option.value}
-                          disabled={option.disabled}
-                          aria-label={option.label}
-                          aria-describedby={
-                            option.description ? descriptionId : undefined
-                          }
-                          className="buzz-select-option"
+                    {group.options.map((option) => (
+                      <BaseSelect.Item
+                        key={option.value}
+                        value={option.value}
+                        disabled={option.disabled}
+                        className="buzz-select-option"
+                      >
+                        <BaseSelect.ItemText>
+                          {option.label}
+                        </BaseSelect.ItemText>
+                        <BaseSelect.ItemIndicator
+                          className="buzz-select-indicator"
+                          keepMounted={variant === "compact"}
                         >
-                          <span className="buzz-select-option-main">
-                            {option.leading && (
-                              <span
-                                className="buzz-select-leading"
-                                aria-hidden="true"
-                              >
-                                {option.leading}
-                              </span>
-                            )}
-                            <span className="buzz-select-option-content">
-                              <BaseSelect.ItemText>
-                                {option.label}
-                              </BaseSelect.ItemText>
-                              {option.description && (
-                                <span
-                                  id={descriptionId}
-                                  className="buzz-select-option-description text-body-sm text-subtle"
-                                >
-                                  {option.description}
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                          <BaseSelect.ItemIndicator
-                            className="buzz-select-indicator"
-                            keepMounted={variant === "compact"}
-                          >
-                            <CheckIcon size={14} aria-hidden="true" />
-                          </BaseSelect.ItemIndicator>
-                        </BaseSelect.Item>
-                      );
-                    })}
+                          <CheckIcon size={14} aria-hidden="true" />
+                        </BaseSelect.ItemIndicator>
+                      </BaseSelect.Item>
+                    ))}
                   </BaseSelect.Group>
                 ))}
               </BaseSelect.List>

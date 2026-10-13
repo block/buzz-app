@@ -237,7 +237,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Textarea",
     purpose: "A multiline field with shared label and validation behavior.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    variants: ["default", "panel surface", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Textarea.tsx",
@@ -724,7 +724,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Search and choose from a set of options. The field includes a browse control and a shared option popup.",
     behavior:
       "Base UI owns keyboard navigation and selection; callers own filtering, custom values and async discovery.",
-    variants: ["default", "loading", "disabled"],
+    variants: ["default", "compact", "loading", "disabled"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Combobox.tsx",

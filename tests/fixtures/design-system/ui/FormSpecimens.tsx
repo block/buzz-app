@@ -141,6 +141,9 @@ export function TextareaExamples() {
     placeholder="A place to explore and share ideas."
   />
 </Field>
+<Field label="On a floating surface">
+  <Textarea surface="panel" rows={3} placeholder="Describe what I should do" />
+</Field>
 <Field label="Read-only notes">
   <Textarea
     rows={3}
@@ -166,6 +169,13 @@ export function TextareaExamples() {
   />
 </Field>`}
       >
+        <Field label="On a floating surface">
+          <Textarea
+            surface="panel"
+            rows={3}
+            placeholder="Describe what I should do"
+          />
+        </Field>
         <Field
           label="Description"
           description="Explain what this workspace is for."
@@ -421,11 +431,13 @@ export function WorkspaceCombobox({
   state = "ready",
   disabled = false,
   readOnly = false,
+  compact = false,
 }: {
   label?: string;
   state?: ExampleState;
   disabled?: boolean;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
   const [value, setValue] = useState<(typeof destinations)[number] | null>(
     null,
@@ -441,6 +453,7 @@ export function WorkspaceCombobox({
       itemToStringLabel={(item) => item.label}
     >
       <Combobox.Control
+        appearance={compact ? "compact" : "field"}
         label={label}
         triggerLabel={`Browse ${label.toLowerCase()}`}
         placeholder="Search workspaces"
@@ -491,12 +504,14 @@ export function ComboboxExamples() {
         title="Searchable choices"
         description="A check marks the selected value; highlighting follows the pointer or keyboard. Try a query with no matches, a long option, and Escape."
         code={`<WorkspaceCombobox />
+<WorkspaceCombobox label="Compact row choice" compact />
 <WorkspaceCombobox label="Read-only choices" readOnly />
 <WorkspaceCombobox label="Disabled choices" disabled />
 
 ${workspaceComboboxCode}`}
       >
         <WorkspaceCombobox />
+        <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />
       </FormExample>

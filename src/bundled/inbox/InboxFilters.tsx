@@ -87,7 +87,10 @@ export function InboxFilters({
             </Button>
           }
         />
-        <MenuPopup aria-label="Inbox filters">
+        <MenuPopup
+          aria-label="Inbox filters"
+          style={{ maxHeight: "var(--available-height)" }}
+        >
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Status</MenuGroupLabel>
             <MenuCheckboxItem

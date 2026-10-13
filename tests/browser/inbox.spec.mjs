@@ -158,6 +158,12 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       );
     }
   };
+  await expect(
+    filters.getByRole("menuitemcheckbox", { name: "Agents", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    filters.getByRole("menuitemradio", { name: "Drafts", exact: true }),
+  ).toBeInViewport();
   await expectMenuSelection("All");
   await page.keyboard.press("Escape");
   await expect(filter).toBeFocused();

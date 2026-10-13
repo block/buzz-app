@@ -26,6 +26,7 @@ import {
 } from "./service";
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
+import { fileBacked } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -2254,6 +2255,28 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   // The next save stores them.
   await service.save(bot, { config: { reply: "saved" } });
   expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("rejects a save that agent storage could not write, and saves it on retry", async () => {
+  const disk = new Map<string, string>();
+  let failing = false;
+  const storage = fileBacked(new Map(), async (key, value) => {
+    if (failing) throw new Error("disk full");
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    service.save(bot, { config: { reply: "unsaved" } }),
+  ).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(disk.get(`buzz.agent.v1:${bot}`)).not.toContain("unsaved");
+  failing = false;
+  await service.save(bot, { config: { reply: "unsaved" } });
+  expect(disk.get(`buzz.agent.v1:${bot}`)).toContain("unsaved");
 });
 
 it("saves nothing when native create fails", async () => {

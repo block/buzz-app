@@ -145,8 +145,13 @@ test("Inbox status choices combine with attention filters and preserve them", as
     name: "Archived",
     exact: true,
   });
-  await expect(archived).toBeVisible();
+  await expect(
+    page.getByRole("menuitemradio", { name: "All", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("End");
+  await expect(
+    page.getByRole("menuitemradio", { name: "Drafts", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(archived).toBeFocused();
   app.append(

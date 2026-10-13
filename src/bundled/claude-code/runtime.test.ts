@@ -8,6 +8,7 @@ import type { EventData, RelayEvent } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
+import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
 
@@ -53,9 +54,14 @@ function setup(
   };
   const host = { spawn, request: vi.fn() } as unknown as Host;
   const read = vi.fn(async () => thread);
+  const memoryRead = vi.fn(async () => ({
+    entries: [] as readonly MemoryEntry[],
+    partial: false,
+  }));
   const session = {
     workflowAuthority: options.workflowAuthority,
     read,
+    agentMemories: { read: memoryRead },
     channels: {
       list: () => ({
         channels: [
@@ -156,6 +162,7 @@ function setup(
     claudes,
     fake,
     read,
+    memoryRead,
     data,
     agent,
     workingUntil,
@@ -334,6 +341,47 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).not.toContain("<team>");
   runtime.dispose();
+});
+
+it("gives each new session the agent's current core memory, and starts without it when unreadable", async () => {
+  const { deliver, claudes, memoryRead } = setup();
+  const core = (body: string) => ({
+    entries: [{ slug: "core", body, eventId: "e".repeat(64), createdAt: 1 }],
+    partial: false,
+  });
+  const mention = (id: string) =>
+    deliver({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+  const asked = (id: string) =>
+    systemPromptOf(
+      claudes().find((process) =>
+        process.prompts[0]?.includes(`Content: @Claude ${id}`),
+      ),
+    );
+  memoryRead.mockResolvedValueOnce(core("I am Claude."));
+  await mention("1");
+  await flush(10);
+  expect(asked("1")).toContain("<core-memory>\nI am Claude.\n</core-memory>");
+  // The owner edits it between sessions; the next one reads it again.
+  memoryRead.mockResolvedValueOnce(core("I am Claude, renamed."));
+  await mention("2");
+  await flush(10);
+  expect(asked("2")).toContain(
+    "<core-memory>\nI am Claude, renamed.\n</core-memory>",
+  );
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  memoryRead.mockRejectedValueOnce(new Error("relay down"));
+  await mention("3");
+  await flush(10);
+  expect(asked("3")).toContain("## Agent Memory");
+  expect(asked("3")).not.toContain("<core-memory>");
 });
 
 it("names the agent in its system prompt, resuming idle sessions when it is renamed", async () => {

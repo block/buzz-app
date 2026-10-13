@@ -1,35 +1,62 @@
-// An agent's memory as the harness plugins read it. It is encrypted to the
-// owner, so it is read back through the owner's session; no agent key is
-// needed.
-import type { createAgentMemories, MemoryEntry } from "../agents/memory";
+// An agent's memory as the harness plugins read it and show it to their
+// agents. It is encrypted to the owner, so it is read back through the
+// owner's session; no agent key is needed.
+import type { MemoryListing } from "../agents/memory";
+import type { RelaySession } from "../relay/session";
 
-type AgentMemories = ReturnType<typeof createAgentMemories>["capability"];
+/** How long a shared read may take; each caller can stop waiting sooner. */
+const READ_TIMEOUT_MS = 10_000;
 
-/** Reads the agent's memories once. Aborting `signal` ends the read. */
-export async function readMemories(
-  memories: AgentMemories,
-  agent: string,
-  signal?: AbortSignal,
-): Promise<readonly MemoryEntry[]> {
-  signal?.throwIfAborted();
-  const view = memories.open(agent);
-  const abort = () => view.dispose();
-  signal?.addEventListener("abort", abort, { once: true });
-  try {
-    await view.refresh();
-    signal?.throwIfAborted();
-    const { status, listing } = view.snapshot();
-    if (status !== "ready" || !listing)
-      throw new Error(`Memory unavailable (${status})`);
-    return listing.entries;
-  } finally {
-    signal?.removeEventListener("abort", abort);
-    view.dispose();
+/** One owner-view read per session and agent at a time, which concurrent
+ * turns and tool calls share. */
+export class MemoryReads {
+  private reads = new WeakMap<
+    RelaySession,
+    Map<string, Promise<MemoryListing>>
+  >();
+
+  async read(session: RelaySession, agent: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    let reads = this.reads.get(session);
+    if (!reads) {
+      reads = new Map();
+      this.reads.set(session, reads);
+    }
+    let read = reads.get(agent);
+    if (!read) {
+      const started = session.agentMemories.read(
+        agent,
+        AbortSignal.timeout(READ_TIMEOUT_MS),
+      );
+      const shared = reads;
+      const done = () => {
+        if (shared.get(agent) === started) shared.delete(agent);
+      };
+      void started.then(done, done);
+      reads.set(agent, started);
+      read = started;
+    }
+    return abortable(read, signal);
+  }
+
+  /** After a memory write, a read that may have started before it is not
+   * shared with later callers. */
+  forget(session: RelaySession, agent: string) {
+    this.reads.get(session)?.delete(agent);
   }
 }
 
+/** The `core` memory in a listing: its text, `null` when the agent has none,
+ * or undefined when a partial listing may have missed it. */
+export function coreOf(listing: MemoryListing) {
+  return (
+    listing.entries.find((entry) => entry.slug === "core")?.body ??
+    (listing.partial ? undefined : null)
+  );
+}
+
 /** The `core` memory section of a prompt: its text, a prompt to create one
- * when it is `null`, or nothing when it is unknown or empty. */
+ * when it is `null`, or nothing when it is unread (`undefined`) or blank. */
 export function coreMemorySection(memory: string | null | undefined) {
   const body =
     memory === null
@@ -38,52 +65,13 @@ export function coreMemorySection(memory: string | null | undefined) {
   return body ? `<core-memory>\n${body}\n</core-memory>` : "";
 }
 
-/** How long a read of the agent's `core` memory is reused. */
-const CORE_TTL_MS = 5 * 60_000;
-
-/** An agent's `core` memory as a harness injects it into its prompt: its
- * text, `null` when it has none, or undefined when it could not be read. A
- * read, even a failed one, is reused for five minutes or until `forget`, and
- * concurrent turns share one. */
-export class CoreMemory {
-  private cached:
-    | Readonly<{ value: string | null | undefined; at: number }>
-    | undefined;
-  private reading: Promise<string | null | undefined> | undefined;
-  /** Bumped by `forget`, so a read started before a write is not kept. */
-  private version = 0;
-  constructor(
-    private readonly read: () => Promise<
-      readonly Pick<MemoryEntry, "slug" | "body">[]
-    >,
-  ) {}
-
-  get(): Promise<string | null | undefined> {
-    if (this.cached && Date.now() - this.cached.at < CORE_TTL_MS)
-      return Promise.resolve(this.cached.value);
-    if (this.reading) return this.reading;
-    const version = this.version;
-    const reading = (async () => {
-      let value: string | null | undefined;
-      try {
-        const memories = await this.read();
-        value = memories.find((memory) => memory.slug === "core")?.body ?? null;
-      } catch (error) {
-        console.warn("Could not read the agent's core memory", error);
-      }
-      if (version === this.version) this.cached = { value, at: Date.now() };
-      return value;
-    })().finally(() => {
-      if (this.reading === reading) this.reading = undefined;
-    });
-    this.reading = reading;
-    return reading;
-  }
-
-  /** After the agent writes `core`, the next turn reads it again. */
-  forget() {
-    this.version++;
-    this.cached = undefined;
-    this.reading = undefined;
-  }
+/** Stops waiting when `signal` aborts, even if the read itself does not. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    void promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
 }

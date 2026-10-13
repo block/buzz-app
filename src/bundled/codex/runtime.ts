@@ -9,10 +9,7 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
-import {
-  CoreMemory,
-  readMemories,
-} from "../../features/agent-harness/core-memory";
+import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
@@ -99,8 +96,6 @@ type Entry = {
   after: Promise<void>;
   lanes: Map<string, Lane>;
   saved: Record<string, Saved>;
-  /** The agent's `core` memory, for each turn's instructions. */
-  memory: CoreMemory;
 };
 type Server = {
   rpc: AppServer;
@@ -119,9 +114,6 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
-/** How long a read of the agent's `core` memory may take before a turn goes
- * on without it. */
-const MEMORY_TIMEOUT_MS = 5_000;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -143,6 +135,7 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
@@ -328,13 +321,6 @@ export class CodexRuntime {
       after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
       lanes: new Map(),
-      memory: new CoreMemory(() =>
-        this.memories(
-          request.scope,
-          pubkey,
-          AbortSignal.timeout(MEMORY_TIMEOUT_MS),
-        ),
-      ),
     };
     this.entries.set(pubkey, entry);
     return entry;
@@ -704,29 +690,22 @@ export class CodexRuntime {
     const version = active.version;
     const request = active.reply;
     const answering = [...active.requests];
-    const shared = appClient(request.agent, {
+    const client = appClient(request.agent, {
       spawn: this.spawn,
       cwd: active.workspace,
       check,
       signal: active.signal,
       memories: async () => {
-        const entries = await this.memories(
-          request.scope,
-          request.agent.pubkey,
-          active.signal,
-        );
+        const { entries } = await this.memories(request, active.signal);
         check();
         return entries;
       },
-    });
-    const client = {
-      ...shared,
-      remember: async (slug: string, body: string, after: number) => {
-        await shared.remember(slug, body, after);
-        if (slug === "core")
-          this.entries.get(request.agent.pubkey)?.memory.forget();
+      remembered: () => {
+        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+        if (snapshot?.status === "ready")
+          this.memoryReads.forget(snapshot.session, request.agent.pubkey);
       },
-    };
+    });
     const reply = await callTool(
       client,
       {
@@ -753,16 +732,38 @@ export class CodexRuntime {
       ],
     };
   }
-  /** The agent's memory, read back through the owner's session in the
-   * agent's community: it is encrypted to the owner, so no agent key is
-   * needed to read it. */
-  private memories(scope: string, pubkey: string, signal: AbortSignal) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready" || snapshot.scope !== scope)
-      return Promise.reject(
-        new Error("Buzz is not connected to this community"),
-      );
-    return readMemories(snapshot.session.agentMemories, pubkey, signal);
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private async memories(request: Request, signal: AbortSignal) {
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+      throw new Error("Buzz is not connected to this community");
+    const { session } = snapshot;
+    const listing = await this.memoryReads.read(
+      session,
+      request.agent.pubkey,
+      signal,
+    );
+    signal.throwIfAborted();
+    const current = this.relay(request.agent.pubkey)?.snapshot();
+    if (
+      current?.status !== "ready" ||
+      current.scope !== request.scope ||
+      current.session !== session
+    )
+      throw new Error("Buzz is not connected to this community");
+    return listing;
+  }
+  /** The agent's `core` memory for a turn: its text, `null` when it has none,
+   * or undefined when it could not be read, so the turn goes on without it. */
+  private async core(request: Request, signal: AbortSignal) {
+    try {
+      return coreOf(await this.memories(request, signal));
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Codex could not read the agent's memory", error);
+      return undefined;
+    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -888,8 +889,6 @@ export class CodexRuntime {
       }
     });
     try {
-      // Read while the thread is prepared, not after.
-      const memory = entry.memory.get();
       const rpc = await server.opening;
       signal.throwIfAborted();
       // The process host expands ~/… and creates the directory; Codex's RPC needs
@@ -988,8 +987,10 @@ export class CodexRuntime {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
       });
-      const context = await this.history(request, signal);
-      const core = await memory;
+      const [context, memory] = await Promise.all([
+        this.history(request, signal),
+        this.core(request, signal),
+      ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
@@ -1002,7 +1003,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team, core),
+            value: developerInstructions(agent, settings, request.team, memory),
           },
         },
       });

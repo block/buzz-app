@@ -26,11 +26,10 @@ export function developerInstructions(
   agent: AgentHandle,
   settings?: Config,
   team = "",
-  /** The agent's `core` memory: `null` when it has none, undefined when it
-   * could not be read. */
+  /** The agent's `core` memory: `null` when it has none, undefined if unread. */
   memory?: string | null,
 ) {
-  const core = settings ? coreMemorySection(memory) : "";
+  const core = coreMemorySection(memory);
   return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
 The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Buzz access and signing are handled by the host. Do not invoke the buzz CLI or look for credentials. Use Codex's native coding tools in the workspace.
 
@@ -38,7 +37,7 @@ ${BASE}
 
 ${BUZZ_PROMPT}
 
-${settings ? `Current Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}` : ""}${core ? `\n\nThe current core memory replaces all prior core memory.\n${core}` : ""}`;
+${settings ? `Current Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}` : ""}`;
 }
 
 export function turnInput(

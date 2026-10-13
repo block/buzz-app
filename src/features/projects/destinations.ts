@@ -3,6 +3,7 @@ import { newer } from "../relay/events";
 import { ReadError, readErrorKind } from "../relay/errors";
 import type { OpenFailure } from "../navigation/controller";
 import { entityHex, gitHash, type EntityRoute } from "./routes";
+import { ByteLru } from "../relay/budget";
 
 export class EntityFailure extends Error {
   constructor(readonly reason: OpenFailure) {
@@ -50,6 +51,9 @@ type Read = (
   filters: readonly ReadFilter[],
   signal: AbortSignal,
 ) => Promise<readonly EventData[]>;
+export type ProjectHome =
+  | { status: "none" | "ambiguous" }
+  | { status: "home"; project: Entity };
 
 export function entityFromEvent(event: EventData): Entity | undefined {
   const ds = values(event, "d");
@@ -156,6 +160,9 @@ export function authoritativeProjects(
 
 /** The host supplies verified, principal-bound reads. No feature can pick an origin or signer. */
 export function projectDestinations(read: Read) {
+  const homes = new ByteLru<ProjectHome>(64, 1024 * 1024);
+  const attempts = new Map<string, object>();
+  let homeEpoch = 0;
   async function surviving(entities: Entity[], signal: AbortSignal) {
     if (!entities.length) return [];
     const authors = [...new Set(entities.map((entity) => entity.owner))];
@@ -213,46 +220,72 @@ export function projectDestinations(read: Read) {
     return entity;
   }
   return {
+    peekHome: (channelId: string) => homes.peek(channelId),
+    clearHomes() {
+      homeEpoch++;
+      attempts.clear();
+      homes.clear();
+    },
     /** Only a complete read is evidence of "none"; a capped read throws. */
-    async home(
-      channelId: string,
-      signal: AbortSignal,
-    ): Promise<
-      { status: "none" | "ambiguous" } | { status: "home"; project: Entity }
-    > {
-      const events = await read(
-        [30621, 30617].map((kind) => ({
-          kinds: [kind],
-          "#buzz-channel": [channelId],
-          limit: 100,
-        })),
-        signal,
-      );
-      if (
-        [30621, 30617].some(
-          (kind) => events.filter((e) => e.kind === kind).length >= 100,
+    async home(channelId: string, signal: AbortSignal): Promise<ProjectHome> {
+      signal.throwIfAborted();
+      const attempt = {};
+      const epoch = homeEpoch;
+      attempts.set(channelId, attempt);
+      try {
+        const events = await read(
+          [30621, 30617].map((kind) => ({
+            kinds: [kind],
+            "#buzz-channel": [channelId],
+            limit: 100,
+          })),
+          signal,
+        );
+        if (
+          [30621, 30617].some(
+            (kind) => events.filter((e) => e.kind === kind).length >= 100,
+          )
         )
-      )
-        throw new EntityFailure("unavailable");
-      const heads = new Map<string, EventData>();
-      for (const event of events) {
-        const address = `${event.kind}:${event.pubkey}:${value(event, "d")}`;
-        heads.set(address, newer(heads.get(address), event));
+          throw new EntityFailure("unavailable");
+        const heads = new Map<string, EventData>();
+        for (const event of events) {
+          const address = `${event.kind}:${event.pubkey}:${value(event, "d")}`;
+          heads.set(address, newer(heads.get(address), event));
+        }
+        const matches = authoritativeProjects(
+          [...heads.values()],
+          [...heads.values()],
+          channelId,
+        ).map(entityFromEvent);
+        // ACP would still name it; Projects cannot open it, so fail visibly.
+        if (matches.some((project) => !project))
+          throw new EntityFailure("unavailable");
+        // Stricter than ACP: an owner-deleted project is not a home here.
+        const [project, ...others] = await surviving(
+          matches as Entity[],
+          signal,
+        );
+        const result: ProjectHome = !project
+          ? { status: "none" }
+          : others.length
+            ? { status: "ambiguous" }
+            : { status: "home", project };
+        signal.throwIfAborted();
+        if (epoch !== homeEpoch)
+          throw new DOMException("Project cache cleared", "AbortError");
+        if (attempts.get(channelId) === attempt) homes.set(channelId, result);
+        return result;
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          epoch === homeEpoch &&
+          attempts.get(channelId) === attempt
+        )
+          homes.delete(channelId);
+        throw error;
+      } finally {
+        if (attempts.get(channelId) === attempt) attempts.delete(channelId);
       }
-      const matches = authoritativeProjects(
-        [...heads.values()],
-        [...heads.values()],
-        channelId,
-      ).map(entityFromEvent);
-      // ACP would still name it; Projects cannot open it, so fail visibly.
-      if (matches.some((project) => !project))
-        throw new EntityFailure("unavailable");
-      // Stricter than ACP: an owner-deleted project is not a home here.
-      const [project, ...others] = await surviving(matches as Entity[], signal);
-      if (!project) return { status: "none" };
-      return others.length
-        ? { status: "ambiguous" }
-        : { status: "home", project };
     },
     async list(signal: AbortSignal) {
       const events = await read(

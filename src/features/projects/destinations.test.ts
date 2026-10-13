@@ -533,6 +533,104 @@ describe("authoritative project home (parity with ACP prompt_project.rs)", () =>
     );
   const signal = () => new AbortController().signal;
 
+  it.each(["none", "home", "ambiguous"] as const)(
+    "retains %s per session and replaces it only after the next check completes",
+    async (status) => {
+      const events =
+        status === "none"
+          ? []
+          : [
+              channelRepo,
+              home("one"),
+              ...(status === "ambiguous" ? [home("two")] : []),
+            ];
+      const { read, destinations } = fixture(events);
+      const first = await destinations.home(CHANNEL, signal());
+      expect(first.status).toBe(status);
+      expect(destinations.peekHome(CHANNEL)).toEqual(first);
+      expect(fixture(events).destinations.peekHome(CHANNEL)).toBeUndefined();
+      let release = (_events: RelayEvent[]) => {};
+      const gate = new Promise<RelayEvent[]>((resolve) => {
+        release = resolve;
+      });
+      read.mockImplementationOnce(() => gate);
+      const next = destinations.home(CHANNEL, signal());
+      try {
+        expect(destinations.peekHome(CHANNEL)).toEqual(first);
+      } finally {
+        release([]);
+      }
+      await expect(next).resolves.toEqual({ status: "none" });
+      expect(destinations.peekHome(CHANNEL)).toEqual({ status: "none" });
+    },
+  );
+
+  it.each(["failure", "cancel", "clear"])(
+    "handles %s without retaining an invalid completion",
+    async (outcome) => {
+      const { read, destinations } = fixture([channelRepo, home("one")]);
+      const first = await destinations.home(CHANNEL, signal());
+      let release = (_events: RelayEvent[]) => {};
+      let fail = (_error: Error) => {};
+      const gate = new Promise<RelayEvent[]>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
+      read.mockImplementationOnce(() => gate);
+      const controller = new AbortController();
+      const next = destinations.home(CHANNEL, controller.signal);
+      const rejected = expect(next).rejects.toBeInstanceOf(Error);
+      if (outcome === "cancel") controller.abort();
+      if (outcome === "clear") destinations.clearHomes();
+      if (outcome === "failure") fail(new Error("offline"));
+      else release([]);
+      await rejected;
+      expect(destinations.peekHome(CHANNEL)).toEqual(
+        outcome === "cancel" ? first : undefined,
+      );
+    },
+  );
+
+  it.each(["success", "failure", "cancel"])(
+    "an older %s cannot replace or erase a newer result",
+    async (outcome) => {
+      const { read, destinations } = fixture([channelRepo, home("one")]);
+      let release = (_events: RelayEvent[]) => {};
+      let fail = (_error: Error) => {};
+      const gate = new Promise<RelayEvent[]>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
+      read.mockImplementationOnce(() => gate);
+      const controller = new AbortController();
+      const older = destinations.home(CHANNEL, controller.signal);
+      const newer = await destinations.home(CHANNEL, signal());
+      if (outcome === "success") {
+        release([]);
+        await older;
+      } else {
+        const rejected = expect(older).rejects.toBeInstanceOf(Error);
+        if (outcome === "cancel") {
+          controller.abort();
+          release([]);
+        } else fail(new Error("offline"));
+        await rejected;
+      }
+      expect(destinations.peekHome(CHANNEL)).toEqual(newer);
+    },
+  );
+
+  it("bounds retained homes by count and bytes without changing completed results", async () => {
+    const { destinations } = fixture([]);
+    for (let i = 0; i < 65; i++) await destinations.home(String(i), signal());
+    expect(destinations.peekHome("0")).toBeUndefined();
+    expect(destinations.peekHome("64")).toEqual({ status: "none" });
+    const large = event(30621, home("large").tags, "x".repeat(1024 * 1024));
+    const oversized = fixture([channelRepo, large]).destinations;
+    expect((await oversized.home(CHANNEL, signal())).status).toBe("home");
+    expect(oversized.peekHome(CHANNEL)).toBeUndefined();
+  });
+
   it("reads by #buzz-channel and resolves one surviving home", async () => {
     const { read, destinations } = fixture([
       channelRepo,

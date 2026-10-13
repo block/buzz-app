@@ -67,7 +67,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
-import type { Entity } from "../projects/destinations";
+import type { Entity, ProjectHome } from "../projects/destinations";
 
 composerDOMFixture();
 
@@ -5025,6 +5025,7 @@ describe("project resource picker", () => {
     home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
       Promise.resolve({ status: "home", project }),
     issues: readonly (typeof item)[] = [item],
+    cached?: ProjectHome,
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -5046,7 +5047,14 @@ describe("project resource picker", () => {
       },
     );
     const homes = vi.fn(home);
-    Object.assign(h.session as object, { projects: { home: homes, load } });
+    Object.assign(h.session as object, {
+      projects: {
+        home: homes,
+        load,
+        peekHome: (channelId: string) =>
+          channelId === "channel" ? cached : undefined,
+      },
+    });
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "resources",
@@ -5453,6 +5461,128 @@ describe("project resource picker", () => {
       expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
     );
   });
+
+  it.each(["formatting", "channel"])(
+    "keeps a known project visible but unusable after %s remount, then preserves ambiguity and retry",
+    async (action) => {
+      const reads: ReturnType<typeof deferred<ProjectHome>>[] = [];
+      const p = picker(
+        () => {
+          const read = deferred<ProjectHome>();
+          reads.push(read);
+          return read.promise;
+        },
+        undefined,
+        { status: "home", project },
+      );
+      const trigger = () =>
+        screen.getByRole("button", { name: "Add issue or pull request" });
+      try {
+        await waitFor(() => expect(reads.length).toBeGreaterThan(0));
+        expect(trigger()).toBeVisible();
+        expect(trigger()).toBeDisabled();
+        await act(async () => {
+          for (const read of reads) read.resolve({ status: "home", project });
+        });
+        expect(trigger()).toBeEnabled();
+        if (action === "formatting") {
+          await p.h.user.click(
+            screen.getByRole("button", { name: "Toggle formatting" }),
+          );
+          const close = await screen.findByRole("button", {
+            name: "Close formatting",
+          });
+          await waitFor(() =>
+            expect(
+              screen.queryByRole("button", {
+                name: "Toggle formatting",
+                hidden: true,
+              }),
+            ).toBeNull(),
+          );
+          await p.h.user.click(close);
+        } else {
+          p.h.retarget({ channelId: "other" });
+          await waitFor(() =>
+            expect(p.homes).toHaveBeenCalledWith(
+              "other",
+              expect.any(AbortSignal),
+            ),
+          );
+          await act(async () => reads.at(-1)?.resolve({ status: "none" }));
+          p.h.retarget({ channelId: "channel" });
+        }
+        await waitFor(() =>
+          expect(
+            p.homes.mock.calls.filter(([id]) => id === "channel").length,
+          ).toBeGreaterThan(1),
+        );
+        expect(trigger()).toBeVisible();
+        expect(trigger()).toBeDisabled();
+        fireEvent.click(trigger());
+        expect(
+          screen.queryByRole("dialog", { name: "Add issue or pull request" }),
+        ).toBeNull();
+        await act(async () => reads.at(-1)?.resolve({ status: "ambiguous" }));
+        await p.open();
+        expect(
+          await screen.findByText(/belongs to more than one project/),
+        ).toBeVisible();
+        expect(screen.queryByRole("button", { name: row })).toBeNull();
+        await p.h.user.click(
+          screen.getByRole("button", { name: "Retry project" }),
+        );
+        expect(
+          screen.queryByRole("button", { name: "Add issue or pull request" }),
+        ).toBeNull();
+        await act(async () =>
+          reads.at(-1)?.resolve({ status: "home", project }),
+        );
+        expect(await screen.findByRole("button", { name: row })).toBeVisible();
+      } finally {
+        await act(async () => {
+          for (const read of reads) read.resolve({ status: "none" });
+        });
+      }
+    },
+  );
+
+  it.each(["none", "ambiguous", "error"] as const)(
+    "a warm project is replaced by the completed %s state",
+    async (outcome) => {
+      const read = deferred<ProjectHome>();
+      const p = picker(() => read.promise, undefined, {
+        status: "home",
+        project,
+      });
+      await waitFor(() => expect(p.homes).toHaveBeenCalled());
+      expect(
+        screen.getByRole("button", { name: "Add issue or pull request" }),
+      ).toBeDisabled();
+      await act(async () => {
+        if (outcome === "error") read.reject(new Error("offline"));
+        else read.resolve({ status: outcome });
+      });
+      if (outcome === "none") {
+        expect(
+          screen.queryByRole("button", { name: "Add issue or pull request" }),
+        ).toBeNull();
+      } else {
+        await p.open();
+        expect(
+          screen.getByText(
+            outcome === "ambiguous"
+              ? /belongs to more than one project/
+              : /Could not load this channel's project/,
+          ),
+        ).toBeVisible();
+        expect(
+          screen.getByRole("button", { name: "Retry project" }),
+        ).toBeEnabled();
+        expect(screen.queryByRole("button", { name: row })).toBeNull();
+      }
+    },
+  );
 });
 
 it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {

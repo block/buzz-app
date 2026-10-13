@@ -162,7 +162,12 @@ export const groups: Group[] = [
         "emoji-wrapped",
         "Wrapped emoji",
         "Large emoji have enough line space when they wrap.",
-        "🎉 🚀 👍🏽 👨‍👩‍👧‍👦 🇦🇺 1️⃣ 🎉 🚀 👍🏽 👨‍👩‍👧‍👦 🇦🇺 1️⃣",
+        "🎉 :landscape: 🚀 👍🏽 :landscape: 👨‍👩‍👧‍👦 🇦🇺 :landscape: 1️⃣ 🎉 :landscape: 🚀 👍🏽 :landscape: 👨‍👩‍👧‍👦 🇦🇺 :landscape: 1️⃣",
+        {
+          emoji: [
+            { shortcode: "landscape", url: "https://fixture.test/landscape" },
+          ],
+        },
       ),
     ],
   },

@@ -78,17 +78,49 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
         const emoji = page.locator(
           '[data-message-id="emoji-wrapped"] [data-single-emoji]',
         );
-        const space = await emoji.evaluate((el) => {
-          const style = getComputedStyle(el);
-          const context = document.createElement("canvas").getContext("2d");
-          context.font = style.font;
-          const ink = context.measureText(el.textContent);
+        await emoji.scrollIntoViewIfNeeded();
+        await expect(emoji.locator("img")).toHaveCount(6);
+        await expect
+          .poll(() =>
+            emoji
+              .locator("img")
+              .evaluateAll((images) =>
+                images.every(
+                  (image) => image.complete && image.naturalWidth > 0,
+                ),
+              ),
+          )
+          .toBe(true);
+        await page.evaluate(() => document.fonts.ready);
+        const layout = await emoji.evaluate((el) => {
+          const paragraph = el.getBoundingClientRect();
           return {
-            line: Number.parseFloat(style.lineHeight),
-            ink: ink.actualBoundingBoxAscent + ink.actualBoundingBoxDescent,
+            top: paragraph.top,
+            bottom: paragraph.bottom,
+            line: Number.parseFloat(getComputedStyle(el).minHeight),
+            images: [...el.querySelectorAll("img")].map((image) => {
+              const box = image.getBoundingClientRect();
+              return {
+                top: box.top,
+                bottom: box.bottom,
+                left: box.left,
+                right: box.right,
+              };
+            }),
           };
         });
-        expect(space.line).toBeGreaterThanOrEqual(space.ink);
+        for (const image of layout.images) {
+          expect(image.top).toBeGreaterThanOrEqual(layout.top);
+          expect(image.bottom).toBeLessThanOrEqual(layout.bottom);
+          expect(image.left).toBeGreaterThanOrEqual(0);
+          expect(image.right).toBeLessThanOrEqual(width);
+        }
+        const lines = [...new Set(layout.images.map((image) => image.top))];
+        if (width === 390) expect(lines.length).toBeGreaterThan(1);
+        for (let index = 1; index < lines.length; index++)
+          expect(lines[index] - lines[index - 1]).toBeGreaterThanOrEqual(
+            layout.line,
+          );
       }
     }
   }

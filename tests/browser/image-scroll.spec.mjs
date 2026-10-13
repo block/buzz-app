@@ -480,19 +480,42 @@ test("decoded image resizing preserves reading and bottom following across remou
       expect(await originalNode.evaluate((node) => node.isConnected)).toBe(
         false,
       );
+      // A fraction of scroll extent can land on a text-only row. Position a
+      // partially visible image while every remaining decode is still held.
+      const readingImageId = await feed.evaluate((element) => {
+        const viewport = element.getBoundingClientRect();
+        const image = [
+          ...element.querySelectorAll("[data-media-preview] img"),
+        ].find((image) => {
+          const bounds = image.getBoundingClientRect();
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+        });
+        if (!image) throw new Error("No image intersects the reading viewport");
+        const bounds = image.getBoundingClientRect();
+        element.scrollTop += bounds.top + bounds.height / 2 - viewport.top;
+        return image.closest("[data-message-id]").dataset.messageId;
+      });
+      await settle(page, feed);
       const visible = await feed.evaluate((element) => {
         const top = element.getBoundingClientRect().top;
         const row = [...element.querySelectorAll("[data-message-id]")].find(
           (row) => row.getBoundingClientRect().bottom > top,
         );
         const image = row.querySelector("[data-media-preview] img");
+        const bounds = image?.getBoundingClientRect();
         return {
           id: row.dataset.messageId,
           top: row.getBoundingClientRect().top,
           name: image ? new URL(image.src).pathname.slice(1, -4) : null,
+          imageTop: bounds?.top,
+          imageBottom: bounds?.bottom,
+          viewportTop: top,
         };
       });
+      expect(visible.id).toBe(readingImageId);
       expect(visible.name).not.toBeNull();
+      expect(visible.imageTop).toBeLessThan(visible.viewportTop);
+      expect(visible.imageBottom).toBeGreaterThan(visible.viewportTop);
       const delayed = await feed
         .locator("[data-media-preview] img")
         .evaluateAll((images) =>

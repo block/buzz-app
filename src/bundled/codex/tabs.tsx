@@ -117,19 +117,10 @@ export class CodexProvider {
     try {
       const data = await catalog(this.spawn, abort.signal);
       if (this.abort === abort) {
-        const defaults =
-          this.state.defaults.model &&
-          !data.models.some(
-            (model) => model.model === this.state.defaults.model,
-          )
-            ? Object.freeze({ model: "", effort: "" })
-            : this.state.defaults;
-        if (defaults !== this.state.defaults) this.writeDefaults(defaults);
         this.set({
           readiness: "ready",
           checking: false,
           data,
-          defaults,
           error: "",
         });
       }
@@ -166,14 +157,14 @@ export class CodexProvider {
   resolve(raw: unknown): Config {
     const explicit = readConfig(raw);
     const inheritedModel = this.state.defaults.model;
-    const model =
-      explicit.model ||
-      (inheritedModel && this.state.data && !this.model(inheritedModel)
-        ? ""
-        : inheritedModel);
+    const unavailable = Boolean(
+      inheritedModel && this.state.data && !this.model(inheritedModel),
+    );
+    const model = explicit.model || (unavailable ? "" : inheritedModel);
     if (explicit.effort) return { ...explicit, model };
     const selected = this.model(model);
-    const preferred = this.state.defaults.effort;
+    const preferred =
+      unavailable && !explicit.model ? "" : this.state.defaults.effort;
     const effort = !preferred
       ? ""
       : !this.state.data
@@ -344,6 +335,17 @@ export function createTabs(
       : nativeModel;
     const efforts = [
       { value: "", label: codexDefaultEffortLabel("", selected) },
+      ...(draft.effort &&
+      !selected?.supportedReasoningEfforts.some(
+        (effort) => effort.reasoningEffort === draft.effort,
+      )
+        ? [
+            {
+              value: draft.effort,
+              label: `${effortName(draft.effort)} (unavailable)`,
+            },
+          ]
+        : []),
       ...(selected?.supportedReasoningEfforts.map((effort) => ({
         value: effort.reasoningEffort,
         label: effortName(effort.reasoningEffort),
@@ -405,6 +407,15 @@ export function createTabs(
                       ? "Following Codex's recommendation"
                       : undefined,
                   },
+                  ...(draft.model &&
+                  !data?.models.some((model) => model.model === draft.model)
+                    ? [
+                        {
+                          value: draft.model,
+                          label: `${draft.model} (unavailable)`,
+                        },
+                      ]
+                    : []),
                   ...(data?.models.map((model) => ({
                     value: model.model,
                     label: model.displayName,

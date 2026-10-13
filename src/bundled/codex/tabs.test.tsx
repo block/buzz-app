@@ -319,23 +319,55 @@ it("applies provider precedence without rewriting records and falls back for inc
   const invalid = new CodexProvider(f.spawn, localStorage);
   expect(invalid.resolve(defaults)).toEqual(defaults);
 });
-it("removes a stored provider model that disappeared before agents resolve it", async () => {
+it("falls back for an unavailable provider default and restores it when the catalog recovers", async () => {
   localStorage.setItem(
     "buzz.codex.provider-defaults.v1",
-    JSON.stringify({ version: 1, model: "retired-model", effort: "high" }),
+    JSON.stringify({ version: 1, model: "model-a", effort: "high" }),
   );
   const f = fixture();
   expect(f.provider.resolve(defaults)).toMatchObject({
-    model: "retired-model",
+    model: "model-a",
     effort: "high",
   });
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing host fixture");
+  f.spawn.mockImplementationOnce((id, options) =>
+    spawn(id, {
+      ...options,
+      onStdout: (data) => {
+        const wire = JSON.parse(data);
+        if (Array.isArray(wire.result?.data))
+          wire.result.data = wire.result.data.filter(
+            (model: { model: string }) => model.model !== "model-a",
+          );
+        options?.onStdout?.(`${JSON.stringify(wire)}\n`);
+      },
+    }),
+  );
   await f.provider.check();
   expect(f.provider.resolve(defaults)).toEqual(defaults);
+  expect(f.provider.resolve({ ...defaults, model: "model-b" })).toMatchObject({
+    model: "model-b",
+    effort: "medium",
+  });
   expect(
     JSON.parse(
       localStorage.getItem("buzz.codex.provider-defaults.v1") ?? "null",
     ),
-  ).toMatchObject({ model: "", effort: "" });
+  ).toMatchObject({ model: "model-a", effort: "high" });
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(screen.getByLabelText("Default model")).toHaveTextContent(
+    "model-a (unavailable)",
+  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "High (unavailable)",
+  );
+  cleanup();
+  await f.provider.check();
+  expect(f.provider.resolve(defaults)).toMatchObject({
+    model: "model-a",
+    effort: "high",
+  });
 });
 it("keeps model-default provider thinking dynamic across save and reopen", async () => {
   const f = fixture();

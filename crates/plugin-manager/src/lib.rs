@@ -165,6 +165,24 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         },
         ..HostGrants::default()
     });
+    let mut claude: Manifest = serde_json::from_str(include_str!(
+        "../../../src/bundled/claude-code/manifest.json"
+    ))
+    .expect("claude manifest");
+    // Its manifest names the script its processes run; the script itself is
+    // compiled in, so `bash` runs this exact text and no file on disk.
+    for process in claude.host.iter_mut().flat_map(|host| &mut host.processes) {
+        if process.program == "bash" && process.args.first().is_some_and(|arg| arg == "claude.sh") {
+            process.args.splice(
+                0..0,
+                [
+                    "-c",
+                    include_str!("../../../src/bundled/claude-code/claude.sh"),
+                ]
+                .map(String::from),
+            );
+        }
+    }
     vec![
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
@@ -215,10 +233,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/claude-code/manifest.json"
-        ))
-        .expect("claude manifest"),
+        claude,
         serde_json::from_str(include_str!("../../../src/bundled/codex/manifest.json"))
             .expect("codex manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
@@ -1057,6 +1072,25 @@ mod tests {
     };
     use std::collections::BTreeMap;
     use std::fs;
+
+    #[test]
+    fn bundled_claude_processes_run_the_compiled_script() {
+        let claude = bundled_manifests()
+            .into_iter()
+            .find(|manifest| manifest.id == "buzz.claude-code")
+            .unwrap();
+        let script = include_str!("../../../src/bundled/claude-code/claude.sh");
+        for (id, command) in [("claude", "run"), ("install", "install"), ("use", "use")] {
+            let process = claude
+                .host
+                .iter()
+                .flat_map(|host| &host.processes)
+                .find(|process| process.id == id)
+                .unwrap();
+            assert_eq!(process.program, "bash");
+            assert_eq!(process.args, ["-c", script, "claude.sh", command]);
+        }
+    }
 
     #[test]
     fn native_catalog_matches_desktop_bundles() {

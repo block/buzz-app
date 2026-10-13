@@ -1149,6 +1149,7 @@ function ChannelWorkspace({
     <SessionColumn enabled={flatSession}>
       <MessageManagementStatus />
       <div
+        data-channel-history
         ref={historyContainer}
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >

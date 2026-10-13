@@ -2273,7 +2273,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 /* Leave a separate floating lane when the composer has an activity pill. */
 :is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
-.jumpToLatest {
+.jumpToLatest,
+[data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
+  > .feed
+  .jumpToLatest {
   top: calc(100% - var(--size-control-sm) - 2 * var(--space-6));
 }
 .jumpToLatestSurface {

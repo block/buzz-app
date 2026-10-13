@@ -330,8 +330,8 @@ function MessageRowContent({
     ? { ...shown, content: timeReply.content }
     : shown;
   const attachmentOnly =
-    !displayRow.content.trim() &&
-    !displayRow.diff &&
+    !row.content.trim() &&
+    !row.diff &&
     !row.agentEnvelope &&
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
@@ -706,8 +706,11 @@ function MessageRowContent({
             )}
             {!attachmentOnly && (
               <div
-                className={styles.messageBubble}
-                data-own={(!!viewer && row.authorId === viewer) || undefined}
+                className={shownRow ? undefined : styles.messageBubble}
+                data-own={
+                  (!shownRow && !!viewer && row.authorId === viewer) ||
+                  undefined
+                }
                 data-long-text={
                   row.content.length > 160 ||
                   row.content.includes("\n") ||
@@ -1146,6 +1149,8 @@ function AgentsMessageRow(props: MessageRowProps) {
               shownRow={body}
               day={false}
               layout="continuation"
+              stackPrevious
+              stackNext
             />
           </div>
         )}

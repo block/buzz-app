@@ -2342,6 +2342,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin-top: 0;
 }
 
+/* The continuation clock follows the first line inside the bubble's inset. */
+.message[data-stack-previous]:has(.messageBubble) .continuationTime {
+  margin-block-start: var(--space-2);
+}
+
 .messageAvatar {
   user-select: none;
   position: absolute;

@@ -1029,7 +1029,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
     "aria-selected",
     "true",
   );
-  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await openAction(user, "Teams");
   expect(screen.getByText("Night Shift")).toBeInTheDocument();
 });
 

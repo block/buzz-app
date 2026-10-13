@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
@@ -26,21 +26,26 @@ const models: ModelChoice[] = [
   { id: "opus", label: "Opus", description: "Most capable" },
 ];
 
-function setup(value = "", props: { compact?: boolean } = {}) {
+function setup(
+  value = "",
+  props: { compact?: boolean; allowCustomModel?: boolean } = {},
+) {
   const onChange = vi.fn();
   const view = render(
     <ModelPicker
       models={models}
+      allowCustomModel={props.allowCustomModel ?? true}
       value={value}
       defaultLabel="Default model"
       onChange={onChange}
-      {...props}
+      compact={props.compact ?? false}
     />,
   );
   return { onChange, view, user: userEvent.setup() };
 }
 
-const input = () => screen.getByRole("combobox", { name: "Model" });
+const input = () =>
+  screen.getByRole<HTMLInputElement>("combobox", { name: "Model" });
 
 it("shows the default's label when no model is chosen", () => {
   setup("");
@@ -68,6 +73,26 @@ it("picks the default as an empty value", async () => {
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
 });
 
+it.each([
+  ["field", () => input()],
+  [
+    "browse button",
+    () => screen.getByRole("button", { name: "Browse models" }),
+  ],
+] as const)(
+  "replaces the full value after opening from the %s",
+  async (_name, opener) => {
+    const { user } = setup("opus");
+    await user.click(opener());
+    await waitFor(() => {
+      expect(input().selectionStart).toBe(0);
+      expect(input().selectionEnd).toBe("Opus".length);
+    });
+    await user.keyboard("x");
+    expect(input()).toHaveValue("x");
+  },
+);
+
 it("commits a typed custom ID on Enter", async () => {
   const { onChange, user } = setup("");
   await user.clear(input());
@@ -91,13 +116,44 @@ it("commits a typed label as that model's ID", async () => {
   expect(onChange).toHaveBeenLastCalledWith("opus");
 });
 
-it("shows a saved value that is not listed as a custom model", async () => {
-  const { user } = setup("claude-old-1");
-  expect(input()).toHaveValue("claude-old-1");
-  await user.click(input());
-  const option = await screen.findByRole("option", { name: /claude-old-1/ });
-  expect(option).toHaveTextContent("Custom model");
-  expect(option).toHaveAttribute("aria-selected", "true");
+it.each([true, false])(
+  "shows a saved unlisted value as unavailable when custom entry is %s",
+  async (allowCustomModel) => {
+    const { user } = setup("claude-old-1", { allowCustomModel });
+    expect(input()).toHaveValue("claude-old-1");
+    await user.click(input());
+    const option = await screen.findByRole("option", { name: /claude-old-1/ });
+    expect(option).toHaveTextContent("Unavailable model");
+    expect(option).toHaveAttribute("aria-selected", "true");
+  },
+);
+
+it("filters and picks listed models when custom entry is disabled", async () => {
+  const { onChange, user } = setup("", { allowCustomModel: false });
+  await user.clear(input());
+  await user.type(input(), "Op");
+  expect(screen.queryByRole("option", { name: /Sonnet/ })).toBeNull();
+  await user.click(await screen.findByRole("option", { name: /Opus/ }));
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
+});
+
+it("restores the selection after an unmatched Enter in catalog-only mode", async () => {
+  const { onChange, user } = setup("", { allowCustomModel: false });
+  await user.clear(input());
+  await user.type(input(), "zzz-unlisted");
+  expect(await screen.findByText("No matching models.")).toBeVisible();
+  await user.keyboard("{Enter}");
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input()).toHaveValue("Default model");
+});
+
+it("restores the selection after unmatched text loses focus in catalog-only mode", async () => {
+  const { onChange, user } = setup("opus", { allowCustomModel: false });
+  await user.clear(input());
+  await user.type(input(), "zzz-unlisted");
+  await user.tab();
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input()).toHaveValue("Opus");
 });
 
 it("offers a typed ID that matches nothing as a custom model", async () => {
@@ -112,6 +168,7 @@ it("is disabled as a whole", () => {
   render(
     <ModelPicker
       models={models}
+      allowCustomModel
       value=""
       defaultLabel="Default model"
       onChange={vi.fn()}

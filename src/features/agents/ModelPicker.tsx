@@ -1,5 +1,5 @@
 // A type's model choice, shared by agent types for the New agent dialog and
-// their settings: a list to pick from, or any model ID typed in.
+// their settings. Each type decides whether its catalog also accepts typed IDs.
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   ClaudeLogoIcon,
@@ -31,6 +31,7 @@ export function ModelIcon({ model }: { model: string }) {
  * `compact` sizes it to its text, for the New agent dialog's corner. */
 export function ModelPicker({
   models,
+  allowCustomModel,
   value,
   defaultLabel,
   defaultDescription,
@@ -41,6 +42,8 @@ export function ModelPicker({
   description,
 }: {
   models: readonly ModelChoice[];
+  /** Whether text absent from `models` may be committed as its model ID. */
+  allowCustomModel: boolean;
   value: string;
   defaultLabel: string;
   defaultDescription?: string;
@@ -52,6 +55,7 @@ export function ModelPicker({
 }) {
   const [query, setQuery] = useState<string | null>(null);
   const highlighted = useRef<ModelChoice | null>(null);
+  const control = useRef<HTMLDivElement>(null);
   const measure = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState(0);
   const fallback: ModelChoice = {
@@ -61,9 +65,13 @@ export function ModelPicker({
   };
   const items: ModelChoice[] = [fallback, ...models];
   if (value && !items.some((model) => model.id === value))
-    items.push({ id: value, label: value, description: "Custom model" });
+    items.push({ id: value, label: value, description: "Unavailable model" });
   const custom = query?.trim();
-  if (custom && !items.some((m) => m.id === custom || m.label === custom))
+  if (
+    allowCustomModel &&
+    custom &&
+    !items.some((m) => m.id === custom || m.label === custom)
+  )
     items.push({ id: custom, label: custom, description: "Custom model" });
   const shown =
     query === null
@@ -89,11 +97,12 @@ export function ModelPicker({
     const match = items.find(
       (model) => model.id === query || model.label === query,
     );
-    onChange((match?.id ?? query).trim());
+    if (match) onChange(match.id);
+    else if (allowCustomModel) onChange(query.trim());
     setQuery(null);
   };
   return (
-    <div className={compact ? styles.compactModel : undefined}>
+    <div ref={control} className={compact ? styles.compactModel : undefined}>
       {compact && (
         <span ref={measure} aria-hidden="true" className={styles.measure}>
           {text}
@@ -119,6 +128,10 @@ export function ModelPicker({
             setQuery(next);
         }}
         onOpenChange={(open, details) => {
+          if (open && details.reason === "input-press")
+            queueMicrotask(() =>
+              control.current?.querySelector("input")?.select(),
+            );
           if (!open && details.reason === "escape-key") setQuery(null);
         }}
         onValueChange={(model) => {
@@ -130,11 +143,20 @@ export function ModelPicker({
           label="Model"
           labelVisibility={compact ? "hidden" : "visible"}
           triggerLabel="Browse models"
+          onBrowse={() => {
+            // Base UI opens on mousedown; select after its click finishes.
+            setTimeout(
+              () => control.current?.querySelector("input")?.select(),
+              0,
+            );
+          }}
           loading={loading}
           description={compact ? undefined : description}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           appearance={compact ? "chip" : "field"}
-          placeholder="Choose or enter a model"
+          placeholder={
+            allowCustomModel ? "Choose or enter a model" : "Choose a model"
+          }
           style={
             compact
               ? { width: width ? `${Math.ceil(width) + 2}px` : "12ch" }
@@ -155,7 +177,11 @@ export function ModelPicker({
         />
         <Combobox.Popup
           className={styles.modelOptions}
-          empty="Type a model ID to use a custom model."
+          empty={
+            allowCustomModel
+              ? "Type a model ID to use a custom model."
+              : "No matching models."
+          }
         >
           <Combobox.List>
             {(model: ModelChoice) => (

@@ -68,6 +68,15 @@ test("video speed options escape the thread and restore focus after selection an
         height: "400px",
       });
     });
+  const scroller = page.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
+  await expect(scroller).toHaveAttribute("aria-busy", "false");
+  // Let initial positioning and the resize observers finish before choosing
+  // the menu's scroll baseline; their correction would otherwise overwrite it.
+  await page.evaluate(() => document.fonts.ready);
+  await settle(page, scroller);
   await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
     // WebKit truncates fractional scroll requests. Round the final position so

@@ -21,6 +21,7 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { SidebarFrame } from "./SidebarFrame";
+import { SidebarList } from "./SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuGroup,
@@ -140,17 +141,6 @@ export function ChannelSidebar(props: Props) {
         </div>
       )}
     </SidebarBoundary>
-  );
-}
-
-// Mirrors SidebarUnread's list geometry, so page rows hold still across connection states.
-function SidebarList({ children }: { children: ReactNode }) {
-  return (
-    <div className={styles.channelListFrame}>
-      <div className={styles.channelList}>
-        <div className={styles.channelListContent}>{children}</div>
-      </div>
-    </div>
   );
 }
 

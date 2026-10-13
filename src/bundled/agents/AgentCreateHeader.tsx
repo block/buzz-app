@@ -88,6 +88,8 @@ export function AgentCreateHeader({
   }, [view]);
   const [gridSize, setGridSize] = useState({ width: 768, height: 432, gap: 8 });
   useLayoutEffect(() => {
+    if (view === "selected" || view === "collections" || view === "image")
+      return;
     const element = options.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {

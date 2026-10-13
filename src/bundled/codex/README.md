@@ -119,7 +119,8 @@ previous copy stays in use. Switching takes a lock shared by every Buzz build,
 which the system releases when the build holding it stops, and checks the copy
 again once it holds the lock. It keeps the new copy, the previous one and any
 newer one another build may be testing. A mention sent before Buzz has found a
-copy, or while it downloads the first one, waits for it.
+copy, or while it downloads the first one, waits for it. If that download
+failed, a mention tries it again.
 Buzz checks when the agents load and every 6 hours; the first download (about
 130 MB) waits until a Codex agent is running, or **Install Codex** is clicked.
 

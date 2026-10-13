@@ -142,7 +142,12 @@ function releases(
   latest: string,
   { current, broken }: { current?: string; broken?: string } = {},
 ) {
-  const state = { current, fetched: [] as string[], used: [] as string[] };
+  const state = {
+    current,
+    offline: false,
+    fetched: [] as string[],
+    used: [] as string[],
+  };
   const claude = fakeSpawn();
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     const args = options.args ?? [];
@@ -153,8 +158,10 @@ function releases(
       code: 0,
     };
     if (id === "platform") result = { stdout: "Darwin arm64\n", code: 0 };
-    else if (id === "install") state.fetched.push(args.join(" "));
-    else if (id === "use") state.current = args[0];
+    else if (id === "install") {
+      state.fetched.push(args.join(" "));
+      if (state.offline) result = { code: 1 };
+    } else if (id === "use") state.current = args[0];
     else if (args[0] === "--version")
       result = !version
         ? { code: 127 }
@@ -352,4 +359,16 @@ it("holds a delivery that arrives while it first looks for its copy", async () =
   await Promise.all([update, delivery]);
   // Released only once the first copy was in use.
   expect(used).toEqual(["2.1.300"]);
+});
+
+it("tries the first download again when a mention finds no copy", async () => {
+  const disk = releases("2.1.300");
+  const setup = new ClaudeSetup(disk.spawn, disk.request);
+  disk.state.offline = true;
+  await setup.update(true);
+  expect(setup.snapshot().status).toEqual({ state: "missing" });
+  disk.state.offline = false;
+  await setup.installed(new AbortController().signal);
+  expect(disk.state.fetched).toHaveLength(2);
+  expect(disk.state.used).toEqual(["2.1.300"]);
 });

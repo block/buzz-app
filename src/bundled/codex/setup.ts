@@ -224,6 +224,9 @@ export class CodexSetup {
       const status = this.state.status;
       return status !== undefined && status.state !== "missing";
     };
+    // After a first download failed, a mention tries it again.
+    if (!this.holding && this.state.status?.state === "missing")
+      void this.update(true);
     for (let work = this.holding; work && !found(); work = this.holding) {
       const ended = work;
       await new Promise<void>((resolve, reject) => {

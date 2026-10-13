@@ -135,6 +135,7 @@ function releases(
 ) {
   const state = {
     current,
+    offline: false,
     fetched: [] as string[],
     used: [] as string[],
     servers: [] as (ReturnType<typeof appServer> & {
@@ -154,8 +155,10 @@ function releases(
     }
     let result: Result = { code: 0 };
     if (id === "platform") result = { stdout: "Darwin arm64\n", code: 0 };
-    else if (id === "install") state.fetched.push(args.join(" "));
-    else if (id === "use") {
+    else if (id === "install") {
+      state.fetched.push(args.join(" "));
+      if (state.offline) result = { code: 1 };
+    } else if (id === "use") {
       state.current = args[0];
       state.used.push(args.join(" "));
     } else if (args[0] === "--version")
@@ -344,4 +347,16 @@ it("holds a delivery that arrives while it first looks for its copy", async () =
   await Promise.all([update, delivery]);
   // Released only once the first copy was in use.
   expect(used).toEqual(["0.163.0"]);
+});
+
+it("tries the first download again when a mention finds no copy", async () => {
+  const disk = releases("0.163.0");
+  const setup = new CodexSetup(disk.spawn, disk.request);
+  disk.state.offline = true;
+  await setup.update(true);
+  expect(setup.snapshot().status).toEqual({ state: "missing" });
+  disk.state.offline = false;
+  await setup.installed(new AbortController().signal);
+  expect(disk.state.fetched).toHaveLength(2);
+  expect(disk.state.used).toEqual(["0.163.0"]);
 });

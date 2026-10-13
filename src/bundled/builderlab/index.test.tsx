@@ -441,6 +441,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       screen.getByRole("tab", { name: "Instructions" }),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Instructions" }));
     const instructions = await screen.findByRole("textbox", {
       name: "Instructions",
     });

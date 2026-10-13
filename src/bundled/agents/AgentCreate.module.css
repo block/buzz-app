@@ -213,6 +213,7 @@
 
 /* Keep identity compact when the setup fields are visible below it. */
 .setupSurface {
+  container-type: inline-size;
   background: var(--surface-panel);
   border-radius: var(--radius-container);
 }
@@ -276,7 +277,7 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .collection:hover:not(:disabled),
-  .option:hover:not(:disabled) {
+  .option:hover:not(:disabled):not([aria-pressed="true"]) {
     background: var(--affordance-subtle-hover);
     border-color: var(--border-prominent);
   }

@@ -6,11 +6,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import {
-  ClaudeLogoIcon,
-  CodexLogoIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -22,14 +18,9 @@ import styles from "./AgentCreate.module.css";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** The type's mark, recognized from its key or title. */
+/** Use each registered provider's icon in creation and library cards. */
 export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
-  const name = `${type?.key ?? ""} ${type?.title ?? ""}`.toLowerCase();
-  const Icon = name.includes("claude")
-    ? ClaudeLogoIcon
-    : name.includes("codex")
-      ? CodexLogoIcon
-      : RobotIcon;
+  const Icon = type?.icon ?? RobotIcon;
   return <Icon size={16} aria-hidden="true" />;
 }
 
@@ -175,8 +166,6 @@ export function AgentCreateDialog({
             setError("");
           }}
           nameRef={nameField}
-          cornerRef={() => {}}
-          corner={null}
           details={null}
           editing={false}
           avatarNavigationRef={avatarNavigation}

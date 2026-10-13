@@ -382,7 +382,7 @@
     outline-offset: 2px;
   }
   /* A title field: the value set as a page title, with no field around it. */
-  .buzz-input[data-appearance="title"] {
+  .buzz-input:where([data-appearance="title"]) {
     --border: transparent;
     @apply text-title;
     min-height: 3.5rem;

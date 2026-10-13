@@ -3,16 +3,21 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   within,
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
+  AgentProviderSnapshot,
+  AgentViewProps,
   Agents,
   AgentsSnapshot,
   RegisteredAgentType,
@@ -20,6 +25,10 @@ import type {
 } from "../../features/agents/service";
 import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentsPage } from "./AgentsPage";
 
 afterEach(cleanup);
@@ -34,6 +43,7 @@ const agent = (name: string, n: number): Agent => ({
   config: { reply: `${name} says hi` },
   skipped: {},
   timers: {},
+  attentionEnabled: true,
   attention: {
     "interest/default": {
       slug: "interest/default",
@@ -73,25 +83,129 @@ const portable: PortableAgent[] = [
   },
 ];
 
-function setup(saved: Agent[], { shown = true, model = false } = {}) {
+function provider(
+  initial: AgentProviderSnapshot["readiness"],
+  DialogBody: (props: { onClose(): void }) => ReactNode = () => (
+    <p>Provider controls</p>
+  ),
+  attentionLabel = "Set up provider",
+) {
+  let state: AgentProviderSnapshot =
+    initial === "attention"
+      ? { readiness: initial, attentionLabel }
+      : { readiness: initial };
+  let attentionAction: (() => void) | undefined;
+  const listeners = new Set<() => void>();
+  const check = vi.fn(async () => undefined);
+  return {
+    contribution: {
+      snapshot: () => state,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      check,
+      get attentionAction() {
+        return attentionAction;
+      },
+      DialogBody,
+    },
+    check,
+    set(next: AgentProviderSnapshot) {
+      state = next;
+      for (const listener of listeners) listener();
+    },
+    setAttentionAction(next: (() => void) | undefined) {
+      attentionAction = next;
+    },
+  };
+}
+
+function setup(
+  saved: Agent[],
+  {
+    shown = true,
+    model = false,
+    status = "ready" as AgentsSnapshot["status"],
+    more = [] as RegisteredAgentType[],
+    dirtySettings = false,
+    page = {} as {
+      navigation?: PageNavigation;
+      navigator?: Navigation;
+    },
+  } = {},
+) {
   let snapshot: AgentsSnapshot = {
-    status: "ready",
+    status,
     agents: saved,
     running: saved,
     teams: [],
   };
   const listeners = new Set<() => void>();
+  const echoProvider = provider("ready", ({ onClose }) => (
+    <>
+      <p>Echo controls</p>
+      <button type="button" onClick={onClose}>
+        Save defaults
+      </button>
+    </>
+  ));
+  const DirtySettings = ({ agent, save, settingsHost }: AgentViewProps) => {
+    const [reply, setReply] = useState(
+      (agent.config as { reply: string }).reply,
+    );
+    const [error, setError] = useState("");
+    const pendingSave = settingsHost?.pendingSave;
+    return settingsHost ? (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError("");
+          void save({ reply }).catch((reason: unknown) =>
+            setError(String(reason instanceof Error ? reason.message : reason)),
+          );
+        }}
+      >
+        {settingsHost.typeControl?.(true)}
+        <p>Provider settings</p>
+        <label>
+          Reply
+          <input
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+          />
+        </label>
+        {error && <p role="alert">{error}</p>}
+        <button type="submit" disabled={!pendingSave}>
+          Save
+        </button>
+      </form>
+    ) : (
+      <p>Provider settings</p>
+    );
+  };
+  const tabs = dirtySettings
+    ? [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings" as const,
+          component: DirtySettings,
+        },
+      ]
+    : [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }];
   const type = {
     key: "test/echo",
     pluginId: "test",
     revision: "1",
     id: "echo",
     title: "Echo",
+    icon: RobotIcon,
     description: "Says its line.",
+    migrationWarning: "Anything Echo left running will stop.",
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
-    tabs: [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }],
     CreateModel: model
       ? ({
           config,
@@ -111,6 +225,8 @@ function setup(saved: Agent[], { shown = true, model = false } = {}) {
           </button>
         )
       : undefined,
+    provider: echoProvider.contribution,
+    tabs,
     Create: ({
       config,
       onChange,
@@ -126,7 +242,7 @@ function setup(saved: Agent[], { shown = true, model = false } = {}) {
     ),
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
-  const types = [type];
+  const types = [type, ...more];
   const agents = {
     types: () => types,
     snapshot: () => snapshot,
@@ -148,6 +264,36 @@ function setup(saved: Agent[], { shown = true, model = false } = {}) {
     portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
+    previewRetype: vi.fn(
+      () =>
+        ({
+          config: { endpoint: "wss://relay.example" },
+          moved: [],
+          dropped: ["workspace"],
+          settings: [
+            {
+              id: "model",
+              label: "Model",
+              outcome: "reset",
+            },
+            {
+              id: "thinking",
+              label: "Thinking",
+              outcome: "dropped",
+            },
+          ],
+        }) as const,
+    ),
+    retype: vi.fn(async (pubkey, typeKey, change) => {
+      const changed = snapshot.agents.map((saved) =>
+        saved.pubkey === pubkey
+          ? { ...saved, type: typeKey, config: change?.config ?? {} }
+          : saved,
+      );
+      snapshot = { ...snapshot, agents: changed, running: changed };
+      for (const listener of listeners) listener();
+      return ["workspace"] as const;
+    }),
     remove: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
@@ -171,24 +317,24 @@ function setup(saved: Agent[], { shown = true, model = false } = {}) {
     snapshot: () => disconnected,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  render(<AgentsPage agents={agents} relay={relay} />);
+  const view = render(<AgentsPage agents={agents} relay={relay} {...page} />);
   const show = (next: Agent[]) => {
     snapshot = { ...snapshot, agents: next };
     for (const listener of listeners) listener();
   };
-  return { agents, types, show };
+  return { agents, echoProvider, types, show, relay, ...view };
 }
 
 it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1), agent("Bo", 2)]);
-  const grid = screen.getByRole("list", { name: "Agents" });
+  const grid = screen.getByRole("grid", { name: "Agents" });
   expect(within(grid).getByText("Ada says hi")).toBeInTheDocument();
   expect(screen.queryByText("Peek of Ada")).not.toBeInTheDocument();
 
   await user.click(within(grid).getByText("Ada"));
-  expect(screen.getByRole("listitem", { name: /Ada/ })).toHaveAttribute(
-    "data-selected",
+  expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
+    "aria-selected",
     "true",
   );
   expect(screen.getByText("Peek of Ada")).toBeInTheDocument();
@@ -197,7 +343,7 @@ it("peeks at a selected agent beside the grid and follows the arrow keys", async
 
   await user.keyboard("{ArrowRight}");
   expect(screen.getByText("Peek of Bo")).toBeInTheDocument();
-  expect(screen.getByRole("listitem", { name: /Bo/ })).toHaveFocus();
+  expect(screen.getByRole("gridcell", { name: /Bo/ })).toHaveFocus();
 
   await user.keyboard("{Escape}");
   expect(screen.queryByText("Peek of Bo")).not.toBeInTheDocument();
@@ -207,9 +353,9 @@ it("peeks at a selected agent beside the grid and follows the arrow keys", async
 it("opens the build view with the type's tabs and the app's Attention and Memory tabs", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("listitem", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  expect(screen.queryByRole("grid")).not.toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
   expect(tabs).toEqual(["Settings", "Reply", "Attention", "Memory"]);
   expect(
@@ -223,9 +369,255 @@ it("opens the build view with the type's tabs and the app's Attention and Memory
   expect(screen.getByText("Default")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "All agents" }));
-  expect(screen.getByRole("listitem", { name: /Ada/ })).toHaveAttribute(
-    "data-selected",
+  expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
+    "aria-selected",
     "true",
+  );
+});
+
+it("checks active providers in a health submenu and opens their host-owned dialogs", async () => {
+  const user = userEvent.setup();
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    icon: PlugIcon,
+    defaults: () => ({ config: {} }),
+  } as unknown as RegisteredAgentType;
+  const brokenProvider = provider(
+    "attention",
+    () => {
+      throw new Error("Broken controls");
+    },
+    "Repair Broken",
+  );
+  brokenProvider.contribution.check = vi.fn(() => {
+    throw new Error("Broken check");
+  });
+  const broken = {
+    ...relay,
+    key: "test/broken",
+    id: "broken",
+    title: "Broken",
+    provider: brokenProvider.contribution,
+  } as unknown as RegisteredAgentType;
+  const checkingProvider = provider("checking");
+  const checking = {
+    ...relay,
+    key: "test/checking",
+    id: "checking",
+    title: "Checking",
+    provider: checkingProvider.contribution,
+  } as unknown as RegisteredAgentType;
+  try {
+    const { echoProvider } = setup([agent("Ada", 1)], {
+      more: [relay, broken, checking],
+    });
+    const more = screen.getByRole("button", { name: "More agent actions" });
+
+    await user.click(more);
+    const trigger = await screen.findByRole("menuitem", {
+      name: "Provider settings",
+    });
+    await user.hover(trigger);
+    const menu = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
+    await vi.waitFor(() =>
+      expect(menu).not.toHaveAttribute("data-starting-style"),
+    );
+    expect(screen.getAllByRole("menu")).toHaveLength(2);
+    const echo = within(menu).getByRole("menuitem", {
+      name: "Echo, ready",
+    });
+    const relayRow = within(menu).getByRole("menuitem", {
+      name: "Relay, unavailable",
+    });
+    expect(relayRow).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(menu).getByRole("menuitem", {
+        name: "Repair Broken, attention",
+      }),
+    ).toBeEnabled();
+    const checkingRow = within(menu).getByRole("menuitem", {
+      name: "Checking, checking",
+    });
+    expect(checkingRow).toHaveAttribute("aria-disabled", "true");
+    expect(checkingRow).toHaveAttribute("aria-busy", "true");
+    expect(
+      checkingRow.querySelector(".motion-safe\\:animate-spin"),
+    ).toBeVisible();
+    expect(echo.querySelector("svg")).toBeInTheDocument();
+    expect(checkingProvider.check).toHaveBeenCalled();
+
+    fireEvent.click(echo);
+    const dialog = await screen.findByRole("dialog", { name: "Echo" });
+    expect(within(dialog).getByText("Echo controls")).toBeVisible();
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    expect(
+      within(dialog.querySelector("header") as HTMLElement).getAllByRole(
+        "button",
+      ),
+    ).toEqual([close]);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Save defaults" }),
+    );
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
+    );
+    const reopenedProviders = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
+    fireEvent.click(
+      within(reopenedProviders).getByRole("menuitem", {
+        name: "Echo, ready",
+      }),
+    );
+    const reopenedDialog = await screen.findByRole("dialog", { name: "Echo" });
+    act(() => echoProvider.set({ readiness: "attention" }));
+    expect(
+      within(reopenedDialog).queryByRole("button", { name: "Check again" }),
+    ).toBeNull();
+    act(() => echoProvider.set({ readiness: "ready", blocking: true }));
+    await user.keyboard("{Escape}");
+    expect(reopenedDialog).toBeInTheDocument();
+    expect(
+      within(reopenedDialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+    act(() => echoProvider.set({ readiness: "ready" }));
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    const attentionAction = vi.fn();
+    echoProvider.setAttentionAction(attentionAction);
+    act(() =>
+      echoProvider.set({
+        readiness: "attention",
+        attentionLabel: "Log in to Echo",
+      }),
+    );
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
+    );
+    const actionableProviders = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
+    await vi.waitFor(() =>
+      expect(actionableProviders).not.toHaveAttribute("data-starting-style"),
+    );
+    fireEvent.click(
+      within(actionableProviders).getByRole("menuitem", {
+        name: "Log in to Echo, attention",
+      }),
+    );
+    expect(attentionAction).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
+
+    await user.click(more);
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Provider settings" }),
+    );
+    const providers = await screen.findByRole("menu", {
+      name: "Provider settings",
+    });
+    await vi.waitFor(() =>
+      expect(providers).not.toHaveAttribute("data-starting-style"),
+    );
+    fireEvent.click(
+      within(providers).getByRole("menuitem", {
+        name: "Repair Broken, attention",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Provider controls are unavailable.",
+    );
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(more).toHaveFocus());
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+it("restores a provider dialog from page history and writes open and close visits", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const routed = {
+    ...base,
+    route: { version: 1, params: { provider: "test/echo" } },
+  } as const;
+  let current: { id: string; target: OpenTarget } = {
+    id: "base",
+    target: base,
+  };
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = {
+    snapshot: () => ({ entry: current }),
+    open,
+  } as unknown as Navigation;
+  const request = (): PageNavigation => {
+    const navigation = {
+      entryId: current.id,
+      target: current.target,
+      signal: new AbortController().signal,
+      focus: "content" as const,
+      forSession: () => navigation,
+      resolve: () => true,
+      complete: () => true,
+    };
+    return navigation;
+  };
+  const pageView = (agents: Agents, relay: RelayData) => (
+    <AgentsPage
+      agents={agents}
+      relay={relay}
+      navigator={navigator}
+      navigation={request()}
+    />
+  );
+  const page = { navigator, navigation: request() };
+  const view = setup([agent("Ada", 1)], { page });
+
+  await user.click(screen.getByRole("button", { name: "More agent actions" }));
+  await user.hover(
+    await screen.findByRole("menuitem", { name: "Provider settings" }),
+  );
+  const providers = await screen.findByRole("menu", {
+    name: "Provider settings",
+  });
+  fireEvent.click(
+    within(providers).getByRole("menuitem", { name: "Echo, ready" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(routed);
+
+  current = { id: "provider", target: routed };
+  view.unmount();
+  const restored = render(pageView(view.agents, view.relay));
+  expect(await screen.findByRole("dialog", { name: "Echo" })).toBeVisible();
+
+  current = { id: "base", target: base };
+  restored.rerender(pageView(view.agents, view.relay));
+  expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
+
+  current = { id: "provider", target: routed };
+  restored.rerender(pageView(view.agents, view.relay));
+  await user.click(await screen.findByRole("button", { name: "Close" }));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith(base, { replace: true }),
   );
 });
 
@@ -236,10 +628,10 @@ it("shows an agent's picture in the grid, peek and build view", async () => {
   const pictures = () =>
     document.querySelectorAll(`img[src="${picture}"]`).length;
   expect(pictures()).toBe(1);
-  await user.click(screen.getByRole("listitem", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   expect(pictures()).toBe(2);
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  expect(screen.queryByRole("grid")).not.toBeInTheDocument();
   expect(pictures()).toBe(1);
 });
 
@@ -247,7 +639,7 @@ it("edits the picture from the build view and shows why a save failed", async ()
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
   const { agents } = setup([{ ...agent("Ada", 1), picture }]);
-  await user.click(screen.getByRole("listitem", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   agents.save.mockRejectedValueOnce(new Error("Could not save"));
   await user.click(screen.getByRole("button", { name: "Edit avatar" }));
@@ -258,6 +650,142 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
+it("saves a reviewed provider change with the destination settings", async () => {
+  const user = userEvent.setup();
+  const RelaySettings = ({
+    agent,
+    save,
+    settingsHost,
+  }: AgentViewProps<{ endpoint: string }>) => {
+    const [endpoint, setEndpoint] = useState(agent.config.endpoint);
+    const [error, setError] = useState("");
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError("");
+          void save({ endpoint }).catch((reason: unknown) =>
+            setError(String(reason instanceof Error ? reason.message : reason)),
+          );
+        }}
+      >
+        {settingsHost?.typeControl?.(false)}
+        <label>
+          Endpoint
+          <input
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+          />
+        </label>
+        {error && <p role="alert">{error}</p>}
+        <button type="submit">Save</button>
+      </form>
+    );
+  };
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    icon: PlugIcon,
+    defaults: () => ({ config: { endpoint: "wss://relay.example" } }),
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: RelaySettings,
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], {
+    more: [relay],
+    dirtySettings: true,
+  });
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  await user.keyboard("{Enter}");
+  const rail = screen.getByRole("complementary", { name: "Ada identity" });
+  expect(
+    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+  ).not.toBeInTheDocument();
+  agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
+  const typeTrigger = screen.getByRole("button", {
+    name: "Change provider from Echo",
+  });
+  expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
+  await user.click(typeTrigger);
+  const providerMenu = await screen.findByRole("menu");
+  const currentChoice = within(providerMenu).getByRole("menuitemradio", {
+    name: "Echo",
+  });
+  const relayChoice = within(providerMenu).getByRole("menuitemradio", {
+    name: "Relay",
+  });
+  expect(currentChoice).toBeChecked();
+  expect(relayChoice).not.toBeChecked();
+  expect(relayChoice.querySelector("svg")).toBeInTheDocument();
+  await user.click(relayChoice);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Move Ada to Relay?",
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Change provider" }),
+  ).not.toBeInTheDocument();
+  expect(agents.retype).not.toHaveBeenCalled();
+  expect(within(dialog).queryByText("Instructions")).toBeNull();
+  expect(within(dialog).getByText("Workspace").parentElement).toHaveTextContent(
+    "WorkspaceDropped",
+  );
+  expect(within(dialog).getByText("Model").parentElement).toHaveTextContent(
+    "ModelResets",
+  );
+  expect(within(dialog).getByText("Thinking").parentElement).toHaveTextContent(
+    "ThinkingDropped",
+  );
+  expect(dialog).toHaveTextContent(
+    "Your agent will continue the conversation in Buzz.",
+  );
+  expect(dialog).toHaveTextContent("Anything Echo left running will stop.");
+  expect(dialog).toHaveTextContent(
+    "Unsaved Settings changes will be discarded when you continue.",
+  );
+  expect(dialog).toHaveTextContent(
+    "The provider changes when you save settings.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(agents.retype).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "Change provider from Relay" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Reply" }),
+  ).not.toBeInTheDocument();
+  const endpoint = screen.getByRole("textbox", { name: "Endpoint" });
+  expect(endpoint).toHaveValue("wss://relay.example");
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(save).toBeEnabled();
+  await user.click(save);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Ada is answering",
+  );
+  expect(agents.retype).toHaveBeenCalledOnce();
+  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay", {
+    config: { endpoint: "wss://relay.example" },
+  });
+  await user.clear(endpoint);
+  await user.type(endpoint, "wss://custom.example");
+  await user.click(save);
+  expect(agents.retype).toHaveBeenLastCalledWith("1".repeat(64), "test/relay", {
+    config: { endpoint: "wss://custom.example" },
+  });
+  expect(
+    screen.getByRole("button", { name: "Change provider from Relay" }),
+  ).toBeVisible();
+});
+
 it("makes a new agent in the create dialog and goes straight to building it", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
@@ -266,7 +794,9 @@ it("makes a new agent in the create dialog and goes straight to building it", as
     await screen.findByRole("menuitem", { name: "Create a new agent" }),
   );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
-  expect(within(dialog).getByText("Echo")).toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  ).toHaveTextContent("Echo");
   await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
@@ -292,7 +822,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   await user.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
   expect(
-    await screen.findByRole("list", { name: "Agents" }),
+    await screen.findByRole("grid", { name: "Agents" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "New agent" })).toBeNull();
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
@@ -301,7 +831,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
 it("saves a rename on Enter and discards it on Escape", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("listitem", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   const field = within(
     screen.getByRole("complementary", { name: "Ada identity" }),
@@ -336,7 +866,7 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
     type: "test/echo",
   });
   expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
-    "data-selected",
+    "aria-selected",
     "true",
   );
 });
@@ -442,7 +972,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
     attention: {},
   };
   const { agents } = setup([far, sky]);
-  const grid = screen.getByRole("list", { name: "Agents" });
+  const grid = screen.getByRole("grid", { name: "Agents" });
   expect(within(grid).getByText("On another device")).toBeInTheDocument();
   expect(within(grid).getByText("Setup unfinished")).toBeInTheDocument();
 
@@ -453,7 +983,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   ).not.toBeInTheDocument();
   expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
   await user.dblClick(within(grid).getByText("Far"));
-  expect(screen.getByRole("list")).toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
 
   await user.click(within(grid).getByText("Sky"));
   expect(
@@ -465,7 +995,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   await user.click(screen.getByRole("button", { name: "Finish setup" }));
   expect(agents.finish).toHaveBeenCalledWith(sky.pubkey);
   await user.dblClick(within(grid).getByText("Sky"));
-  expect(screen.getByRole("list")).toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
 });
 
 it("moves focus from Finish setup to Open once the setup finishes", async () => {
@@ -502,7 +1032,10 @@ it("opens deletion from the card menu without selecting it and requires confirma
   await user.click(
     await screen.findByRole("menuitem", { name: "Open settings" }),
   );
-  expect(screen.getByText("Reply tab")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 it("saves a card model through its type and keeps failures on the card", async () => {
@@ -549,3 +1082,19 @@ it("opens marketplace in a modal and restores focus to New agent", async () => {
   expect(screen.getByRole("tab", { name: "Your teams" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "New agent" })).toHaveFocus();
 });
+
+it.each(["loading", "error", "unavailable"] as const)(
+  "keeps import and marketplace reachable while agents are %s",
+  async (status) => {
+    setup([], { status });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("menuitem", { name: "Import an agent" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Import an agent" }),
+    ).toBeVisible();
+  },
+);

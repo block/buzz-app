@@ -24,6 +24,8 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
+  /** Read-only catalog probe, without workspace customizations or tools. */
+  discovery?: boolean;
   /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
@@ -162,8 +164,15 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
-        "--permission-mode",
-        "bypassPermissions",
+        ...(launch.discovery
+          ? [
+              "--safe-mode",
+              "--tools",
+              "",
+              "--strict-mcp-config",
+              "--no-session-persistence",
+            ]
+          : ["--permission-mode", "bypassPermissions"]),
         ...(launch.model ? ["--model", launch.model] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId

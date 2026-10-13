@@ -106,8 +106,8 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-// STOPGAP(agent-local-typing): delete with local-typing.ts.
-import { typeLocally } from "./local-typing";
+import { meChat } from "./me-chat";
+import { pulseTyping } from "./typing";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -2428,7 +2428,7 @@ export class AgentsService extends Service implements Agents {
           this.require().remember(agent.pubkey, slug, body, after),
         attention: this.attention(agent.pubkey),
       });
-      const working = this.working(runner, job);
+      const working = this.working(runner, job, agent.owner);
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
         const team = teamPrompt(
@@ -2481,9 +2481,13 @@ export class AgentsService extends Service implements Agents {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
-   * mention run is shown typing on this device meanwhile; no public
-   * activity is published. */
-  private working(runner: Runner, { trigger, channelId, work }: Job) {
+   * mention run is shown typing in its thread meanwhile; its activity stays
+   * on this device. */
+  private working(
+    runner: Runner,
+    { trigger, channelId, work }: Job,
+    owner: string,
+  ) {
     work?.started();
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
@@ -2491,13 +2495,16 @@ export class AgentsService extends Service implements Agents {
     const done =
       event && channel
         ? [
-            // STOPGAP(agent-local-typing): delete with local-typing.ts.
-            typeLocally(
-              () => {
-                const relay = this.relay(runner.pubkey)?.snapshot();
-                return relay?.status === "ready" ? relay.session : undefined;
-              },
-              runner.pubkey,
+            // Straight to native, so pulses stay out of what it wrote.
+            pulseTyping(
+              async (pulse) => this.require().publish(runner.pubkey, pulse),
+              // Where its turn answers, read the same way.
+              meChat(
+                () => this.relay(runner.pubkey),
+                owner,
+                channel,
+                runner.controller.signal,
+              ),
               event,
               channel,
             ),

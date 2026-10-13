@@ -521,6 +521,12 @@ test("selected row button advances and menu closes without losing the original d
     "data-retention-marker",
     "original-editor",
   );
+  // Successor reveal owns initial focus; finish it before focusing the row menu.
+  const successor = inbox
+    .getByRole("region", { name: "Inbox detail" })
+    .locator(`[data-message-id="${neighbor.id}"]`);
+  await expect(successor).toBeInViewport();
+  await expect(successor).toBeFocused();
   await next.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Archive conversation" }).click();

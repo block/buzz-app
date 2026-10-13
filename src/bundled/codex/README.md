@@ -43,7 +43,10 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 While work is active, new mentions steer it, incorporating the follow-up into the
 ongoing task. Messages arriving during startup wait for the turn to start and
 then steer it; idle conversations continue the saved session. If a turn finishes
-while a follow-up is being delivered, the follow-up starts another turn.
+while a follow-up is being delivered, the follow-up starts another turn. A
+follow-up that picks a model or effort other than the running turn's cannot
+steer it, so it waits and runs as the next turn, and later follow-ups wait
+behind it to keep their order.
 A successful final send stops the request counting as working at once; Codex
 still ends its turn with one more model call. Interrupting the turn instead would
 leave a `<turn_aborted>` note in the session after every reply.

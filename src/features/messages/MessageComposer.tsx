@@ -1005,8 +1005,14 @@ function Composer({
           );
           return;
         }
-        if (requestDeletion && session.outbox?.supports(5))
-          requestDeletion(editing.target, editing.close);
+        if (requestDeletion && session.outbox?.supports(5)) {
+          const checkpoint = beforeEdit.current;
+          requestDeletion(editing.target, (focus) => {
+            if (beforeEdit.current !== checkpoint) return;
+            editing.close();
+            focusRestoredDraft.current = focus;
+          });
+        }
         return;
       }
       editing.save(

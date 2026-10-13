@@ -708,7 +708,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     },
   );
   await expect(shellNavigation).toHaveAttribute("data-sidebar-open", "true");
-  expect(accessibilityHiddenWidth).toBe(expandedWidth + gutterWidth);
+  expect(accessibilityHiddenWidth).toBe(expandedWidth + gutterWidth + 4);
   await shellNavigation.evaluate((node) => node.removeAttribute("aria-hidden"));
 
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();

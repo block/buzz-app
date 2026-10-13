@@ -1094,9 +1094,11 @@ export class AgentsService extends Service implements Agents {
     const imported: Agent[] = [];
     const failed: { name: string; error: string }[] = [];
     const elsewhere: string[] = [];
+    const listed = new Set(found.agents.map((agent) => agent.pubkey));
     for (const member of old.members) {
-      // Native lists only named identities, and the same copy as an agent.
-      const { name } = member;
+      const npub = npubEncode(member.pubkey);
+      const name =
+        member.name.trim() || `${npub.slice(0, 11)}…${npub.slice(-6)}`;
       const here = live.find((identity) => identity.pubkey === member.pubkey);
       if (here && originOf(here.relay) === origin) {
         members.push(member.pubkey);
@@ -1105,6 +1107,10 @@ export class AgentsService extends Service implements Agents {
       // Kept to its own community's copy of the team, never moved here.
       if (here) {
         elsewhere.push(name);
+        continue;
+      }
+      if (!listed.has(member.pubkey)) {
+        failed.push({ name, error: "No longer available in old Buzz" });
         continue;
       }
       // Checked with no wait before the import starts.

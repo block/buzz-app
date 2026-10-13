@@ -1049,16 +1049,19 @@ const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 const sentence = (text: string) => text.replace(/\.?$/, ".");
 
 /** What a team import left undone, or "" if nothing. */
-function teamPortNote(
-  name: string,
-  { team, imported, failed, elsewhere, teamError }: TeamPort,
-) {
+function teamPortNote({
+  team,
+  imported,
+  failed,
+  elsewhere,
+  teamError,
+}: TeamPort) {
   if (!failed.length && !elsewhere.length && !teamError) return "";
   const came = imported.map((agent) => agent.name).join(", ");
   return [
     teamError
-      ? `Couldn't save team ${name}. Add its members in Teams.`
-      : team && `Imported team ${name}${came ? ` with ${came}` : ""}.`,
+      ? `Couldn't save team ${teamError.name}. ${came ? `Imported ${came}; add them` : "Add its members"} in Teams.`
+      : team && `Imported team ${team.name}${came ? ` with ${came}` : ""}.`,
     ...failed.map((member) =>
       sentence(`Couldn't import ${member.name}: ${member.error}`),
     ),
@@ -1141,7 +1144,7 @@ function ImportAgents({
           },
       );
       // Leaving would hide the one place that names what still needs a hand.
-      const note = teamPortNote(team.name, result);
+      const note = teamPortNote(result);
       if (note) setError(note);
       else onImported();
     } catch (reason) {

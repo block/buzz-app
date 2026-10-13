@@ -223,6 +223,8 @@ function setup(
   const types = [type, ...more];
   const agents = {
     types: () => types,
+    registerTool: vi.fn(),
+    tools: () => [],
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {
       listeners.add(listener);

@@ -30,6 +30,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     agents.relay,
     localStorage,
     (raw) => providerDefaults.resolve(raw),
+    () => agents.tools(),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

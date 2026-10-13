@@ -6,6 +6,7 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context, Memory } from "../../buzz-mcp/client";
+import { pluginTools } from "../../buzz-mcp/plugin-tools";
 import { respond } from "../../buzz-mcp/rpc";
 import {
   fromOwner,
@@ -14,6 +15,7 @@ import {
   type Delivery,
   type Effort,
   type Models,
+  type RegisteredAgentTool,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -126,7 +128,11 @@ export class ClaudeRuntime {
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** Active plugins' tools, which new sessions are offered. */
+    private readonly plugins: () => readonly RegisteredAgentTool[] = () => [],
   ) {}
+  /** The plugin tools new sessions were last offered; a change restarts idle ones. */
+  private offered = "";
 
   private get spawn(): Spawn {
     const spawn = this.host.spawn?.bind(this.host);
@@ -139,6 +145,9 @@ export class ClaudeRuntime {
    * agent is here. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
+    const offered = this.offeredTools();
+    const toolsChanged = offered !== this.offered;
+    this.offered = offered;
     // Deleted, signed out or its community disconnected: either way its
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
@@ -165,7 +174,7 @@ export class ClaudeRuntime {
         entry.name = agent.name;
         entry.attention = agent.attentionEnabled;
         entry.sessions.reconfigure();
-      }
+      } else if (toolsChanged) entry.sessions.reconfigure();
     }
     this.spare.warm(
       ...agents.map((agent) => where(this.resolveConfig(agent.config))),
@@ -664,10 +673,27 @@ export class ClaudeRuntime {
         };
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, {
-          offered: attention,
-          ...(handle ? { api: handle.attention } : {}),
-        });
+        return respond(
+          client,
+          context,
+          message,
+          { offered: attention, ...(handle ? { api: handle.attention } : {}) },
+          {
+            tools: this.plugins,
+            ...(handle
+              ? {
+                  caller: {
+                    agent: {
+                      pubkey: handle.pubkey,
+                      name: handle.name,
+                      owner: handle.owner,
+                    },
+                    ...context,
+                  },
+                }
+              : {}),
+          },
+        );
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -683,6 +709,7 @@ export class ClaudeRuntime {
           entry.team,
           entry.name,
           entry.attention,
+          this.offeredTools(),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -705,6 +732,12 @@ export class ClaudeRuntime {
     });
     this.agents.set(pubkey, entry);
     return entry;
+  }
+
+  private offeredTools() {
+    return pluginTools(this.plugins())
+      .map((tool) => tool.key)
+      .join(" ");
   }
 
   /** The agent's `core` memory, as the harness injects it into a new session:

@@ -347,3 +347,46 @@ it("shows a media image to the agent, and nothing else", async () => {
     callTool(client, {}, "media_get", { url: "abc.txt" }),
   ).rejects.toThrow("Only JPEG, PNG, GIF and WebP");
 });
+
+it("refuses a plugin's tool once its plugin is gone, and before the agent can call it", async () => {
+  const call = vi.fn(async () => "ok");
+  let tools = [
+    {
+      key: "a.plugin/pr_status",
+      pluginId: "a.plugin",
+      revision: "1",
+      id: "pr_status",
+      description: "A PR's state.",
+      inputSchema: { type: "object" as const },
+      call,
+    },
+  ];
+  const agent = { pubkey: me, name: "Me", owner: alice };
+  const ask = (plugins: Parameters<typeof respond>[4]) =>
+    respond(
+      undefined,
+      {},
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "pr_status", arguments: {} },
+      },
+      undefined,
+      plugins,
+    ) as Promise<{
+      result: { isError?: boolean; content: { text: string }[] };
+    }>;
+  // Listed, but no delivery has said who the agent is yet.
+  expect((await ask({ tools: () => tools })).result.content[0]?.text).toBe(
+    "Buzz is not ready yet. Try again.",
+  );
+  expect((await ask({ tools: () => tools, caller: { agent } })).result).toEqual(
+    { content: [{ type: "text", text: "ok" }] },
+  );
+  tools = [];
+  const gone = (await ask({ tools: () => tools, caller: { agent } })).result;
+  expect(gone.isError).toBe(true);
+  expect(gone.content[0]?.text).toMatch(/^No tool pr_status/);
+  expect(call).toHaveBeenCalledTimes(1);
+});

@@ -41,6 +41,11 @@ export type {
   MessageRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
+export type {
+  Agents,
+  AgentTool,
+  AgentToolCaller,
+} from "../features/agents/service";
 
 export type {
   Shortcuts,

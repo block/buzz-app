@@ -25,6 +25,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.relay,
     localStorage,
     (raw) => providerController.resolve(raw),
+    () => ctx.agents.tools(),
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the

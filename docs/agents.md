@@ -73,6 +73,36 @@ state may appear as collapsed diagnostics in Settings, but is not durable histor
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 
+## Plugin tools
+
+Any plugin that injects `agents` can offer the agents this app runs a tool, beside
+the Buzz tools, with `ctx.agents.registerTool({ id, description, inputSchema, call })`:
+
+```ts
+ctx.agents.registerTool({
+  id: "pr_status",
+  description: "A GitHub pull request's state.",
+  inputSchema: { type: "object", properties: { pr: { type: "string" } } },
+  call: async (args, caller) => lookup(String(args.pr), caller.agent.pubkey),
+});
+```
+
+`id` is the name the agent calls: 1–64 lowercase letters, digits and underscores,
+starting with a letter. `call` answers in plain text; a throw is a tool error the
+agent sees. `caller` names the agent (`pubkey`, `name`, `owner`) and where it was
+working (`channel`, and `root` when it is answering in a thread). The tool runs
+in the plugin with the plugin's access, not the agent's key; use `caller` to act
+for the right agent.
+
+Claude and Codex sessions list active plugins' tools after the Buzz tools. A
+session's tool list is fixed when it starts, so a tool reaches new sessions: idle
+Claude sessions restart when the set changes, and Codex offers it to new threads.
+When a plugin is turned off its tools go, and a session that still lists one gets
+a tool error. A plugin cannot take a Buzz tool's or attention tool's name; when
+two plugins offer the same `id`, the lowest contribution key wins, so activation
+order never decides. Hosted agents and the standalone `buzz-mcp` server have no
+plugins, so they never get these tools.
+
 ## Local agents
 
 `LocalAgents` (`src/features/agents/local.ts`) is a read-only snapshot of the

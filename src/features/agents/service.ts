@@ -430,6 +430,27 @@ export type RemoteAgentType = Readonly<{
   ): Promise<void>;
 }>;
 export type RegisteredAgentType = Contribution<AgentType>;
+/** A tool a plugin offers to the agents this app runs, beside the Buzz tools.
+ * Its `id` is the name agents call it by. */
+export type AgentTool = Readonly<{
+  id: string;
+  description: string;
+  /** A JSON Schema object for the arguments. */
+  inputSchema: Readonly<{ type: "object" } & Record<string, unknown>>;
+  /** Answers in plain text; a throw is a tool error for the agent to correct. */
+  call(
+    args: Readonly<Record<string, unknown>>,
+    caller: AgentToolCaller,
+  ): Promise<string>;
+}>;
+/** Who called a plugin's tool, and where it was working. */
+export type AgentToolCaller = Readonly<{
+  agent: Readonly<{ pubkey: string; name: string; owner: string }>;
+  channel?: string;
+  /** The thread the agent is answering in, if any. */
+  root?: string;
+}>;
+export type RegisteredAgentTool = Contribution<AgentTool>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -479,6 +500,12 @@ export type NewAgent = Readonly<{
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
+  /** Offers `tool` to the agents this app runs, from their next session. It
+   * goes when the plugin is turned off. Hosted agents never get it: their
+   * provider runs them. */
+  registerTool(tool: AgentTool): void;
+  /** Active plugins' tools; `subscribe` hears when they change. */
+  tools(): readonly RegisteredAgentTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
@@ -531,6 +558,8 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const QUEUE_LIMIT = 32;
+/** Agent tool names: what MCP clients and Codex's dynamic tools both accept. */
+const TOOL_ID = /^[a-z][a-z0-9_]{0,63}$/;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
@@ -807,6 +836,7 @@ type Runner = {
 
 export class AgentsService extends Service implements Agents {
   private readonly contributions;
+  private readonly toolContributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -854,6 +884,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.toolContributions = createContributions<AgentTool>(ctx);
     migrateAgentStorage(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
@@ -870,6 +901,7 @@ export class AgentsService extends Service implements Agents {
           this.update();
           this.notify();
         }),
+        this.toolContributions.subscribe(() => this.notify()),
         communities.subscribe(() => {
           this.watch();
           this.update();
@@ -935,6 +967,20 @@ export class AgentsService extends Service implements Agents {
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
+  registerTool(tool: AgentTool) {
+    if (
+      !TOOL_ID.test(tool.id ?? "") ||
+      typeof tool.description !== "string" ||
+      !tool.description.trim() ||
+      tool.inputSchema?.type !== "object" ||
+      typeof tool.call !== "function"
+    )
+      throw new Error(
+        "Agent tools need an id of 1-64 lowercase letters, digits and underscores, a description, an object inputSchema and call",
+      );
+    this.toolContributions.register(this.ctx, tool);
+  }
+  tools = () => this.toolContributions.snapshot();
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

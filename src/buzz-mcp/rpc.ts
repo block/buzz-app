@@ -1,13 +1,18 @@
 // The Buzz tools as an MCP server inside the host process: answers one
 // JSON-RPC message at a time, as Claude sends them over its stream-json
 // pipe to an in-process (`sdk`) server. Holds no state between messages.
-import type { AgentAttention } from "../features/agents/service";
+import type {
+  AgentAttention,
+  AgentToolCaller,
+  RegisteredAgentTool,
+} from "../features/agents/service";
 import {
   ATTENTION_TOOLS,
   callAttentionTool,
   isAttentionTool,
 } from "./attention";
 import type { BuzzClient, Context } from "./client";
+import { callPluginTool, listed, pluginTools } from "./plugin-tools";
 import { callTool, type Reply, TOOLS } from "./tools";
 
 type Message = Readonly<{
@@ -24,13 +29,22 @@ export type AttentionTools = Readonly<{
   api?: AgentAttention;
 }>;
 
+/** Plugins' tools for one session: the active ones when asked, and who calls
+ * them once a delivery has given the session a handle. */
+export type PluginTools = Readonly<{
+  tools(): readonly RegisteredAgentTool[];
+  caller?: AgentToolCaller;
+}>;
+
 /** Answers `input`. Without a client, tools are listed but cannot be called.
- * Attention tools are listed only when `attention` offers them. */
+ * Attention tools are listed only when `attention` offers them; plugins' tools
+ * when `plugins` is given. */
 export async function respond(
   client: BuzzClient | undefined,
   context: Context,
   input: unknown,
   attention?: AttentionTools,
+  plugins?: PluginTools,
 ) {
   const { id, method, params = {} } = (input ?? {}) as Message;
   // A notification needs no answer, but the pipe expects one.
@@ -48,7 +62,11 @@ export async function respond(
       return result({});
     case "tools/list":
       return result({
-        tools: attention?.offered ? [...TOOLS, ...ATTENTION_TOOLS] : TOOLS,
+        tools: [
+          ...TOOLS,
+          ...(attention?.offered ? ATTENTION_TOOLS : []),
+          ...(plugins ? pluginTools(plugins.tools()).map(listed) : []),
+        ],
       });
     case "tools/call":
       try {
@@ -64,6 +82,24 @@ export async function respond(
               `Attention is off for you: your owner turned it off, so these tools do nothing now.\n(classifier: ${api.classifier()})`,
             );
           reply = await callAttentionTool(api, name, args);
+        } else if (
+          plugins &&
+          !isAttentionTool(name) &&
+          !TOOLS.some((tool) => tool.name === name)
+        ) {
+          if (!plugins.caller)
+            throw new Error("Buzz is not ready yet. Try again.");
+          const answer = callPluginTool(
+            plugins.tools(),
+            name,
+            args,
+            plugins.caller,
+          );
+          if (!answer)
+            throw new Error(
+              `No tool ${name}. Its plugin may have been turned off.`,
+            );
+          reply = await answer;
         } else {
           if (!client) throw new Error("Buzz is not ready yet. Try again.");
           reply = await callTool(client, context, name, args);

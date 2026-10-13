@@ -26,6 +26,7 @@ function applied() {
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
+      tools: () => [],
       register: (registered: AgentType) => {
         type = registered;
       },
@@ -123,6 +124,7 @@ it("stops agents that stop running even when the agent list could not be read", 
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
+      tools: () => [],
       register: () => undefined,
       snapshot: () => state,
       relay: () => undefined,

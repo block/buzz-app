@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents/service";
+import type {
+  Agent,
+  Delivery,
+  RegisteredAgentTool,
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
@@ -41,6 +45,7 @@ function setup(
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
+    plugins?: () => readonly RegisteredAgentTool[];
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -80,7 +85,13 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new ClaudeRuntime(host, () => relay, storage);
+  const runtime = new ClaudeRuntime(
+    host,
+    () => relay,
+    storage,
+    undefined,
+    options.plugins,
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
     published.push(template);
@@ -1040,6 +1051,91 @@ it("offers attention tools and guidance only while attention is on", async () =>
   expect(await names(off, 3)).toContain("send");
   expect(systemPromptOf(off)).not.toContain("## Attention");
   expect(off?.prompts[0]).not.toContain("<attention>");
+});
+
+it("offers plugins' tools to new sessions, calls them as the agent, and drops them with their plugin", async () => {
+  const lookup = vi.fn(async () => "PR #7 is open");
+  const shadow = vi.fn(async () => "not Buzz's send");
+  const tool = (key: string, id: string, call = lookup) =>
+    ({
+      key,
+      pluginId: key.split("/")[0],
+      revision: "1",
+      id,
+      description: `${id} from ${key}`,
+      inputSchema: { type: "object", properties: { pr: { type: "string" } } },
+      call,
+    }) as RegisteredAgentTool;
+  let plugins = [
+    tool("b.plugin/pr_status", "pr_status", shadow),
+    tool("a.plugin/pr_status", "pr_status"),
+    tool("a.plugin/send", "send", shadow),
+  ];
+  const { runtime, claudes, deliver } = setup([], { plugins: () => plugins });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as Agent;
+  runtime.sync([agent]);
+  await deliver({
+    type: "mention",
+    event: message("6", "@Claude is it open?", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  const listed = (
+    (await mcp(claude, 1, "tools/list")) as unknown as {
+      tools: { name: string; description: string }[];
+    }
+  ).tools;
+  // One per name, the lowest key winning; Buzz's own names stay Buzz's.
+  expect(listed.filter((t) => t.name === "pr_status")).toEqual([
+    expect.objectContaining({
+      description: "pr_status from a.plugin/pr_status",
+    }),
+  ]);
+  expect(listed.filter((t) => t.name === "send")).toHaveLength(1);
+  const answer = (await mcp(claude, 2, "tools/call", {
+    name: "pr_status",
+    arguments: { pr: "7" },
+  })) as unknown as { content: { text: string }[] };
+  expect(answer.content[0]?.text).toBe("PR #7 is open");
+  expect(lookup).toHaveBeenCalledWith(
+    { pr: "7" },
+    expect.objectContaining({
+      agent: { pubkey: self, name: "Claude", owner: alice },
+      channel,
+    }),
+  );
+  expect(shadow).not.toHaveBeenCalled();
+  // Its plugin turned off: the idle session stops, and the next one is not
+  // offered the tool.
+  plugins = [];
+  runtime.sync([agent]);
+  await flush(10);
+  expect(claude?.killed).toBe(true);
+  await deliver({
+    type: "mention",
+    event: message("7", "@Claude and now?", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  const next = claudes().find((process) =>
+    process.prompts[0]?.includes("and now?"),
+  );
+  const names = (
+    (await mcp(next, 3, "tools/list")) as unknown as {
+      tools: { name: string }[];
+    }
+  ).tools.map((t) => t.name);
+  expect(names).toContain("send");
+  expect(names).not.toContain("pr_status");
 });
 
 it("keeps one spare for all its agents, and none once they are gone", async () => {

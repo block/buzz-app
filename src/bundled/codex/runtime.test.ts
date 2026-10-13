@@ -3,7 +3,11 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents/service";
+import type {
+  Agent,
+  Delivery,
+  RegisteredAgentTool,
+} from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
@@ -42,6 +46,7 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
+  plugins?: () => readonly RegisteredAgentTool[],
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -256,7 +261,13 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, () => relay, store);
+  const runtime = new CodexRuntime(
+    spawn,
+    () => relay,
+    store,
+    undefined,
+    plugins,
+  );
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -347,6 +358,7 @@ function fixture(
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
+        tools: () => [],
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -1737,6 +1749,46 @@ it.each([
       threadId: recover ? "thread-2" : "thread-1",
     },
   });
+});
+
+it("offers plugins' tools to a new thread and calls them as the agent", async () => {
+  const call = vi.fn(async () => "PR #7 is open");
+  const pr = {
+    key: "a.plugin/pr_status",
+    pluginId: "a.plugin",
+    revision: "1",
+    id: "pr_status",
+    description: "A PR's state.",
+    inputSchema: { type: "object" as const },
+    call,
+  };
+  let plugins: RegisteredAgentTool[] = [pr];
+  const f = fixture([], undefined, false, () => plugins);
+  await f.runtime.run(f.delivery("is it open?"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+  expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["send", "pr_status"]),
+  );
+  expect((await f.tool("pr_status", { pr: "7" }))?.result).toEqual({
+    success: true,
+    contentItems: [{ type: "inputText", text: "PR #7 is open" }],
+  });
+  expect(call).toHaveBeenCalledWith(
+    { pr: "7" },
+    {
+      agent: { pubkey, name: "Codex", owner },
+      channel: "channel",
+      root,
+    },
+  );
+  plugins = [];
+  expect((await f.tool("pr_status", {}))?.result).toMatchObject({
+    success: false,
+  });
+  expect(call).toHaveBeenCalledTimes(1);
+  await f.complete();
 });
 
 it("routes callbacks by thread and turn, rejecting stale, unknown and malformed tools without writes", async () => {

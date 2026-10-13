@@ -5,12 +5,18 @@ import {
   type AgentHandle,
   type Delivery,
   type Models,
+  type RegisteredAgentTool,
 } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
 import type { MemoryListing } from "../../features/agents/memory";
 import { appClient } from "../../buzz-mcp/app-client";
+import {
+  callPluginTool,
+  listed,
+  pluginTools,
+} from "../../buzz-mcp/plugin-tools";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
@@ -163,6 +169,8 @@ export class CodexRuntime {
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** Active plugins' tools, which new threads are offered. */
+    private readonly plugins: () => readonly RegisteredAgentTool[] = () => [],
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -690,12 +698,9 @@ export class CodexRuntime {
           active?.threadId === call?.threadId &&
           active?.turnId === call?.turnId,
       );
-    if (
-      !active ||
-      call.namespace !== "buzz" ||
-      !TOOLS.some((tool) => tool.name === call.tool)
-    )
+    if (!active || call.namespace !== "buzz")
       throw new Error("No active Buzz tool for this thread and turn");
+    const builtIn = TOOLS.some((tool) => tool.name === call.tool);
     const check = () => {
       active.signal.throwIfAborted();
       if (active.finished) throw new Error("The Codex turn has ended");
@@ -727,15 +732,22 @@ export class CodexRuntime {
           this.memoryReads.get(snapshot.session)?.delete(request.agent.pubkey);
       },
     });
-    const reply = await callTool(
-      client,
-      {
-        channel: request.conversation.channelId,
-        ...(request.toolRoot ? { root: request.toolRoot } : {}),
-      },
-      call.tool,
-      args,
-    );
+    const context = {
+      channel: request.conversation.channelId,
+      ...(request.toolRoot ? { root: request.toolRoot } : {}),
+    };
+    const { pubkey, name, owner } = request.agent;
+    const plugin = builtIn
+      ? undefined
+      : callPluginTool(this.plugins(), call.tool, args, {
+          agent: { pubkey, name, owner },
+          ...context,
+        });
+    if (!builtIn && !plugin)
+      throw new Error(
+        `No tool ${call.tool}. Its plugin may have been turned off.`,
+      );
+    const reply = await (plugin ?? callTool(client, context, call.tool, args));
     const final = call.tool === "send" && args.final === true;
     if (final) {
       active.sentVersion = Math.max(active.sentVersion ?? -1, version);
@@ -1002,7 +1014,7 @@ export class CodexRuntime {
             ...(resuming
               ? { threadId: existing?.threadId, excludeTurns: true }
               : {
-                  dynamicTools: DYNAMIC_TOOLS,
+                  dynamicTools: dynamicTools(this.plugins()),
                 }),
           },
         );
@@ -1015,7 +1027,7 @@ export class CodexRuntime {
           throw error;
         started = await rpc.request<typeof started>("thread/start", {
           ...params,
-          dynamicTools: DYNAMIC_TOOLS,
+          dynamicTools: dynamicTools(this.plugins()),
         });
       }
       active.threadId = started.thread.id;
@@ -1117,12 +1129,16 @@ export class CodexRuntime {
     }
   }
 }
-const DYNAMIC_TOOLS = [
+/** A new thread's tools: Buzz's, then active plugins'. A thread keeps them. */
+const dynamicTools = (plugins: readonly RegisteredAgentTool[]) => [
   {
     type: "namespace",
     name: "buzz",
     description: "Read and act in Buzz as this agent.",
-    tools: TOOLS.map((tool) => ({ type: "function", ...tool })),
+    tools: [...TOOLS, ...pluginTools(plugins).map(listed)].map((tool) => ({
+      type: "function",
+      ...tool,
+    })),
   },
 ];
 const EMPTY: readonly SessionView[] = Object.freeze([]);

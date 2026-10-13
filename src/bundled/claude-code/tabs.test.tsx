@@ -216,6 +216,7 @@ function applied({
       })),
     },
     agents: {
+      tools: () => [],
       register: (registered: AgentType<Config>) => {
         type = registered;
       },

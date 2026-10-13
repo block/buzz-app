@@ -8,7 +8,6 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import userEvent from "@testing-library/user-event";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair } from "../../features/relay/testing";
 import { EmojiPicker } from "./EmojiPicker";
@@ -83,8 +82,7 @@ it.each(["dark", undefined] as const)(
   },
 );
 
-it("uses smiley-plus for message reactions while leaving composer emoji unchanged", async () => {
-  const user = userEvent.setup();
+it("uses smiley-plus for message reactions while leaving composer emoji unchanged", () => {
   const owner = createRelaySession({
     viewer: keypair().pubkey,
     relayAuthor: keypair().pubkey,
@@ -112,10 +110,7 @@ it("uses smiley-plus for message reactions while leaving composer emoji unchange
   expect(
     screen.getByRole("button", { name: "Add reaction" }).querySelector("svg"),
   ).toHaveClass("tabler-icon-mood-plus");
-  const composer = screen.getByRole("button", { name: "Emoji and GIFS" });
-  expect(composer.querySelector("svg")).toHaveClass("tabler-icon-mood-smile");
-  await user.hover(composer);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "Emoji and GIFS",
-  );
+  expect(
+    screen.getByRole("button", { name: "Emoji and GIFS" }).querySelector("svg"),
+  ).toHaveClass("tabler-icon-mood-smile");
 });

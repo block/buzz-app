@@ -200,17 +200,52 @@ export function useFloatingActionBar(
         : `${document.documentElement.clientWidth - anchor.right}px`;
       bar.showPopover?.();
     };
+    // A transition or animation on the slot or an ancestor (such as a sliding
+    // drawer) moves it without resizing, mutating or scrolling anything.
+    const moving = () => {
+      for (let node: Element | null = slot; node; node = node.parentElement)
+        for (const animation of node.getAnimations?.() ?? [])
+          if (
+            animation.playState === "running" &&
+            Number.isFinite(animation.effect?.getComputedTiming().endTime)
+          )
+            return true;
+      return false;
+    };
+    let following = false;
     // Every move of the slot arrives through an event or observer below. Read
     // its rect once per frame from those, rather than polling it every frame and
-    // forcing a layout whenever the timeline is mid-mutation.
+    // forcing a layout whenever the timeline is mid-mutation. Only while finite
+    // motion is in flight does it follow every frame, ending with a realignment
+    // at the resting position.
     const schedule = () => {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         position();
+        if (following) following = moving();
+        if (following) schedule();
       });
     };
+    const follow = () => {
+      following = true;
+      schedule();
+    };
+    const motion = (event: Event) => {
+      if (event.target instanceof Node && event.target.contains(slot)) follow();
+    };
+    const motionEvents = [
+      "transitionrun",
+      "transitionend",
+      "transitioncancel",
+      "animationstart",
+      "animationend",
+      "animationcancel",
+    ];
     position();
+    if (moving()) follow();
+    for (const type of motionEvents)
+      document.addEventListener(type, motion, true);
     document.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
@@ -235,6 +270,8 @@ export function useFloatingActionBar(
     const unobserveModals = observeModals(schedule);
     return () => {
       cancelAnimationFrame(frame);
+      for (const type of motionEvents)
+        document.removeEventListener(type, motion, true);
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
       observer.disconnect();

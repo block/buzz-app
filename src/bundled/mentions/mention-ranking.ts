@@ -79,14 +79,18 @@ export function rankMentions(
     )
     .map((k) => k.c);
 }
-/** Space is intent only for one exact key across the full, uncapped choice set. */
+/**
+ * Space is intent only for one exact key across the full, uncapped choice set.
+ * Every choice can continue the name; only choices `among` can equal it.
+ */
 export const exactMention = (
   choices: readonly MentionChoice[],
   query: string,
+  among: (choice: MentionChoice) => boolean = () => true,
 ) =>
   exactName(
     choices,
     (c) => [...c.aliases, c.label],
     query,
-    (c) => c.aliases.length > 0,
+    (c) => c.aliases.length > 0 && among(c),
   )?.recipient.pubkey;

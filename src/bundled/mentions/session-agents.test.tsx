@@ -2539,67 +2539,187 @@ it.each([
     }
   },
 );
-it.each([
-  { found: [], hasMore: false, space: true },
-  {
-    found: [{ pubkey: "f".repeat(64), name: "Jose" }],
-    hasMore: false,
-    space: false,
-  },
-  { found: [], hasMore: true, space: false },
-])(
-  "Space waits for the full directory before it selects an exact name (%j)",
-  async ({ found, hasMore, space }) => {
-    const h = setup();
-    h.profiles.set(h.member, { name: "José" });
-    let finish: (value: { people: typeof found; hasMore: boolean }) => void =
-      () => {};
-    const people = vi.fn(
-      () =>
-        new Promise<{ people: typeof found; hasMore: boolean }>((resolve) => {
-          finish = resolve;
-        }),
-    );
-    const publish = vi.fn();
-    const result = () =>
-      publish.mock.lastCall?.[0] as CompletionResult | undefined;
-    const view = render(
-      <MentionCompletion
-        session={
-          {
-            ...h.session,
-            directMessages: { ...h.session.directMessages, people },
-          } as unknown as RelaySession
-        }
-        scope="space-test"
-        channelId="parent"
-        observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
-        query={{ start: 0, end: 5, query: "jose" }}
-        publish={publish}
-      />,
-    );
-    try {
-      await waitFor(() =>
-        expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
-      );
-      // The member José is shown, but an outside Jose may still arrive.
-      const member = result()?.items.find((item) => item.id === h.member);
-      expect(member).toBeDefined();
-      expect(result()?.spaceId).toBeUndefined();
-      expect(member?.canSelect?.(" ")).toBe(false);
-      expect(member?.canSelect?.("Enter")).toBe(true);
-      await act(async () => finish({ people: found, hasMore }));
-      await waitFor(() =>
-        expect(result()?.spaceId).toBe(space ? h.member : undefined),
-      );
-      expect(
-        result()
-          ?.items.find((item) => item.id === h.member)
-          ?.canSelect?.(" "),
-      ).toBe(space);
-    } finally {
+type DirectoryPage = {
+  people: { pubkey: string; name: string }[];
+  hasMore: boolean;
+};
+/** Other members map to a profile name, or null for a profile still loading. */
+function spaceFixture(
+  memberName: string,
+  others: Record<string, string | null> = {},
+) {
+  const h = setup();
+  h.profiles.set(h.member, { name: memberName });
+  for (const [key, name] of Object.entries(others))
+    if (name !== null) h.profiles.set(key, { name });
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        channelType: "stream" as const,
+        members: [h.member, ...Object.keys(others)],
+      },
+    ],
+  };
+  let finish: (value: DirectoryPage) => void = () => {};
+  let fail: (error: Error) => void = () => {};
+  const people = vi.fn(
+    () =>
+      new Promise<DirectoryPage>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      }),
+  );
+  const publish = vi.fn();
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const view = render(
+    <MentionCompletion
+      session={
+        {
+          ...h.session,
+          channels: { ...h.session.channels, list: () => list },
+          directMessages: { ...h.session.directMessages, people },
+        } as unknown as RelaySession
+      }
+      scope="space-test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "jose" }}
+      publish={publish}
+    />,
+  );
+  return {
+    ...h,
+    people,
+    result,
+    finish: (page: DirectoryPage) => act(async () => finish(page)),
+    fail: () => act(async () => fail(new Error("offline"))),
+    canSpace: (id: string) =>
+      result()
+        ?.items.find((item) => item.id === id)
+        ?.canSelect?.(" "),
+    dispose() {
       view.unmount();
       h.library.dispose();
+    },
+  };
+}
+const outsideJose = "f".repeat(64);
+const otherMember = "d".repeat(64);
+it.each([
+  { people: [], hasMore: false },
+  { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: false },
+  { people: [], hasMore: true },
+  "error" as const,
+])(
+  "Space selects a unique exact member name without waiting for the directory (%j)",
+  async (page) => {
+    const h = spaceFixture("José");
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      // Typing straight on from the name must not race the directory search.
+      expect(h.result()?.spaceId).toBe(h.member);
+      expect(h.canSpace(h.member)).toBe(true);
+      await (page === "error" ? h.fail() : h.finish(page));
+      // Directory namesakes and failures cannot unsettle a member's name.
+      await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+      expect(h.canSpace(h.member)).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each([
+  { case: "a member namesake", others: { [otherMember]: "Jose" } },
+  { case: "a member's longer name", others: { [otherMember]: "Jose Luis" } },
+  // Its name may be "Jose"; only the directory can say before profiles load.
+  { case: "an unnamed member", others: { [otherMember]: null } },
+])("Space leaves a member's name as prose beside $case", async ({ others }) => {
+  const h = spaceFixture("José", others);
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+    );
+    await waitFor(() =>
+      expect(h.result()?.items.some((item) => item.id === h.member)).toBe(true),
+    );
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.canSpace(h.member)).toBe(false);
+    await h.finish({
+      people: [{ pubkey: otherMember, name: others[otherMember] ?? "Jose" }],
+      hasMore: false,
+    });
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.canSpace(h.member)).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space leaves a member's name as prose once the directory finds a longer outside name", async () => {
+  const h = spaceFixture("Jose");
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+    );
+    // A longer outside name cannot block before the directory reports it.
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      hasMore: false,
+    });
+    await waitFor(() =>
+      expect(h.result()?.items.some((item) => item.id === outsideJose)).toBe(
+        true,
+      ),
+    );
+    expect(h.result()?.spaceId).toBeUndefined();
+    expect(h.canSpace(h.member)).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+it.each([
+  {
+    page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: false },
+    space: true,
+  },
+  {
+    page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: true },
+    space: false,
+  },
+  {
+    page: {
+      people: [
+        { pubkey: outsideJose, name: "Jose" },
+        { pubkey: "e".repeat(64), name: "José" },
+      ],
+      hasMore: false,
+    },
+    space: false,
+  },
+])(
+  "Space waits for the full directory before it selects an outside name (%j)",
+  async ({ page, space }) => {
+    const h = spaceFixture("Member");
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      expect(h.result()?.spaceId).toBeUndefined();
+      await h.finish(page);
+      await waitFor(() =>
+        expect(h.result()?.items.some((item) => item.id === outsideJose)).toBe(
+          true,
+        ),
+      );
+      expect(h.result()?.spaceId).toBe(space ? outsideJose : undefined);
+      expect(h.canSpace(outsideJose)).toBe(space);
+    } finally {
+      h.dispose();
     }
   },
 );

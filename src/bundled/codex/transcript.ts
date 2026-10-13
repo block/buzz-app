@@ -22,7 +22,11 @@ type Turn = {
   startedAt: number | null;
   completedAt: number | null;
 };
-export type CodexTranscript = Transcript & { more: boolean; working: boolean };
+export type CodexTranscript = Transcript & {
+  more: boolean;
+  working: boolean;
+  warning?: string;
+};
 
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 const display = (value: unknown) =>
@@ -292,6 +296,7 @@ export async function findConversation(
   signal: AbortSignal,
 ) {
   const found = [];
+  let failure: unknown;
   for (const store of ["isolated", "legacy"] as const) {
     const thread = await withServer(
       spawn,
@@ -306,9 +311,15 @@ export async function findConversation(
         return undefined;
       },
       store,
-    );
+    ).catch((error) => {
+      signal.throwIfAborted();
+      failure = error;
+      console.error(`Codex could not search ${store} history`, error);
+      return undefined;
+    });
     if (thread) found.push(thread);
   }
+  if (!found.length && failure) throw failure;
   return found.sort((a, b) => b.at - a.at)[0];
 }
 
@@ -377,6 +388,7 @@ export async function readTranscript(
   let found = false;
   let more = false;
   let working = false;
+  let warning: string | undefined;
   const owner = lookup.store ?? "legacy";
   for (const store of [
     owner,
@@ -404,7 +416,12 @@ export async function readTranscript(
         }
       },
       store,
-    );
+    ).catch((error) => {
+      signal.throwIfAborted();
+      if (store === owner) throw error;
+      warning = `Some conversation history could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    });
+  if (!found && warning) throw new Error(warning);
   if (!found) return undefined;
   all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
   return {
@@ -412,5 +429,6 @@ export async function readTranscript(
     unknownThread: 0,
     more: more || all.length > TURN_LIMIT,
     working,
+    ...(warning ? { warning } : {}),
   };
 }

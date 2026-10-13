@@ -52,9 +52,12 @@ function fixture(
   turns: (threadId: string) => Wire = () => ({ result: { data: [] } }),
   /** What `thread/list` finds, or the error message it fails with. */
   threads: { id: string; name: string; updatedAt: number }[] | string = [],
+  failedStore?: string,
 ) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    if (options?.args?.at(-1) === failedStore)
+      throw new Error("conflicting setup");
     const exit = deferred<number | null>();
     const process = {
       write: async (text: string) => {
@@ -578,4 +581,46 @@ it("says when looking for another build's thread failed", async () => {
       screen.getByRole("region", { name: "This channel" }),
     ).findByRole("alert"),
   ).toHaveTextContent("Could not look for a Codex session: database is locked");
+});
+
+it("shows readable history alongside the other-store failure", async () => {
+  const root = "e".repeat(64);
+  const f = fixture(
+    {
+      [JSON.stringify(["channel", root])]: {
+        threadId: "kept",
+        workspace: "/w",
+      },
+    },
+    () => ({
+      result: {
+        data: [
+          {
+            id: "turn",
+            status: "completed",
+            startedAt: 1,
+            completedAt: 2,
+            items: [
+              { type: "agentMessage", id: "a", text: "Retained history." },
+            ],
+          },
+        ],
+        nextCursor: null,
+      },
+    }),
+    [],
+    "isolated",
+  );
+  render(
+    <PanelSubviewHost close={vi.fn()}>
+      <f.tabs.CodexTab {...f.props()} />
+    </PanelSubviewHost>,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "View transcript" }));
+  expect(await screen.findByText("Retained history.")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Some conversation history could not be read: conflicting setup",
+  );
 });

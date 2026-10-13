@@ -458,3 +458,50 @@ it("merges display history across stores while activity belongs to the saved thr
   expect(read?.turns.map((turn) => turn.turnId)).toEqual(["old", "new"]);
   expect(read?.working).toBe(false);
 });
+
+it("retains readable history with a diagnostic when the other home fails", async () => {
+  const f = server(paged([turn()]));
+  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
+    options?.args?.at(-1) === "isolated"
+      ? Promise.reject(new Error("conflicting setup"))
+      : f.spawn(id, options),
+  );
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "thread-1", store: "legacy" },
+    new AbortController().signal,
+  );
+  expect(read?.turns).toHaveLength(1);
+  expect(read?.warning).toContain("conflicting setup");
+  await expect(
+    readTranscript(
+      spawn,
+      { ...lookup, threadId: "thread-1", store: "isolated" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("conflicting setup");
+});
+
+it("retains discovered history and reports an unavailable other home", async () => {
+  const tagged = `${sessionTitle(agent.name, lookup)} · ${sessionTag(agent.pubkey, lookup)}`;
+  const f = server(paged([turn()]), [
+    { id: "shared", name: tagged, updatedAt: 1 },
+  ]);
+  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
+    options?.args?.at(-1) === "isolated"
+      ? Promise.reject(new Error("conflicting setup"))
+      : f.spawn(id, options),
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    await expect(
+      findConversation(spawn, lookup, new AbortController().signal),
+    ).resolves.toEqual({ threadId: "shared", at: 1000, store: "legacy" });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("isolated"),
+      expect.any(Error),
+    );
+  } finally {
+    error.mockRestore();
+  }
+});

@@ -25,3 +25,25 @@ test("Buzz-specific Codex sign-in guidance fits narrow enlarged layouts and rema
     await expect(page.getByRole("alert")).toContainText("sign-in for Buzz");
   }
 });
+
+test("an unavailable other store leaves readable history with an explicit alert", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/codex-setup.html?partial-history");
+  await page.getByRole("button", { name: "View transcript" }).click();
+  await expect(
+    page.getByText("The existing conversation history is available."),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Some conversation history could not be read",
+  );
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});

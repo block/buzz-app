@@ -196,6 +196,9 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
+  /** Me's explicit default recipient. Authored mentions still take precedence. */
+  selectedAgent?: string | undefined;
+  chatPresentation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -301,6 +304,8 @@ function Composer({
   submission,
   sessionConversation,
   personalConversation = false,
+  selectedAgent,
+  chatPresentation = false,
   activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
@@ -971,10 +976,26 @@ function Composer({
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId &&
     (!personalConversation || session.mePlacement.has(channelId));
-  async function prepareRecipients(explicit: readonly string[]) {
+  async function prepareRecipients(
+    explicit: readonly string[],
+    selected: string | undefined,
+  ) {
     const channel = await session.workSessions.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    if (selected) {
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      if (
+        !session.agentChoices
+          .snapshot()
+          .selectable.some((agent) => agent.pubkey === selected)
+      )
+        throw new Error(
+          "The selected assistant is no longer available. Choose another assistant and retry.",
+        );
+    }
     const recipients = personalConversation
       ? [...explicit]
       : [
@@ -1104,11 +1125,17 @@ function Composer({
       }
       requireCompletedSessionStart();
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      const selected =
+        personalConversation && !captured.recipients.length
+          ? selectedAgent
+          : undefined;
+      let recipients = selected
+        ? [selected]
+        : captured.recipients.map((item) => item.pubkey);
       if (sessionConversation || personalConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        recipients = await prepareRecipients(recipients, selected);
       } else if (recipients.length) {
         const channel = session.channels
           .list()
@@ -1166,7 +1193,7 @@ function Composer({
         session.agentChoices.snapshot(),
       );
       const next = followupDraft(
-        rememberAgentsPreference()
+        !personalConversation && rememberAgentsPreference()
           ? captured.recipients.filter(
               (item) =>
                 agents.has(item.pubkey) &&
@@ -1402,6 +1429,7 @@ function Composer({
       <form
         ref={form}
         className={styles.composer}
+        data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
         onKeyDown={(event) => {
@@ -1673,9 +1701,15 @@ function Composer({
           {active &&
             !editing.target &&
             !submission &&
-            !!value.recipients.length && (
+            (!!value.recipients.length || !!selectedAgent) && (
               <ComposerModels
-                pubkeys={value.recipients.map((item) => item.pubkey)}
+                pubkeys={
+                  value.recipients.length
+                    ? value.recipients.map((item) => item.pubkey)
+                    : selectedAgent
+                      ? [selectedAgent]
+                      : []
+                }
                 value={picks}
                 disabled={editingDisabled}
                 onChange={setPicks}

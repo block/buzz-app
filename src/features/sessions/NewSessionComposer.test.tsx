@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
+import { readSelectedAssistant } from "./selected-assistant";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -824,6 +825,57 @@ it("retries Me placement on the same created channel before sending, including a
   );
 });
 
+it("starts a Me chat with a visible assistant and remembers it for the created chat", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="me-assistant"
+      onStarted={started}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Start here");
+  await user.click(
+    screen.getByRole("button", { name: "Choose follow-up assistant" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Outside agent" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  const id = f.workSessions.create.mock.calls[0]?.[0];
+  if (!id) throw new Error("Missing created chat");
+  expect(f.messages.send).toHaveBeenCalledWith(id, "Start here", [
+    "b".repeat(64),
+  ]);
+  expect(readSelectedAssistant("me-assistant", id)).toBe("b".repeat(64));
+});
+
+it("freezes the assistant while a Me creation receipt is pending", () => {
+  const f = setup();
+  const id = "22222222-2222-4222-8222-222222222222";
+  writeView("me-pending", "me:new-agent", "b".repeat(64));
+  writeView("me-pending", "me:pending", {
+    id,
+    text: "Retry this thought",
+    agent: "b".repeat(64),
+    invitationId: "e".repeat(64),
+    creationId: "c".repeat(64),
+  });
+  render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="me-pending"
+      onStarted={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: /^Change agent: Outside agent/ }),
+  ).toBeDisabled();
+});
+
 it("passes the frozen Me section into initial placement before setup and send", async () => {
   const f = setup();
   const id = "22222222-2222-4222-8222-222222222222";
@@ -954,7 +1006,7 @@ it("opens and saves local draft settings in a fresh Me-only group", async () => 
     const open = async () => {
       await user.click(screen.getByRole("button", { name: "Session actions" }));
       await user.click(
-        await screen.findByRole("menuitem", { name: "Session settings…" }),
+        await screen.findByRole("menuitem", { name: "Chat settings…" }),
       );
       return screen.findByRole("textbox", { name: "Canvas" });
     };

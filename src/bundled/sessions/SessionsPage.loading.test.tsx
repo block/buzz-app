@@ -232,9 +232,7 @@ it("opens a pending Me start through its original receipt after its section was 
     setup: { sectionId: "deleted", canvas: "Frozen instructions", agents: [] },
   });
   f.mount();
-  expect(
-    screen.getByRole("region", { name: "New conversation" }),
-  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "New chat" })).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 

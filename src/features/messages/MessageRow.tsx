@@ -106,6 +106,7 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  alignViewer?: boolean;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -197,6 +198,7 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  alignViewer = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -459,7 +461,14 @@ function MessageRowContent({
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
-      <div ref={rowRef} className={styles.message} data-layout={layout}>
+      <div
+        ref={rowRef}
+        className={styles.message}
+        data-layout={layout}
+        data-viewer-message={
+          alignViewer && row.authorId === session?.viewer ? "" : undefined
+        }
+      >
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />

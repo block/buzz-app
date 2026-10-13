@@ -14,7 +14,7 @@ test.use({
   historyCounts: { [id]: 2, [other]: 1 },
 });
 
-test("Me has full-width chat and matching context/overflow actions without navigating", async ({
+test("Me has a wide new chat, bounded conversation and matching actions", async ({
   page,
   app,
 }) => {
@@ -60,7 +60,7 @@ test("Me has full-width chat and matching context/overflow actions without navig
   expect(actions).toContain("Share…");
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("heading", { name: "New conversation", exact: true }),
+    page.getByRole("heading", { name: "New chat", exact: true }),
   ).toBeVisible();
   await expect(row).toBeFocused();
   await sidebar
@@ -112,51 +112,127 @@ test("Me has full-width chat and matching context/overflow actions without navig
           return el.closest("form").getBoundingClientRect().width / pane.width;
         }),
       )
-      .toBeGreaterThan(0.9);
+      .toBeLessThanOrEqual(0.95);
+    await expect
+      .poll(() =>
+        composer.evaluate((el) => {
+          const pane = el
+            .closest("[data-attachment-drop-zone]")
+            .getBoundingClientRect();
+          return el.closest("form").getBoundingClientRect().width / pane.width;
+        }),
+      )
+      .toBeGreaterThan(0.65);
     await expect(composer).toBeInViewport();
   }
   await page.screenshot({ path: test.info().outputPath("me-full-width.png") });
 });
 
-test("moving a conversation expands unfiled Conversations and keeps keyboard focus", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New group…" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Section name" }).fill("Work");
-  await dialog.getByRole("button", { name: "Create and move" }).click();
-  await expect(dialog).not.toBeVisible();
-  await expect(sidebar.getByText("Saving section…")).not.toBeVisible();
-  await expect(sidebar.getByRole("alert")).toHaveCount(0);
-  await expect(
-    sidebar.getByRole("button", { name: "Work", exact: true }),
-  ).toBeVisible();
-  const unfiled = sidebar.getByRole("button", {
-    name: "Conversations",
-    exact: true,
+test.describe("Berd-style Me organization", () => {
+  test.use({ meAgentNames: ["Owned Honey"] });
+  test("a project holds two chats and remembers each chat's assistant", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+    const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+    await row.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+    await page.getByRole("menuitem", { name: "New project…" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+    await dialog.getByRole("button", { name: "Create and move" }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(sidebar.getByText("Saving project…")).not.toBeVisible();
+    await expect(sidebar.getByRole("alert")).toHaveCount(0);
+    await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();
+    await expect(
+      sidebar.getByRole("button", { name: "Work", exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() => app.report.sidebarPublications?.length ?? 0)
+      .toBe(1);
+    await page.clock.install();
+    await page.clock.runFor(1_100);
+    await page.clock.resume();
+
+    const beta = sidebar.getByRole("button", { name: "Beta", exact: true });
+    await beta.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+    await page.getByRole("menuitem", { name: "Work", exact: true }).click();
+    await expect
+      .poll(() => app.report.sidebarPublications?.length ?? 0)
+      .toBe(2);
+    await expect(row).toBeVisible();
+    await expect(beta).toBeVisible();
+
+    await row.click();
+    await expect(
+      page.getByRole("button", { name: "Project: Work", exact: true }),
+    ).toBeVisible();
+    const assistant = page.getByRole("button", {
+      name: "Choose follow-up assistant",
+      exact: true,
+    });
+    await assistant.click();
+    await page
+      .getByRole("button", { name: "Owned Honey", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
+    ).toBeVisible();
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    await composer.fill("Remember the launch checklist");
+    await composer.press("Enter");
+    const viewerMessage = page.getByText("Remember the launch checklist", {
+      exact: true,
+    });
+    await expect(viewerMessage).toBeVisible();
+    await beta.click();
+    await expect(
+      page.getByRole("button", {
+        name: "Choose follow-up assistant",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await row.click();
+    await expect(
+      page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
+    ).toBeVisible();
+    await viewerMessage.hover();
+    await page.screenshot({
+      path: test.info().outputPath("after-light-wide.png"),
+    });
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+      document.documentElement.classList.add("dark");
+    });
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await page.screenshot({
+      path: test.info().outputPath("after-dark-wide.png"),
+    });
+    await page.setViewportSize({ width: 760, height: 900 });
+    await expect(composer).toBeInViewport();
+    await page.screenshot({
+      path: test.info().outputPath("after-dark-narrow.png"),
+    });
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "light";
+      document.documentElement.classList.remove("dark");
+      document.documentElement.style.setProperty("--buzz-text-scale", "2");
+    });
+    await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+    await expect(composer).toBeInViewport();
+    await page.screenshot({
+      path: test.info().outputPath("after-light-text-2x.png"),
+    });
   });
-  await unfiled.click();
-  await expect(unfiled).toHaveAttribute("aria-expanded", "false");
-  await row.focus();
-  await row.press("Shift+F10");
-  await page.getByRole("menuitem", { name: "Move to", exact: true }).focus();
-  await page.keyboard.press("ArrowRight");
-  await page
-    .getByRole("menuitem", { name: "Conversations", exact: true })
-    .click();
-  await expect(unfiled).toHaveAttribute("aria-expanded", "true");
-  await expect(row).toBeVisible();
-  await expect(row).toBeFocused();
-  await expect(
-    page.getByRole("heading", { name: "New conversation", exact: true }),
-  ).toBeVisible();
 });
 
 test("Share promotes the same conversation and opens its preserved history in Messages", async ({

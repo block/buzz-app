@@ -9,7 +9,7 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
-import type { MemoryEntry } from "../../features/agents/memory";
+import type { MemoryListing } from "../../features/agents/memory";
 import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
@@ -155,7 +155,7 @@ export class CodexRuntime {
   /** One owner-view read per session and agent; concurrent turns share it. */
   private memoryReads = new WeakMap<
     RelaySession,
-    Map<string, Promise<readonly MemoryEntry[]>>
+    Map<string, Promise<MemoryListing>>
   >();
   constructor(
     private readonly spawn: Spawn,
@@ -717,9 +717,14 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
-        const entries = await this.memories(request, active.signal);
+        const { entries } = await this.memories(request, active.signal);
         check();
         return entries;
+      },
+      remembered: () => {
+        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+        if (snapshot?.status === "ready")
+          this.memoryReads.get(snapshot.session)?.delete(request.agent.pubkey);
       },
     });
     const reply = await callTool(
@@ -762,25 +767,17 @@ export class CodexRuntime {
     }
     let read = reads.get(request.agent.pubkey);
     if (!read) {
-      read = (async () => {
-        const view = session.agentMemories.open(request.agent.pubkey);
-        try {
-          await view.refresh();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          view.dispose();
-        }
-      })();
+      read = session.agentMemories.read(
+        request.agent.pubkey,
+        AbortSignal.timeout(10000),
+      );
       reads.set(request.agent.pubkey, read);
       void read.then(
         () => reads?.delete(request.agent.pubkey),
         () => reads?.delete(request.agent.pubkey),
       );
     }
-    const entries = await abortable(read, signal);
+    const listing = await abortable(read, signal);
     signal.throwIfAborted();
     const current = this.relay(request.agent.pubkey)?.snapshot();
     if (
@@ -789,14 +786,17 @@ export class CodexRuntime {
       current.session !== session
     )
       throw new Error("Buzz is not connected to this community");
-    return entries;
+    return listing;
   }
   /** The agent's `core` memory for a turn: its text, `null` when it has none,
    * or undefined when it could not be read, so the turn goes on without it. */
   private async core(request: Request, signal: AbortSignal) {
     try {
-      const entries = await this.memories(request, signal);
-      return entries.find((entry) => entry.slug === "core")?.body ?? null;
+      const listing = await this.memories(request, signal);
+      return (
+        listing.entries.find((entry) => entry.slug === "core")?.body ??
+        (listing.partial ? undefined : null)
+      );
     } catch (error) {
       signal.throwIfAborted();
       console.warn("Codex could not read the agent's memory", error);

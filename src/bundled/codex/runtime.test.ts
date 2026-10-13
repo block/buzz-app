@@ -209,9 +209,13 @@ function fixture(
   }));
   const read = vi.fn(async () => [] as EventData[]);
   const memories: { slug: string; body: string; createdAt: number }[] = [];
+  const memoryRead = vi.fn(async () => ({ entries: memories, partial: false }));
   const memoryView = {
     refresh: vi.fn(async () => {}),
-    snapshot: () => ({ status: "ready", listing: { entries: memories } }),
+    snapshot: () => ({
+      status: "ready",
+      listing: { entries: memories, partial: false },
+    }),
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
@@ -227,7 +231,7 @@ function fixture(
         ),
       },
       read,
-      agentMemories: { open: memoryOpen },
+      agentMemories: { open: memoryOpen, read: memoryRead },
       channels: {
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
@@ -413,6 +417,7 @@ function fixture(
     query,
     fileReads,
     memoryOpen,
+    memoryRead,
     memoryView,
     remember,
     upload,
@@ -496,7 +501,7 @@ it("hands over promptly and runs conversations independently on one server", asy
     additionalContext: {
       "buzz.instructions": {
         value: expect.stringContaining(
-          "Read your `core` memory with `mem_get` at the start of a session",
+          "Your `core` memory is auto-injected into your context every turn",
         ),
       },
     },
@@ -1799,7 +1804,7 @@ it("gives each turn the agent's current core memory, and goes on without it when
     "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
   );
   f.complete(1, "SECOND");
-  f.memoryView.refresh.mockRejectedValueOnce(new Error("offline"));
+  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
   await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
   expect(memory(2)).toContain("TEST_INSTRUCTIONS");
@@ -1811,6 +1816,23 @@ it("gives each turn the agent's current core memory, and goes on without it when
   f.complete(2, "THIRD");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
   warn.mockRestore();
+});
+
+it("does not declare core missing when the owner listing is partial", async () => {
+  const f = fixture();
+  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
+  await f.runtime.run(f.delivery("partial"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const start = f.starts()[0];
+  expect(start).toBeDefined();
+  const instructions = (
+    start?.params as {
+      additionalContext?: Record<string, { value: string }>;
+    }
+  )?.additionalContext?.["buzz.instructions"]?.value;
+  expect(instructions).toContain("TEST_INSTRUCTIONS");
+  expect(instructions).not.toContain("No core memory found");
+  expect(instructions).not.toContain("<core-memory>");
 });
 
 it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
@@ -1885,10 +1907,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     ],
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
-  expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
+  expect(f.memoryRead).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  // The turn's own `core` read, then the two tool calls.
-  expect(f.memoryView.dispose).toHaveBeenCalledTimes(3);
+  // The turn's own `core` read, then mem_set's read and a fresh post-write read.
+  expect(f.memoryRead).toHaveBeenCalledTimes(3);
   expect(
     (
       await f.tool("send", {

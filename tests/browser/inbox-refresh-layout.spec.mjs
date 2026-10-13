@@ -61,7 +61,9 @@ for (const width of [1280, 390, 320]) {
             ),
           ].map((row) => ({ ...box(row), text: row.textContent })),
           header: box(element.querySelector("header")),
+          show: box(element.querySelector('[role="combobox"]')),
           filters: box(element.querySelector('[aria-label="Inbox filters"]')),
+          unread: box(element.querySelector('[aria-label="Unread only"]')),
         };
       });
     const measurements = [];
@@ -116,3 +118,70 @@ for (const width of [1280, 390, 320]) {
     });
   });
 }
+
+// Only a browser can prove that the sibling Archive control leaves readable
+// label space when the host's interface size doubles at a narrow width.
+test("narrow enlarged-text rows reflow Archive without erasing their labels", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-font-scale.v1", "2");
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const list = inbox.getByRole("list", { name: "Inbox conversations" });
+  const rows = list.getByRole("listitem");
+  await expect(rows).toHaveCount(3);
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  await expect(list).toHaveAttribute("aria-busy", "false");
+  const row = rows.first();
+  const open = row.getByRole("button", { name: /^Open / });
+  const archive = row.getByRole("button", { name: /^Archive / });
+  const geometry = () =>
+    row.evaluate((element) => {
+      const open = element.querySelector(".navigation-item");
+      const label = open.querySelector(".navigation-item-label");
+      const action = open.nextElementSibling;
+      const box = (node) => {
+        const { x, y, width, height } = node.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      return {
+        root: parseFloat(getComputedStyle(document.documentElement).fontSize),
+        row: box(element),
+        open: box(open),
+        label: box(label),
+        action: box(action),
+      };
+    });
+  const measured = await geometry();
+  // NavigationItem truncates long labels at enlarged text sizes; this checks
+  // that Archive reserves no additional inline space, not full visual acceptance.
+  expect(measured.label.width).toBeGreaterThanOrEqual(2 * measured.root);
+  expect(measured.open.x + measured.open.width).toBe(
+    measured.row.x + measured.row.width,
+  );
+  expect(measured.action.y).toBeGreaterThanOrEqual(
+    measured.open.y + measured.open.height,
+  );
+  await open.focus();
+  await expect(archive.locator("xpath=..")).toHaveCSS("opacity", "1");
+  await archive.click();
+  await expect(rows).toHaveCount(2);
+  await inbox.getByRole("combobox", { name: "Show" }).click();
+  await page.getByRole("option", { name: "Archived", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
+    "Archived",
+  );
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await rows.getByRole("button", { name: /^Open / }).focus();
+  await rows.getByRole("button", { name: /^Restore / }).click();
+  await expect(rows).toHaveCount(0);
+  await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
+    0,
+  );
+});

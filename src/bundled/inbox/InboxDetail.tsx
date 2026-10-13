@@ -19,6 +19,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import {
   ArrowSquareOutIcon,
   ChatCircleIcon,
@@ -37,6 +38,7 @@ export function InboxDetail({
   extensions,
   channelName,
   previewIncomplete,
+  archiveAction,
   onBack,
   resizeHandle,
 }: {
@@ -49,6 +51,9 @@ export function InboxDetail({
   extensions?: ConversationExtensions | undefined;
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
+  archiveAction?:
+    | { archived: boolean; disabled: boolean; run(): void }
+    | undefined;
   onBack(): void;
 }) {
   const [error, setError] = useState<string>();
@@ -217,6 +222,23 @@ export function InboxDetail({
         }
         actions={
           <>
+            {archiveAction && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={
+                  archiveAction.disabled || !available || !!previewIncomplete
+                }
+                onClick={archiveAction.run}
+                aria-label={
+                  archiveAction.archived
+                    ? "Restore conversation"
+                    : "Archive conversation"
+                }
+              >
+                {archiveAction.archived ? "Restore" : "Archive"}
+              </Button>
+            )}
             {openAction}
             <IconButton
               ref={placeholderClose}

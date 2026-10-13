@@ -111,7 +111,7 @@ it("adopts and carries an agent's instructions and workspace, nothing else", () 
   );
 });
 
-it("checks provider defaults before running agents after startup", async () => {
+it("stops agents that stop running even when the agent list could not be read", () => {
   const sync = vi.spyOn(CodexRuntime.prototype, "sync");
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };
   let state = { status: "ready", agents: [agent], running: [agent] };
@@ -130,8 +130,7 @@ it("checks provider defaults before running agents after startup", async () => {
     },
     effect: vi.fn(),
   } as never);
-  expect(sync).not.toHaveBeenCalled();
-  await vi.waitFor(() => expect(sync).toHaveBeenLastCalledWith([agent]));
+  expect(sync).toHaveBeenLastCalledWith([agent]);
   // A failed refresh keeps the list; leaving the community then empties it.
   state = { ...state, status: "error", agents: [], running: [] };
   notify();

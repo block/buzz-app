@@ -27,11 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // server; switching communities or a reconnect does not.
   const sync = () => {
     const snapshot = ctx.agents.snapshot();
-    if (
-      snapshot.status === "loading" ||
-      providerController.snapshot().readiness === "checking"
-    )
-      return;
+    if (snapshot.status === "loading") return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
   const offAgents = ctx.agents.subscribe(sync);
@@ -111,7 +107,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => runtime.preview(agent),
-    run: (delivery) => runtime.run(delivery),
+    run: async (delivery) => {
+      if (providerController.snapshot().readiness === "checking")
+        await providerController.check();
+      return runtime.run(delivery);
+    },
     timeoutMs: 2 * 60_000,
   });
 };

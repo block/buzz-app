@@ -148,8 +148,28 @@ function fixture(
     exited: exits.promise,
   };
   let closed = false;
+  let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
+    if (plugin && _id === "app-server" && appServerSpawns++ === 0) {
+      const catalogExit = deferred<number | null>();
+      return {
+        write: async (data: string) => {
+          const request: Wire = JSON.parse(data);
+          if (request.id == null) return;
+          const result =
+            request.method === "account/read"
+              ? { account: { type: "chatgpt" } }
+              : request.method === "model/list"
+                ? { data: [], nextCursor: null }
+                : {};
+          value?.onStdout?.(`${JSON.stringify({ id: request.id, result })}\n`);
+        },
+        end: async () => catalogExit.resolve(0),
+        kill: async () => catalogExit.resolve(null),
+        exited: catalogExit.promise,
+      };
+    }
     if (_id === "workspace") {
       value?.onStdout?.("/home/test/.buzz\n");
       return { ...process, exited: Promise.resolve(0) };

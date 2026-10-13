@@ -171,13 +171,23 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   await expect(archive.locator("xpath=..")).toHaveCSS("opacity", "1");
   await archive.click();
   await expect(rows).toHaveCount(2);
-  await inbox.getByRole("combobox", { name: "Show" }).click();
-  await page.getByRole("option", { name: "Archived", exact: true }).click();
+  await inbox
+    .getByRole("button", { name: "Inbox filters", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemcheckbox", { name: "Archived", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemcheckbox", { name: "Inbox", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
   await expect(rows).toHaveCount(1);
-  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
-    "Archived",
+  await expect(
+    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+  ).toContainText("Archived");
+  await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
+    0,
   );
-  await expect(page.getByRole("listbox")).toHaveCount(0);
   await rows.getByRole("button", { name: /^Open / }).focus();
   await rows.getByRole("button", { name: /^Restore / }).click();
   await expect(rows).toHaveCount(0);

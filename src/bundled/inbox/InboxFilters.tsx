@@ -18,6 +18,7 @@ import {
   NotificationFilledIcon,
 } from "../../shared/design-system/icons";
 
+export type ShowFilter = "inbox" | "archived" | "all";
 export type ActivityFilter = "all" | "threads" | "mentions" | "dms";
 export type SenderFilter = "everyone" | "humans" | "agents";
 const views = [
@@ -30,25 +31,45 @@ const views = [
 
 export function InboxFilters({
   view,
+  show,
   sender,
   unreadOnly,
   triggerRef,
   onViewChange,
+  onShowChange,
   onSenderChange,
   onUnreadChange,
 }: {
   view: ActivityFilter | "drafts";
+  show: ShowFilter;
   sender: SenderFilter;
   unreadOnly: boolean;
   triggerRef: Ref<HTMLButtonElement>;
   onViewChange(view: ActivityFilter | "drafts"): void;
+  onShowChange(show: ShowFilter): void;
   onSenderChange(sender: SenderFilter): void;
   onUnreadChange(checked: boolean): void;
 }) {
   const selectionId = useId();
   const drafts = view === "drafts";
   const label = views.find((item) => item.value === view)?.label;
-  const summary = `${label}${!drafts && sender !== "everyone" ? ` · ${sender === "humans" ? "People" : "Agents"}` : ""}`;
+  const summary = drafts
+    ? label
+    : [
+        view === "all" && show === "archived" ? undefined : label,
+        show === "archived"
+          ? "Archived"
+          : show === "all"
+            ? "Inbox and archived"
+            : undefined,
+        sender === "everyone"
+          ? undefined
+          : sender === "humans"
+            ? "People"
+            : "Agents",
+      ]
+        .filter(Boolean)
+        .join(" · ");
   return (
     <>
       <MenuRoot>
@@ -64,6 +85,50 @@ export function InboxFilters({
           }
         />
         <MenuPopup aria-label="Inbox filters">
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Status</MenuGroupLabel>
+            <MenuCheckboxItem
+              checked={show !== "archived"}
+              disabled={drafts || show === "inbox"}
+              closeOnClick={false}
+              onCheckedChange={(checked) => {
+                if (!drafts && (checked || show === "all"))
+                  onShowChange(checked ? "all" : "archived");
+              }}
+            >
+              Inbox
+            </MenuCheckboxItem>
+            <MenuCheckboxItem
+              checked={show !== "inbox"}
+              disabled={drafts || show === "archived"}
+              closeOnClick={false}
+              onCheckedChange={(checked) => {
+                if (!drafts && (checked || show === "all"))
+                  onShowChange(checked ? "all" : "inbox");
+              }}
+            >
+              Archived
+            </MenuCheckboxItem>
+          </MenuGroup>
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Type</MenuGroupLabel>
+            <MenuRadioGroup value={view} onValueChange={onViewChange}>
+              {views
+                .filter((item) => item.value !== "drafts")
+                .map((item) => (
+                  <MenuRadioItem
+                    key={item.value}
+                    value={item.value}
+                    selection="highlight"
+                    closeOnClick
+                  >
+                    {item.label}
+                  </MenuRadioItem>
+                ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+          <MenuSeparator />
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">From</MenuGroupLabel>
             <MenuCheckboxItem
@@ -90,21 +155,11 @@ export function InboxFilters({
             </MenuCheckboxItem>
           </MenuGroup>
           <MenuSeparator />
-          <MenuGroup>
-            <MenuGroupLabel emphasis="quiet">Show</MenuGroupLabel>
-            <MenuRadioGroup value={view} onValueChange={onViewChange}>
-              {views.map((item) => (
-                <MenuRadioItem
-                  key={item.value}
-                  value={item.value}
-                  selection="highlight"
-                  closeOnClick
-                >
-                  {item.label}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
+          <MenuRadioGroup value={view} onValueChange={onViewChange}>
+            <MenuRadioItem value="drafts" selection="highlight" closeOnClick>
+              Drafts
+            </MenuRadioItem>
+          </MenuRadioGroup>
         </MenuPopup>
       </MenuRoot>
       {!drafts && (

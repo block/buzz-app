@@ -66,10 +66,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(
     inbox.getByRole("button", { name: "Load older activity", exact: true }),
   ).toHaveCount(0);
-  await expect(inbox.getByRole("combobox")).toHaveCount(1);
-  await expect(inbox.getByRole("combobox", { name: "Show" })).toHaveText(
-    "Inbox",
-  );
+  await expect(inbox.getByRole("combobox")).toHaveCount(0);
   await expect(filter).toHaveText("All");
   const expectBareUnread = async () => {
     await expect(unread).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");

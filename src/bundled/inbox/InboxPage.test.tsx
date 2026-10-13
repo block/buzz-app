@@ -335,9 +335,9 @@ it("archives from the row without opening it, remembers filters, and clears an e
   view.unmount();
   render(h.view);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Show" })).toHaveTextContent(
-      "Archived",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Inbox filters" }),
+    ).toHaveTextContent("Archived"),
   );
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
@@ -522,13 +522,13 @@ it("defaults saved filters field by field", async () => {
   );
   render(h.view);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Show" })).toHaveTextContent(
-      "Archived",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Inbox filters" }),
+    ).toHaveTextContent("Archived"),
   );
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("All");
+  ).toHaveTextContent(/^Archived$/);
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "false",
@@ -1056,9 +1056,9 @@ it("reconciles saved preferences from another window", async () => {
       );
     }
   });
-  expect(screen.getByRole("combobox", { name: "Show" })).toHaveTextContent(
-    "Inbox + archived",
-  );
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("Inbox and archived");
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
   ).toHaveTextContent("All");
@@ -1659,20 +1659,22 @@ async function chooseFilter(label: string, control = "Activity type") {
     return;
   }
   const user = userEvent.setup();
-  if (control === "Show") {
-    await user.click(screen.getByRole("combobox", { name: control }));
-    await user.click(await screen.findByRole("option", { name: label }));
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: control })).toHaveTextContent(
-        label,
-      ),
-    );
-    return;
-  }
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
   await user.click(trigger);
   await screen.findByRole("menu", { name: "Inbox filters" });
-  if (control === "Sender") {
+  if (control === "Show") {
+    const inbox = screen.getByRole("menuitemcheckbox", { name: /^Inbox$/ });
+    const archived = screen.getByRole("menuitemcheckbox", { name: "Archived" });
+    if (label !== "Archived" && inbox.getAttribute("aria-checked") !== "true")
+      await user.click(inbox);
+    if (label !== "Inbox" && archived.getAttribute("aria-checked") !== "true")
+      await user.click(archived);
+    if (label === "Archived" && inbox.getAttribute("aria-checked") === "true")
+      await user.click(inbox);
+    if (label === "Inbox" && archived.getAttribute("aria-checked") === "true")
+      await user.click(archived);
+    await user.keyboard("{Escape}");
+  } else if (control === "Sender") {
     const people = screen.getByRole("menuitemcheckbox", { name: "People" });
     const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
     // Enable the desired sender before disabling the other: never select none.
@@ -2478,32 +2480,37 @@ it.each([true, false])(
   },
 );
 
-it("keeps Show's open keyboard selection through incoming row updates", async () => {
+it("keeps the status checkbox focused through incoming row updates", async () => {
   const h = fixture();
   const user = userEvent.setup();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
-  const show = screen.getByRole("combobox", { name: "Show" });
-  await user.click(show);
-  await waitFor(() =>
-    expect(screen.getByRole("option", { name: /^Inbox$/ })).toHaveFocus(),
-  );
-  await user.keyboard("{End}");
-  const combined = screen.getByRole("option", { name: "Inbox + archived" });
-  expect(combined).toHaveAttribute("data-highlighted");
-
+  const trigger = screen.getByRole("button", { name: "Inbox filters" });
+  await user.click(trigger);
+  const archived = await screen.findByRole("menuitemcheckbox", {
+    name: "Archived",
+  });
+  await user.keyboard("{Home}{ArrowDown}");
+  await waitFor(() => expect(archived).toHaveFocus());
+  expect(
+    screen.getByRole("menuitemcheckbox", { name: /^Inbox$/ }),
+  ).toHaveAttribute("aria-disabled", "true");
   const incoming = message(h.alice, "room", "Another review request", 50, [
     ["p", h.viewer.pubkey],
   ]);
   h.addEvent(incoming);
   await act(async () => h.emit([incoming]));
   await waitFor(() => expect(rows()).toHaveLength(3));
-  expect(screen.getAllByRole("option")).toHaveLength(3);
-  expect(combined).toHaveAttribute("data-highlighted");
+  expect(archived).toHaveFocus();
   await user.keyboard("{Enter}");
-  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-  expect(show).toHaveTextContent("Inbox + archived");
-  expect(show).toHaveFocus();
+  await waitFor(() => expect(archived).toBeChecked());
+  expect(
+    screen.getByRole("menu", { name: "Inbox filters" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger).toHaveTextContent("Inbox and archived");
+  expect(trigger).toHaveFocus();
 });
 
 it("shows Inbox scope as a filter without resetting attention filters", async () => {
@@ -2512,8 +2519,8 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   await screen.findByText("Public agent mention");
   await waitFor(() => expect(rows().length).toBeGreaterThan(0));
 
-  const show = () => screen.getByRole("combobox", { name: "Show" });
-  expect(show()).toHaveTextContent("Inbox");
+  const show = () => screen.getByRole("button", { name: "Inbox filters" });
+  expect(show()).toHaveTextContent("All");
   expect(screen.queryByRole("group", { name: "Inbox scope" })).toBeNull();
   expect(
     screen.queryByRole("button", { name: "About Inbox archive" }),
@@ -2538,7 +2545,7 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   const expectKept = () => {
     expect(
       screen.getByRole("button", { name: "Inbox filters" }),
-    ).toHaveTextContent("Mentions · Agents");
+    ).toHaveTextContent(/Mentions.*Agents/);
     expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -2550,7 +2557,7 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   await chooseFilter("Inbox", "Show");
   await waitFor(() => expect(rows()).toHaveLength(1));
   expectKept();
-  await chooseFilter("Inbox + archived", "Show");
+  await chooseFilter("Inbox and archived", "Show");
   await waitFor(() => expect(rows()).toHaveLength(2));
   expectKept();
   const archivedRow = rows().find((row) =>
@@ -2576,10 +2583,10 @@ it("combines the existing filter choices without placeholder actions", async () 
   await screen.findByText("Please review this");
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
   expect(trigger).toHaveTextContent("All");
-  expect(screen.getAllByRole("combobox")).toHaveLength(1);
-  expect(screen.getByRole("combobox", { name: "Show" })).toHaveTextContent(
-    "Inbox",
-  );
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("All");
   expect(screen.queryByRole("tab")).toBeNull();
   expect(
     screen.queryByRole("button", {
@@ -2614,6 +2621,29 @@ it("combines the existing filter choices without placeholder actions", async () 
     expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
   await user.keyboard("{Escape}");
   expect(trigger).toHaveFocus();
+  await chooseFilter("Drafts");
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveTextContent("Drafts");
+  expect(screen.queryByRole("button", { name: "Unread only" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Inbox filters" }));
+  await screen.findByRole("menu", { name: "Inbox filters" });
+  for (const name of ["Inbox", "Archived", "People", "Agents"])
+    expect(screen.getByRole("menuitemcheckbox", { name })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  await user.click(
+    screen.getByRole("menuitemradio", { name: "All", exact: true }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Inbox filters" }),
+    ).toHaveTextContent("All"),
+  );
+  expect(
+    screen.getByRole("button", { name: "Unread only" }),
+  ).toBeInTheDocument();
 });
 
 it("waits for roster recovery before explicit evidence refresh", async () => {

@@ -15,6 +15,7 @@ import {
   type Effort,
   type Models,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -96,6 +97,12 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  /** Each conversation's latest posting policy: when its turns were handed
+   * over, and when all of them settled. */
+  policies: Map<
+    string,
+    { topLevel: boolean; handed: Promise<unknown>; settled: Promise<unknown> }
+  >;
 };
 
 /** Where an agent's processes run, and with which model. */
@@ -376,9 +383,22 @@ export class ClaudeRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
+    const topLevel = await meChat(
+      () => this.relay(agent.pubkey),
+      agent.owner,
+      channel,
+      signal,
+    );
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
-      const turn = await this.turn(entry, agent.pubkey, event, channel, fresh);
+      const turn = await this.turn(
+        entry,
+        agent.pubkey,
+        event,
+        channel,
+        topLevel,
+        fresh,
+      );
       return {
         key: turn.key,
         text: this.review(
@@ -387,33 +407,58 @@ export class ClaudeRuntime {
         ),
       };
     };
-    const { key, text } = await prompt(false);
-    // A conversation's tools default to its thread; a session shared by
-    // several threads is told which to reply in instead.
-    entry.contexts.set(
-      key,
-      key === channel
-        ? { channel }
-        : { channel, root: threadReference(event)?.rootId ?? event.id },
+    const key = this.key(entry, agent.pubkey, event, channel, topLevel);
+    // A turn keeps the posting policy it was admitted with: a request under
+    // the other policy waits for the conversation's turns to settle rather
+    // than steering into them and changing their tools' context.
+    const prior = entry.policies.get(key);
+    const same = prior?.topLevel === topLevel;
+    const wait = prior && (same ? prior.handed : prior.settled);
+    let delivered!: Promise<Settled>;
+    const handed = (async () => {
+      await wait;
+      const { text } = await prompt(false);
+      // A conversation's tools default to its thread; a session shared by
+      // several threads is told which to reply in instead.
+      entry.contexts.set(
+        key,
+        topLevel
+          ? { channel, topLevel }
+          : key === channel
+            ? { channel }
+            : { channel, root: threadReference(event)?.rootId ?? event.id },
+      );
+      delivered = entry.sessions.deliver(key, text, event.created_at, {
+        steer: steerPrompt(text),
+        fresh: async () => (await prompt(true)).text,
+        activityScope: topLevel
+          ? channel
+          : (threadReference(event)?.rootId ?? event.id),
+        ...(step ? { step } : {}),
+        ...(acknowledged ? { acknowledged } : {}),
+        ...(superseded ? { superseded } : {}),
+        pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      });
+    })();
+    const done = handed.then(
+      () => delivered,
+      (error: unknown): Settled => ({ ok: false, error: String(error) }),
     );
-    const done = entry.sessions.deliver(key, text, event.created_at, {
-      steer: steerPrompt(text),
-      fresh: async () => (await prompt(true)).text,
-      ...(trigger.type === "mention"
-        ? {
-            activityScope: threadReference(event)?.rootId ?? event.id,
-            ...(step ? { step } : {}),
-            ...(acknowledged ? { acknowledged } : {}),
-            ...(superseded ? { superseded } : {}),
-          }
-        : {}),
-      pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+    entry.policies.set(key, {
+      topLevel,
+      handed: handed.catch(() => undefined),
+      settled: Promise.all([same ? prior.settled : undefined, done]).then(
+        () => undefined,
+      ),
     });
+    // Deliveries keep their order: a later one waits on this handover, and
+    // one with nothing to wait for is handed over before `run` returns.
+    if (!wait) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
     this.notify();
     this.watch(done, async (error) => {
-      if (error) await this.report(agent, channel, event, error);
+      if (error) await this.report(agent, channel, event, error, topLevel);
     });
   }
 
@@ -537,6 +582,7 @@ export class ClaudeRuntime {
     channel: string,
     event: EventData,
     error: string,
+    topLevel: boolean,
   ) {
     return agent
       .publish({
@@ -544,7 +590,9 @@ export class ClaudeRuntime {
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
         tags: [
           ["h", channel],
-          ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
+          ...(topLevel
+            ? []
+            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
           ["p", agent.owner],
         ],
       })
@@ -553,31 +601,54 @@ export class ClaudeRuntime {
       );
   }
 
+  /** The conversation the event's turn goes to: a Me chat or DM is one
+   * conversation, as is a channel for an agent with channel scope. */
+  private key(
+    entry: Entry,
+    self: string,
+    event: EventData,
+    channelId: string,
+    topLevel: boolean,
+  ) {
+    const summary = this.summary(self, channelId);
+    return topLevel ||
+      summary?.channelType === "dm" ||
+      entry.config.scope === "channel"
+      ? channelId
+      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+  }
+  private summary(self: string, channelId: string) {
+    const snapshot = this.relay(self)?.snapshot();
+    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
+    return (
+      session?.channels.list().channels.find((item) => item.id === channelId) ??
+      session?.channels.get?.(channelId)
+    );
+  }
+
   /** Where the event's turn goes, and what its prompt needs. */
   private async turn(
     entry: Entry,
     self: string,
     event: EventData,
     channelId: string,
+    topLevel: boolean,
     fresh = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary =
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId);
+    const summary = this.summary(self, channelId);
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     const scope = entry.config.scope;
-    const key =
-      dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
+    const key = this.key(entry, self, event, channelId, topLevel);
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    if (session && (thread || dm || topLevel))
       try {
         const events = await session.read(
-          thread
+          thread && !topLevel
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
@@ -619,6 +690,7 @@ export class ClaudeRuntime {
       key,
       event,
       scope,
+      topLevel,
       channel: {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
@@ -644,6 +716,7 @@ export class ClaudeRuntime {
       lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      policies: new Map(),
     };
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.

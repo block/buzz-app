@@ -12,9 +12,13 @@ import { threadReference } from "../relay/thread-reference";
 
 /** Clients show a pulse for 8 s, so one every 3 s keeps it steady. */
 const PULSE_MS = 3_000;
+/** Turns showing each typing scope; only the last one to stop ends it. */
+const showing = new Map<string, number>();
 
 /** Shows `pubkey` typing where it answers `event` until the returned function
- * is called. `session` is read on every pulse, as the community may reconnect. */
+ * is called: in the channel itself for a chat in the viewer's Me, which reads
+ * as one conversation. `session` is read on every pulse, as the community may
+ * reconnect. */
 export function typeLocally(
   session: () => RelaySession | undefined,
   pubkey: string,
@@ -22,11 +26,18 @@ export function typeLocally(
   channelId: string,
 ): () => void {
   const root = threadReference(event)?.rootId ?? event.id;
+  const flat = session()?.mePlacement.has(channelId) ?? false;
   const tags = [
     ["h", channelId],
-    ...(root === event.id ? [] : [["e", root, "", "root"]]),
-    ["e", event.id, "", "reply"],
+    ...(flat
+      ? []
+      : [
+          ...(root === event.id ? [] : [["e", root, "", "root"]]),
+          ["e", event.id, "", "reply"],
+        ]),
   ];
+  const scope = `${channelId}:${flat ? "" : root}:${pubkey}`;
+  showing.set(scope, (showing.get(scope) ?? 0) + 1);
   const send = (kind: number) =>
     session()?.typing.local({
       id: "",
@@ -47,8 +58,17 @@ export function typeLocally(
   };
   const timer = setInterval(pulse, PULSE_MS);
   pulse();
+  let stopped = false;
   return () => {
     clearInterval(timer);
+    if (stopped) return;
+    stopped = true;
+    const left = (showing.get(scope) ?? 1) - 1;
+    if (left) {
+      showing.set(scope, left);
+      return;
+    }
+    showing.delete(scope);
     // Ends it now rather than when the last pulse would expire.
     try {
       send(9);

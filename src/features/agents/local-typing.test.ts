@@ -19,17 +19,18 @@ const mention = {
 } as unknown as RelayEvent;
 
 afterEach(() => vi.useRealTimers());
+/** A community whose Me holds `personal`; `local` takes each pulse. */
+const community = (local: () => void, personal: readonly string[] = []) =>
+  ({
+    typing: { local },
+    mePlacement: { has: (id: string) => personal.includes(id) },
+  }) as unknown as RelaySession;
 
 it("pulses in the mention's thread every three seconds until stopped", () => {
   vi.useFakeTimers();
   vi.setSystemTime(10_000);
   const local = vi.fn();
-  const stop = typeLocally(
-    () => ({ typing: { local } }) as unknown as RelaySession,
-    agent,
-    mention,
-    "channel",
-  );
+  const stop = typeLocally(() => community(local), agent, mention, "channel");
   expect(local).toHaveBeenCalledExactlyOnceWith({
     id: "",
     pubkey: agent,
@@ -64,11 +65,35 @@ it("skips pulses while the community is not ready, and stops if one throws", () 
     throw new Error("closed");
   });
   typeLocally(() => session, agent, mention, "channel");
-  session = { typing: { local } } as unknown as RelaySession;
+  session = community(local);
   vi.advanceTimersByTime(3_000);
   expect(local).toHaveBeenCalledOnce();
   vi.advanceTimersByTime(9_000);
   expect(local).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledOnce();
   warn.mockRestore();
+});
+
+it("types in a Me chat itself, ending only when its last turn stops", () => {
+  vi.useFakeTimers();
+  const local = vi.fn();
+  const session = () => community(local, ["channel"]);
+  const first = typeLocally(session, agent, mention, "channel");
+  const other = { ...mention, id: "e".repeat(64), tags: [["h", "channel"]] };
+  const second = typeLocally(session, agent, other, "channel");
+  expect(local.mock.calls.map(([event]) => event.tags)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+  ]);
+  first();
+  first();
+  // The other turn is still working, so nothing ends it yet.
+  expect(local.mock.calls.map(([event]) => event.kind)).toEqual([20002, 20002]);
+  vi.advanceTimersByTime(3_000);
+  expect(local.mock.lastCall?.[0].kind).toBe(20002);
+  second();
+  expect(local.mock.lastCall?.[0]).toMatchObject({
+    kind: 9,
+    tags: [["h", "channel"]],
+  });
 });

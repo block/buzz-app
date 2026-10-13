@@ -315,7 +315,7 @@ const visibleWorkspace = () =>
     .spyOn(HTMLElement.prototype, "getClientRects")
     .mockReturnValue([{ width: 500, height: 500 }] as unknown as DOMRectList);
 
-test("native Close closes the active tab from outside the pane, commits each request, and falls back only on the next press", () => {
+test("native Close closes the active tab from outside the pane, commits each request, and reports when no tab is left", () => {
   visibleWorkspace();
   render(
     <StrictMode>

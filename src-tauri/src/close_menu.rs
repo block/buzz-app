@@ -1,5 +1,5 @@
-//! Cmd+W is a menu action, not a window-close request: the red button must
-//! continue closing the window even when a tab is open.
+//! Cmd+W is a menu action that only ever closes a tab, never the window: with
+//! no tab to close it does nothing. The red button still closes the window.
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     AppHandle, Manager, Runtime,
@@ -10,7 +10,7 @@ const REQUEST: &str = include_str!("close-request.js");
 
 pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
-    let close = MenuItem::with_id(app, CLOSE, "Close", true, Some("CmdOrCtrl+W"))?;
+    let close = MenuItem::with_id(app, CLOSE, "Close Tab", true, Some("CmdOrCtrl+W"))?;
     // Tauri's default has Close Window in both File and Window. Preserve all
     // other native items (especially editing/services), replacing both routes.
     // Predefined items expose their label, but not their native action type.
@@ -49,21 +49,8 @@ pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         return;
     }
     // Evaluate only in the trusted main view, even when a raw guest webview
-    // owns keyboard focus. One synchronous decision avoids stale tab state,
-    // startup/reload subscription gaps, and timeout-driven double closes.
-    let target = window.clone();
-    if let Err(error) = window.eval_with_callback(REQUEST, move |result| {
-        // Only an explicit unhandled result permits fallback. Evaluation errors
-        // must not turn a handled tab close into a second, window-level close.
-        if result == r#""unhandled""#
-            && target.is_visible().unwrap_or(false)
-            && target.is_focused().unwrap_or(false)
-        {
-            if let Err(error) = target.close() {
-                eprintln!("Could not close Buzz window: {error}");
-            }
-        }
-    }) {
-        eprintln!("Could not request Buzz close: {error}");
+    // owns keyboard focus.
+    if let Err(error) = window.eval(REQUEST) {
+        eprintln!("Could not request Buzz tab close: {error}");
     }
 }

@@ -70,7 +70,7 @@ const CLIPBOARD_CHORDS: readonly KeyBinding[] = [
   { key: "x", mod: true },
   { key: "a", mod: true },
 ];
-/** Close tab/window and quit: the desktop shell owns these, so they stay fixed. */
+/** Close tab and quit: the desktop shell owns these, so they stay fixed. */
 const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "q", mod: true },
   { key: "w", mod: true },

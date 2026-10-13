@@ -955,7 +955,7 @@ it("shows desktop Close as reserved and read-only while other actions remain edi
         plugins={catalog([])}
       />,
     );
-    const closeRow = within(row("Close tab or window"));
+    const closeRow = within(row("Close tab"));
     expect(closeRow.getByText("Reserved by Buzz")).toBeVisible();
     expect(closeRow.getByText("Control W")).toBeInTheDocument();
     expect(closeRow.queryByRole("button")).not.toBeInTheDocument();

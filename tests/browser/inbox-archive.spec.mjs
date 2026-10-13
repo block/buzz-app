@@ -350,6 +350,7 @@ test("saved grouped archive converges with unresolved Inbox evidence across relo
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
   await expect(rows).toHaveCount(3);
+  await choose(page, inbox, "Show", "Archived");
   await choose(page, inbox, "Show", "Inbox");
   const saved = await page.evaluate(
     ({ channel, rootId, messageIds }) => {

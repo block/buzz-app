@@ -23,26 +23,31 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = host.spawn?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   const runtime = new ClaudeRuntime(host, agents.relay);
+  /** A Claude agent is running, so Buzz's copy is needed; unknown until the
+   * agents have loaded. */
+  let needed: boolean | undefined;
   const sync = () => {
     const snapshot = agents.snapshot();
     // Agents that stop running, the app signing out included, stop their
     // processes; switching communities does not.
     if (snapshot.status === "loading") return;
-    runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
+    const running = snapshot.running.filter((agent) => agent.type === typeKey);
+    runtime.sync(running);
+    // Once loaded, and when the first Claude agent runs, the copy is brought
+    // up to date; that is also when a first copy is downloaded.
+    const was = needed;
+    needed = running.length > 0;
+    if (was === undefined || (needed && !was)) void setup.update(needed);
   };
   // One spare session waits for whichever running agent needs it next.
   if (spawn) {
     const unsubscribe = agents.subscribe(sync);
     sync();
-    // The first download waits for a Claude agent to need it.
-    const update = () =>
-      void setup.update(
-        agents.snapshot().running.some((agent) => agent.type === typeKey),
-      );
-    const started = setTimeout(update);
-    const timer = setInterval(update, UPDATE_MS);
+    const timer = setInterval(
+      () => void setup.update(needed ?? false),
+      UPDATE_MS,
+    );
     ctx.effect(() => () => {
-      clearTimeout(started);
       clearInterval(timer);
       unsubscribe();
       runtime.dispose();

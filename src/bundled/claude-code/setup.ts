@@ -209,18 +209,19 @@ export class ClaudeSetup {
   /** Moves Buzz's copy to the latest release. Unless `needed`, a computer
    * without a copy is left without one: the download is large. */
   async update(needed: boolean) {
-    if (!needed) {
-      await this.check();
-      if (this.state.status?.state === "missing") return;
-    }
-    await this.run("install");
+    if (!this.spawn || this.state.running) return;
+    if (!needed && (await checkClaude(this.spawn)).state === "missing") return;
+    await this.run("install", false);
   }
 
-  /** Installs or updates Buzz's copy, or runs sign-in; then checks again. */
-  async run(step: "install" | "login") {
+  /** Installs or updates Buzz's copy, or runs sign-in; then checks again.
+   * Asked for by the person, it also retries a release that failed its test,
+   * and shows only this step's output. */
+  async run(step: "install" | "login", asked = true) {
     if (!this.spawn || this.state.running) return;
     this.cancelled = false;
-    this.set({ running: step, output: "" });
+    if (asked) this.refused.clear();
+    this.set({ running: step, ...(asked ? { output: "" } : {}) });
     try {
       if (step === "install") await this.install(this.spawn);
       else await this.step(this.spawn, "claude", ["auth", "login"], "Sign-in");
@@ -240,6 +241,7 @@ export class ClaudeSetup {
     args: readonly string[],
     label: string,
   ) {
+    if (this.cancelled) throw new Error(`${label} ended (stopped).`);
     this.process = await spawn(id, {
       args,
       env: ENV,

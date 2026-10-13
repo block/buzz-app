@@ -226,9 +226,11 @@ it("keeps the copy in use when a new release fails its test", async () => {
       "Claude 2.1.300 failed its test: Killed: 9. Buzz keeps using 2.1.200.",
     status: { state: "ready", version: "2.1.200" },
   });
-  // A refused release is not downloaded again.
+  // A refused release is not downloaded again, unless the person asks.
   await setup.update(false);
   expect(state.fetched).toHaveLength(1);
+  await setup.run("install");
+  expect(state.fetched).toHaveLength(2);
 });
 
 it("does nothing when the copy is already the latest", async () => {
@@ -252,5 +254,6 @@ it("waits for a Claude agent before the first download", async () => {
   const setup = new ClaudeSetup(spawn, request);
   await setup.update(false);
   expect(requests).toEqual([]);
-  expect(setup.snapshot().status).toEqual({ state: "missing" });
+  await setup.update(true);
+  expect(requests).toHaveLength(2);
 });

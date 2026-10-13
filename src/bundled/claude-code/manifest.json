@@ -19,7 +19,7 @@
         "program": "bash",
         "args": [
           "-c",
-          "set -e; d=\"${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code\"; [ \"$(uname)\" = Darwin ] && d=\"$HOME/Library/Application Support/Buzz/claude-code\"; case \"$1\" in \"\"|[!0-9]*|*[!0-9.]*) echo \"Invalid version\" >&2; exit 2;; esac; case \"$2\" in darwin-arm64|darwin-x64|linux-arm64|linux-x64) ;; *) echo \"Unsupported platform\" >&2; exit 2;; esac; f=\"$d/$1/claude\"; mkdir -p \"$d/$1\"; curl -fsSL -o \"$f.part\" \"https://downloads.claude.ai/claude-code-releases/$1/$2/claude\"; s=$( (shasum -a 256 \"$f.part\" 2>/dev/null || sha256sum \"$f.part\") | cut -d\" \" -f1); [ \"$s\" = \"$3\" ] || { rm -f \"$f.part\"; echo \"The download did not match its checksum\" >&2; exit 1; }; chmod +x \"$f.part\"; mv -f \"$f.part\" \"$f\"",
+          "set -e; d=\"${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code\"; [ \"$(uname)\" = Darwin ] && d=\"$HOME/Library/Application Support/Buzz/claude-code\"; case \"$1\" in \"\"|[!0-9]*|*[!0-9.]*) echo \"Invalid version\" >&2; exit 2;; esac; case \"$2\" in darwin-arm64|darwin-x64|linux-arm64|linux-x64) ;; *) echo \"Unsupported platform\" >&2; exit 2;; esac; f=\"$d/$1/claude\"; t=\"$f.$$\"; trap 'rm -f \"$t\"' EXIT; trap \"exit 143\" INT TERM; mkdir -p \"$d/$1\"; curl -fsSL --speed-limit 1024 --speed-time 60 -o \"$t\" \"https://downloads.claude.ai/claude-code-releases/$1/$2/claude\"; s=$( (shasum -a 256 \"$t\" 2>/dev/null || sha256sum \"$t\") | cut -d\" \" -f1); [ \"$s\" = \"$3\" ] || { echo \"The download did not match its checksum\" >&2; exit 1; }; chmod +x \"$t\"; mv -f \"$t\" \"$f\"",
           "install"
         ]
       },
@@ -28,7 +28,7 @@
         "program": "bash",
         "args": [
           "-c",
-          "set -e; d=\"${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code\"; [ \"$(uname)\" = Darwin ] && d=\"$HOME/Library/Application Support/Buzz/claude-code\"; case \"$1\" in \"\"|[!0-9]*|*[!0-9.]*) echo \"Invalid version\" >&2; exit 2;; esac; test -x \"$d/$1/claude\"; p=$(cat \"$d/current\" 2>/dev/null || true); printf %s \"$1\" > \"$d/current.tmp\"; mv -f \"$d/current.tmp\" \"$d/current\"; for o in \"$d\"/*/; do o=$(basename \"$o\"); [ \"$o\" = \"$1\" ] || [ \"$o\" = \"$p\" ] || rm -rf \"${d:?}/$o\"; done",
+          "set -e; d=\"${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code\"; [ \"$(uname)\" = Darwin ] && d=\"$HOME/Library/Application Support/Buzz/claude-code\"; case \"$1\" in \"\"|[!0-9]*|*[!0-9.]*) echo \"Invalid version\" >&2; exit 2;; esac; test -x \"$d/$1/claude\"; p=$(cat \"$d/current\" 2>/dev/null || true); printf %s \"$1\" > \"$d/current.$$\"; mv -f \"$d/current.$$\" \"$d/current\"; for o in \"$d\"/*/; do o=$(basename \"$o\"); [ \"$o\" = \"$1\" ] || [ \"$o\" = \"$p\" ] || rm -rf \"${d:?}/$o\"; done",
           "use"
         ]
       },

@@ -173,18 +173,33 @@ records carry reusable verification evidence; unsigned local intent, copied
 caller proof symbols and ordinary senders cannot establish it. No signature
 verification runs while folding retained history.
 
+The owner tag identifies the identity that scheduled the workflow, not the author
+of every rendered word. Templates can include trigger-controlled values; those
+values do not acquire the owner's prompt authority.
+
+Claude Code and Codex also use this proof to authorize delegated workflow mentions.
+The receiving agent's ready community session must supply the explicit relay
+authority, and the workflow owner must equal that agent's owner. The event must
+contain a canonical `buzz:workflow-mention` for the receiving agent; all such tags
+must have exactly two fields, a lowercase-hex pubkey, and no duplicate targets.
+The relay emits these tags only for targets present in the owner-authored template
+and the rendered output. Legacy `p` tags route mentions but do not authorize them.
+Workflows created under an owned agent's own key are owned by that agent, rather
+than its human owner, and do not satisfy this equality check.
+
 Cached-only startup intentionally shows the actual signer until a live connection
 establishes explicit relay authority. Saved operator-contact `relayAuthor` is not
 promoted to `self`, and no new trusted storage is introduced. Signer-based search
-and Inbox sender filters, permissions, mention policy and relay-reported participant
+and Inbox sender filters and relay-reported participant
 summaries are unchanged by workflow presentation. Channel/thread rows retain the
 effective-author attribution and owner edit/delete behavior added separately in
 #661; when that author differs from the signer, the row carries a separate signing
 key so the disclosure still identifies the actual relay. Thread and media views
 request workflow-owner profiles through the existing background profile directory.
-The workflow proof check controls only the automation label, not main's effective
-message-author policy. With explicit authority, an unadmitted copy has no workflow
-label but can still receive main's effective-author attribution; production reads
+The workflow proof controls the automation label and the delegated-mention gate
+above; it does not control main's effective message-author policy. With explicit
+authority, an unadmitted copy has neither a workflow label nor delegated prompt
+authority, but can still receive main's effective-author attribution; production reads
 must retain their admission-owned event objects. Without explicit authority,
 cached-only startup keeps the signer fallback described above.
 Participant summaries have no per-message owner evidence

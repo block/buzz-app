@@ -138,6 +138,7 @@ function fixture(
   };
   const outbox = {
     subscribe: () => () => {},
+    observeSend: () => () => {},
     snapshot: () => operations,
     supports: () => true,
     retry: vi.fn(),

@@ -18,6 +18,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import {
+  MessageManagement,
+  MessageManagementStatus,
+} from "../../features/messages/MessageManagement";
 import { ChannelPreview } from "./ChannelPreview";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -280,49 +284,59 @@ export function InboxDetail({
               // The flex class must not override native hidden presentation.
               style={previewIncomplete ? { display: "none" } : undefined}
             >
-              <ConversationHost
-                host={host}
+              <MessageManagement
                 session={session}
-                scope={session.scope}
                 channelId={item.channelId}
-                channelName={channelName}
-                threadId={
-                  item.target.kind === "channel" ? undefined : target.messageId
-                }
-                extensions={extensions}
+                active={false}
               >
-                {(interactions) => (
-                  <>
-                    {" "}
-                    {item.target.kind === "channel" ? (
-                      <ChannelPreview
-                        interactions={interactions}
-                        session={session}
-                        extensions={extensions}
-                        channelId={item.channelId}
-                        channelName={
-                          channel?.channelType === "dm"
-                            ? `DM with ${dmName}`
-                            : channelName
-                        }
-                        anchor={target.messageId}
-                      />
-                    ) : (
-                      <ThreadPanel
-                        session={session}
-                        scope={session.scope}
-                        extensions={extensions}
-                        channelId={item.channelId}
-                        channelName={channelName}
-                        messageId={target.messageId}
-                        sessionConversation={channel?.channelType === "session"}
-                        revealSelected
-                        {...interactions}
-                      />
-                    )}
-                  </>
-                )}
-              </ConversationHost>
+                <MessageManagementStatus />
+                <ConversationHost
+                  host={host}
+                  session={session}
+                  scope={session.scope}
+                  channelId={item.channelId}
+                  channelName={channelName}
+                  threadId={
+                    item.target.kind === "channel"
+                      ? undefined
+                      : target.messageId
+                  }
+                  extensions={extensions}
+                >
+                  {(interactions) => (
+                    <>
+                      {item.target.kind === "channel" ? (
+                        <ChannelPreview
+                          interactions={interactions}
+                          session={session}
+                          extensions={extensions}
+                          channelId={item.channelId}
+                          channelName={
+                            channel?.channelType === "dm"
+                              ? `DM with ${dmName}`
+                              : channelName
+                          }
+                          anchor={target.messageId}
+                        />
+                      ) : (
+                        <ThreadPanel
+                          session={session}
+                          scope={session.scope}
+                          extensions={extensions}
+                          channelId={item.channelId}
+                          channelName={channelName}
+                          messageId={target.messageId}
+                          sessionConversation={
+                            channel?.channelType === "session"
+                          }
+                          revealSelected
+                          {...interactions}
+                        />
+                      )}
+                    </>
+                  )}
+                </ConversationHost>
+              </MessageManagement>
             </div>
           </ConversationPresentation>
         )}

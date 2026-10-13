@@ -13,6 +13,8 @@ export type ChannelCreationInput = Readonly<{
   ttlSeconds?: number | undefined;
   /** NIP-CL labels to create the channel with. */
   labels?: readonly string[] | undefined;
+  /** Create a NIP-CL system channel: left out of channel lists. */
+  system?: true | undefined;
   setup?: ChannelSetup | undefined;
 }>;
 type Progress = {
@@ -68,7 +70,12 @@ export function createChannelSetup({
   delivered(id: string, active?: () => boolean): Promise<void>;
   /** Observe/read back only; never retry template publications. */
   confirm(id: string): Promise<void>;
-  refresh(id: string, member: string): Promise<void>;
+  /** Wait for relay roster proof that `member` is in the channel `input` made. */
+  refresh(
+    id: string,
+    member: string,
+    input: ChannelCreationInput,
+  ): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
   place(id: string, group: string): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
@@ -156,7 +163,7 @@ export function createChannelSetup({
         let retrying = true;
         try {
           await delivered(operation, () => retrying && !signal.aborted);
-          await refresh(checking.id, viewer);
+          await refresh(checking.id, viewer, checking.input);
         } catch (error) {
           if (
             local
@@ -261,7 +268,7 @@ export function createChannelSetup({
             create(p.id, p.input, active),
           );
           await delivered(id);
-          await refresh(p.id, viewer);
+          await refresh(p.id, viewer, p.input);
           p.created = true;
           admitted.add(p.id);
           pending = undefined;
@@ -334,7 +341,7 @@ export function createChannelSetup({
               }
               // Accepted without roster proof stays unresolved. Never restore a
               // deliberately removed member by replaying a confirmed command.
-              await refresh(p.id, agent);
+              await refresh(p.id, agent, p.input);
               p.added.push(agent);
               await persist();
             }

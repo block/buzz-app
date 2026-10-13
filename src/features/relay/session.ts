@@ -180,7 +180,7 @@ function parseChannelCreation(
     !["open", "private"].includes(channelVisibility) ||
     channelType?.length !== 2 ||
     channelType[0] !== "channel_type" ||
-    channelType[1] !== "stream" ||
+    (channelType[1] !== "stream" && channelType[1] !== "system") ||
     !validOptionalOrder ||
     optional.some((tag) => tag.length !== 2) ||
     labelTags.some(
@@ -207,6 +207,7 @@ function parseChannelCreation(
     ...(description ? { description } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     ...(labels.length ? { labels: Object.freeze(labels) } : {}),
+    ...(channelType[1] === "system" ? { system: true as const } : {}),
   });
   return Object.freeze({
     signature: JSON.stringify(input),
@@ -1354,7 +1355,7 @@ export function createRelaySession(
               input.description,
               input.ttlSeconds,
               active,
-              { labels: input.labels },
+              { labels: input.labels, system: input.system },
             ),
           delivered: (id, active) =>
             workSessions.delivered(
@@ -1375,7 +1376,8 @@ export function createRelaySession(
             )
               throw new Error("Setup is awaiting exact relay confirmation");
           },
-          refresh: (id, member) => workSessions.refresh(id, { member }, false),
+          refresh: (id, member, input) =>
+            workSessions.refresh(id, { member, system: input.system }, false),
           canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
             if (
@@ -1534,6 +1536,7 @@ export function createRelaySession(
         ...(input.labels?.length
           ? { labels: Object.freeze([...new Set(input.labels)]) }
           : {}),
+        ...(input.system ? { system: true as const } : {}),
       };
       const signature = JSON.stringify(normalized);
       await writes?.ready;
@@ -1556,7 +1559,7 @@ export function createRelaySession(
             normalized.description,
             normalized.ttlSeconds,
             undefined,
-            { labels: normalized.labels },
+            { labels: normalized.labels, system: normalized.system },
           ),
         };
         restoredOperation = pendingChannelCreation.operation;
@@ -1572,7 +1575,7 @@ export function createRelaySession(
         );
         await workSessions.refresh(
           pending.id,
-          { member: transport.viewer },
+          { member: transport.viewer, system: pending.input.system },
           false,
         );
         await writes?.outbox.dismiss(pending.operation);

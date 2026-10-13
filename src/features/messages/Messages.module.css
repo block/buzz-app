@@ -139,6 +139,13 @@
   flex: 1;
   min-width: 0;
 }
+.message[data-viewer-message] .messageBody {
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: min(85%, 42rem);
+  margin-inline-start: auto;
+  text-align: start;
+}
 .byline {
   display: flex;
   flex-wrap: wrap;
@@ -565,6 +572,30 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-1);
+}
+.composerToolRow {
+  display: contents;
+}
+.composerConversationControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.composer[data-chat-presentation] .composerActions {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.composer[data-chat-presentation] .composerToolRow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+.composer[data-chat-presentation] .composerConversationControls {
+  width: 100%;
 }
 .backgroundUpload {
   display: flex;

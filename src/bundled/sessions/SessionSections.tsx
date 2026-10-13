@@ -215,6 +215,7 @@ export function SessionSections({
           <Collapsible.Root
             key={section.id}
             className={styles.section}
+            data-project={personal && section.id ? "" : undefined}
             open={!collapsed.includes(section.id)}
             onOpenChange={(open) => toggle(section.id, open)}
             data-animate={animate || undefined}

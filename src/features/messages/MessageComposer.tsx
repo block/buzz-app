@@ -1665,82 +1665,88 @@ function Composer({
           )}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
-          {active && (
-            <ComposerFormattingTools
-              disabled={editingDisabled}
-              activeFormats={activeFormats}
-              toggleFormat={(format) => input.current?.toggleFormat(format)}
-              editLink={() => {
-                const edit = input.current?.editLink();
-                if (edit) setLinkEdit(edit);
-              }}
-            >
-              {extensions ? (
-                <ComposerTools
-                  registry={extensions.tools}
-                  capture={voice.begin}
-                  renderLeading={renderLeadingTools}
-                  session={session}
-                  scope={scope}
-                  channelId={channelId}
-                  threadRootId={threadRootId}
-                  disabled={editingDisabled}
-                  inviteAgents={agentChoices && !editing.target}
-                  insertText={(text) => insert(text)}
-                  insertMention={insertMention}
-                  insertMentions={insertMentions}
-                  insertResource={insertResource}
-                  focus={() => input.current?.focus()}
-                />
-              ) : (
-                renderLeadingTools(null)
-              )}
-            </ComposerFormattingTools>
-          )}
-          {active && !editing.target && trailingTool}
-          {active &&
-            !editing.target &&
-            !submission &&
-            (!!value.recipients.length || !!selectedAgent) && (
-              <ComposerModels
-                pubkeys={
-                  value.recipients.length
-                    ? value.recipients.map((item) => item.pubkey)
-                    : selectedAgent
-                      ? [selectedAgent]
-                      : []
-                }
-                value={picks}
+          <div className={styles.composerToolRow}>
+            {active && (
+              <ComposerFormattingTools
                 disabled={editingDisabled}
-                onChange={setPicks}
-              />
+                activeFormats={activeFormats}
+                toggleFormat={(format) => input.current?.toggleFormat(format)}
+                editLink={() => {
+                  const edit = input.current?.editLink();
+                  if (edit) setLinkEdit(edit);
+                }}
+              >
+                {extensions ? (
+                  <ComposerTools
+                    registry={extensions.tools}
+                    capture={voice.begin}
+                    renderLeading={renderLeadingTools}
+                    session={session}
+                    scope={scope}
+                    channelId={channelId}
+                    threadRootId={threadRootId}
+                    disabled={editingDisabled}
+                    inviteAgents={agentChoices && !editing.target}
+                    insertText={(text) => insert(text)}
+                    insertMention={insertMention}
+                    insertMentions={insertMentions}
+                    insertResource={insertResource}
+                    focus={() => input.current?.focus()}
+                  />
+                ) : (
+                  renderLeadingTools(null)
+                )}
+              </ComposerFormattingTools>
             )}
-          <IconButton
-            variant={
-              draft.trim() || attachments.items.length ? "primary" : "ghost"
-            }
-            size="toolbar"
-            type="submit"
-            aria-label={editing.target ? "Save changes" : "Send message"}
-            title={editing.target ? "Save changes" : "Send message"}
-            disabled={
-              disabled ||
-              (!editing.target && (!!accepted || conflict || sendPending)) ||
-              (!!editing.target && (editing.locked || editDisabled)) ||
-              admitting ||
-              sending ||
-              submission?.disabled ||
-              (!editing.target && attachments.blocked) ||
-              (!draft.trim() &&
-                !attachments.items.length &&
-                !(
-                  editing.target &&
-                  requestDeletion &&
-                  session.outbox?.supports(5)
-                ))
-            }
-            icon={<ArrowUpIcon size={16} />}
-          />
+            {active &&
+              !editing.target &&
+              !submission &&
+              (!!value.recipients.length || !!selectedAgent) && (
+                <ComposerModels
+                  pubkeys={
+                    value.recipients.length
+                      ? value.recipients.map((item) => item.pubkey)
+                      : selectedAgent
+                        ? [selectedAgent]
+                        : []
+                  }
+                  value={picks}
+                  disabled={editingDisabled}
+                  onChange={setPicks}
+                />
+              )}
+            <IconButton
+              variant={
+                draft.trim() || attachments.items.length ? "primary" : "ghost"
+              }
+              size="toolbar"
+              type="submit"
+              aria-label={editing.target ? "Save changes" : "Send message"}
+              title={editing.target ? "Save changes" : "Send message"}
+              disabled={
+                disabled ||
+                (!editing.target && (!!accepted || conflict || sendPending)) ||
+                (!!editing.target && (editing.locked || editDisabled)) ||
+                admitting ||
+                sending ||
+                submission?.disabled ||
+                (!editing.target && attachments.blocked) ||
+                (!draft.trim() &&
+                  !attachments.items.length &&
+                  !(
+                    editing.target &&
+                    requestDeletion &&
+                    session.outbox?.supports(5)
+                  ))
+              }
+              icon={<ArrowUpIcon size={16} />}
+            />
+          </div>
+          {active && !editing.target && trailingTool && (
+            <div className={styles.composerConversationControls}>
+              {trailingTool}
+            </div>
+          )}
         </div>
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>

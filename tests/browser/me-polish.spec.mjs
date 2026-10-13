@@ -148,9 +148,9 @@ test.describe("Berd-style Me organization", () => {
     await expect(sidebar.getByText("Saving project…")).not.toBeVisible();
     await expect(sidebar.getByRole("alert")).toHaveCount(0);
     await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();
-    await expect(
-      sidebar.getByRole("button", { name: "Work", exact: true }),
-    ).toBeVisible();
+    const project = sidebar.getByRole("button", { name: "Work", exact: true });
+    await expect(project).toBeVisible();
+    await expect(project).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() => app.report.sidebarPublications?.length ?? 0)
       .toBe(1);
@@ -167,11 +167,17 @@ test.describe("Berd-style Me organization", () => {
       .toBe(2);
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
+    const projectBox = await project.boundingBox();
+    const chatBox = await row.boundingBox();
+    expect(projectBox).toBeTruthy();
+    expect(chatBox).toBeTruthy();
+    expect(chatBox.x).toBeGreaterThan(projectBox.x);
 
-    await row.click();
+    await sidebar.getByText("Alpha", { exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Project: Work", exact: true }),
     ).toBeVisible();
+    app.meAgentMessage(id, "Agent follow-up fixture");
     const assistant = page.getByRole("button", {
       name: "Choose follow-up assistant",
       exact: true,
@@ -187,6 +193,10 @@ test.describe("Berd-style Me organization", () => {
       name: "Message your agents",
       exact: true,
     });
+    const agentMessage = page.getByText("Agent follow-up fixture", {
+      exact: true,
+    });
+    await expect(agentMessage).toBeVisible();
     await composer.fill("Remember the launch checklist");
     await composer.press("Enter");
     const viewerMessage = page.getByText("Remember the launch checklist", {
@@ -200,11 +210,41 @@ test.describe("Berd-style Me organization", () => {
         exact: true,
       }),
     ).toBeVisible();
-    await row.click();
+    await sidebar.getByText("Alpha", { exact: true }).click();
     await expect(
       page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
     ).toBeVisible();
+    const viewerBox = await viewerMessage.boundingBox();
+    const agentBox = await agentMessage.boundingBox();
+    expect(viewerBox).toBeTruthy();
+    expect(agentBox).toBeTruthy();
+    expect(viewerBox.x).toBeGreaterThan(agentBox.x);
+    const expectHorizontalTools = async () => {
+      const attach = await page
+        .getByRole("button", { name: "Attach files", exact: true })
+        .boundingBox();
+      const formatting = await page
+        .getByRole("button", { name: "Toggle formatting", exact: true })
+        .boundingBox();
+      expect(attach).toBeTruthy();
+      expect(formatting).toBeTruthy();
+      expect(Math.abs(attach.y - formatting.y)).toBeLessThan(4);
+    };
+    const settle = () =>
+      page.evaluate(() =>
+        Promise.all(
+          document
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().endTime !== Infinity,
+            )
+            .map((animation) => animation.finished.catch(() => {})),
+        ),
+      );
     await viewerMessage.hover();
+    await settle();
+    await expectHorizontalTools();
     await page.screenshot({
       path: test.info().outputPath("after-light-wide.png"),
     });
@@ -213,11 +253,16 @@ test.describe("Berd-style Me organization", () => {
       document.documentElement.classList.add("dark");
     });
     await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+    await viewerMessage.hover();
+    await settle();
     await page.screenshot({
       path: test.info().outputPath("after-dark-wide.png"),
     });
     await page.setViewportSize({ width: 760, height: 900 });
     await expect(composer).toBeInViewport();
+    await expectHorizontalTools();
+    await viewerMessage.hover();
+    await settle();
     await page.screenshot({
       path: test.info().outputPath("after-dark-narrow.png"),
     });
@@ -229,6 +274,14 @@ test.describe("Berd-style Me organization", () => {
     });
     await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
     await expect(composer).toBeInViewport();
+    await expectHorizontalTools();
+    const projectLabel = project.getByText("Work", { exact: true });
+    await expect(projectLabel).toBeVisible();
+    await expect
+      .poll(() => projectLabel.evaluate((element) => element.clientWidth))
+      .toBeGreaterThan(20);
+    await viewerMessage.hover();
+    await settle();
     await page.screenshot({
       path: test.info().outputPath("after-light-text-2x.png"),
     });

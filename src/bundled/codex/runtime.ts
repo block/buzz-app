@@ -738,7 +738,7 @@ export class CodexRuntime {
         cwd: workspace,
         developerInstructions: developerInstructions(agent),
         approvalPolicy: "never",
-        // Matches Claude Code's bypassPermissions; only the owner can start work.
+        // Matches Claude's bypassPermissions; only the owner can start work.
         sandbox: "danger-full-access",
         config: {
           web_search: "disabled",

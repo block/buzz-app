@@ -423,7 +423,7 @@ from the `<buzz-event>` framing, other sections collapsed), the session's system
 prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
 their tool call with the auto-approval outcome, plans, mode changes, the session's
 selected config values (e.g. model), context usage, stop reason and errors. Tool
-names and inputs differ by adapter (Pi, Goose, Codex, Claude Code), so tool rows show the
+names and inputs differ by adapter (Pi, Goose, Codex, Claude), so tool rows show the
 adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
 `locations` and content (text, with a wholly fenced Markdown block shown as its body,
 and `diff` as removed/added lines) are interpreted.

@@ -1082,7 +1082,7 @@ function ImportAgents({
     onPendingChange(true);
     setError("");
     try {
-      await agents.port({
+      const { name, teamError } = await agents.port({
         source: agent.source,
         pubkey: agent.pubkey,
         type: chosen.key,
@@ -1094,7 +1094,12 @@ function ImportAgents({
             agents: last.agents.filter((item) => item.pubkey !== agent.pubkey),
           },
       );
-      onImported();
+      // Leaving would hide the one place that says the team needs a hand.
+      if (teamError)
+        setError(
+          `Imported ${name}, but couldn't add it to team ${teamError.name}. Add it in Teams.`,
+        );
+      else onImported();
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -1176,6 +1181,7 @@ function ImportAgents({
                       SOURCES[agent.source],
                       // Its key tells it apart only from one of the same name.
                       named.get(agent.name) !== 1 && labels.get(agent.pubkey),
+                      agent.team && `Joins team ${agent.team.name}`,
                     ]
                       .filter(Boolean)
                       .join(" · ")}

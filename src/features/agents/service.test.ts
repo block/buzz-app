@@ -6,6 +6,8 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
+import { eventDto } from "../relay/events";
+import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -1031,12 +1033,8 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
     .update(`nostr:agent-auth:${agent}:`)
     .digest();
   const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
-  const from = (pubkey: string, tags: string[][] = []) => ({
-    pubkey,
-    kind: 9,
-    created_at: 100,
-    tags,
-  });
+  const from = (pubkey: string, tags: string[][] = []) =>
+    event("gate", { pubkey, tags });
   expect(await fromOwner(from(owner), owner)).toBe(true);
   expect(await fromOwner(from(agent, [auth]), owner)).toBe(true);
   expect(await fromOwner(from(agent), owner)).toBe(false);
@@ -1045,6 +1043,25 @@ it("answers the owner and agents the owner attested, nobody else", async () => {
   expect(
     await fromOwner(from(agent, [["auth", owner, "", "0".repeat(128)]]), owner),
   ).toBe(false);
+});
+
+it("accepts relay workflow delegation only from this agent's owner", async () => {
+  const relay = keypair();
+  const workflow = { authority: relay.pubkey, agent: bot };
+  const prompt = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@bot work",
+      tags: [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", viewer],
+        ["buzz:workflow-mention", bot],
+      ],
+    }),
+  );
+  expect(await fromOwner(prompt, viewer, workflow)).toBe(true);
+  expect(await fromOwner(prompt, other, workflow)).toBe(false);
+  expect(await fromOwner(prompt, viewer)).toBe(false);
 });
 
 it("sets and clears a picture through native, and publishes it", async () => {
@@ -2061,23 +2078,85 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
-it("keeps a hosted agent made without its picture when the picture fails to save", async () => {
+it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
+  const { service, plugin, session } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.profile.mockRejectedValueOnce(new Error("not supported"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const picture = "https://example.test/sky.png";
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture,
+  });
+  expect(records.publish).toHaveBeenCalledExactlyOnceWith(
+    session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(remote.profile).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sky",
+    picture,
+    signal: expect.any(AbortSignal),
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted", picture });
+  expect(service.find(hostedKey)?.picture).toBe(picture);
+  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent Sky picture was not published",
+    expect.any(Error),
+  );
+  warn.mockRestore();
+});
+
+it("keeps a hosted agent's picture through a setup that failed, and lists it once finished", async () => {
+  const storage = memoryStorage();
+  const { service, plugin, session } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  const picture = "https://example.test/sky.png";
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky", picture }),
+  ).rejects.toThrow("provider down");
+  expect(service.find(hostedKey)).toMatchObject({ unfinished: true, picture });
+  expect(remote.profile).not.toHaveBeenCalled();
+  // A restart keeps it.
+  const again = await setup({ storage });
+  again.plugin.agents.register(cloud().type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)).toMatchObject({
+      unfinished: true,
+      picture,
+    }),
+  );
+  const agent = await service.finish(hostedKey);
+  expect(agent).toMatchObject({ picture });
+  expect(agent.unfinished).toBeUndefined();
+  expect(records.publish).toHaveBeenCalledExactlyOnceWith(
+    session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+});
+
+it("makes a hosted agent without a picture that is not an HTTPS image URL", async () => {
   const { service, plugin } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
-  remote.profile.mockRejectedValueOnce(new Error("provider down"));
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const agent = await service.create({
     type: "example/cloud",
     name: "Sky",
-    picture: "https://example.test/sky.png",
+    picture: "data:image/png;base64,AAAA",
   });
-  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
   expect(agent.picture).toBeUndefined();
-  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(remote.profile).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledWith(
-    "Agent Sky picture was not saved",
-    expect.any(Error),
+    "Agent Sky picture is not an HTTPS image URL",
   );
   warn.mockRestore();
 });

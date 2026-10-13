@@ -87,7 +87,7 @@ function fakeRelay(origin = "https://relay.example.test") {
     read: vi.fn(async () => [...listed]),
     // STOPGAP(agent-local-typing): delete with local-typing.ts.
     typing: { local: vi.fn() },
-    mePlacement: { has: () => false },
+    mePlacement: { snapshot: () => ({ status: "ready" }), has: () => false },
     // The agent is in `channel`; `private` is the owner's alone.
     channels: {
       list: () => ({

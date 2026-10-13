@@ -20,10 +20,21 @@ const mention = {
 
 afterEach(() => vi.useRealTimers());
 /** A community whose Me holds `personal`; `local` takes each pulse. */
-const community = (local: () => void, personal: readonly string[] = []) =>
+const community = (
+  local: () => void,
+  personal: readonly string[] = [],
+  placement: { status: string; refresh?: () => Promise<void> } = {
+    status: "ready",
+  },
+) =>
   ({
     typing: { local },
-    mePlacement: { has: (id: string) => personal.includes(id) },
+    mePlacement: {
+      snapshot: () => placement,
+      refresh: placement.refresh,
+      has: (id: string) =>
+        placement.status === "ready" && personal.includes(id),
+    },
   }) as unknown as RelaySession;
 
 it("pulses in the mention's thread every three seconds until stopped", () => {
@@ -96,4 +107,33 @@ it("types in a Me chat itself, ending only when its last turn stops", () => {
     kind: 9,
     tags: [["h", "channel"]],
   });
+});
+
+it("waits for a first placement read, as its turn does, before choosing where to type", async () => {
+  vi.useFakeTimers();
+  const local = vi.fn();
+  let read!: () => void;
+  // One read in flight, joined by every caller, as the kit's is.
+  const pending = new Promise<void>((resolve) => {
+    read = () => {
+      placement.status = "ready";
+      resolve();
+    };
+  });
+  const placement = { status: "loading", refresh: vi.fn(() => pending) };
+  const session = community(local, ["channel"], placement);
+  const stop = typeLocally(() => session, agent, mention, "channel");
+  const early = typeLocally(() => session, agent, mention, "channel");
+  early();
+  expect(local).not.toHaveBeenCalled();
+  read();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(local).toHaveBeenCalledOnce();
+  // In the chat itself, not the mention's thread; the stopped one never showed.
+  expect(local.mock.lastCall?.[0]).toMatchObject({
+    kind: 20002,
+    tags: [["h", "channel"]],
+  });
+  stop();
+  expect(local.mock.lastCall?.[0].kind).toBe(9);
 });

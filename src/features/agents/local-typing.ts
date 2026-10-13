@@ -17,16 +17,46 @@ const showing = new Map<string, number>();
 
 /** Shows `pubkey` typing where it answers `event` until the returned function
  * is called: in the channel itself for a chat in the viewer's Me, which reads
- * as one conversation. `session` is read on every pulse, as the community may
- * reconnect. */
+ * as one conversation. Before the placement is first read, it waits for that
+ * read, which its turn joins, so both place it alike. `session` is read on
+ * every pulse, as the community may reconnect. */
 export function typeLocally(
   session: () => RelaySession | undefined,
   pubkey: string,
   event: RelayEvent,
   channelId: string,
 ): () => void {
+  const placement = session()?.mePlacement;
+  let stop: (() => void) | undefined;
+  let stopped = false;
+  const begin = () => {
+    if (!stopped)
+      stop = show(
+        session,
+        pubkey,
+        event,
+        channelId,
+        !!placement?.has(channelId),
+      );
+  };
+  const status = placement?.snapshot().status;
+  if (!placement || status === "ready" || status === "unavailable") begin();
+  else void placement.refresh().then(begin, begin);
+  return () => {
+    stopped = true;
+    stop?.();
+    stop = undefined;
+  };
+}
+
+function show(
+  session: () => RelaySession | undefined,
+  pubkey: string,
+  event: RelayEvent,
+  channelId: string,
+  flat: boolean,
+) {
   const root = threadReference(event)?.rootId ?? event.id;
-  const flat = session()?.mePlacement.has(channelId) ?? false;
   const tags = [
     ["h", channelId],
     ...(flat
@@ -58,11 +88,8 @@ export function typeLocally(
   };
   const timer = setInterval(pulse, PULSE_MS);
   pulse();
-  let stopped = false;
   return () => {
     clearInterval(timer);
-    if (stopped) return;
-    stopped = true;
     const left = (showing.get(scope) ?? 1) - 1;
     if (left) {
       showing.set(scope, left);

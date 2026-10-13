@@ -307,6 +307,9 @@
     color: var(--text-unavailable);
     cursor: not-allowed;
   }
+  .buzz-select-option[data-disabled] .buzz-select-option-description {
+    color: inherit;
+  }
   .buzz-select-value[data-placeholder] {
     color: var(--text-metadata);
   }

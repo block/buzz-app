@@ -2,7 +2,7 @@
 // installer and sign-in, each run as a declared process.
 import type { HostProcess } from "../../features/host/service";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { ENV, type Spawn } from "./claude";
+import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
 
 export type ClaudeStatus =
   | Readonly<{ state: "missing" }>
@@ -11,6 +11,26 @@ export type ClaudeStatus =
   | Readonly<{ state: "error"; message: string }>;
 
 const CHECK_TIMEOUT_MS = 15_000;
+
+async function queryModels(spawn: Spawn) {
+  const process = await ClaudeProcess.spawn(spawn, { cwd: "~/.buzz" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("Claude Code model discovery timed out")),
+        CHECK_TIMEOUT_MS,
+      );
+    });
+    return await Promise.race([
+      process.initialize({ systemPrompt: "" }).then(() => process.models()),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await process.kill().catch(() => undefined);
+  }
+}
 
 /** Runs a short process and returns its exit code and output. */
 async function collect(spawn: Spawn, id: string, args: readonly string[]) {
@@ -84,6 +104,7 @@ export async function runStep(
 
 export type SetupState = Readonly<{
   status: ClaudeStatus | undefined;
+  models: readonly ClaudeModel[];
   checking: boolean;
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
@@ -95,6 +116,7 @@ const OUTPUT_LIMIT = 20_000;
 export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
+    models: [],
     checking: false,
     running: undefined,
     output: "",
@@ -102,6 +124,7 @@ export class ClaudeSetup {
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
+  private loadingModels = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
 
@@ -142,7 +165,29 @@ export class ClaudeSetup {
     if (this.state.checking || this.state.running) return;
     this.set({ checking: true });
     const status = await checkClaude(this.spawn);
-    this.set({ status, checking: false });
+    this.set({
+      status,
+      ...(status.state === "ready" ? {} : { models: [] }),
+      checking: false,
+    });
+  }
+
+  /** Loads optional model copy only for surfaces that display the catalog. */
+  async loadModels() {
+    if (
+      !this.spawn ||
+      this.state.status?.state !== "ready" ||
+      this.loadingModels
+    )
+      return;
+    this.loadingModels = true;
+    try {
+      this.set({ models: await queryModels(this.spawn) });
+    } catch {
+      // Model metadata is optional; setup remains usable when discovery fails.
+    } finally {
+      this.loadingModels = false;
+    }
   }
 
   /** Runs the installer or sign-in, then checks again. */

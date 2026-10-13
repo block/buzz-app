@@ -686,7 +686,9 @@ Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
 selection-mark slot in every option so selecting the widest label cannot resize it.
 The caller owns its column width. `align="end"` anchors a trailing choice popup
 to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. For searchable choices, use the shared Combobox parts; keep
+when the choice is unavailable. An option may include one concise supporting
+description; Select shows it as a byline in the popup while the closed trigger
+retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep

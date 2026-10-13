@@ -382,6 +382,7 @@ it("keeps the new instructions on Done editing", async () => {
   await user.click(
     within(dialog).getByRole("button", { name: "Done editing" }),
   );
+  expect(agents.create).not.toHaveBeenCalled();
   expect(within(dialog).getByText("Be brief. And kind.")).toBeInTheDocument();
   expect(
     within(dialog).queryByRole("button", { name: "Back" }),

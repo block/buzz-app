@@ -223,9 +223,17 @@ export function AgentCreateDialog({
             <Button
               variant="primary"
               // The footer is outside the form; Enter in any field submits it.
-              {...(editing
-                ? { onClick: editing.done }
-                : { type: "submit" as const, form })}
+              type={editing ? "button" : "submit"}
+              form={editing ? undefined : form}
+              onClick={
+                editing
+                  ? (event) => {
+                      // This control becomes the submit button after editing ends.
+                      event.preventDefault();
+                      editing.done();
+                    }
+                  : undefined
+              }
               loading={pending}
               disabled={
                 !editing && (avatarBusy || !type || !name.trim() || pending)

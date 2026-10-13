@@ -1557,6 +1557,51 @@ it("delivers pending owner steering after a final send and posts its own answer"
   ).toEqual(["prior answer", "NEW ANSWER"]);
 });
 
+it("lets go of a rejected steering mention without ending the running turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/steer" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    f.emit({ id: wire.id, error: { code: -32600, message: "model busy" } });
+  });
+  await f.runtime.run(f.delivery("new request"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("Steering was not accepted: model busy"),
+  });
+  // The rejection answers the mention; the turn it could not join works on.
+  let working = false;
+  let rejected = false;
+  void Promise.resolve(f.workingUntil.mock.calls[0]?.[0]).then(() => {
+    working = true;
+  });
+  void Promise.resolve(f.workingUntil.mock.calls[1]?.[0]).then(() => {
+    rejected = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(f.workingUntil).toHaveBeenCalledTimes(2);
+  expect(rejected).toBe(true);
+  expect(working).toBe(false);
+  expect(f.starts()).toHaveLength(1);
+  await f.complete(0, "FIRST ANSWER");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(working).toBe(true);
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual([
+    expect.stringContaining("Steering was not accepted"),
+    "FIRST ANSWER",
+  ]);
+});
+
 it("finishes final sends normally and preserves the agent's background terminals", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start server"));

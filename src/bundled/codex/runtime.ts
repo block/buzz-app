@@ -48,7 +48,8 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
-  /** Called once a final send answers this request, or one steered after it. */
+  /** Called once a final send answers this request, or one steered after it,
+   * or a steering rejection is posted in its place. */
   answered: () => void;
 };
 type Saved = { threadId: string; workspace: string };
@@ -423,6 +424,9 @@ export class CodexRuntime {
             request,
             `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
           );
+          // The running turn never took this request in, so nothing else
+          // answers it: let go of its working hold now, not at that turn's end.
+          request.answered();
         }
       });
       active.steering = accepted.catch((error) =>

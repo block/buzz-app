@@ -1,3 +1,9 @@
+import {
+  createLocalAgentActivity,
+  type LocalAgentActivity,
+  type WorkOutcome,
+} from "./local-activity";
+import { threadReference } from "../relay/thread-reference";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -81,8 +87,6 @@ import {
 } from "./store";
 // STOPGAP(agent-local-typing): delete with local-typing.ts.
 import { typeLocally } from "./local-typing";
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-import { reactWhileWorking } from "./working-reactions";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -201,6 +205,15 @@ export type Delivery<Config = unknown> = Readonly<{
   /** Keeps the run counted as working after `run` returns, until `done`
    * settles, for a type that hands its work off and returns early. */
   workingUntil(done: PromiseLike<unknown>): void;
+  /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
+  step?(tool: string, target?: string): void;
+  /** The plugin declined this request; no work or successful outcome is implied. */
+  ignored?(): void;
+  /** The harness acknowledged this exact request. Not proof of model consumption. */
+  acknowledged?(): void;
+  /** A newer acknowledged request owns this turn's activity; hide this message's
+   * bubble without claiming success or changing the execution outcome. */
+  superseded?(): void;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
 /** A model with its effort levels, lowest first. */
@@ -553,7 +566,11 @@ const recordPicture = (value: unknown) => {
 /** The `wss://` URL of a community, as agents and their providers know it. */
 const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
-type Job = { trigger: Trigger; channelId?: string };
+type Job = {
+  work?: ReturnType<LocalAgentActivity["begin"]>;
+  trigger: Trigger;
+  channelId?: string;
+};
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
   filter?: ReturnType<typeof compileFilter>;
@@ -577,6 +594,7 @@ type Runner = {
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
+  activityClaimed?: boolean;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -628,6 +646,7 @@ export class AgentsService extends Service implements Agents {
       pubkey: string,
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
+    private readonly localActivity = createLocalAgentActivity(),
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
@@ -1698,6 +1717,7 @@ export class AgentsService extends Service implements Agents {
     };
   }
   private retire(runner: Runner) {
+    this.localActivity.clear(undefined, runner.pubkey);
     runner.queue.length = 0;
     runner.controller.abort();
   }
@@ -1827,12 +1847,38 @@ export class AgentsService extends Service implements Agents {
       runner.admitted = 0;
     }
     if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
+      if (runner.activityClaimed) {
+        this.showWork(runner, job);
+        job.work?.finish({
+          ok: false,
+          error:
+            "Agent is busy and could not queue this request. Try again when it finishes.",
+        });
+      }
       console.warn(`Agent ${this.agent(runner.pubkey)?.name} dropped an event`);
       return;
     }
     runner.admitted++;
+    if (runner.activityClaimed) this.showWork(runner, job);
     runner.queue.push(job);
     void this.drain(runner);
+  }
+
+  private showWork(runner: Runner, job: Job) {
+    if (job.work || job.trigger.type !== "mention") return;
+    const agent = this.agent(runner.pubkey);
+    const scope = agent && this.bindingOf(agent)?.scope;
+    const event = job.trigger.event;
+    const channelId =
+      job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
+    if (!scope || !channelId) return;
+    job.work = this.localActivity.begin({
+      scope,
+      agent: runner.pubkey,
+      channelId,
+      messageId: event.id,
+      threadRootId: threadReference(event)?.rootId ?? event.id,
+    });
   }
 
   // One run at a time per agent: events in arrival order, then a due timer.
@@ -1849,7 +1895,10 @@ export class AgentsService extends Service implements Agents {
       const run = type?.run;
       // An agent this copy cannot run is left to another copy of the app.
       if (!agent || !type || !run) {
-        if (agent) runner.queue.length = 0;
+        if (agent) {
+          this.localActivity.clear(undefined, runner.pubkey);
+          runner.queue.length = 0;
+        }
         await this.release(runner);
         // It may have come back into view, or gained its type, meanwhile.
         if (this.ready(runner.pubkey) !== agent || runner.type !== type)
@@ -1860,11 +1909,15 @@ export class AgentsService extends Service implements Agents {
       // one holding the agent runs them. Asked on every wake too, so a copy
       // takes over within a tick of the holder quitting or letting go.
       if (!(await this.claim(runner))) {
+        this.localActivity.clear(undefined, runner.pubkey);
+        runner.activityClaimed = false;
         runner.queue.length = 0;
         break;
       }
       // The agent or its type may have changed meanwhile.
       if (this.ready(runner.pubkey) !== agent || runner.type !== type) continue;
+      runner.activityClaimed = true;
+      for (const queued of runner.queue) this.showWork(runner, queued);
       const job = runner.queue.shift() ?? this.dueTimer(agent);
       if (!job) break;
       const lifetime = runner.controller.signal;
@@ -1886,29 +1939,40 @@ export class AgentsService extends Service implements Agents {
           this.require().remember(agent.pubkey, slug, body, after),
       });
       const working = this.working(runner, job);
+      const completion = Promise.resolve().then(async () => {
+        const pick = await pickFor(job.trigger, agent, type);
+        const team = teamPrompt(
+          this.teamList,
+          this.identities.filter((identity) => !identity.deleted),
+          agent.pubkey,
+        );
+        signal.throwIfAborted();
+        return run(
+          Object.freeze({
+            trigger: job.trigger,
+            ...(job.channelId ? { channelId: job.channelId } : {}),
+            agent: handle,
+            config: agent.config,
+            ...pick,
+            ...(team ? { team } : {}),
+            signal,
+            workingUntil: working.hold,
+            ignored: () => job.work?.remove(),
+            acknowledged: () => job.work?.started(),
+            superseded: () => job.work?.supersede(),
+            step: (tool: string, target?: string) =>
+              job.work?.step(tool, target),
+          }),
+        );
+      });
+      // Handover expiry releases the queue, never the actual work's outcome.
+      void completion.then(
+        () => working.release(),
+        (error) => working.release({ ok: false, error: message(error) }),
+      );
       try {
         await Promise.race([
-          Promise.resolve().then(async () => {
-            const pick = await pickFor(job.trigger, agent, type);
-            const team = teamPrompt(
-              this.teamList,
-              this.identities.filter((identity) => !identity.deleted),
-              agent.pubkey,
-            );
-            signal.throwIfAborted();
-            return run(
-              Object.freeze({
-                trigger: job.trigger,
-                ...(job.channelId ? { channelId: job.channelId } : {}),
-                agent: handle,
-                config: agent.config,
-                ...pick,
-                ...(team ? { team } : {}),
-                signal,
-                workingUntil: working.hold,
-              }),
-            );
-          }),
+          completion,
           new Promise<never>((_, reject) => {
             if (signal.aborted) reject(signal.reason);
             signal.addEventListener("abort", () => reject(signal.reason), {
@@ -1919,8 +1983,6 @@ export class AgentsService extends Service implements Agents {
       } catch (error) {
         if (!lifetime.aborted)
           console.error(`Agent run failed: ${agent.name}`, error);
-      } finally {
-        working.release();
       }
     }
     runner.running = false;
@@ -1928,22 +1990,16 @@ export class AgentsService extends Service implements Agents {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
-   * mention run is reacted to, and shown typing here, meanwhile: both are
-   * STOPGAPs, and `done` is empty without them. */
-  private working(runner: Runner, { trigger, channelId }: Job) {
-    const native = this.native;
+   * mention run is shown typing on this device meanwhile; no public
+   * activity is published. */
+  private working(runner: Runner, { trigger, channelId, work }: Job) {
+    work?.started();
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
     const done =
-      native && event && channel
+      event && channel
         ? [
-            // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-            reactWhileWorking(
-              (template) => native.publish(runner.pubkey, template),
-              event,
-              channel,
-            ),
             // STOPGAP(agent-local-typing): delete with local-typing.ts.
             typeLocally(
               () => {
@@ -1957,19 +2013,47 @@ export class AgentsService extends Service implements Agents {
           ]
         : [];
     let holds = 1;
+    let outcome: WorkOutcome = { ok: true };
+    const lifetime = runner.controller.signal;
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
+      lifetime.removeEventListener("abort", abort);
       for (const end of done) end();
     };
-    const release = () => {
-      if (holds > 0 && --holds === 0) stop();
+    const abort = () => {
+      work?.remove();
+      stop();
+    };
+    lifetime.addEventListener("abort", abort, { once: true });
+    const release = (result?: unknown) => {
+      if (holds <= 0) return;
+      if (
+        result &&
+        typeof result === "object" &&
+        "ok" in result &&
+        result.ok === false
+      ) {
+        outcome = {
+          ok: false,
+          error:
+            "error" in result
+              ? String(result.error)
+              : "Could not finish this request",
+        };
+      }
+      if (--holds === 0) {
+        work?.finish(outcome);
+        stop();
+      }
     };
     return {
-      hold(work: PromiseLike<unknown>) {
+      hold(pending: PromiseLike<unknown>) {
         if (holds <= 0) return;
         holds++;
-        Promise.resolve(work).then(release, release);
+        Promise.resolve(pending).then(release, (error) =>
+          release({ ok: false, error: message(error) }),
+        );
       },
       release,
     };

@@ -1,3 +1,4 @@
+import type { LocalAgentSource, LocalWork } from "../agents/local-activity";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
@@ -26,6 +27,8 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Roots established from retained signed triggering messages, not typing. */
+  requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
 type Typing = Readonly<{
   agent: string;
@@ -47,6 +50,7 @@ type Snapshot = Readonly<{
     | "interrupted";
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
+  local?: readonly LocalWork[];
   typing: readonly Typing[];
   trimmed: number;
   history: "unavailable" | "loading" | "ready" | "error";
@@ -56,7 +60,13 @@ type Snapshot = Readonly<{
   historyAgents: readonly string[];
   capture: "unknown" | "saving" | "off" | "error";
 }>;
-type Turn = Omit<ActivityTurn, "state"> & { ended: boolean; epoch: number };
+type Turn = Omit<ActivityTurn, "state" | "requests"> & {
+  requests?: ActivityTurn["requests"];
+  triggeringEventIds?: readonly string[];
+  ended: boolean;
+  epoch: number;
+  unresolvedTriggers?: readonly string[];
+};
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -82,6 +92,8 @@ export function createAgentActivity(
     host: ArchiveHost;
     canRestore: (channel: string) => boolean;
   },
+  findMessage?: (id: string) => EventData | undefined,
+  local?: { source: LocalAgentSource; scope: string },
 ) {
   let closed = false,
     leases = 0,
@@ -125,7 +137,40 @@ export function createAgentActivity(
     historyAgents,
     capture: captureStatus,
   });
+  function associate(turn: Turn) {
+    const unresolved: string[] = [];
+    const requests = [...(turn.requests ?? [])];
+    for (const id of turn.unresolvedTriggers ?? []) {
+      const event = findMessage?.(id);
+      if (!event) {
+        unresolved.push(id);
+        continue;
+      }
+      if (![9, 40002, 40008].includes(event.kind)) continue;
+      const channels = event.tags.filter(([key]) => key === "h");
+      if (channels.length !== 1 || channels[0]?.[1] !== turn.channelId)
+        continue;
+      const reference = threadReference(event);
+      if (event.tags.some(([key]) => key === "e") && !reference) continue;
+      requests.push(
+        Object.freeze({
+          messageId: id,
+          threadRootId: reference?.rootId ?? event.id,
+        }),
+      );
+    }
+    turn.unresolvedTriggers = unresolved;
+    turn.requests = Object.freeze(requests);
+  }
   function publish() {
+    const localWork =
+      local && !closed
+        ? local.source
+            .work()
+            .filter(
+              (row) => row.scope === local.scope && canAccess(row.channelId),
+            )
+        : [];
     const now = Date.now();
     const fresh = records.filter(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
@@ -160,6 +205,7 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
           state: turn.ended
             ? "ended"
             : status === "listening" &&
@@ -175,6 +221,9 @@ export function createAgentActivity(
     const nextWorking = JSON.stringify(
       [
         ...new Set([
+          ...localWork
+            .filter((row) => row.state === "waiting" || row.state === "working")
+            .map((row) => row.channelId),
           ...visible
             .filter((turn) => turn.state === "working")
             .map((turn) => turn.channelId)
@@ -190,6 +239,8 @@ export function createAgentActivity(
     if (
       !workingChanged &&
       snapshot.status === status &&
+      (snapshot.local ?? []).length === localWork.length &&
+      (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
       snapshot.history === historyStatus &&
@@ -206,6 +257,7 @@ export function createAgentActivity(
       status,
       records: Object.freeze(records),
       turns: Object.freeze(visible),
+      local: Object.freeze(localWork),
       typing: Object.freeze(typers),
       trimmed,
       history: historyStatus,
@@ -271,7 +323,27 @@ export function createAgentActivity(
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
-    turns.set(key, {
+    const triggers =
+      item.kind === "turn_started"
+        ? object(item.payload)?.triggeringEventIds
+        : previous?.triggeringEventIds;
+    const triggeringEventIds =
+      Array.isArray(triggers) &&
+      triggers.length <= 64 &&
+      triggers.every(
+        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
+      )
+        ? (triggers as string[])
+        : undefined;
+    const turn: Turn = {
+      ...(triggeringEventIds
+        ? {
+            triggeringEventIds,
+            requests: previous?.requests ?? [],
+            unresolvedTriggers:
+              previous?.unresolvedTriggers ?? triggeringEventIds,
+          }
+        : {}),
       agent,
       turnId: item.turnId,
       channelId: item.channelId,
@@ -280,7 +352,9 @@ export function createAgentActivity(
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
       epoch,
-    });
+    };
+    associate(turn);
+    turns.set(key, turn);
     if (turns.size > ACTIVITY_TURN_LIMIT) {
       const oldest = [...turns].sort(
         (a, b) => a[1].timestamp - b[1].timestamp,
@@ -436,10 +510,17 @@ export function createAgentActivity(
     historyStatus = history ? "ready" : "unavailable";
     publish();
   }
+  const stopLocal = local?.source.subscribeWork(publish);
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
       clearHistory,
+      /** Display-only local acknowledgement, scoped to this session and access. */
+      dismissError(agent: string, channelId: string, messageId: string) {
+        if (!local || closed || !canAccess(channelId)) return false;
+        local.source.dismissError?.({ scope: local.scope, agent, messageId });
+        return true;
+      },
       archive: history?.host,
       selectHistory(agent: string) {
         if (historyAgent === agent) return;
@@ -526,6 +607,19 @@ export function createAgentActivity(
       )
         return;
       if (leases > 0) admit(frame, Date.now(), false);
+    },
+    /** Trigger messages may arrive after telemetry. Resolve at content admission,
+     * not on the freshness timer, without retaining or fetching more messages. */
+    messagesChanged(events: readonly EventData[]) {
+      if (closed || !leases) return;
+      const ids = new Set(events.map((event) => event.id));
+      let changed = false;
+      for (const turn of turns.values()) {
+        if (!turn.unresolvedTriggers?.some((id) => ids.has(id))) continue;
+        associate(turn);
+        changed = true;
+      }
+      if (changed) publish();
     },
     /** Public typing is scope/freshness evidence only, never ownership evidence. */
     channelEvents(events: readonly EventData[]) {
@@ -619,6 +713,7 @@ export function createAgentActivity(
     dispose() {
       if (closed) return;
       closed = true;
+      stopLocal?.();
       leases = 0;
       observe(null);
       clearInterval(timer);

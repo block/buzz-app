@@ -1,3 +1,4 @@
+import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -279,6 +280,7 @@ async function setup({
   storage = memoryStorage(),
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
+  timeoutMs = 60_000,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -294,12 +296,14 @@ async function setup({
     async (_: string, __: AbortSignal) =>
       ["auth", viewer, "", "f".repeat(128)] as const,
   );
+  const activity = createLocalAgentActivity();
   const service = new AgentsService(
     ctx,
     client.communities,
     native,
     storage,
     authorize,
+    activity,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -308,6 +312,7 @@ async function setup({
   const type: AgentType<Config> = {
     id: "echo",
     title: "Echo",
+    timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
     defaults: () => ({
       config: { reply: "ok" },
@@ -343,7 +348,9 @@ async function setup({
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   return {
+    activity,
     service,
+    type,
     native,
     storage,
     run,
@@ -575,9 +582,8 @@ it("leaves the team section out for an agent on no team", () => {
   ).toBe("");
 });
 
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
-  const { service, run, emit, native, relay } = await setup();
+it("keeps handed-off activity local, without publishing working reactions", async () => {
+  const { service, run, emit, native, relay, activity } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   let finish = () => {};
   const turn = new Promise<void>((resolve) => {
@@ -591,53 +597,32 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
     ],
   });
   emit({ events: [mention], channelId: channel });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  await settle();
-  const reactions = await published(native, 7);
-  expect(reactions.map(({ content, tags }) => [content, tags])).toEqual(
-    ["👀", "💬"].map((emoji) => [
-      emoji,
-      [
-        ["h", channel],
-        ["e", mention.id],
-      ],
-    ]),
-  );
-  // STOPGAP(agent-local-typing): this device shows the agent typing in the
-  // mention's thread meanwhile.
-  expect(relay.snapshot().session.typing.local).toHaveBeenCalledWith(
-    expect.objectContaining({
-      pubkey: bot,
-      kind: 20002,
-      tags: [
-        ["h", channel],
-        ["e", mention.id, "", "reply"],
-      ],
-    }),
-  );
-  // `run` has returned, but the turn it handed off is still going.
-  expect(await published(native, 5)).toEqual([]);
-  finish();
-  await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(2),
-  );
-  // The relay takes one target per deletion.
-  expect((await published(native, 5)).map(({ tags }) => tags)).toEqual(
-    reactions.map(({ id }) => [
-      ["h", channel],
-      ["e", id],
-      ["k", "7"],
-    ]),
-  );
-  // Only mentions are reacted to, and a failed run takes its reactions back.
-  run.mockRejectedValueOnce(new Error("boom"));
-  emit({ events: [event("m2", { tags: mention.tags })], channelId: channel });
-  emit({ events: [event("w", { content: "deploy" })], channelId: channel });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-  await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(4),
-  );
-  expect(await published(native, 7)).toHaveLength(4);
+  const typing = relay.snapshot().session.typing.local;
+  try {
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(activity.reader.work()[0]?.state).toBe("working");
+    expect(typing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pubkey: bot,
+        kind: 20002,
+        tags: [
+          ["h", channel],
+          ["e", mention.id, "", "reply"],
+        ],
+      }),
+    );
+    expect(await published(native, 7)).toEqual([]);
+    finish();
+    await vi.waitFor(() =>
+      expect(typing).toHaveBeenCalledWith(expect.objectContaining({ kind: 9 })),
+    );
+    expect(activity.reader.work()[0]?.state).toBe("done");
+    expect(await published(native, 7)).toEqual([]);
+    expect(await published(native, 5)).toEqual([]);
+  } finally {
+    finish();
+  }
 });
 
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
@@ -784,38 +769,6 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   expect(held?.signal.aborted).toBe(true);
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
-});
-
-// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
-it("keeps a mention's reactions however long its handed-off work runs", async () => {
-  vi.useFakeTimers();
-  const { service, run, emit, native } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  let finish = () => {};
-  const turn = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
-  emit({
-    events: [
-      event("m", {
-        tags: [
-          ["h", channel],
-          ["p", bot],
-        ],
-      }),
-    ],
-    channelId: channel,
-  });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  await vi.advanceTimersByTimeAsync(0);
-  expect(await published(native, 7)).toHaveLength(2);
-  // Buzz sets no deadline on an agent's work; the harness decides.
-  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
-  expect(await published(native, 5)).toEqual([]);
-  finish();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(await published(native, 5)).toHaveLength(2);
 });
 
 it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {
@@ -2161,4 +2114,194 @@ it("keeps what it lists when the community's records cannot be read", async () =
     name: "Sea",
     place: "hosted",
   });
+});
+
+it("projects accepted queued work and keeps working past handover until the plugin's actual result", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  let releaseHandover!: () => void;
+  let finish!: (outcome: WorkOutcome) => void;
+  const done = new Promise<WorkOutcome>((resolve) => {
+    finish = resolve;
+  });
+  f.run.mockImplementationOnce((delivery) => {
+    delivery.workingUntil?.(done);
+    return new Promise<void>((resolve) => {
+      releaseHandover = resolve;
+    });
+  });
+  const first = event("1", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  const second = event("2", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  f.emit({ events: [first, second], channelId: channel });
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work().map((row) => row.state)).toEqual([
+        "working",
+        "waiting",
+      ]),
+    );
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      agent: bot,
+      messageId: first.id,
+      threadRootId: first.id,
+      channelId: channel,
+    });
+    releaseHandover();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work().map((row) => row.state)).toEqual([
+        "working",
+        "done",
+      ]),
+    );
+    finish({ ok: false, error: "Provider unavailable" });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "Provider unavailable",
+      }),
+    );
+  } finally {
+    releaseHandover?.();
+    finish({ ok: true });
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("keeps a handed-off request and its original scope through reconnect, without reviving it from old callbacks", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  let finish!: (result: WorkOutcome) => void;
+  const done = new Promise<WorkOutcome>((resolve) => {
+    finish = resolve;
+  });
+  f.run.mockImplementationOnce((delivery) => delivery.workingUntil?.(done));
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("working"),
+    );
+    const scope = f.activity.reader.work()[0]?.scope;
+    f.reconnecting();
+    f.connect(true);
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      state: "working",
+      scope,
+    });
+    finish({ ok: true });
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    expect(f.run).toHaveBeenCalledTimes(1);
+  } finally {
+    finish({ ok: true });
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("does not label still-running work failed when only its handover deadline expires", async () => {
+  const f = await setup({ timeoutMs: 100 });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  let release!: () => void;
+  let expired!: () => void;
+  const deadline = new Promise<void>((resolve) => {
+    expired = resolve;
+  });
+  f.run.mockImplementationOnce((delivery) => {
+    delivery.signal.addEventListener("abort", expired, { once: true });
+    return new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  });
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("working"),
+    );
+    await deadline;
+    await settle();
+    expect(f.activity.reader.work()[0]?.state).toBe("working");
+    release();
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+  } finally {
+    release?.();
+    log.mockRestore();
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("clears declined requests and removed agents without late outcomes reviving activity", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const request = (id: string) => ({
+    events: [
+      event(id, {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  let finish!: (result: WorkOutcome) => void;
+  const done = new Promise<WorkOutcome>((resolve) => {
+    finish = resolve;
+  });
+  try {
+    f.native.claim.mockResolvedValue(false);
+    f.emit(request("unclaimed"));
+    await settle();
+    expect(f.activity.reader.work()).toEqual([]);
+    expect(f.run).not.toHaveBeenCalled();
+    f.native.claim.mockResolvedValue(true);
+    f.run.mockImplementationOnce((delivery) => delivery.ignored?.());
+    f.emit(request("declined"));
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    await settle();
+    expect(f.activity.reader.work()).toEqual([]);
+    f.run.mockImplementationOnce((delivery) => delivery.workingUntil(done));
+    f.emit(request("active"));
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("working"),
+    );
+    await f.service.remove(bot);
+    finish({ ok: false, error: "Late failure" });
+    await settle();
+    expect(f.activity.reader.work()).toEqual([]);
+  } finally {
+    finish({ ok: true });
+    await f.ctx.fiber.dispose();
+  }
 });

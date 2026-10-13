@@ -1,6 +1,7 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
+import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -237,10 +238,14 @@ export function MessageComposer(props: MessageComposerProps) {
     props.channelId,
     props.threadRootId,
   )}`;
-  return props.personalConversation ? (
-    <PersonalComposer key={key} {...props} />
-  ) : (
-    <Composer key={key} {...props} />
+  return (
+    <TypingPresentation active key={key}>
+      {props.personalConversation ? (
+        <PersonalComposer {...props} />
+      ) : (
+        <Composer {...props} />
+      )}
+    </TypingPresentation>
   );
 }
 
@@ -1495,6 +1500,8 @@ function Composer({
                     )
               }
               data-single-emoji={largeEmojiDraft || undefined}
+              // Choosing this conversation's tab resumes typing here.
+              data-tab-focus=""
               maxLength={16000}
               aria-label={label}
               placeholder={placeholder ?? label}

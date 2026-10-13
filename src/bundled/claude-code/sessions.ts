@@ -7,6 +7,7 @@ import {
   ClaudeProcess,
   type ClaudeLaunch,
   type ClaudeModel,
+  type ActivityReceipt,
   type Settled,
   type Spawn,
   type ToolServer,
@@ -118,7 +119,7 @@ export class AgentSessions {
       result: Promise.resolve().then(async () => {
         const launch = await this.options.launch();
         if (this.disposed || this.discovery !== discovery)
-          throw new Error("Claude Code was stopped");
+          throw new Error("Claude was stopped");
         const process = await ClaudeProcess.start(this.options.spawn, {
           cwd: launch.cwd,
           ...(launch.model ? { model: launch.model } : {}),
@@ -127,7 +128,7 @@ export class AgentSessions {
         discovery.process = process;
         try {
           if (this.disposed || this.discovery !== discovery)
-            throw new Error("Claude Code was stopped");
+            throw new Error("Claude was stopped");
           return await read(process);
         } finally {
           await process.kill();
@@ -158,13 +159,18 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
+      step,
+      acknowledged,
+      superseded,
+      activityScope,
     }: Readonly<{
       steer?: string;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
-    }> = {},
+    }> &
+      ActivityReceipt = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "Claude Code was stopped" };
+    if (this.disposed) return { ok: false, error: "Claude was stopped" };
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
@@ -180,29 +186,45 @@ export class AgentSessions {
     }
     if (live) {
       this.touch(key, live, seen);
-      return this.answer(key, live, live.process.busy ? steer : text, pick);
+      return this.answer(key, live, live.process.busy ? steer : text, {
+        ...pick,
+        ...(activityScope ? { activityScope } : {}),
+        ...(step ? { step } : {}),
+        ...(acknowledged ? { acknowledged } : {}),
+        ...(superseded ? { superseded } : {}),
+      });
     }
     const saved = this.options.store.get(key);
     const starting = this.start(saved?.id).catch((error) => {
-      console.warn("Claude Code could not start", error);
+      console.warn("Claude could not start", error);
       return undefined;
     });
     this.opening.set(key, starting);
     live = await starting;
     if (this.opening.get(key) === starting) this.opening.delete(key);
     if (live && !this.disposed) this.adopt(key, live, seen);
-    if (!live) return { ok: false, error: "Claude Code could not start" };
+    if (!live) return { ok: false, error: "Claude could not start" };
     if (this.disposed) {
       void live.process.kill();
-      return { ok: false, error: "Claude Code was stopped" };
+      return { ok: false, error: "Claude was stopped" };
     }
-    const delivered = await this.answer(key, live, text, pick);
+    const activity = {
+      ...pick,
+      ...(activityScope ? { activityScope } : {}),
+      ...(step ? { step } : {}),
+      ...(acknowledged ? { acknowledged } : {}),
+      ...(superseded ? { superseded } : {}),
+    };
+    const delivered = await this.answer(key, live, text, activity);
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
       this.options.store.delete(key);
       this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen, { pick });
+      return this.deliver(key, fresh ? await fresh() : text, seen, {
+        pick,
+        ...activity,
+      });
     }
     return delivered;
   }
@@ -260,8 +282,13 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.drop(key, live);
     });
   }
-  private async answer(key: string, live: Live, text: string, pick: TurnPick) {
-    const settled = await live.process.send(text, pick);
+  private async answer(
+    key: string,
+    live: Live,
+    text: string,
+    activity: TurnPick & ActivityReceipt,
+  ) {
+    const settled = await live.process.send(text, activity);
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (live.fingerprint !== this.options.fingerprint() && !live.process.busy)
@@ -368,7 +395,7 @@ export class Spare {
         sessionId: this.newId(),
         tools: this.tools,
       }).catch((error) => {
-        console.warn("Claude Code could not start a spare session", error);
+        console.warn("Claude could not start a spare session", error);
         return undefined;
       }),
     };
@@ -407,7 +434,7 @@ export function localSessions(
     try {
       storage.setItem(name, JSON.stringify(all));
     } catch (error) {
-      console.warn("Claude Code sessions were not saved", error);
+      console.warn("Claude sessions were not saved", error);
     }
   };
   return {

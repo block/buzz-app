@@ -108,14 +108,17 @@ it("picks the default as an empty value", async () => {
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
 });
 
-it.each([true, false])(
-  "shows a saved unlisted value as unavailable when custom entry is %s",
-  async (allowCustomModel) => {
+it.each([
+  [true, "Custom model"],
+  [false, "Unavailable model"],
+])(
+  "describes a saved unlisted value when custom entry is %s",
+  async (allowCustomModel, description) => {
     const { user } = setup("claude-old-1", { allowCustomModel });
     expect(control()).toHaveTextContent("claude-old-1");
     await user.click(control());
     const option = await screen.findByRole("option", { name: /claude-old-1/ });
-    expect(option).toHaveTextContent("Unavailable model");
+    expect(option).toHaveTextContent(description);
     expect(option).toHaveAttribute("aria-selected", "true");
   },
 );

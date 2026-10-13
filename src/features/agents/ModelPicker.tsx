@@ -147,7 +147,11 @@ export function ModelPicker({
   };
   const items: ModelChoice[] = [fallback, ...models];
   if (value && !items.some((model) => model.id === value))
-    items.push({ id: value, label: value, description: "Unavailable model" });
+    items.push({
+      id: value,
+      label: value,
+      description: allowCustomModel ? "Custom model" : "Unavailable model",
+    });
   const selected = items.find((model) => model.id === value) ?? fallback;
   const choices = allowCustomModel ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {

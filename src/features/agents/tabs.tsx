@@ -50,7 +50,7 @@ export function agentSections({
       <Component
         agent={agent}
         save={(config) =>
-          role === "settings" && settingsHost?.pendingSave
+          settingsHost?.pendingSave
             ? settingsHost.pendingSave(config)
             : agents.save(agent.pubkey, { config })
         }

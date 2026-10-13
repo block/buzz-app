@@ -2325,6 +2325,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-width: 100%;
 }
 
+/* Percentage-sized media needs a definite available width, unlike text bubbles. */
+.messagePayload:has(.messageAttachments) {
+  width: 100%;
+}
+
 .messageAvatar {
   user-select: none;
   position: absolute;

@@ -282,6 +282,7 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
     const scroller = bar.closest("[data-message-scroller]");
     return {
       top: slot.getBoundingClientRect().top,
+      barBottom: bar.getBoundingClientRect().bottom,
       slotHeight: slot.offsetHeight,
       rowHeight: bar.closest("[data-layout]").offsetHeight,
       scrollerHeight: scroller.clientHeight,
@@ -312,7 +313,7 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
         )
         .toEqual({
           slotTop: baseline.top + growth,
-          barBottom: baseline.top + growth,
+          barBottom: baseline.barBottom + growth,
         });
       await expect(button).toBeFocused();
       await expect
@@ -571,13 +572,28 @@ test("comment actions revealed while the drawer slides realign when it settles",
   await shown();
   const anchoring = () =>
     actions.evaluate((bar) => {
-      const slot = bar.parentElement.getBoundingClientRect();
+      const bubble = bar
+        .closest("[data-layout]")
+        .querySelector("[data-message-action-anchor]")
+        .getBoundingClientRect();
       const rect = bar.getBoundingClientRect();
+      const beside = bar.dataset.placement === "beside";
       return {
-        right: Math.round(slot.right),
-        anchored:
-          Math.abs(slot.top - rect.bottom) < 1 &&
-          Math.abs(slot.right - rect.right) < 1,
+        right: Math.round(bubble.right),
+        anchored: beside
+          ? Math.abs(rect.left - bubble.right - 8) < 1 &&
+            Math.abs(
+              rect.top + rect.height / 2 - bubble.top - bubble.height / 2,
+            ) < 1
+          : Math.abs(bubble.top + 8 - rect.bottom) < 1 &&
+            Math.abs(
+              Math.min(
+                bubble.right + 8,
+                bar.closest("[data-message-scroller]").getBoundingClientRect()
+                  .right - 12,
+                document.documentElement.clientWidth - 12,
+              ) - rect.right,
+            ) < 1,
       };
     });
   const moving = await anchoring();

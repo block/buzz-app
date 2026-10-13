@@ -111,36 +111,49 @@ export function AppearanceSettings({
             trailing={(label) => (
               <fieldset
                 {...label}
-                className="m-0 grid min-w-0 max-w-full grid-cols-6 gap-2 border-0 p-0"
+                className="m-0 min-w-0 max-w-full border-0 p-0"
               >
-                {BUBBLE_COLORS.map((color) => {
-                  const colorLabel =
-                    color === "neutral"
-                      ? "Default"
-                      : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
-                  return (
-                    <IconButton
-                      key={color}
-                      data-bubble-color={color}
-                      style={messageButtonStyle}
-                      variant="primary"
-                      size="sm"
-                      shape="round"
-                      aria-label={`${colorLabel} message color`}
-                      title={colorLabel}
-                      aria-pressed={bubbleColor === color}
-                      onClick={() => appearance.setBubbleColor(color)}
-                      icon={
-                        <CheckIcon
-                          aria-hidden="true"
-                          className={
-                            bubbleColor === color ? "opacity-100" : "opacity-0"
-                          }
-                        />
-                      }
-                    />
-                  );
-                })}
+                <div
+                  data-message-colors
+                  className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto"
+                >
+                  {BUBBLE_COLORS.map((color) => {
+                    const colorLabel =
+                      color === "neutral"
+                        ? "Default"
+                        : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
+                    return (
+                      <IconButton
+                        key={color}
+                        data-bubble-color={color}
+                        style={messageButtonStyle}
+                        variant="primary"
+                        size="sm"
+                        shape="round"
+                        aria-label={`${colorLabel} message color`}
+                        title={colorLabel}
+                        aria-pressed={bubbleColor === color}
+                        onFocus={(event) =>
+                          event.currentTarget.scrollIntoView({
+                            block: "nearest",
+                            inline: "nearest",
+                          })
+                        }
+                        onClick={() => appearance.setBubbleColor(color)}
+                        icon={
+                          <CheckIcon
+                            aria-hidden="true"
+                            className={
+                              bubbleColor === color
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }
+                          />
+                        }
+                      />
+                    );
+                  })}
+                </div>
               </fieldset>
             )}
           />

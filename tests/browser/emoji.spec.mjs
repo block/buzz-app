@@ -65,8 +65,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     expect(
       await sentSingleEmoji.evaluate((message) => {
-        const bubble = message.parentElement;
-        const byline = bubble.previousElementSibling;
+        const bubble = message.closest("[data-message-action-anchor]");
+        const byline = bubble.parentElement.previousElementSibling;
         return (
           bubble.getBoundingClientRect().top -
           byline.getBoundingClientRect().bottom

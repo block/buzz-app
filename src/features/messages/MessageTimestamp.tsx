@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
@@ -50,16 +50,25 @@ export function MessageTimestampHint({
   children: ReactNode;
 }) {
   useLocalDay();
+  const payload = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
   const fullDate =
     createdAt === undefined ? undefined : formatFullTimestamp(createdAt);
   return (
     <Tooltip
       content={fullDate}
-      {...(createdAt === undefined ? { open: false } : {})}
+      open={createdAt !== undefined && open}
+      onOpenChange={(next) =>
+        setOpen(next && !payload.current?.contains(document.activeElement))
+      }
       delay={1000}
       disableHoverablePopup
     >
-      <div className={styles.messagePayload}>
+      <div
+        ref={payload}
+        className={styles.messagePayload}
+        onFocusCapture={() => setOpen(false)}
+      >
         {children}
         {createdAt !== undefined && (
           <time

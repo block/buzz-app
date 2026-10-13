@@ -150,6 +150,22 @@ it("reveals the grouped date only after a long hover and dismisses on leaving", 
   expect(screen.queryByRole("tooltip")).toBeNull();
 });
 
+it("does not open a timestamp when focus returns to a message control", async () => {
+  render(
+    <MessageTimestampHint
+      createdAt={new Date(2026, 8, 24, 9, 5).getTime() / 1000}
+    >
+      <button type="button">Open video fullscreen</button>
+    </MessageTimestampHint>,
+  );
+  act(() => screen.getByRole("button").focus());
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+  });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(screen.getByRole("button")).toHaveFocus();
+});
+
 // Either side of local midnight; formatDayGroupLabel's ladder is tested in
 // datetime.test.ts.
 it.each([

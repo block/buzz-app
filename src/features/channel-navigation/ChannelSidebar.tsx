@@ -125,7 +125,7 @@ export function ChannelSidebar(props: Props) {
               connection.status === "connecting" ? "required" : undefined
             }
           >
-            <div className={styles.sidebarScroll}>
+            <SidebarList>
               {navigation}
               <p className={styles.empty}>
                 {connection.status === "connecting"
@@ -135,11 +135,22 @@ export function ChannelSidebar(props: Props) {
               {connection.status === "error" && (
                 <Button onClick={props.relay.retry}>Retry channels</Button>
               )}
-            </div>
+            </SidebarList>
           </SidebarFrame>
         </div>
       )}
     </SidebarBoundary>
+  );
+}
+
+// Mirrors SidebarUnread's list geometry, so page rows hold still across connection states.
+function SidebarList({ children }: { children: ReactNode }) {
+  return (
+    <div className={styles.channelListFrame}>
+      <div className={styles.channelList}>
+        <div className={styles.channelListContent}>{children}</div>
+      </div>
+    </div>
   );
 }
 
@@ -172,13 +183,13 @@ class SidebarBoundary extends Component<
     return this.state.failed ? (
       <div className="shell-sidebar-default">
         <SidebarFrame label="Channel sidebar">
-          <div className={styles.sidebarScroll}>
+          <SidebarList>
             {this.props.fallback}
             <p role="alert">Channels couldn’t open.</p>
             <Button onClick={() => this.setState({ failed: false })}>
               Retry channels
             </Button>
-          </div>
+          </SidebarList>
         </SidebarFrame>
       </div>
     ) : (

@@ -1,3 +1,4 @@
+import { createLocalAgentActivity } from "../features/agents/local-activity";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import {
   createIdentity,
@@ -45,6 +46,7 @@ export function createServices() {
     bundled: bundledPlugins,
   });
   const localAgents = createLocalAgents();
+  const localActivity = createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -64,13 +66,21 @@ export function createServices() {
     localAgents.agents,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
+    localActivity.reader,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
-  const agents = new AgentsService(ctx, communities);
+  const agents = new AgentsService(
+    ctx,
+    communities,
+    undefined,
+    undefined,
+    undefined,
+    localActivity,
+  );
   ctx.effect(() =>
     localAgents.bind({ snapshot: agents.local, subscribe: agents.subscribe }),
   );

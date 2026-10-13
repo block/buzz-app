@@ -462,12 +462,65 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Show a person or agent with an image or stable fallback. Use a circle for a person and a squircle for an agent, based on identity data supplied by the caller.",
     behavior: "Base UI Avatar.",
-    variants: ["small", "default", "large", "fill", "circle", "squircle"],
+    variants: [
+      "compact",
+      "small",
+      "default",
+      "large",
+      "fill",
+      "circle",
+      "squircle",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/Avatar.tsx",
     baseUi: [BASE_UI_PARTS.avatar],
+    composes: [],
+  },
+  {
+    slug: "avatar-stack",
+    name: "AvatarStack",
+    purpose:
+      "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
+    behavior:
+      "Decorative artwork composed from Avatar; identity data stays with the caller.",
+    variants: ["compact", "small", "circle", "squircle", "overflow count"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/AvatarStack.tsx",
+    baseUi: [],
+    composes: ["avatar"],
+  },
+  {
+    slug: "typing-dots",
+    name: "TypingDots",
+    purpose:
+      "Show received/waiting activity with unison breathing, and working activity with staggered dots. The caller supplies the state and accessible text.",
+    behavior:
+      "CSS-only decorative motion. Reduced motion keeps the dots still; receipt detection and lifecycle state stay with the feature.",
+    variants: ["waiting", "working (default)", "reduced motion"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/TypingDots.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "shimmer-text",
+    name: "ShimmerText",
+    purpose:
+      "Give a short live-work label, such as an agent's current step, a moving sheen while that work is live.",
+    behavior:
+      "CSS-only decorative motion over subtle-to-standard text roles. Reduced motion shows plain text; the caller decides when work is live.",
+    variants: ["active (default)", "inactive", "reduced motion"],
+    status: "proposed",
+    collection: "components",
+    owner: "Messages",
+    source: "shared/design-system/ui/ShimmerText.tsx",
+    baseUi: [],
     composes: [],
   },
   {

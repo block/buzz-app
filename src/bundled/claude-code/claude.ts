@@ -9,6 +9,14 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 
+export type ActivityReceipt = Readonly<{
+  /** Presentation destination; channel-shared sessions may handle several threads. */
+  activityScope?: string;
+  step?: (tool: string, target?: string) => void;
+  acknowledged?: () => void;
+  superseded?: () => void;
+}>;
+
 export type Spawn = (
   id: string,
   options?: HostProcessOptions,
@@ -16,7 +24,7 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
-  /** Appended to Claude Code's own system prompt. */
+  /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
   /** A saved session to continue. */
@@ -39,7 +47,7 @@ const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
-/** A model Claude Code lists as one a session can switch to. */
+/** A model Claude lists as one a session can switch to. */
 export type ClaudeModel = Readonly<{
   /** What `set_model` takes: an alias such as `opus`, or a model id. */
   value: string;
@@ -62,7 +70,7 @@ export type Settled = Readonly<{
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
- * Claude Code session that started the app. */
+ * Claude session that started the app. */
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
@@ -98,9 +106,9 @@ export class ClaudeProcess {
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   private requests = 0;
-  /** Control requests awaiting Claude Code's answer, by request id. */
+  /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
-  /** The models Claude Code lists, from its answer to `initialize`. */
+  /** The models Claude lists, from its answer to `initialize`. */
   private listed: Promise<readonly ClaudeModel[]> = Promise.resolve([]);
   /** The model the next turn runs on; undefined is the session's own. */
   private pickedModel: string | undefined;
@@ -115,19 +123,19 @@ export class ClaudeProcess {
     private readonly process: HostProcess,
     resume: string | undefined,
     private tools: ToolServer | undefined,
-    /** The session's own model, as launched; undefined is Claude Code's default. */
+    /** The session's own model, as launched; undefined is Claude's default. */
     private readonly ownModel: string | undefined,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
       this.alive = false;
       for (const resolve of this.calls.values())
-        resolve({ subtype: "error", error: "Claude Code exited" });
+        resolve({ subtype: "error", error: "Claude exited" });
       this.calls.clear();
       const error =
         this.lastError ??
         (this.stderr.trim().split("\n").at(-1) ||
-          `Claude Code exited (${code ?? "signal"})`);
+          `Claude exited (${code ?? "signal"})`);
       this.settle({ ok: false, error });
       return code;
     });
@@ -152,6 +160,7 @@ export class ClaudeProcess {
         "--input-format",
         "stream-json",
         "--verbose",
+        "--replay-user-messages",
         "--permission-mode",
         "bypassPermissions",
         ...(launch.model ? ["--model", launch.model] : []),
@@ -237,7 +246,7 @@ export class ClaudeProcess {
   models() {
     return this.listed;
   }
-  /** The effort a turn without a pick runs at, when Claude Code reports it. */
+  /** The effort a turn without a pick runs at, when Claude reports it. */
   async readEffort() {
     await this.readOwnEffort();
     return this.ownEffort;
@@ -258,28 +267,34 @@ export class ClaudeProcess {
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
-  send(text: string, { model, effort }: TurnPick = {}): Promise<Settled> {
+  send(
+    text: string,
+    { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
+  ): Promise<Settled> {
     if (!this.alive)
       return Promise.resolve({
         ok: false,
-        error: "Claude Code is not running",
+        error: "Claude is not running",
       });
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    const uuid = crypto.randomUUID();
+    this.receipts.set(uuid, activity);
     this.pending++;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
     this.write({
       type: "user",
+      uuid,
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
     }).catch((error) =>
       this.settle({
         ok: false,
-        error: `Claude Code did not take the message: ${error}`,
+        error: `Claude did not take the message: ${error}`,
       }),
     );
     return settled;
@@ -293,7 +308,7 @@ export class ClaudeProcess {
     return this.process.write(`${JSON.stringify(message)}\n`);
   }
   /** Writes a control request: `written` settles with the write, `answer`
-   * with Claude Code's response. */
+   * with Claude's response. */
   private request(request: Message) {
     const id = `buzz-${++this.requests}`;
     const answer = new Promise<Message>((resolve) =>
@@ -306,7 +321,7 @@ export class ClaudeProcess {
     });
     return { written, answer };
   }
-  /** Sends a control request and resolves with Claude Code's response. */
+  /** Sends a control request and resolves with Claude's response. */
   private call(request: Message): Promise<Message> {
     const { written, answer } = this.request(request);
     return written.then(() => answer);
@@ -323,7 +338,7 @@ export class ClaudeProcess {
       ...(next ? { model: next } : {}),
     }).then((answer) => {
       if (answer.subtype !== "success")
-        console.warn("Claude Code did not change its model", answer.error);
+        console.warn("Claude did not change its model", answer.error);
     });
   }
   /** Changes effort without restarting, which keeps the prompt cache: Claude
@@ -336,7 +351,7 @@ export class ClaudeProcess {
     void this.readOwnEffort();
     const level = effort ?? this.ownEffort;
     if (!level) {
-      console.warn("Claude Code's own effort is unknown; keeping the last one");
+      console.warn("Claude's own effort is unknown; keeping the last one");
       return;
     }
     this.effort = effort;
@@ -345,7 +360,7 @@ export class ClaudeProcess {
       settings: { effortLevel: level },
     }).then((answer) => {
       if (answer.subtype !== "success")
-        console.warn("Claude Code did not change its effort", answer.error);
+        console.warn("Claude did not change its effort", answer.error);
     });
   }
   /** Read once, ahead of the first change, so it is the session's own. */
@@ -363,6 +378,8 @@ export class ClaudeProcess {
   }
   private settle(settled: Settled) {
     this.pending = 0;
+    this.receipts.clear();
+    this.activeReceipts.clear();
     this.lastError = undefined;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
@@ -387,6 +404,11 @@ export class ClaudeProcess {
       this.handle(message);
     }
   }
+  // Replay acknowledgments are correlated by the UUID we supplied, never by
+  // prompt text or tool-result user messages. Only the latest acknowledged
+  // request gets steps; settling ends all requests, not just the latest one.
+  private readonly receipts = new Map<string, ActivityReceipt>();
+  private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
@@ -415,20 +437,45 @@ export class ClaudeProcess {
       if (message.state === "idle" && this.pending) this.done();
       return;
     }
+    if (
+      message.type === "user" &&
+      message.isReplay === true &&
+      typeof message.uuid === "string"
+    ) {
+      const receipt = this.receipts.get(message.uuid);
+      if (receipt) {
+        this.receipts.delete(message.uuid);
+        // Watches/timers have no message activity: they must not hide a mention.
+        if (receipt.step) {
+          const scope = receipt.activityScope ?? "conversation";
+          this.activeReceipts.get(scope)?.superseded?.();
+          this.activeReceipts.set(scope, receipt);
+          receipt.acknowledged?.();
+        }
+      }
+      return;
+    }
+    if (message.type === "assistant") {
+      const step = stepLabel(message);
+      if (step)
+        for (const receipt of this.activeReceipts.values())
+          receipt.step?.(step.tool, step.target);
+      return;
+    }
     if (message.type !== "result") return;
     // An interrupt is not a failure to report.
     if (message.is_error && message.terminal_reason !== "aborted_streaming")
       this.lastError =
         typeof message.result === "string" && message.result
           ? message.result
-          : `Claude Code stopped (${String(message.subtype)})`;
+          : `Claude stopped (${String(message.subtype)})`;
     if (!this.reportsState && this.pending) this.done();
   }
   private done() {
     const error = this.lastError;
     this.settle(error ? { ok: false, error } : { ok: true });
   }
-  /** Answers what Claude Code asks its host: calls to the Buzz tools, the
+  /** Answers what Claude asks its host: calls to the Buzz tools, the
    * hook after `send`, and, since permissions are bypassed, anything else only
    * so an unexpected request does not stall the turn. */
   private async answer(message: Message) {
@@ -479,4 +526,43 @@ export class ClaudeProcess {
       this.pending === 1
     );
   }
+}
+
+/** The last content block of an assistant message as the tool it names and its target. */
+export function stepLabel(
+  message: Message,
+): { tool: string; target?: string } | undefined {
+  const content = (message.message as { content?: unknown } | undefined)
+    ?.content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content.at(-1) as {
+    type?: unknown;
+    name?: unknown;
+    input?: Record<string, unknown>;
+  } | null;
+  if (block?.type === "tool_use" && typeof block.name === "string") {
+    const tool = block.name.split("__").at(-1);
+    if (!tool) return undefined;
+    const input = block.input ?? {};
+    const target = [
+      "description",
+      "file_path",
+      "notebook_path",
+      "pattern",
+      "url",
+      "query",
+      "command",
+    ]
+      .map((key) => input[key])
+      .find((value): value is string => typeof value === "string" && !!value);
+    return target ? { tool, target: shortTarget(target) } : { tool };
+  }
+  if (block?.type === "thinking") return { tool: "Thinking" };
+  if (block?.type === "text") return { tool: "Writing reply" };
+  return undefined;
+}
+
+/** File paths show their name; everything else is passed through for trimming. */
+function shortTarget(value: string) {
+  return value.startsWith("/") ? (value.split("/").at(-1) ?? value) : value;
 }

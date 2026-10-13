@@ -10,6 +10,7 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -47,6 +48,8 @@ function fixture(
   let thread = 0;
   let turn = 0;
   const sent: Wire[] = [];
+  /** Methods the server answers with a JSON-RPC error instead of a result. */
+  const failing = new Set<string>();
   const toolCalls = new Map<
     number | string,
     { threadId: string | undefined; turnId: string; callId: string }
@@ -75,6 +78,13 @@ function fixture(
         return;
       }
       if (request.id == null) return;
+      if (request.method && failing.has(request.method)) {
+        emit({
+          id: request.id,
+          error: { message: `${request.method} failed` },
+        });
+        return;
+      }
       const params = request.params as Record<string, unknown>;
       let result: unknown = {};
       if (request.method === "model/list")
@@ -148,8 +158,32 @@ function fixture(
     exited: exits.promise,
   };
   let closed = false;
+  let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
+    // The plugin starts the app server as a step of Buzz's `codex.sh`.
+    const appServer =
+      _id === "app-server" ||
+      value?.args?.slice(2, 4).join(" ") === "run app-server";
+    if (plugin && appServer && appServerSpawns++ === 0) {
+      const catalogExit = deferred<number | null>();
+      return {
+        write: async (data: string) => {
+          const request: Wire = JSON.parse(data);
+          if (request.id == null) return;
+          const result =
+            request.method === "account/read"
+              ? { account: { type: "chatgpt" } }
+              : request.method === "model/list"
+                ? { data: [], nextCursor: null }
+                : {};
+          value?.onStdout?.(`${JSON.stringify({ id: request.id, result })}\n`);
+        },
+        end: async () => catalogExit.resolve(0),
+        kill: async () => catalogExit.resolve(null),
+        exited: catalogExit.promise,
+      };
+    }
     if (_id === "workspace") {
       value?.onStdout?.("/home/test/.buzz\n");
       return { ...process, exited: Promise.resolve(0) };
@@ -168,6 +202,12 @@ function fixture(
       );
       return { ...process, exited: Promise.resolve(0) };
     }
+    // The plugin's setup checks find Buzz's copy installed and signed in.
+    const step = value?.args?.slice(3).join(" ");
+    if (step === "--version" || step === "login status") {
+      value?.onStdout?.("codex-cli 0.162.1\n");
+      return { ...process, exited: Promise.resolve(0) };
+    }
     options = value;
     return process;
   });
@@ -179,9 +219,13 @@ function fixture(
   }));
   const read = vi.fn(async () => [] as EventData[]);
   const memories: { slug: string; body: string; createdAt: number }[] = [];
+  const memoryRead = vi.fn(async () => ({ entries: memories, partial: false }));
   const memoryView = {
     refresh: vi.fn(async () => {}),
-    snapshot: () => ({ status: "ready", listing: { entries: memories } }),
+    snapshot: () => ({
+      status: "ready",
+      listing: { entries: memories, partial: false },
+    }),
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
@@ -197,7 +241,7 @@ function fixture(
         ),
       },
       read,
-      agentMemories: { open: memoryOpen },
+      agentMemories: { open: memoryOpen, read: memoryRead },
       channels: {
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
@@ -383,6 +427,7 @@ function fixture(
     query,
     fileReads,
     memoryOpen,
+    memoryRead,
     memoryView,
     remember,
     upload,
@@ -397,6 +442,7 @@ function fixture(
     spawn,
     process,
     sent,
+    failing,
     emit,
     publish,
     read,
@@ -433,6 +479,9 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(
+    "Never publish a bare acknowledgement.",
+  );
   expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
@@ -455,6 +504,15 @@ it("hands over promptly and runs conversations independently on one server", asy
     additionalContext: {
       "buzz.instructions": {
         value: expect.not.stringContaining("<team>"),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "Your `core` memory is auto-injected into your context every turn",
+        ),
       },
     },
   });
@@ -593,6 +651,71 @@ it("ends a stopped agent's leftover shells and lets it start again only after le
     "SERVER RUNNING",
     "BACK",
   ]);
+});
+it("logs a failed idle terminal clean without ending the shared server or blocking the agent's return", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  f.failing.add("thread/backgroundTerminals/clean");
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  f.runtime.sync([{ pubkey } as Agent]);
+  await vi.waitFor(() =>
+    expect(error).toHaveBeenCalledWith(
+      "Codex could not clean a stopped agent's terminals",
+      new Error("thread/backgroundTerminals/clean failed"),
+    ),
+  );
+  error.mockRestore();
+  expect(
+    f.sent.find((wire) => wire.method === "thread/backgroundTerminals/clean")
+      ?.params,
+  ).toMatchObject({ threadId: thread });
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: "9".repeat(64) } as Agent]);
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: thread });
+  await f.complete(2, "BACK");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual([
+    "SERVER RUNNING",
+    "BACK",
+  ]);
+});
+it("does not clean or log a cleanup error after the last agent closes the server", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  await f.runtime.run(f.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "SERVER RUNNING");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.useFakeTimers();
+  try {
+    f.runtime.sync([]);
+    await vi.runAllTimersAsync();
+    expect(f.process.end).toHaveBeenCalledTimes(1);
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
+    ).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(f.runtime.sessions(pubkey)).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+    error.mockRestore();
+  }
 });
 it("reopens the shared server after it exits", async () => {
   const f = fixture();
@@ -1313,9 +1436,23 @@ it("publishes workspace errors without starting work", async () => {
     config: { workspace: "relative" },
   });
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("absolute workspace"),
+    content: expect.stringContaining("absolute or ~/… workspace"),
   });
   expect(f.spawn).not.toHaveBeenCalled();
+});
+
+it("resolves a workspace under home through the process host", async () => {
+  const f = fixture();
+  await f.runtime.run({
+    ...f.delivery("hello"),
+    config: { workspace: "~/code" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.spawn).toHaveBeenCalledWith(
+    "workspace",
+    expect.objectContaining({ cwd: "~/code" }),
+  );
+  f.runtime.dispose();
 });
 
 it.each([{}, { workspace: "" }, { workspace: "  " }])(
@@ -1362,7 +1499,7 @@ it("reports a default workspace resolution failure without starting a turn", asy
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining(
-      "Could not resolve the default Codex workspace",
+      "Could not resolve the Codex workspace ~/.buzz",
     ),
   });
   expect(f.starts()).toHaveLength(0);
@@ -1655,6 +1792,102 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
+it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const memory = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext?: Record<string, { value: string }> }
+        | undefined
+    )?.additionalContext?.["buzz.instructions"]?.value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(memory(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
+  );
+  f.complete(0, "FIRST");
+  await f.remember("core", "I am Codex.", 0);
+  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(memory(1)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  f.complete(1, "SECOND");
+  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
+  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
+  expect(memory(2)).not.toContain("<core-memory>");
+  expect(warn).toHaveBeenCalledWith(
+    "Codex could not read the agent's memory",
+    expect.any(Error),
+  );
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  warn.mockRestore();
+});
+
+it("does not declare core missing when the owner listing is partial", async () => {
+  const f = fixture();
+  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
+  await f.runtime.run(f.delivery("partial"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const start = f.starts()[0];
+  expect(start).toBeDefined();
+  const instructions = (
+    start?.params as {
+      additionalContext?: Record<string, { value: string }>;
+    }
+  )?.additionalContext?.["buzz.instructions"]?.value;
+  expect(instructions).toContain("TEST_INSTRUCTIONS");
+  expect(instructions).not.toContain("No core memory found");
+  expect(instructions).not.toContain("<core-memory>");
+});
+
+it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const read = vi.fn(async () => {
+    await gate.promise;
+    return {
+      entries: [
+        {
+          slug: "core",
+          body: "CONCURRENT CORE",
+          eventId: "6".repeat(64),
+          createdAt: 1,
+        },
+      ],
+      partial: false,
+    };
+  });
+  const memories = createAgentMemories(read, owner, () => true);
+  f.snapshot.session.agentMemories =
+    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
+
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      f.runtime.run(
+        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
+      ),
+    ),
+  );
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  expect(f.starts()).toHaveLength(0);
+
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
+  for (const start of f.starts())
+    expect(start.params).toMatchObject({
+      additionalContext: {
+        "buzz.instructions": {
+          value: expect.stringContaining("CONCURRENT CORE"),
+        },
+      },
+    });
+});
+
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -1684,9 +1917,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     ],
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
-  expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
+  expect(f.memoryRead).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
+  // The turn's own `core` read, then mem_set's read and a fresh post-write read.
+  expect(f.memoryRead).toHaveBeenCalledTimes(3);
   expect(
     (
       await f.tool("send", {

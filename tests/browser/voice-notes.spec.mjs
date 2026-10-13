@@ -397,7 +397,8 @@ test("rejects a full attachment draft before opening the microphone", async ({
       buffer: Buffer.from("test"),
     })),
   );
-  // Wait for attachment layout and uploads before targeting the toolbar.
+  // The attachment rows grow as the draft settles, moving the toolbar under a
+  // pointer aimed at its earlier position. Click once every file is Ready.
   await expect(
     page.getByRole("status").filter({ hasText: /· Ready$/ }),
   ).toHaveCount(10);

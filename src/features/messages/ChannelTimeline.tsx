@@ -16,7 +16,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
@@ -127,7 +127,7 @@ export type ChannelTimelineProps = {
   launchPending?: boolean | undefined;
   /** Sessions page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
-  onOpenLink(url: string): boolean;
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   /** One inline exact visit: focus the verified mounted row, without a page navigation. */
@@ -220,6 +220,17 @@ function Timeline({
   );
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
+  // Keep pagination space through EOF so removing its control cannot change
+  // Virtua's start margin in the same measurement cycle as a prepend.
+  const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
+  if (
+    !reserveHistorySpace &&
+    (window.hasMore ||
+      window.loadingOlder ||
+      window.historyLimited ||
+      window.error)
+  )
+    setReserveHistorySpace(true);
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
@@ -744,7 +755,11 @@ function Timeline({
         loadNearTop(element);
       }}
     >
-      <div ref={edge} className={styles.edge}>
+      <div
+        ref={edge}
+        className={styles.edge}
+        data-history-space={reserveHistorySpace || undefined}
+      >
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>

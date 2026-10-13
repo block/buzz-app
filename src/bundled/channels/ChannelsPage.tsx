@@ -5,6 +5,7 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
@@ -12,9 +13,7 @@ import { useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
-import { personalGroups } from "../../features/channel-templates/setup";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
-import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -186,20 +185,11 @@ function ChannelWorkspace({
     navigation.target.route?.params === "new-message";
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
-  const kitState = useSyncExternalStore(
-    queries.channelKit.subscribe,
-    queries.channelKit.snapshot,
-  );
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
     // Start the optional catalog afterward so opening Messages cannot strand it.
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
-  const groupEntry = personalGroups(kitState.entries);
-  const personal =
-    groupEntry?.record.value.type === "groups"
-      ? groupEntry.record.value
-      : undefined;
   const [canvasOrigin, setCanvasOrigin] = useState<{
     channelId: string;
     navigation: PageNavigation | undefined;
@@ -214,7 +204,6 @@ function ChannelWorkspace({
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
-  const [kitError, setKitError] = useState("");
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);
@@ -646,21 +635,6 @@ function ChannelWorkspace({
   const returnFocus = useRef<
     { trigger: HTMLElement; channelId: string | undefined } | undefined
   >(undefined);
-  useLayoutEffect(() => {
-    const pending = returnFocus.current;
-    if (!pending) return;
-    if (pending.channelId !== currentId || !pending.trigger.isConnected) {
-      returnFocus.current = undefined;
-      return;
-    }
-    // The close commit gets one focus handoff, never a deferred request that
-    // can override a later, unrelated tab selection.
-    returnFocus.current = undefined;
-    if (pending.trigger.closest('[inert], [hidden], [aria-hidden="true"]'))
-      return;
-    if (!document.querySelector('dialog[open], [aria-modal="true"]'))
-      pending.trigger.focus({ preventScroll: true });
-  });
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -692,7 +666,7 @@ function ChannelWorkspace({
     continuingVisit,
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
-    openLink: (url) => openLink(url, true),
+    openLink: (url) => openLink(url, { fromThread: true }),
     fallbackFocus: settingsTrigger,
     eligible: (entry) =>
       !entry.panel.channelMenu ||
@@ -702,6 +676,22 @@ function ChannelWorkspace({
         !cached &&
         entry.panel.channelMenu.eligible(current, queries)
       ),
+  });
+  // The page's thread opener wins after the tab owner restores its fallback.
+  useLayoutEffect(() => {
+    const pending = returnFocus.current;
+    if (!pending) return;
+    if (pending.channelId !== currentId || !pending.trigger.isConnected) {
+      returnFocus.current = undefined;
+      return;
+    }
+    // The close commit gets one focus handoff, never a deferred request that
+    // can override a later, unrelated tab selection.
+    returnFocus.current = undefined;
+    if (pending.trigger.closest('[inert], [hidden], [aria-hidden="true"]'))
+      return;
+    if (!document.querySelector('dialog[open], [aria-modal="true"]'))
+      pending.trigger.focus({ preventScroll: true });
   });
   const {
     open,
@@ -908,7 +898,18 @@ function ChannelWorkspace({
     };
   }, [currentId, routedThread]);
   const openLink = useCallback(
-    (url: string, fromThread = false, returnFocus?: HTMLElement) => {
+    (
+      url: string,
+      {
+        fromThread = false,
+        returnFocus,
+        rootId,
+      }: {
+        fromThread?: boolean;
+        returnFocus?: HTMLElement | undefined;
+        rootId?: string;
+      } = {},
+    ) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -981,6 +982,7 @@ function ChannelWorkspace({
         open(
           {
             channelId: context.channelId,
+            ...(rootId && { rootId }),
             panel: candidate,
             target: url,
           },
@@ -1031,53 +1033,18 @@ function ChannelWorkspace({
       {...(current?.channelType !== "session" ? { openMembers } : {})}
       key={settings?.id}
       setupTools={
-        current && (
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            {personal && (
-              <Select
-                label="Personal group"
-                variant="field"
-                value={personal.assignments[current.id] ?? ""}
-                groups={[
-                  {
-                    label: "",
-                    options: [
-                      { value: "", label: "No group" },
-                      ...personal.groups.map((g) => ({
-                        value: g.id,
-                        label: g.name,
-                      })),
-                    ],
-                  },
-                ]}
-                onValueChange={async (groupId) => {
-                  const assignments = { ...personal.assignments };
-                  if (groupId) assignments[current.id] = groupId;
-                  else delete assignments[current.id];
-                  setKitError("");
-                  try {
-                    await queries.channelKit.save(
-                      { ...personal, assignments },
-                      groupEntry?.eventId,
-                    );
-                  } catch (error) {
-                    setKitError(String(error));
-                  }
-                }}
-              />
-            )}
-            {kitError && <p role="alert">{kitError}</p>}
-            {handoff && !current.readOnly && current.channelType !== "dm" && (
-              <ChannelLifecycleActions
-                key={`${current.id}:${!!current.archived}`}
-                channelId={current.id}
-                lifecycle={queries.channelLifecycle}
-                choose={(action, trigger) =>
-                  handoff.openLifecycle(current, action, trigger)
-                }
-              />
-            )}
-          </div>
+        current &&
+        handoff &&
+        !current.readOnly &&
+        current.channelType !== "dm" && (
+          <ChannelLifecycleActions
+            key={`${current.id}:${!!current.archived}`}
+            channelId={current.id}
+            lifecycle={queries.channelLifecycle}
+            choose={(action, trigger) =>
+              handoff.openLifecycle(current, action, trigger)
+            }
+          />
         )
       }
       channel={current}
@@ -1250,7 +1217,7 @@ function ChannelWorkspace({
           }
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
+          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
@@ -1432,30 +1399,32 @@ function ChannelWorkspace({
                             );
                           }}
                         />
-                        {current && (
-                          <IconButton
-                            ref={splitTrigger}
-                            data-tab-pane-toggle=""
-                            size="toolbar"
-                            aria-label="Toggle tab pane"
-                            title={
-                              showingChannelPanel
-                                ? "Close tab pane"
-                                : "Open tab pane"
-                            }
-                            aria-expanded={!!showingChannelPanel}
-                            disabled={!hasChannelPanel}
-                            focusableWhenDisabled
-                            onClick={() =>
-                              tabState.setPaneOpen(!showingChannelPanel)
-                            }
-                            icon={
-                              <SidebarRightIcon
-                                size="1rem"
-                                aria-hidden="true"
-                              />
-                            }
-                          />
+                        {current && !showingChannelPanel && (
+                          <span className={panelStyles.paneToggle}>
+                            <IconButton
+                              ref={splitTrigger}
+                              data-tab-pane-toggle=""
+                              size="toolbar"
+                              aria-label="Toggle tab pane"
+                              title={
+                                showingChannelPanel
+                                  ? "Close tab pane"
+                                  : "Open tab pane"
+                              }
+                              aria-expanded={!!showingChannelPanel}
+                              disabled={!hasChannelPanel}
+                              focusableWhenDisabled
+                              onClick={() =>
+                                tabState.setPaneOpen(!showingChannelPanel)
+                              }
+                              icon={
+                                <SidebarRightIcon
+                                  size="1rem"
+                                  aria-hidden="true"
+                                />
+                              }
+                            />
+                          </span>
                         )}
                       </>
                     }
@@ -1524,6 +1493,19 @@ function ChannelWorkspace({
               >
                 <PanelWorkspace
                   key={currentId}
+                  actions={
+                    <IconButton
+                      data-tab-pane-toggle=""
+                      data-highlight-expanded="false"
+                      variant="subtle"
+                      size="toolbar"
+                      aria-label="Toggle tab pane"
+                      title="Close tab pane"
+                      aria-expanded={true}
+                      onClick={secondary.closePane}
+                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
+                    />
+                  }
                   drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={

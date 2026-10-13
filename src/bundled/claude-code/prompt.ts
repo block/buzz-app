@@ -1,7 +1,7 @@
 // Prompts in the harness's format (buzz-acp), so a Claude agent here reads the
 // same sections and follows the same base prompt as a harness agent.
 import { npubEncode } from "nostr-tools/nip19";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, coreMemory } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import type { ClassifierSkip } from "../../features/agents/service";
 import attentionPrompt from "./attention_prompt.md?raw";
@@ -51,14 +51,7 @@ export function systemPrompt(
       ? section("agent-instructions", input.instructions)
       : "",
     input.team?.trim() ?? "",
-    input.memory === null
-      ? section(
-          "core-memory",
-          "No core memory found. Use `mem_set` with slug `core` to create one (it will hold your identity, rules, and goals across sessions). Ask your user about yourself.",
-        )
-      : input.memory?.trim()
-        ? section("core-memory", input.memory)
-        : "",
+    coreMemory(input.memory),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -70,6 +63,9 @@ export type Channel = Readonly<{
   dm?: boolean;
 }>;
 export type TurnInput = Readonly<{
+  /** The agent's pubkey, which finds its sessions among others' in a shared
+   * workspace. */
+  agent: string;
   event: EventData;
   channel: Channel;
   scope: Scope;
@@ -140,7 +136,12 @@ export function turnPrompt(input: TurnInput) {
           "Session scope: channel",
           `Channel: ${channelLabel}`,
         ];
-  const parts = [section("context", [...lines, hint, reply].join("\n"))];
+  const parts = [
+    section(
+      "context",
+      [...lines, `Agent: ${input.agent}`, hint, reply].join("\n"),
+    ),
+  ];
   if (context.length)
     parts.push(
       section(

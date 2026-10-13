@@ -7,7 +7,9 @@ import {
   type Models,
 } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
+import type { MemoryListing } from "../../features/agents/memory";
 import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
@@ -33,6 +35,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -112,8 +115,6 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
-/** Bindings listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -121,6 +122,22 @@ function textOf(event: EventData, name: string) {
   let text = event.content.trim().replace(/^🤖\s+/, "");
   if (text.startsWith(`@${name}`)) text = text.slice(name.length + 1).trim();
   return text;
+}
+async function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      try {
+        signal.throwIfAborted();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 /** Agents owns admission/identity. This plugin owns work after hand-over, and
@@ -135,11 +152,17 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  /** One owner-view read per session and agent; concurrent turns share it. */
+  private memoryReads = new WeakMap<
+    RelaySession,
+    Map<string, Promise<MemoryListing>>
+  >();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -150,7 +173,7 @@ export class CodexRuntime {
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
-    const settings = config(agent.config);
+    const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([
       settings.workspace,
       settings.model,
@@ -216,7 +239,7 @@ export class CodexRuntime {
     const code = await process.exited;
     const workspace = directory.trim();
     if (code !== 0 || !absoluteWorkspace(workspace))
-      throw new Error("Could not resolve the default Codex workspace.");
+      throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
@@ -258,10 +281,16 @@ export class CodexRuntime {
       );
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
+          if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
+            .catch((error) =>
+              console.error(
+                "Codex could not clean a stopped agent's terminals",
+                error,
+              ),
+            );
         }
     })();
     this.stopping.set(pubkey, stopped);
@@ -336,7 +365,7 @@ export class CodexRuntime {
     }
     return {};
   }
-  /** The agent's most recently used bindings in this community. */
+  /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const snapshot = this.relay(pubkey)?.snapshot();
     const ready = snapshot?.status === "ready" ? snapshot : undefined;
@@ -367,8 +396,44 @@ export class CodexRuntime {
           return [];
         }
       })
-      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-      .slice(0, CONVERSATION_LIMIT);
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
@@ -419,7 +484,7 @@ export class CodexRuntime {
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = config(delivery.config);
+    const settings = this.resolveConfig(delivery.config);
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
@@ -470,7 +535,7 @@ export class CodexRuntime {
       );
       await this.publish(
         request,
-        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+        "Choose an absolute or ~/… workspace path in Codex settings first.",
       );
       return;
     }
@@ -652,23 +717,14 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
+        const { entries } = await this.memories(request, active.signal);
+        check();
+        return entries;
+      },
+      remembered: () => {
         const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
-          throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-        const abort = () => view.dispose();
-        active.signal.addEventListener("abort", abort, { once: true });
-        try {
-          await view.refresh();
-          check();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          active.signal.removeEventListener("abort", abort);
-          view.dispose();
-        }
+        if (snapshot?.status === "ready")
+          this.memoryReads.get(snapshot.session)?.delete(request.agent.pubkey);
       },
     });
     const reply = await callTool(
@@ -696,6 +752,56 @@ export class CodexRuntime {
             },
       ],
     };
+  }
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private async memories(request: Request, signal: AbortSignal) {
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+      throw new Error("Buzz is not connected to this community");
+    const { session } = snapshot;
+    let reads = this.memoryReads.get(session);
+    if (!reads) {
+      reads = new Map();
+      this.memoryReads.set(session, reads);
+    }
+    let read = reads.get(request.agent.pubkey);
+    if (!read) {
+      read = session.agentMemories.read(
+        request.agent.pubkey,
+        AbortSignal.timeout(10000),
+      );
+      reads.set(request.agent.pubkey, read);
+      void read.then(
+        () => reads?.delete(request.agent.pubkey),
+        () => reads?.delete(request.agent.pubkey),
+      );
+    }
+    const listing = await abortable(read, signal);
+    signal.throwIfAborted();
+    const current = this.relay(request.agent.pubkey)?.snapshot();
+    if (
+      current?.status !== "ready" ||
+      current.scope !== request.scope ||
+      current.session !== session
+    )
+      throw new Error("Buzz is not connected to this community");
+    return listing;
+  }
+  /** The agent's `core` memory for a turn: its text, `null` when it has none,
+   * or undefined when it could not be read, so the turn goes on without it. */
+  private async core(request: Request, signal: AbortSignal) {
+    try {
+      const listing = await this.memories(request, signal);
+      return (
+        listing.entries.find((entry) => entry.slug === "core")?.body ??
+        (listing.partial ? undefined : null)
+      );
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Codex could not read the agent's memory", error);
+      return undefined;
+    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -823,7 +929,7 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
-      // The process host expands ~/.buzz and creates it; Codex's RPC needs
+      // The process host expands ~/… and creates the directory; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
@@ -919,7 +1025,10 @@ export class CodexRuntime {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
       });
-      const context = await this.history(request, signal);
+      const [context, memory] = await Promise.all([
+        this.history(request, signal),
+        this.core(request, signal),
+      ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
@@ -932,7 +1041,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team),
+            value: developerInstructions(agent, settings, request.team, memory),
           },
         },
       });

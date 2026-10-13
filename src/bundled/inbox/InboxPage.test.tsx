@@ -2633,9 +2633,7 @@ it("combines the existing filter choices without placeholder actions", async () 
       "aria-disabled",
       "true",
     );
-  await user.click(
-    screen.getByRole("menuitemradio", { name: "All", exact: true }),
-  );
+  await user.click(screen.getByRole("menuitemradio", { name: /^All$/ }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Inbox filters" }),

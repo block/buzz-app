@@ -1047,10 +1047,9 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   const mediaOpener = detail.getByRole("button", {
     name: "Open video fullscreen",
   });
-  // The inline controls overlap this button; keyboard activation keeps this
-  // test on its portal focus/dismissal contract instead of pointer geometry.
-  await mediaOpener.focus();
-  await page.keyboard.press("Enter");
+  await detail.locator("[data-video-preview]").hover();
+  await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
+  await mediaOpener.click();
   const media = page.getByRole("dialog", { name: "Video attachment" });
   await expect(media).toBeVisible();
   await media.getByRole("button", { name: "Close fullscreen viewer" }).focus();

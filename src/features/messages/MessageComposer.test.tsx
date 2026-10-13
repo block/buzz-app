@@ -3827,6 +3827,25 @@ it("uses Enter to leave a nested empty item without sending", async () => {
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("does not send on Mod+Enter while a completion is showing", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "!search");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("!search");
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("chosen ");
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "chosen ",
+    [],
+    [],
+  );
+});
+
 it("accepts a completion before handling list Enter", async () => {
   const h = mount();
   await h.user.type(h.input(), "- !search");

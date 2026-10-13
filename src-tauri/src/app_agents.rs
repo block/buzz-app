@@ -1,9 +1,9 @@
-//! Native custody for agents the app runs through a plugin (Agents2). The key
+//! Native custody for agents the app runs through a plugin (Agents). The key
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
 use buzz_agent_controller::{
-    AppAgent, AppAgents, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
+    AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
     Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The identity file (which locks its own writes across app instances) and its
-/// own credential handle, so Agents2 never waits on, or fails with, the harness
+/// own credential handle, so Agents never waits on, or fails with, the harness
 /// agent controller (whose storage lock another app may hold).
 #[derive(Clone)]
 pub(crate) struct AppAgentHost {
@@ -255,6 +255,13 @@ impl From<AppAgent> for AppAgentSummary {
     }
 }
 
+/// A taken-over identity and the settings its old store kept for its new type.
+#[derive(Serialize)]
+pub(crate) struct Ported {
+    agent: AppAgentSummary,
+    carry: Carry,
+}
+
 #[tauri::command]
 pub(crate) async fn app_agent_list(
     state: tauri::State<'_, AppAgentHost>,
@@ -292,7 +299,7 @@ pub(crate) async fn app_agent_create(
     .await
 }
 
-/// Identities earlier agent systems saved on this machine, as Agents2 could take
+/// Identities earlier agent systems saved on this machine, as Agents could take
 /// them over; the caller leaves out its own.
 #[tauri::command]
 pub(crate) async fn app_agent_portable(
@@ -303,7 +310,8 @@ pub(crate) async fn app_agent_portable(
 }
 
 /// Takes over an earlier identity with its key, name, picture and description,
-/// as `app_agent_create` does for a new one. Its old store keeps it.
+/// as `app_agent_create` does for a new one, and reports its carried settings.
+/// Its old store keeps it.
 #[tauri::command]
 pub(crate) async fn app_agent_port(
     state: tauri::State<'_, AppAgentHost>,
@@ -313,7 +321,7 @@ pub(crate) async fn app_agent_port(
     destination: String,
     owner: String,
     agent_type: String,
-) -> Result<AppAgentSummary, String> {
+) -> Result<Ported, String> {
     let agents = state.agents.clone()?;
     let old = state.old.clone()?;
     let credentials = state.credentials.clone();
@@ -349,7 +357,10 @@ pub(crate) async fn app_agent_port(
         let mut keys = host.keys();
         let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
         keys.insert(agent.pubkey.clone(), Arc::new(key));
-        Ok(agent.into())
+        Ok(Ported {
+            agent: agent.into(),
+            carry: found.carry,
+        })
     })
     .await
 }
@@ -558,6 +569,48 @@ pub(crate) async fn app_agent_upload(
         ));
     }
     serde_json::from_slice(&body).map_err(|_| "Invalid upload receipt".into())
+}
+
+/// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
+/// strictest hosts, and base64 is 4 characters per 3 bytes.
+const MEDIA_LIMIT: usize = 5 * 1024 * 1024 / 4 * 3;
+
+/// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
+/// as the agent, base64.
+#[tauri::command]
+pub(crate) async fn app_agent_media(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    url: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let url = agent.media_url(&url)?;
+    let auth =
+        serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
+    let response = client(120)?
+        .get(&url)
+        .header(
+            "Authorization",
+            format!(
+                "Nostr {}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(auth)
+            ),
+        )
+        .header("x-auth-tag", &agent.auth)
+        .send()
+        .await
+        .map_err(|_| "Agent media request failed")?;
+    let status = response.status();
+    let body = bounded(response, MEDIA_LIMIT).await?;
+    if !status.is_success() {
+        return Err(format!(
+            "The community refused the media: {}",
+            reason(status, &body)
+        ));
+    }
+    agent.verify_media_hash(&url, &body)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(body))
 }
 
 /// Writes one memory entry, encrypted to the agent's owner. `after` is the

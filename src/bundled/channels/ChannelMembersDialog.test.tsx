@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { Agents } from "../../features/agents/service";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -75,6 +76,7 @@ async function setup(
     canOpenLink(target: string): boolean;
     onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
   },
+  agents?: Agents,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -102,7 +104,8 @@ async function setup(
       await new Promise<void>((resolve) => {
         release = resolve;
       });
-    if (applyAddition) members.push(target);
+    if (applyAddition)
+      members.push(_event.tags.find((tag) => tag[0] === "p")?.[1] ?? target);
     clock++;
   });
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
@@ -171,6 +174,7 @@ async function setup(
         session={owner.session}
         channelId={id}
         {...navigation}
+        {...(agents ? { agents } : {})}
       />
     </ToastProvider>,
   );
@@ -1191,9 +1195,10 @@ it("pages combined local and relay invitations without losing matches", async ({
 }) => {
   return ownedTask(signal, async (step) => {
     const { t, idle, more, rows, pages } = await pagedInvitations(step, 65);
-    expect(rows()).toHaveLength(30);
+    const firstPage = rows();
+    expect(firstPage).toHaveLength(30);
     expect(
-      rows().every((row) =>
+      firstPage.every((row) =>
         row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
       ),
     ).toBe(true);
@@ -1205,7 +1210,9 @@ it("pages combined local and relay invitations without losing matches", async ({
     }
     await more();
     await idle();
-    screen.getByRole("button", { name: /^Add Helper final/ });
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(96);
     expect(pages()).toEqual([1, 2]);
     expect(
@@ -1224,7 +1231,9 @@ it("resets combined invitation paging on refresh or query change", async ({
       await pagedInvitations(step, 31);
     for (let i = 0; i < 3; i++) await more();
     await idle();
-    screen.getByRole("button", { name: /^Add Helper final/ });
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(62);
     expect(pages()).toEqual([1, 2]);
     await click(refresh);
@@ -1244,6 +1253,55 @@ it("resets combined invitation paging on refresh or query change", async ({
   });
 });
 
+it("adds a team's members not in the channel with one button", async () => {
+  const ada = "ab".repeat(32);
+  const cy = "cd".repeat(32);
+  const snapshot = {
+    status: "ready",
+    agents: [
+      { pubkey: ada, name: "Ada" },
+      { pubkey: cy, name: "Cy" },
+    ],
+    running: [],
+    teams: [
+      { id: "crew", name: "Crew", instructions: "", members: [ada, cy] },
+      {
+        id: "far",
+        name: "Far",
+        instructions: "",
+        members: ["ef".repeat(32)],
+      },
+    ],
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+  } as unknown as Agents;
+  const t = await setup("stream", false, false, undefined, agents);
+  await t.user.type(screen.getByRole("searchbox"), "Cr");
+  const teams = await screen.findByRole("list", { name: "Teams" });
+  expect(within(teams).getByText("Ada, Cy")).toBeInTheDocument();
+  await t.user.type(screen.getByRole("searchbox"), "ew");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  await screen.findByText("Crew is in the channel.");
+  const added = t.publish.mock.calls
+    .map(([event]) => event)
+    .filter((event) => event.kind === 9000)
+    .map((event) => event.tags.find((tag) => tag[0] === "p")?.[1]);
+  expect(added.sort()).toEqual([ada, cy]);
+  // Once all its members are in, a team is not offered again.
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("list", { name: "Teams" }),
+    ).not.toBeInTheDocument(),
+  );
+  // A team with no agents in this community is never offered.
+  await t.user.clear(screen.getByRole("searchbox"));
+  await t.user.type(screen.getByRole("searchbox"), "Far");
+  expect(
+    screen.queryByRole("button", { name: "Add team Far" }),
+  ).not.toBeInTheDocument();
+});
 it("offers local agents to add by the shared name rule", async () => {
   const t = await setup();
   t.readAgentLibrary.mockResolvedValue({

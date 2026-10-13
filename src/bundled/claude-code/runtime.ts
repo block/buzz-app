@@ -1,4 +1,4 @@
-// Turns Agents2 deliveries into Claude turns. Each agent of this type has its
+// Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
@@ -13,7 +13,7 @@ import {
   type Delivery,
   type Effort,
   type Models,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -79,6 +79,10 @@ const CHAT = [9, 40002];
 type Entry = {
   sessions: AgentSessions;
   config: Config;
+  /** The team sections of the latest run; a change restarts idle sessions. */
+  team: string;
+  /** The agent's name, for its prompt; a rename restarts idle sessions. */
+  name?: string;
   memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
@@ -137,9 +141,13 @@ export class ClaudeRuntime {
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next);
-      else if (JSON.stringify(entry.config) !== JSON.stringify(next)) {
+      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      else if (
+        JSON.stringify(entry.config) !== JSON.stringify(next) ||
+        entry.name !== agent.name
+      ) {
         entry.config = next;
+        entry.name = agent.name;
         entry.sessions.reconfigure();
       }
     }
@@ -265,6 +273,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    team,
     workingUntil,
   }: Delivery) {
     const settings = config(raw);
@@ -276,6 +285,7 @@ export class ClaudeRuntime {
       return;
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
+    entry.team = team ?? "";
     // Read while the turn's prompt is built, not after: a new session's prompt
     // needs it, and a spare is only faster if nothing else is awaited.
     void this.memory(agent.pubkey, entry);
@@ -344,7 +354,9 @@ export class ClaudeRuntime {
       .finally(() => this.notify());
   }
 
-  /** Says in the thread that a turn failed, so nobody waits on it. */
+  /** Says in the thread that a turn failed, so nobody waits on it. Tells the
+   * owner even when a sibling asked: tagging the sibling would wake it, and two
+   * agents failing alike would wake each other without end. */
   private report(
     agent: AgentHandle,
     channel: string,
@@ -358,7 +370,7 @@ export class ClaudeRuntime {
         tags: [
           ["h", channel],
           ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
-          ["p", event.pubkey],
+          ["p", agent.owner],
         ],
       })
       .catch((failure) =>
@@ -452,6 +464,7 @@ export class ClaudeRuntime {
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
+      team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -486,6 +499,8 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          entry.team,
+          entry.name,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -496,7 +511,9 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
+            team: entry.team,
             ...(memory === undefined ? {} : { memory }),
           }),
         };

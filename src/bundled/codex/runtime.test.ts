@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import * as React from "react";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents2/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
@@ -31,6 +30,7 @@ afterEach(() => {
   for (const runtime of runtimes) runtime.dispose();
   runtimes.length = 0;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /** External app-server protocol fixture: turns complete only when released by
@@ -235,6 +235,7 @@ function fixture(
     type: mime,
   }));
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
   const agent = {
     pubkey,
     owner,
@@ -242,6 +243,7 @@ function fixture(
     publish,
     query,
     upload,
+    media,
     remember,
   };
   runtime.sync([{ pubkey } as Agent]);
@@ -277,7 +279,7 @@ function fixture(
       events.push(result.trigger.event as EventData);
     return result;
   };
-  /** Agents2's running agents, whichever community is selected. */
+  /** Agents' running agents, whichever community is selected. */
   const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
@@ -287,9 +289,8 @@ function fixture(
     vi.stubGlobal("localStorage", store);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
-      react: React,
       host: { spawn },
-      agents2: {
+      agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
         subscribe: (listener: () => void) => {
@@ -376,6 +377,7 @@ function fixture(
     remember,
     upload,
     running,
+    media,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
       listeners.forEach((listener) => {
@@ -400,7 +402,10 @@ function fixture(
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
-  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run({
+    ...f.delivery("@Codex first"),
+    team: "<team>\nCrew\n</team>",
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.publish).not.toHaveBeenCalled();
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
@@ -424,6 +429,22 @@ it("hands over promptly and runs conversations independently on one server", asy
       "buzz.instructions": {
         kind: "application",
         value: expect.stringContaining("TEST_INSTRUCTIONS"),
+      },
+    },
+  });
+  expect(f.starts()[0]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.\n<team>\nCrew\n</team>",
+        ),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.not.stringContaining("<team>"),
       },
     },
   });
@@ -903,7 +924,7 @@ it("ignores non-owner messages without spawning", async () => {
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
-it("answers another agent its owner attested", async () => {
+it("answers another agent its owner attested, telling the owner of failures", async () => {
   const f = fixture();
   const secret = schnorr.utils.randomSecretKey();
   const owner = bytesToHex(schnorr.getPublicKey(secret));
@@ -925,6 +946,12 @@ it("answers another agent its owner attested", async () => {
   }
   await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A failure tells the owner: tagging the sibling would wake it to fail too.
+  f.complete(0, "");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
+  expect(failure.tags).toContainEqual(["p", owner]);
+  expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();
@@ -942,6 +969,20 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
   expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
   });
+});
+it("sets no deadline of its own on a turn", async () => {
+  // Any deadline Buzz set would already have passed.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() =>
+    AbortSignal.abort(
+      new DOMException("The operation timed out.", "TimeoutError"),
+    ),
+  );
+  const f = fixture();
+  await f.runtime.run(f.delivery("a long job"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
 });
 it("ends the server when its agent stops running and suppresses a late final answer", async () => {
   const f = fixture();
@@ -1238,25 +1279,33 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
-  const f = fixture();
-  f.storage.set(
-    `buzz.codex.sessions.v2:${scope}:${pubkey}`,
-    JSON.stringify({
-      [JSON.stringify(["channel", root])]: {
-        threadId: "legacy-thread",
-        workspace: "/tmp/codex-test",
-      },
-    }),
-  );
-  await f.runtime.run(f.delivery("new work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
-    0,
-  );
-  f.complete();
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-});
+it.each(["v2", "v3"])(
+  "starts fresh instead of restoring a %s binding, whose tools are out of date",
+  async (version) => {
+    const f = fixture();
+    f.storage.set(
+      `buzz.codex.sessions.${version}:${scope}:${pubkey}`,
+      JSON.stringify({
+        [JSON.stringify(["channel", root])]: {
+          threadId: "legacy-thread",
+          workspace: "/tmp/codex-test",
+        },
+      }),
+    );
+    await f.runtime.run(f.delivery("new work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+      "media_get",
+    );
+    f.complete();
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  },
+);
 
 it("leaves a failed first startup unbound so the next mention can start fresh", async () => {
   const f = fixture();
@@ -1397,6 +1446,18 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
     { success: true, contentItems: [{ text: "remembered" }] },
   );
+  expect(
+    (await f.tool("media_get", { url: "shot.png" }))?.result,
+  ).toMatchObject({
+    success: true,
+    contentItems: [
+      {
+        type: "inputImage",
+        imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+    ],
+  });
+  expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
   expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
@@ -1579,7 +1640,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v3:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -1616,7 +1677,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v3:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v4:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import * as React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents2/service";
+import type { AgentType } from "../../features/agents/service";
 import { CodexRuntime } from "./runtime";
 import { apply } from "./index";
 
@@ -21,10 +20,9 @@ function applied() {
   let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
-    react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    agents2: {
+    agents: {
       register: (registered: AgentType) => {
         type = registered;
       },
@@ -39,7 +37,11 @@ function applied() {
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
-  expect(applied()).toMatchObject({ id: "codex", title: "Codex" });
+  expect(applied()).toMatchObject({
+    id: "codex",
+    title: "Codex",
+    Create: expect.any(Function),
+  });
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
@@ -49,16 +51,29 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
+it("adopts a brought-over agent's instructions and workspace, nothing else", () => {
+  const type = applied();
+  const saved = type?.defaults().config;
+  expect(
+    type?.adopt?.({ instructions: "Triage.", model: "gpt" } as never, saved),
+  ).toEqual({ ...(saved as object), instructions: "Triage." });
+  expect(type?.adopt?.({ workspace: "/work/code" }, saved)).toEqual({
+    ...(saved as object),
+    workspace: "/work/code",
+  });
+  // A workspace Codex cannot run in stays the default.
+  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual(saved);
+});
+
 it("stops agents that stop running even when the agent list could not be read", () => {
   const sync = vi.spyOn(CodexRuntime.prototype, "sync");
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };
   let state = { status: "ready", agents: [agent], running: [agent] };
   let notify = () => undefined;
   apply({
-    react: React,
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    agents2: {
+    agents: {
       register: () => undefined,
       snapshot: () => state,
       relay: () => undefined,

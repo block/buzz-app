@@ -118,9 +118,6 @@ for (const destination of ["reply", "off-window root"]) {
       page.locator(`[data-channel-timeline] [data-message-id="${target.id}"]`),
     ).toHaveCount(0);
     const key = generateSecretKey();
-    // This journey tests focus, not activity expiry. Keep its one start event
-    // fresh while real browser animation and IO timers continue to run.
-    await page.clock.setFixedTime(new Date());
     app.observer(activity("turn_started", target.id), key);
     const row = page.locator('button[data-channel-id="alpha"]');
     await expect(
@@ -144,6 +141,9 @@ for (const destination of ["reply", "off-window root"]) {
       exact: true,
     });
     for (const hiddenBy of ["settings", "collapsed"]) {
+      // This journey tests focus, not activity expiry. Renew the turn as a live
+      // agent would, keeping the browser clock aligned with relay timestamps.
+      app.observer(activity("turn_liveness", target.id), key);
       await openChannelDetails(page);
       await expect(panel).toBeHidden();
       if (hiddenBy === "collapsed")

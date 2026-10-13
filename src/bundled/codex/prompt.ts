@@ -1,4 +1,4 @@
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import type { AgentHandle } from "../../features/agents/service";
@@ -6,7 +6,14 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Config } from "./config";
 
-export type Conversation = { channelId: string; name: string; root?: string };
+/** `topLevel` is an owner's Me chat: one channel conversation, posted at
+ * its top level. */
+export type Conversation = {
+  channelId: string;
+  name: string;
+  root?: string;
+  topLevel?: true;
+};
 const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 export const rootOf = (event: EventData) =>
@@ -39,7 +46,10 @@ export function turnInput(
   const section = steering
     ? "new-message-arrived-while-you-were-working"
     : "buzz-event";
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", session_thread: conversation.root, reply_to: rootOf(event) })}\n</context>\n<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
+  const routing = conversation.topLevel
+    ? { posting: "top-level" }
+    : { session_thread: conversation.root, reply_to: rootOf(event) };
+  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

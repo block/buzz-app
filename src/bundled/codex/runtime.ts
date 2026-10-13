@@ -6,6 +6,7 @@ import {
   type Delivery,
   type Models,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
@@ -465,8 +466,18 @@ export class CodexRuntime {
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
+    const topLevel =
+      trigger.type === "mention" &&
+      (await meChat(
+        () => this.relay(agent.pubkey),
+        agent.owner,
+        channelId,
+        delivery.signal,
+      ));
     const toolRoot =
-      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+      channel?.channelType === "dm" || topLevel
+        ? undefined
+        : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
@@ -490,6 +501,7 @@ export class CodexRuntime {
         channelId,
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
+        ...(topLevel ? { topLevel } : {}),
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
@@ -537,10 +549,13 @@ export class CodexRuntime {
           // Steering cannot carry a model or effort, so a differing pick
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
-          // messages first.
+          // messages first. A turn keeps the posting policy it was admitted
+          // with, so a request under the other policy waits for it too.
           if (
             active.finished ||
             lane.queued ||
+            request.conversation.topLevel !==
+              active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
@@ -595,10 +610,13 @@ export class CodexRuntime {
   }
 
   /** A positive harness response transfers presentation, not execution or
-   * success. Watches have no bubble; mentions in other threads keep theirs. */
+   * success. Watches have no bubble; mentions in other threads keep theirs,
+   * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = rootOf(request.event);
+    const scope = request.conversation.topLevel
+      ? request.conversation.channelId
+      : rootOf(request.event);
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -652,7 +670,9 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ["e", rootOf(request.event), "", "reply"],
+        ...(request.conversation.topLevel
+          ? []
+          : [["e", rootOf(request.event), "", "reply"]]),
         ["p", request.agent.owner],
       ],
     });
@@ -707,6 +727,7 @@ export class CodexRuntime {
       {
         channel: request.conversation.channelId,
         ...(request.toolRoot ? { root: request.toolRoot } : {}),
+        ...(request.conversation.topLevel ? { topLevel: true } : {}),
       },
       call.tool,
       args,

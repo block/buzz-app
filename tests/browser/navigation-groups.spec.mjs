@@ -1075,17 +1075,14 @@ test.describe("new personal schema", () => {
     page,
     app,
   }) => {
-    let personalDecoded = false;
-    page.on("response", async (response) => {
-      if (
+    const personalDecoded = page.waitForResponse(
+      async (response) =>
         new URL(response.url()).pathname.endsWith("/channel-kit-decode") &&
-        response.ok()
-      ) {
-        const rows = await response.json();
-        if (rows.some((row) => row.record?.value?.type === "groups"))
-          personalDecoded = true;
-      }
-    });
+        response.ok() &&
+        (await response.json()).some(
+          (row) => row.record?.value?.type === "groups",
+        ),
+    );
     const failLegacy = async (route) => {
       app.report.sidebarPreferenceFailures ??= [];
       app.report.sidebarPreferenceFailures.push(route.request().url());
@@ -1098,7 +1095,7 @@ test.describe("new personal schema", () => {
     await page.route("**/sidebar-preferences", failLegacy);
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    await expect.poll(() => personalDecoded).toBe(true);
+    await personalDecoded;
     const id = "11111111-1111-4111-8111-111111111111";
     const personal = page.locator(
       `[data-sidebar-section="group:personal-work"] [data-channel-id="${id}"]`,

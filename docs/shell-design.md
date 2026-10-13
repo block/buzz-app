@@ -72,11 +72,20 @@ semantic tokens, UI authoring rules and the local component reference.
   tab. Each opening carries focus intent: topbar activation suppresses destination
   autofocus, while explicit New conversation, sidebar and deep-link openings keep
   their content focus. This intent is not saved in addresses or history; retry
-  preserves it for the same opening. The selected page is a separately focusable,
+  preserves it for the same opening. A focused Retry navigation control hands
+  focus to main once retry removes it, even if reconnect temporarily remounts
+  the shell. A new opening or focus elsewhere cancels this
+  handoff. The selected page is a separately focusable,
   labelled tabpanel. Toolbar
   and overflow destinations remain native buttons using `aria-current` and
-  focus main content on selection. Header pages never become companion launchers,
-  and only the exact current page is selected.
+  focus main content on selection. Header pages never become companion launchers.
+  Independent header pages retain exact destination selection. Messages stays
+  selected for registered sidebar/default-placement pages, including non-primary
+  pages reached through search or links; their sidebar selection and route remain
+  exact. Its tab labels the active child panel, and activating Messages from a
+  child returns to the existing conversation view. More pages indicates this
+  containing area with `aria-current="true"` (not `page`). Me and Settings remain
+  separate; missing/unregistered destinations do not borrow Messages selection.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout

@@ -208,6 +208,8 @@ function ChannelWorkspace({
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
   const historyContainer = useRef<HTMLElement>(null);
+  // A visit applied by a header opening must not take that opening's focus.
+  const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
@@ -744,11 +746,13 @@ function ChannelWorkspace({
     // Each visit is applied once: Back/Forward switch tabs, never close them,
     // and a closed tab is not reopened by a re-render of the same visit. A
     // message still resolving its placement waits rather than recording.
-    if (routedThread || !requestedMessage || exact?.inTimeline)
+    if (routedThread || !requestedMessage || exact?.inTimeline) {
       tabState.enterVisit(
         `${navigation.entryId}:${routedThread ? "thread" : "channel"}`,
         routedThread,
       );
+      if (navigation.focus === "preserve") setPreservedVisit(navigation);
+    }
     const activity = handoff?.activityThread.current;
     if (
       activity &&
@@ -1261,6 +1265,9 @@ function ChannelWorkspace({
           channelId={current.id}
           channelName={current.name}
           autoFocus={
+            // The bound request arrives after the composer's first render.
+            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+              "preserve" &&
             !current.readOnly &&
             !requestedMessage &&
             !requestedThread &&
@@ -1407,6 +1414,7 @@ function ChannelWorkspace({
                     drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
+                    adoptSelection={preservedVisit}
                     value={secondary.selectedMain}
                     select={(id) =>
                       tabState.selectMain(

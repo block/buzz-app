@@ -353,7 +353,10 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
       />
     </>,
   );
-  const buttons = await screen.findAllByRole("button", { name: "Sign in" });
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Sign in" })).toHaveLength(2),
+  );
+  const buttons = screen.getAllByRole("button", { name: "Sign in" });
   if (!buttons[0]) throw new Error("Missing sign-in");
   fireEvent.click(buttons[0]);
   expect(
@@ -361,9 +364,11 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   ).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
   f.login.resolve(0);
-  await waitFor(() =>
-    expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2),
-  );
+  await waitFor(() => {
+    const models = screen.getAllByRole("combobox", { name: "Model" });
+    expect(models).toHaveLength(2);
+    for (const model of models) expect(model).toHaveTextContent("Model A");
+  });
   expect(
     screen.queryByRole("button", { name: "Sign in" }),
   ).not.toBeInTheDocument();

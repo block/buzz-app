@@ -224,6 +224,76 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,
   ).toBe(oldest.content);
 });
+it.each([true, false])(
+  "preserves signed history continuation across unavailable selection and same-thread retarget (older remaining=%s)",
+  async (hasMore) => {
+    const selected = reply(3);
+    const older = reply(0);
+    let missing = false;
+    const h = await setup((filter) => {
+      if (filter.ids)
+        return filter.ids.includes(root.id)
+          ? [root]
+          : missing
+            ? []
+            : [selected];
+      if (!filter.thread_window) return [];
+      return filter.until === undefined
+        ? [
+            selected,
+            bounds(
+              filter,
+              hasMore
+                ? { created_at: selected.created_at, id: selected.id }
+                : null,
+            ),
+          ]
+        : [older, bounds(filter)];
+    });
+    await h.view.refresh();
+    expect(h.view.snapshot()).toMatchObject({
+      status: "ready",
+      direction: "older",
+      canLoadMore: hasMore,
+    });
+    expect(
+      await h.view.retarget(selected.id, new AbortController().signal),
+    ).toBe("selected");
+
+    missing = true;
+    const beforeRefresh = h.requests.length;
+    await h.view.refresh();
+    expect(h.view.snapshot()).toMatchObject({ targetStatus: "unavailable" });
+    expect(
+      h.requests.slice(beforeRefresh).some(([f]) => f?.thread_window),
+    ).toBe(false);
+    expect(await h.view.retarget(root.id, new AbortController().signal)).toBe(
+      "selected",
+    );
+    expect(h.view.snapshot()).toMatchObject({
+      status: "ready",
+      targetStatus: "ready",
+      target: { id: root.id },
+      direction: "older",
+      canLoadMore: hasMore,
+    });
+
+    if (hasMore) {
+      await h.view.loadMore();
+      expect(h.requests.at(-1)?.[0]).toMatchObject({
+        thread_window: true,
+        until: selected.created_at,
+        before_id: selected.id,
+      });
+      expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+        older.id,
+        selected.id,
+      ]);
+      expect(h.view.snapshot().canLoadMore).toBe(false);
+    }
+  },
+);
+
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

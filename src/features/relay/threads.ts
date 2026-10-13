@@ -497,14 +497,15 @@ export function createThreadView({
         if (!active()) return;
         if (revision === selectionRevision && result !== "selected") {
           targetStatus = "unavailable";
-          publish({ status: "ready", canLoadMore: false });
+          // Target availability says nothing about the retained window's bounds.
+          publish({ status: "ready" });
           return;
         }
         if (revision === selectionRevision) {
           targetStatus = "ready";
           publish();
           if (snapshot.targetStatus !== "ready") {
-            publish({ status: "ready", canLoadMore: false });
+            publish({ status: "ready" });
             return;
           }
         }

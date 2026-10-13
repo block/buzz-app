@@ -2571,6 +2571,11 @@ function spaceFixture(
         fail = reject;
       }),
   );
+  // The real naming policy, so namesakes get the labels users see.
+  const names = bindNames(
+    { profiles: h.session.profiles, agentLibrary: h.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
   const publish = vi.fn();
   const result = () =>
     publish.mock.lastCall?.[0] as CompletionResult | undefined;
@@ -2579,6 +2584,7 @@ function spaceFixture(
       session={
         {
           ...h.session,
+          names,
           channels: { ...h.session.channels, list: () => list },
           directMessages: { ...h.session.directMessages, people },
         } as unknown as RelaySession
@@ -2602,6 +2608,7 @@ function spaceFixture(
         ?.canSelect?.(" "),
     dispose() {
       view.unmount();
+      names.dispose();
       h.library.dispose();
     },
   };
@@ -2655,6 +2662,33 @@ it.each([
     });
     expect(h.result()?.spaceId).toBeUndefined();
     expect(h.canSpace(h.member)).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space keeps a member's name when an identically named outside namesake is qualified", async () => {
+  const h = spaceFixture("Jose");
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+    );
+    await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    // Both now show `Jose · <key suffix>`; a suffix is not a longer name.
+    await waitFor(() =>
+      expect(
+        h.result()?.items.find((item) => item.id === outsideJose)?.label,
+      ).toMatch(/^Jose · /),
+    );
+    expect(
+      h.result()?.items.find((item) => item.id === h.member)?.label,
+    ).toMatch(/^Jose · /);
+    expect(h.result()?.spaceId).toBe(h.member);
+    expect(h.canSpace(h.member)).toBe(true);
+    expect(h.canSpace(outsideJose)).toBe(false);
   } finally {
     h.dispose();
   }

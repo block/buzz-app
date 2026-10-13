@@ -105,10 +105,14 @@ export function useMentionChoices(
     ];
     // One naming scope per choice set, not one normalization per row.
     const name = session.names?.scope(keys, facts);
-    return candidates.map((choice) => ({
-      ...choice,
-      label: name?.(choice.recipient.pubkey)?.name ?? choice.recipient.name,
-    }));
+    return candidates.map((choice) => {
+      const named = name?.(choice.recipient.pubkey);
+      return {
+        ...choice,
+        label: named?.name ?? choice.recipient.name,
+        qualifier: named?.qualifier,
+      };
+    });
   }, [session, channelId, invite, roster, selected, people]);
   // Keys known without the directory search: members and agent choices.
   const localKeys = useCallback(

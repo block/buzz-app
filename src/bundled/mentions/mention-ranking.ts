@@ -6,6 +6,8 @@ import {
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
+  /** The generated key suffix that ends `label` (`Honey · 4prr`), if any. */
+  qualifier?: string | undefined;
 };
 const normalized = normalizeName;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -81,7 +83,8 @@ export function rankMentions(
 }
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
- * Every choice can continue the name; only choices `among` can equal it.
+ * Every choice can continue the name; only choices `among` can equal it. A key
+ * qualifier only tells namesakes apart, so it never continues the name.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
@@ -93,4 +96,10 @@ export const exactMention = (
     (c) => [...c.aliases, c.label],
     query,
     (c) => c.aliases.length > 0 && among(c),
+    (c) => [
+      ...c.aliases,
+      c.qualifier && c.label.endsWith(` · ${c.qualifier}`)
+        ? c.label.slice(0, -(c.qualifier.length + 3))
+        : c.label,
+    ],
   )?.recipient.pubkey;

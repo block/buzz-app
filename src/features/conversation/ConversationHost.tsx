@@ -13,6 +13,7 @@ import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
 import type { RegisteredPanel } from "../panels/service";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
+import type { MessageLinkOrigin } from "../messages/MessageRow";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import type { ConversationExtensions } from "./contracts";
 import { useConversationPresentation } from "./ConversationPresentation";
@@ -36,7 +37,13 @@ type ConversationHostProps = Pick<
 
 /** At most one modal surface: opening a panel or a media review replaces the other. */
 type Overlay =
-  | { panel: RegisteredPanel; target: string; media?: undefined }
+  | {
+      panel: RegisteredPanel;
+      target: string;
+      /** The opening message's thread; replacements keep it, like Channels. */
+      origin?: MessageLinkOrigin | undefined;
+      media?: undefined;
+    }
   | {
       media: Pick<
         ComponentProps<typeof MediaReviewViewer>,
@@ -93,7 +100,7 @@ export function ConversationHost({
     );
   };
   const canOpen = (target: string) => !!host.panels.resolve(target);
-  const open = (url: string) => {
+  const open = (url: string, origin?: MessageLinkOrigin) => {
     if (!active()) return false;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
@@ -107,7 +114,7 @@ export function ConversationHost({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setOverlay({ panel, target: url });
+    setOverlay({ panel, target: url, origin });
     return true;
   };
   return (
@@ -161,11 +168,12 @@ export function ConversationHost({
             }}
             context={{
               channelId,
+              ...(overlay.origin && { rootId: overlay.origin.rootId }),
               canOpen,
               open: (target) =>
                 shown.current === overlay &&
                 host.panels.snapshot().includes(overlay.panel) &&
-                open(target),
+                open(target, overlay.origin),
             }}
           />
         </Dialog>

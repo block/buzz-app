@@ -35,7 +35,10 @@ vi.mock("../relay/react", () => {
 vi.mock("../messages/MessageRow", () => ({
   MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
     <article>
-      <button type="button" onClick={() => onOpenLink?.("fixture:one")}>
+      <button
+        type="button"
+        onClick={() => onOpenLink?.("fixture:one", { rootId: row.id })}
+      >
         Open linked panel
       </button>
       <button
@@ -217,6 +220,18 @@ it("retires panel actions on contribution removal, destination change and unmoun
   view.unmount();
   expect(removed?.context?.open("fixture:two")).toBe(false);
   expect(h.listeners.size).toBe(0);
+});
+
+it("a panel keeps the thread root it was opened from, like Channels", () => {
+  const h = fixture();
+  render(<EmbeddedThread {...h.props} />);
+  fireEvent.click(screen.getByText("Open linked panel"));
+  expect(h.panelProps()?.context?.rootId).toBe(h.props.messageId);
+  act(() => {
+    h.panelProps()?.context?.open("fixture:two");
+  });
+  expect(h.panelProps()?.target).toBe("fixture:two");
+  expect(h.panelProps()?.context?.rootId).toBe(h.props.messageId);
 });
 
 it("a panel opened from media review replaces the viewer, and media review replaces a panel", () => {

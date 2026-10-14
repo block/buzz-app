@@ -159,10 +159,7 @@ function fixture() {
 }
 async function openConversion() {
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", {
-    name: "Share",
-    exact: true,
-  });
+  const trigger = await screen.findByRole("button", { name: "Share" });
   await user.click(trigger);
   const share = await screen.findByRole("dialog", { name: "Share session" });
   await user.click(

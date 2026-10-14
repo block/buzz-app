@@ -49,6 +49,15 @@ was removed; departure/join/retry and held completion matrices remain at the mou
 layer. Existing screenshots cover both themes, narrow/intermediate/wide widths and
 enlarged text; pending light/intermediate and dark/narrow captures were inspected.
 
+Main advanced again during validation. The clean merge `3dd9d56cc` includes main
+`01830334f` (notification reveal and nested-reply test fixes). The complete 18-case
+browser files passed again in 32.6s after that merge. The real mounted Messages
+conversion file and incoming `use-message-reveal` file also passed together:
+16 tests, 5.19s wall / 1.46s execution. A final TypeScript check caught a test-only
+Testing Library option copied from Playwright (`exact`); removing that unsupported
+option preserves exact string-name matching. Normal push hooks check final types
+and related tests; no compiler target or assertion was weakened.
+
 Independent read-only repair review found no blocker and assessed the slice 9/10.
 The configured desktop and original sharing/lifetime worktrees remain untouched.
 No live-account grants, native launch/build, routine full scan or PR merge occurred.

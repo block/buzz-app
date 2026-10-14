@@ -63,6 +63,28 @@ checkout is not switched or restarted. Human testing of this behavior, packaged
 native, live relay and live-agent reply acceptance remain separate from synthetic
 browser/host-seam checks. No `buzz-review-completed` attestation or PR merge.
 
+### Latest-main integration for the conversion decision
+
+Main advanced to `c49bdff81` during this work. Merge `ba62c1553` resolves three
+conflicts against `fab1f5599`: retain this PR's access-only Share instead of
+resurrecting main's retired combined Share/settings form; preserve incoming
+Projects/Chats, selected assistant, profile Activity and relay-recovery ownership;
+restrict selected-assistant/project controls and chat presentation to actual Me
+sessions, not converted ordinary channels with residual private filing.
+
+The merged 15-file owner run passed 584/585 tests; the one failure was an incoming
+`SessionsPage.loading` test expecting Retry Me in the page after main moved it to
+the sidebar owner. The test now mounts the real MeSidebar for that case, retaining
+its retry assertion rather than restoring duplicate product UI. The entire page
+and sidebar files then passed (13 tests, 3.19s); the final page file passed again
+with both retained/removed-placement ordinary-control cases (11 tests, 3.41s).
+Complete merged browser files passed **18 cases in 32.0s**, two workers/no retries.
+Main replaced its own organization journey with the project/assistant journey;
+all sharing/conversion journeys remain. No additional browser cases were added.
+A bounded independent merge review found no integration blocker in the three
+resolutions or caller wiring. Final normal push hooks own types/related tests;
+full upstream native/relay-recovery validation remains hosted CI, not a local scan.
+
 ## Review repairs (2026-10-14)
 
 The author requested repair of Wes's review comments on PR #1070. The independent

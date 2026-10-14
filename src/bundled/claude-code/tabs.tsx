@@ -206,7 +206,7 @@ function ClaudeSetupPanel({
             disabled={!state.running && state.checking}
             focusableWhenDisabled
             onClick={() =>
-              void (state.running ? setup.cancel() : setup.check())
+              void (state.running ? setup.cancel() : setup.check(true))
             }
           >
             {state.running ? "Cancel" : "Check again"}
@@ -324,7 +324,7 @@ export function createTabs({
       defaults.subscribe,
       defaults.snapshot,
     );
-    if (!state.status || state.checking)
+    if (!state.status)
       return (
         <span role="status" className="text-body-sm text-secondary">
           Checking sign-in…

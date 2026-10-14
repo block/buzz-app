@@ -1849,13 +1849,6 @@ html[data-keyboard-input] .quickReactionGlyph {
   color: var(--text-subtle);
 }
 /* Generous conversation measure, relative to the rendered message type size. */
-.message[data-viewer-message] .messageAvatar {
-  right: auto;
-  left: calc(100% + var(--space-3));
-}
-.message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
-  left: calc(100% + var(--space-2));
-}
 .messageBubble > :is(.text, .plainText) {
   max-width: min(90ch, 100%);
 }

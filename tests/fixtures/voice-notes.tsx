@@ -100,7 +100,7 @@ const owner = createRelaySession(
       if (report.failUpload) throw new Error("Fixture upload failed");
       const voice = isVoiceNoteFile(file);
       const result: UploadedAttachment = {
-        type: voice ? attachment.type : file.type,
+        type: voice ? attachment.type : file.type || "application/octet-stream",
         ...(voice && attachment.voice ? { voice: attachment.voice } : {}),
         name: voice ? file.name.replace(/\.wav$/, ".mp4") : file.name,
         url: `https://fixture.test/media/${upload.toString(16).padStart(64, "0")}.mp4`,

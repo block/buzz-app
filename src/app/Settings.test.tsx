@@ -111,7 +111,7 @@ const host = {
   },
 } as unknown as Parameters<typeof Settings>[0];
 
-it("groups plugins by known categories and describes unknown ones under Other", () => {
+it("groups plugins, sorts required ones first, and uses Other for unknown categories", () => {
   const ready = {
     configuration: {
       status: "ready",
@@ -120,6 +120,21 @@ it("groups plugins by known categories and describes unknown ones under Other", 
         profile: "test",
         location: "test",
         plugins: [
+          {
+            manifest: {
+              id: "buzz.voice-notes",
+              name: "Voice Notes",
+              apiVersion: 1,
+              description: "Record voice notes and play them in conversations.",
+              discovery: { category: "communication" },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
           {
             manifest: {
               id: "buzz.channels",
@@ -197,6 +212,17 @@ it("groups plugins by known categories and describes unknown ones under Other", 
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent),
   ).toEqual(["Communication", "Agents", "Other"]);
+  const communication = within(content)
+    .getByRole("heading", { name: "Communication" })
+    .closest("section");
+  expect(communication).not.toBeNull();
+  expect(
+    within(communication as HTMLElement)
+      .getAllByRole("article")
+      .map(
+        (row) => within(row).getByText(/^(Channels|Voice Notes)$/).textContent,
+      ),
+  ).toEqual(["Channels", "Voice Notes"]);
   expect(content).toHaveTextContent(
     "Navigate channels and hold conversations in Buzz.",
   );

@@ -52,6 +52,8 @@ export function AgentCreateHeader({
   nameRef?: Ref<HTMLInputElement>;
   initialAvatarPicker?: boolean;
 }) {
+  // The header shares AvatarEditor's full-size frame, so it requests the
+  // original rather than the thumbnail (see avatar-source.grit).
   const preview = useAvatarPreview(picture ?? "", community);
   const [view, setView] = useState(
     initialAvatarPicker ? "collections" : "selected",

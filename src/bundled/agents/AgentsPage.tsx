@@ -14,7 +14,7 @@ import {
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
 import { AgentBrowse } from "./AgentBrowse";
-import { AgentCard, AgentPortrait } from "./AgentCard";
+import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
@@ -22,15 +22,17 @@ import { AgentDelete } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
+  OldTeam,
   PortableAgent,
-  PortableAgents,
   PortSource,
 } from "../../features/agents/native";
 import type {
   Agent,
   Agents,
+  FoundAgents,
   RegisteredAgentType,
   Team,
+  TeamPort,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -51,6 +53,7 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   MenuPopup,
@@ -110,7 +113,10 @@ export function AgentsPage({
   const [tab, setTab] = useState<Tab>("yours");
   const [selectedKey, setSelectedKey] = useState<string>();
   const [creating, setCreating] = useState(false);
-  const [flow, setFlow] = useState<"import" | "browse">();
+  // Which import the dialog shows follows the menu it was opened from.
+  const [flow, setFlow] = useState<"import" | "import-team" | "browse">();
+  // A team being edited by its id, or "new" for one being made.
+  const [editingTeam, setEditingTeam] = useState<string>();
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
@@ -150,14 +156,27 @@ export function AgentsPage({
   const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
-  const returnToAgents = () => {
-    setFlow(undefined);
-    setTab("yours");
+  // Only a team still saved, or one being made, keeps its editor open.
+  const editing =
+    editingTeam === "new" ||
+    snapshot.teams.some((team) => team.id === editingTeam)
+      ? editingTeam
+      : undefined;
+  // Leaving Teams drops the editor, whose unsaved draft goes with it.
+  const changeTab = (next: Tab) => {
+    if (next !== "teams") setEditingTeam(undefined);
+    setTab(next);
   };
+  const returnTo = (next: Tab) => () => {
+    setFlow(undefined);
+    changeTab(next);
+  };
+  const returnToAgents = returnTo("yours");
 
   const toolbarAction =
-    snapshot.agents.length > 0 ||
-    tab === "teams" ||
+    (tab === "teams"
+      ? snapshot.teams.length > 0
+      : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
   const newAgentMenu = (
@@ -200,6 +219,43 @@ export function AgentsPage({
           }}
         >
           <StorefrontIcon size={16} aria-hidden="true" /> Browse the marketplace
+        </MenuItem>
+      </MenuPopup>
+    </MenuRoot>
+  );
+  // Teams have no marketplace, so New team offers only making and importing.
+  const newTeamMenu = (
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          toolbarAction ? (
+            <NewAgentTile
+              ref={newAgentButton}
+              variant="button"
+              label="New team"
+            />
+          ) : (
+            <NewAgentTile
+              ref={newAgentButton}
+              labelRef={newAgentLabel}
+              label="New team"
+              fullWidth
+            />
+          )
+        }
+      />
+      <MenuPopup
+        anchor={toolbarAction ? newAgentButton : newAgentLabel}
+        align={toolbarAction ? "end" : "center"}
+      >
+        <MenuItem
+          disabled={snapshot.status !== "ready"}
+          onClick={() => setEditingTeam("new")}
+        >
+          <PlusIcon size={16} aria-hidden="true" /> Create a new team
+        </MenuItem>
+        <MenuItem onClick={() => setFlow("import-team")}>
+          <DownloadIcon size={16} aria-hidden="true" /> Import a team
         </MenuItem>
       </MenuPopup>
     </MenuRoot>
@@ -278,10 +334,12 @@ export function AgentsPage({
             variant="panel"
             label="Agent tabs"
             value={tab}
-            onValueChange={setTab}
+            onValueChange={changeTab}
             items={TABS}
           />
-          {toolbarAction && newAgentMenu}
+          {toolbarAction &&
+            !(tab === "teams" && editing) &&
+            (tab === "teams" ? newTeamMenu : newAgentMenu)}
         </div>
         <section
           id={`agents-${tab}`}
@@ -295,6 +353,9 @@ export function AgentsPage({
               agents={agents}
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
               teams={snapshot.teams}
+              editing={editing}
+              onEdit={setEditingTeam}
+              newTeam={!toolbarAction && newTeamMenu}
             />
           )}
         </section>
@@ -360,7 +421,13 @@ export function AgentsPage({
       {flow && (
         <Dialog
           open
-          title={flow === "import" ? "Import an agent" : "Marketplace"}
+          title={
+            flow === "import"
+              ? "Import an agent"
+              : flow === "import-team"
+                ? "Import a team"
+                : "Marketplace"
+          }
           size="wide"
           height="stable"
           preventClose={importing}
@@ -369,19 +436,20 @@ export function AgentsPage({
             if (!open) setFlow(undefined);
           }}
         >
-          {flow === "import" ? (
-            <ImportAgents
-              agents={agents}
-              types={runnable}
-              onImported={returnToAgents}
-              onPendingChange={setImporting}
-            />
-          ) : (
+          {flow === "browse" ? (
             <AgentBrowse
               relay={relay}
               agents={agents}
               types={runnable}
               onImported={returnToAgents}
+            />
+          ) : (
+            <ImportAgents
+              agents={agents}
+              types={runnable}
+              only={flow === "import" ? "agents" : "teams"}
+              onImported={returnTo(flow === "import" ? "yours" : "teams")}
+              onPendingChange={setImporting}
             />
           )}
         </Dialog>
@@ -396,7 +464,7 @@ export function AgentsPage({
           onClose={() => setCreating(false)}
           onCreated={(agent) => {
             setCreating(false);
-            setTab("yours");
+            changeTab("yours");
             build(agent.pubkey);
           }}
         />
@@ -759,21 +827,53 @@ const SOURCES: Record<PortSource, string> = {
   development: "Buzz 0.X dev",
 };
 const host = (relay: string) => relay.replace(/^wss:\/\//, "");
+const sentence = (text: string) => text.replace(/\.?$/, ".");
+
+/** What a team import left undone, or "" if nothing. */
+function teamPortNote({
+  team,
+  imported,
+  failed,
+  elsewhere,
+  foreign,
+  teamError,
+}: TeamPort) {
+  if (!failed.length && !elsewhere.length && !foreign.length && !teamError)
+    return "";
+  const came = imported.map((agent) => agent.name).join(", ");
+  return [
+    teamError
+      ? `Couldn't save team ${teamError.name}. ${came ? `Imported ${came}; add them` : "Add its members"} in Teams.`
+      : team && `Imported team ${team.name}${came ? ` with ${came}` : ""}.`,
+    ...failed.map((member) =>
+      sentence(`Couldn't import ${member.name}: ${member.error}`),
+    ),
+    elsewhere.length &&
+      `Kept out: ${elsewhere.join(", ")}, in another community.`,
+    foreign.length &&
+      `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 /** Identities earlier agent systems saved on this machine, each imported
  * with its key, name and picture as an agent of the chosen type. */
 function ImportAgents({
   agents,
   types,
+  only,
   onImported,
   onPendingChange,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
+  /** The section its entry point imports. */
+  only: "agents" | "teams";
   onImported(): void;
   onPendingChange(pending: boolean): void;
 }) {
-  const [found, setFound] = useState<PortableAgents>();
+  const [found, setFound] = useState<FoundAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState("");
@@ -818,6 +918,34 @@ function ImportAgents({
       onPendingChange(false);
     }
   };
+  const portTeam = async (team: OldTeam) => {
+    if (!chosen || pending) return;
+    setPending(team.id);
+    onPendingChange(true);
+    setError("");
+    try {
+      const result = await agents.portTeam({ id: team.id, type: chosen.key });
+      const came = new Set(result.imported.map((agent) => agent.pubkey));
+      setFound(
+        (last) =>
+          last && {
+            ...last,
+            agents: last.agents.filter((item) => !came.has(item.pubkey)),
+            here: [...last.here, ...came],
+          },
+      );
+      // Leaving would hide the one place that names what still needs a hand.
+      const note = teamPortNote(result);
+      if (note) setError(note);
+      else onImported();
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setPending(undefined);
+      onPendingChange(false);
+    }
+  };
+  const yours = new Set(found?.here);
   if (!types.length)
     return (
       <p className="m-0 text-body-sm text-secondary">
@@ -867,54 +995,100 @@ function ImportAgents({
             Looking for agents…
           </p>
         )
-      ) : found.agents.length ? (
-        <section aria-label="Agents to import" className={cardStyles.grid}>
-          {found.agents.map((agent) => (
-            <AgentCard
-              key={agent.pubkey}
-              agent={agent}
-              community={agent.relay || undefined}
-              detail={
-                <Tooltip
-                  content={[
-                    canonicalPublicKey(agent.pubkey),
-                    agent.relay && host(agent.relay),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  delay={300}
+      ) : found[only].length ? (
+        <>
+          {only === "teams" && (
+            <section aria-label="Teams to import">
+              <InlineHeader title="Teams" />
+              <ul className={styles.portList}>
+                {found.teams.map((team) => {
+                  const here = team.members.filter((member) =>
+                    yours.has(member.pubkey),
+                  ).length;
+                  return (
+                    <li key={team.id} className={styles.portRow}>
+                      <span className="grid min-w-0 flex-1">
+                        <span className="truncate text-body">{team.name}</span>
+                        <span className="truncate text-caption text-secondary">
+                          {[
+                            `${team.members.length} ${team.members.length === 1 ? "member" : "members"}`,
+                            here > 0 && `${here} already here`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        size="compact"
+                        variant="outline"
+                        aria-label={`Import team ${team.name}`}
+                        loading={pending === team.id}
+                        disabled={!chosen || (!!pending && pending !== team.id)}
+                        onClick={() => void portTeam(team)}
+                      >
+                        Import team
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+          {only === "agents" && (
+            <section aria-label="Agents to import" className={cardStyles.grid}>
+              {found.agents.map((agent) => (
+                <AgentCard
+                  key={agent.pubkey}
+                  agent={agent}
+                  community={agent.relay || undefined}
+                  detail={
+                    <Tooltip
+                      content={[
+                        canonicalPublicKey(agent.pubkey),
+                        agent.relay && host(agent.relay),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      delay={300}
+                    >
+                      <span
+                        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
+                        tabIndex={0}
+                      >
+                        {[
+                          SOURCES[agent.source],
+                          // Its key tells it apart only from one of the same name.
+                          named.get(agent.name) !== 1 &&
+                            labels.get(agent.pubkey),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </Tooltip>
+                  }
                 >
-                  <span
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
-                    tabIndex={0}
+                  <Button
+                    size="compact"
+                    variant="outline"
+                    aria-label={`Import ${agent.name}`}
+                    loading={pending === agent.pubkey}
+                    disabled={
+                      !chosen || (!!pending && pending !== agent.pubkey)
+                    }
+                    onClick={() => void port(agent)}
                   >
-                    {[
-                      SOURCES[agent.source],
-                      // Its key tells it apart only from one of the same name.
-                      named.get(agent.name) !== 1 && labels.get(agent.pubkey),
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                </Tooltip>
-              }
-            >
-              <Button
-                size="compact"
-                variant="outline"
-                aria-label={`Import ${agent.name}`}
-                loading={pending === agent.pubkey}
-                disabled={!chosen || (!!pending && pending !== agent.pubkey)}
-                onClick={() => void port(agent)}
-              >
-                Import
-              </Button>
-            </AgentCard>
-          ))}
-        </section>
+                    Import
+                  </Button>
+                </AgentCard>
+              ))}
+            </section>
+          )}
+        </>
       ) : (
         <p className="m-0 text-body-sm text-secondary">
-          No other agents found to import.
+          {only === "teams"
+            ? "No old teams found to import."
+            : "No other agents found to import."}
         </p>
       )}
     </div>
@@ -927,13 +1101,18 @@ function Teams({
   agents,
   saved,
   teams,
+  editing,
+  onEdit,
+  newTeam,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   teams: readonly Team[];
+  /** A team's id while it is edited, or "new" for one being made. */
+  editing: string | undefined;
+  onEdit(id: string | undefined): void;
+  newTeam: ReactNode;
 }) {
-  // A team's id while it is edited, or "new" for one being made.
-  const [editing, setEditing] = useState<string>();
   const team = teams.find((item) => item.id === editing);
   if (editing === "new" || team)
     return (
@@ -942,46 +1121,39 @@ function Teams({
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
-        onDone={() => setEditing(undefined)}
+        onDone={() => onEdit(undefined)}
       />
     );
-  const names = new Map(saved.map((agent) => [agent.pubkey, agent.name]));
+  const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
-    <section className="grid gap-5" aria-label="Teams">
+    <div className="grid gap-4">
       <p className="m-0 text-body-sm text-secondary">
         Each member is told who its teammates are, and follows the team's
         instructions after its own.
       </p>
-      {teams.length ? (
-        <ul className={styles.portList} aria-label="Teams">
-          {teams.map((item) => (
-            <li key={item.id} className={styles.portRow}>
-              <span className="grid min-w-0 flex-1">
-                <span className="truncate text-body">{item.name}</span>
-                <span className="truncate text-caption text-secondary">
-                  {item.members
-                    .map((pubkey) => names.get(pubkey))
-                    .filter(Boolean)
-                    .join(", ") || "No members"}
-                </span>
-              </span>
-              <Button
-                size="compact"
-                aria-label={`Edit ${item.name}`}
-                onClick={() => setEditing(item.id)}
-              >
-                Edit
-              </Button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="m-0 text-body-sm text-secondary">No teams yet.</p>
-      )}
-      <Button variant="primary" onClick={() => setEditing("new")}>
-        <PlusIcon size={14} aria-hidden="true" /> New team
-      </Button>
-    </section>
+      <div className={cardStyles.grid}>
+        {newTeam}
+        {teams.length > 0 && (
+          <ul className="contents" aria-label="Teams">
+            {teams.map((item) => (
+              <li key={item.id} className="contents">
+                <TeamCard
+                  name={item.name}
+                  aria-label={item.name}
+                  members={item.members.flatMap((pubkey) => {
+                    const member = byKey.get(pubkey);
+                    return member
+                      ? [{ ...member, community: member.relay || undefined }]
+                      : [];
+                  })}
+                  onClick={() => onEdit(item.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
 

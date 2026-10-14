@@ -2,6 +2,7 @@
 // Pack avatars play their animation; any other picture shows still.
 import type { ComponentProps, ReactNode } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import styles from "./AgentCard.module.css";
@@ -19,7 +20,11 @@ export function AgentPortrait({
   community?: string | undefined;
 }) {
   const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
-  const src = useAvatarPreview(pack ? "" : (agent.picture ?? ""), community);
+  const src = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    community,
+    "small",
+  );
   if (pack) return <PackedAgentAvatar avatar={pack} />;
   return (
     <Avatar
@@ -65,5 +70,35 @@ export function AgentCard({
       )}
       {children && <span className={styles.actions}>{children}</span>}
     </div>
+  );
+}
+
+/** A team as a card: its first members' portraits overlapped, its name, and
+ * who is on it. */
+export function TeamCard({
+  name,
+  members,
+  ...props
+}: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
+  name: string;
+  members: readonly (Portrayed & { community?: string | undefined })[];
+}) {
+  return (
+    <SurfaceButton {...props} type="button" className={styles.card}>
+      <span className={styles.crew} aria-hidden="true">
+        {members.slice(0, 3).map((member, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: members may share names; order is stable.
+          <span key={index} className={styles.crewPortrait}>
+            <AgentPortrait agent={member} community={member.community} />
+          </span>
+        ))}
+      </span>
+      <span className={`${styles.name} text-label`}>{name}</span>
+      <span className={styles.detail}>
+        <span className={styles.detailText}>
+          {members.map((member) => member.name).join(", ") || "No members"}
+        </span>
+      </span>
+    </SurfaceButton>
   );
 }

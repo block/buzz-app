@@ -47,7 +47,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeVisible();
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toHaveCSS("text-decoration-line", "none");
+  await expect(link).toHaveCSS("text-decoration-line", "underline");
   await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
   // Release the held profile while the link is focused, before the navigation
   // below: profile reads give up after 10s, and a loaded engine can spend that
@@ -179,6 +179,61 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   await expect(thread).toHaveCount(0);
   // Exactly the sidebar plus one panel: the thread does not survive alongside it.
   await expect(page.getByRole("complementary")).toHaveCount(2);
+});
+
+// The context menu shares its trigger with the hover preview and the page's
+// tab owner; that composition needs the real page in a browser.
+test("a message link's context menu opens its thread as a tab without leaving the channel", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const [target] = app.histories.get("primary/beta");
+  const href = `buzz://message?channel=beta&id=${target.id}`;
+  const message = app.append("primary", "alpha", `Open <${href}>.`);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const link = row.getByRole("link", { name: "Beta", exact: true });
+  await expect(link).toBeVisible();
+  await virtuaIdle(page);
+  const before = (await state(page)).entry;
+  await link.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open link",
+    "Copy link",
+  ]);
+  await expect(
+    page.getByLabel("Message preview", { exact: true }),
+  ).toBeHidden();
+  await menu.getByRole("menuitem", { name: "Open link", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    thread.locator(`[data-message-id="${target.id}"]`),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("tablist", { name: "Panel tabs" })
+      .locator('[role="tab"][data-tab-value^="thread:beta:"]'),
+  ).toHaveAttribute("aria-selected", "true");
+  // The tab opens in this channel's workspace; nothing navigates.
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  expect((await state(page)).entry).toEqual(before);
+  // Closing the tab returns focus to the link that opened it.
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:beta:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
+  await expect(thread).toHaveCount(0);
+  await expect(link).toBeFocused();
 });
 
 // Retained DOM, scroll geometry, focus, and CSS motion need a real browser.

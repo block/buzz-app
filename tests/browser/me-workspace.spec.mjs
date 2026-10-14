@@ -291,6 +291,22 @@ test.describe("personal recipients", () => {
       await expect.poll(() => publications().length).toBe(1);
       const sent = publications()[0].event;
       expect(verifyEvent(sent)).toBe(true);
+      const ownRow = workspace.locator(`[data-message-id="${sent.id}"]`);
+      const ownAvatar = ownRow.getByRole("button", {
+        name: "View Fixture Reader profile",
+        exact: true,
+      });
+      await expect(ownAvatar).toBeVisible();
+      await expect
+        .poll(async () => {
+          const avatar = await ownAvatar.boundingBox();
+          const bubble = await ownRow
+            .locator("[data-message-action-anchor]")
+            .boundingBox();
+          return !!avatar && !!bubble && avatar.x >= bubble.x + bubble.width;
+        })
+        .toBe(true);
+
       expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", honey.pubkey],

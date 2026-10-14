@@ -31,6 +31,32 @@
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
+.card:is(button) {
+  width: 100%;
+  cursor: pointer;
+}
+.card:is(button):hover {
+  background: var(--surface-hover);
+}
+/* A team's first members, overlapped in one portrait-sized row. */
+.crew {
+  display: flex;
+  justify-content: center;
+  height: 6rem;
+}
+.crewPortrait {
+  width: 4.5rem;
+  height: 4.5rem;
+  align-self: center;
+}
+.crewPortrait + .crewPortrait {
+  margin-left: calc(var(--space-5) * -1);
+}
+.crewPortrait :is(img, video) {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .portrait {
   display: grid;
   place-items: center;

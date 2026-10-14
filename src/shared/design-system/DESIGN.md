@@ -1046,6 +1046,12 @@ channel header uses the same control with a single non-closable tab with `showSe
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
+Reopening an existing thread increments its navigation tab's `attentionRequest`:
+the tab briefly uses `affordance-subtle-pressed`, then returns to its selected
+fill. The shared tab owns this paint-only cue and reveals an overflowed tab
+without moving focus. Repeated openings restart only the cue; mounting retained
+tabs and ordinary selection do not replay it. Reduced motion holds the tint
+briefly and removes it without fading.
 
 NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
@@ -1168,6 +1174,14 @@ need their own values in each mode.
 - Tints are pale in light mode and deep in dark mode; their names describe their purpose.
 - Check text with its actual fill and backdrop, including interactive states.
 - The original design exploration was light-only. Buzz’s dark values are authored choices and should be revised when rendered evidence shows a problem.
+
+Default own message bubbles use the received fill mixed with 5% black in light
+mode or 5% white in dark mode, with standard text and link colors. The five accent
+choices—blue, green, orange, pink and lilac—pair with white ink. They retain the
+reference hue and as much chroma as sRGB permits; lightness is lowered only to
+reach the 4.5:1 WCAG floor (also meeting the Lc 60 target). Reactions and
+ThemePicker previews follow the selected bubble pair. Default send controls use
+the neutral prominent pair; accent choices use their message pair.
 
 ## Density and rhythm
 

@@ -1382,7 +1382,7 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          {snapshot.root && (
+          {snapshot.root && snapshot.replies.length > 0 && (
             <div className={styles.replyDivider}>
               <span>{replyLabel}</span>
             </div>

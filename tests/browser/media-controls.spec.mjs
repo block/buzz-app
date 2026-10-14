@@ -1,5 +1,128 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// Browser-only: inherited legacy colors on the real uploaded-file preview.
+test("file previews keep dark stage colors when host appearance changes", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/relay-composer.html?attachments");
+  const form = page.getByRole("form", {
+    name: "Send a message to General",
+    exact: true,
+  });
+  await form.getByLabel("Choose attachments").setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Preview notes"),
+  });
+  await expect(form.getByText(/Ready$/)).toHaveCount(1);
+  await form.getByRole("button", { name: "Preview notes.txt" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Attachment preview",
+    exact: true,
+  });
+  const file = dialog.getByRole("link", { name: /notes.txt/ });
+  for (const mode of ["light", "dark", "light"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    await expect(
+      dialog.getByRole("heading", { name: "notes.txt", exact: true }),
+    ).toHaveCSS(
+      "color",
+      mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
+    );
+    await expect(file).toHaveCSS("background-color", "rgb(35, 35, 35)");
+    await expect(file).toHaveCSS("color", "rgb(255, 255, 255)");
+    await file.hover();
+    await expect(file).toHaveCSS("background-color", "rgb(46, 46, 46)");
+    await page.mouse.move(0, 0);
+  }
+});
+
+// Browser-only: container-grid cascade and a native CSS transition sampled at
+// controlled progress. A DOM emulator cannot prove the sidebar retains width.
+for (const kind of ["image", "video"]) {
+  test(`narrow ${kind} comments slide downward while retaining their full width`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(
+      `/tests/fixtures/media-review.html?${kind === "image" ? "photo" : "review"}`,
+    );
+    const dialog = page.getByRole("dialog");
+    const comments = dialog.locator('aside[aria-label="Media comments"]');
+    await expect(
+      dialog.getByRole("heading", { name: "Comments" }),
+    ).toBeVisible();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      const width = await comments.evaluate(
+        (el) => el.getBoundingClientRect().width,
+      );
+      // Extend only the transform duration so the runner can pause the native
+      // transition deterministically while preserving its production curve.
+      await comments.evaluate((el) => {
+        el.style.transitionDuration = "60s, 0s";
+      });
+      try {
+        await dialog.getByRole("button", { name: "Hide comments" }).click();
+        await expect(dialog).toHaveAttribute("data-comments-hidden");
+        await expect
+          .poll(() =>
+            comments.evaluate((el) => {
+              const transition = el
+                .getAnimations()
+                .find(
+                  (animation) => animation.transitionProperty === "transform",
+                );
+              if (!transition) return false;
+              transition.pause();
+              transition.currentTime =
+                transition.effect.getTiming().duration * 0.4;
+              return true;
+            }),
+          )
+          .toBe(true);
+        const state = await comments.evaluate((el) => {
+          const style = getComputedStyle(el);
+          const transform = new DOMMatrix(style.transform);
+          return {
+            width: el.getBoundingClientRect().width,
+            x: transform.m41,
+            y: transform.m42,
+            height: el.offsetHeight,
+          };
+        });
+        expect(state.width).toBeCloseTo(width, 1);
+        expect(state.x).toBe(0);
+        expect(state.y).toBeGreaterThan(0);
+        expect(state.y).toBeLessThan(state.height);
+        expect(
+          await dialog.evaluate(
+            (el) =>
+              getComputedStyle(el).gridTemplateColumns.split(/\s+/).length,
+          ),
+        ).toBe(1);
+      } finally {
+        await comments.evaluate((el) => {
+          el.getAnimations().forEach((animation) => {
+            animation.finish();
+          });
+          el.style.removeProperty("transition-duration");
+        });
+      }
+      await expect(comments).toHaveCSS("visibility", "hidden");
+      await dialog
+        .getByRole("button", { name: "Show comments" })
+        .press("Enter");
+      await expect(comments).toBeVisible();
+      await expect(comments).toHaveCSS("transform", "none");
+    }
+  });
+}
+
 // Browser-only: CSS layout, clipping, focus visibility, and paused control opacity
 // cannot be established by jsdom. Playback/zoom logic stays in component tests.
 for (const kind of ["image", "video"]) {

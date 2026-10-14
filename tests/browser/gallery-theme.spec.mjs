@@ -159,6 +159,18 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await dialog.screenshot({
       path: testInfo.outputPath("gallery-dark-narrow-enlarged.png"),
     });
+    await chooseColorMode(other, "Light");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      "light",
+    );
+    await expect(comments).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(composer).toHaveCSS("color", "rgb(15, 15, 15)");
+    await expect(composer).toBeVisible();
+    await page.bringToFront();
+    await dialog.screenshot({
+      path: testInfo.outputPath("gallery-light-narrow-enlarged.png"),
+    });
     await dialog
       .getByRole("button", { name: "Close fullscreen viewer" })
       .press("Enter");

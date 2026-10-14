@@ -2089,6 +2089,19 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .mediaReviewViewer .mediaReviewStage {
   color: var(--text-standard);
   color-scheme: dark;
+  /* Legacy renderer aliases must resolve on this scoped dark surface. */
+  --text: var(--text-standard);
+  --text-primary: var(--text-standard);
+  --text-muted: var(--text-metadata);
+  --text-secondary: var(--text-metadata);
+  --surface: var(--surface-panel);
+  --surface-input: var(--surface-inset);
+  --surface-control: var(--affordance-subtle);
+  --surface-hover: var(--affordance-subtle-hover);
+  --border: var(--border-standard);
+  --border-input: var(--border-prominent);
+  --primary: var(--text-standard);
+  --on-primary: var(--surface-inset);
   background: var(--bg-media-canvas);
   padding: 0;
 }
@@ -2150,6 +2163,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     overflow-y: auto;
   }
   .mediaReviewViewer[data-comments-hidden] {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(10rem, 1fr) minmax(0, 0px);
   }
   .mediaReviewViewer .mediaReviewConversation {

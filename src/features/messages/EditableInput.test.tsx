@@ -3166,7 +3166,6 @@ it.each(["ul", "ol", "blockquote", "pre"])(
 );
 
 it.each([
-  ["first\nsecond", '<a href="https://example.com">first<br>second</a>'],
   [
     "Ship 🚀 guide",
     'Ship <img data-stringify-type="emoji" alt="🚀"> <a href="https://example.com">guide</a>',
@@ -3212,3 +3211,27 @@ it.each([
     href,
   ]);
 });
+
+it.each([
+  [
+    "Title\nDescription",
+    "\n  <div>Title</div>\n\n  <div>Description</div>\n",
+    "Title Description",
+  ],
+  ["safe\n\n# SECRET", "safe\n\n# SECRET", "safe # SECRET"],
+  ["first\nsecond", "first<br>second", "first second"],
+  ["first\nsecond", "<div>first</div><div>second</div>", "first second"],
+])(
+  "normalizes external link labels into one Markdown paragraph: %s",
+  (plain, inner, label) => {
+    for (const text of [plain, ""]) {
+      const h = mount();
+      paste(h.input, text, `<a href="https://example.com/">${inner}</a>`);
+      expect(h.markdown().trim()).toBe(`[${label}](https://example.com/)`);
+      expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+        "https://example.com/",
+      ]);
+      expect(h.input).toHaveTextContent(label);
+    }
+  },
+);

@@ -203,6 +203,15 @@ export function externalLinkMarkdown(
     }
   }
   if (!linked) return;
+  // External labels must fit one Markdown paragraph. Read child boundaries
+  // before collapsing whitespace so adjacent blocks and <br> do not join words.
+  for (const anchor of body.querySelectorAll("a[href]")) {
+    const label = body.ownerDocument.createElement("div");
+    label.append(...anchor.childNodes);
+    anchor.textContent = serializeNode(label, "text")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
   if (plain !== undefined) {
     // Compare the serializer's actual labels, not the source HTML's textContent:
     // serialization can lose image emoji or boundaries inside an anchor.

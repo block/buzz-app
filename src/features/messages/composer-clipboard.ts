@@ -193,6 +193,11 @@ export function externalLinkMarkdown(html: string): string | undefined {
     // Keep text and line boundaries; importing other rich formatting is separate.
     if (/^(STRONG|B|EM|I|S|DEL|CODE)$/.test(element.tagName))
       element.replaceWith(...element.childNodes);
+    else if (/^(UL|OL|LI|BLOCKQUOTE|PRE)$/.test(element.tagName)) {
+      const block = body.ownerDocument.createElement("div");
+      block.append(...element.childNodes);
+      element.replaceWith(block);
+    }
   }
   return linked ? serializeNode(body, "markdown") : undefined;
 }

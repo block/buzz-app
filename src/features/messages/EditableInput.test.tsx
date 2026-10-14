@@ -3149,3 +3149,18 @@ it("keeps external linked text literal in code blocks and enforces the paste lim
   paste(limited.input, "guide", html);
   expect(limited.markdown()).toBe("");
 });
+
+it.each(["ul", "ol", "blockquote", "pre"])(
+  "pastes external %s as linked text without importing block formatting",
+  (tag) => {
+    const h = mount();
+    const linked = '<a href="https://example.com/">guide</a>';
+    const inner =
+      tag === "ul" || tag === "ol"
+        ? `<li>${linked}</li><li>notes</li>`
+        : `${linked}<br>notes`;
+    paste(h.input, "guide\nnotes", `<${tag}>${inner}</${tag}>`);
+    expect(h.markdown()).toBe("[guide](https://example.com/)\nnotes");
+    expect(h.input.querySelector("ul, ol, blockquote, pre")).toBeNull();
+  },
+);

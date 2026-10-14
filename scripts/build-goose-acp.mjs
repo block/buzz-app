@@ -11,7 +11,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -23,7 +23,9 @@ const name = process.platform === "win32" ? "goose-acp.exe" : "goose-acp";
 // Tauri ships this directory as the app's `bin` resources.
 const destination = join(root, "src-tauri/resources/bin");
 const binary = join(destination, name);
-const stampPath = join(destination, "goose-acp.json");
+const target = join(root, "target/goose-acp-build");
+// What the staged binary was built from, kept out of the shipped directory.
+const stampPath = join(target, "staged.json");
 const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile }, null, 2)}\n`;
 
 if (existsSync(binary) && read(stampPath) === stamp) {
@@ -33,22 +35,12 @@ if (existsSync(binary) && read(stampPath) === stamp) {
 console.log(
   `Building goose-acp (${pin.revision.slice(0, 9)}, ${profile}); the first build takes a few minutes.`,
 );
-// Hermit pins the toolchain on macOS and Linux; Windows CI selects it with rustup.
-const env = { ...process.env };
-if (process.platform !== "win32")
-  env.PATH = `${join(root, "bin")}${delimiter}${env.PATH ?? ""}`;
 // The sources keep one path, so a pin bump recompiles only what changed.
 const source = join(root, "target/goose-acp-src");
-if (
-  !existsSync(join(source, ".git")) ||
-  git(["rev-parse", "HEAD"]).trim() !== pin.revision
-) {
-  mkdirSync(source, { recursive: true });
-  git(["init", "--quiet"]);
-  git(["fetch", "--quiet", "--depth", "1", pin.repository, pin.revision]);
-  git(["checkout", "--quiet", "--force", "--detach", "FETCH_HEAD"]);
-}
-const target = join(root, "target/goose-acp-build");
+mkdirSync(source, { recursive: true });
+run("git", ["init", "--quiet"]);
+run("git", ["fetch", "--quiet", "--depth", "1", pin.repository, pin.revision]);
+run("git", ["checkout", "--quiet", "--force", "--detach", "FETCH_HEAD"]);
 run(
   "cargo",
   [
@@ -64,13 +56,7 @@ run(
     "--features",
     pin.features,
   ],
-  // Link the vendored OpenSSL statically, whatever the shell asks for.
-  {
-    ...env,
-    CARGO_TARGET_DIR: target,
-    OPENSSL_STATIC: "1",
-    OPENSSL_NO_VENDOR: "0",
-  },
+  { ...process.env, CARGO_TARGET_DIR: target },
 );
 // Cargo names the dev profile's output directory "debug".
 const built = join(target, profile === "dev" ? "debug" : profile, name);
@@ -103,14 +89,10 @@ function read(path) {
   }
 }
 
-function git(args) {
-  return run("git", args, env, source);
-}
-
-function run(command, args, childEnv = env, cwd = source) {
+function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {
-    cwd,
-    env: childEnv,
+    cwd: source,
+    env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
     maxBuffer: 64 * 1024 * 1024,

@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -294,12 +294,14 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         return Err("Invalid process arguments".into());
     }
     let path = effective_path();
+    // A bundled program is in the app's `bin` resources, which `tauri dev` also
+    // copies beside the debug executable. Windows adds `.exe` to a path itself.
     let program = if declared.bundled {
-        let resources = app
-            .path()
+        app.path()
             .resource_dir()
-            .map_err(|_| format!("Could not start {}", declared.program))?;
-        bundled_program(&resources, &declared.program)
+            .map_err(|_| format!("Could not start {}", declared.program))?
+            .join("bin")
+            .join(&declared.program)
     } else {
         resolve_program(&declared.program, &path)
     };
@@ -418,17 +420,6 @@ fn take_text(pending: &mut Vec<u8>) -> String {
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.
-/// Where the app ships `program`: its `bin` resources, which `tauri dev` also
-/// copies beside the debug executable.
-fn bundled_program(resources: &Path, program: &str) -> PathBuf {
-    let bin = resources.join("bin");
-    if cfg!(windows) {
-        bin.join(format!("{program}.exe"))
-    } else {
-        bin.join(program)
-    }
-}
-
 fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?

@@ -384,10 +384,15 @@ function Timeline({
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
+  const targetSignal = inlineSignal ?? navigation?.signal;
+  // Positioning waits for the exact reveal, then must run again: a reveal that
+  // leaves the reader at the bottom keeps following late row measurement.
+  const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   const completeTarget = useCallback(() => {
     navigation?.complete({ status: "opened" });
-  }, [navigation]);
-  const exactRevealed = useMessageReveal({
+    setRevealedSignal(targetSignal);
+  }, [navigation, targetSignal]);
+  useMessageReveal({
     scroller,
     focus: !(
       navigation?.target.kind === "conversation" &&
@@ -395,7 +400,7 @@ function Timeline({
     ),
     settled,
     messageId: targetId,
-    signal: inlineSignal ?? navigation?.signal,
+    signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
@@ -511,15 +516,12 @@ function Timeline({
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
-      (!targetId ||
-        exactRevealed.current === (inlineSignal ?? navigation?.signal))
+      (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (
-      (targetId &&
-        (inlineSignal || navigation) &&
-        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
+      (targetId && targetSignal && revealedSignal !== targetSignal) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -648,9 +650,8 @@ function Timeline({
     prepend,
     recordPosition,
     targetId,
-    navigation,
-    inlineSignal,
-    exactRevealed,
+    targetSignal,
+    revealedSignal,
     updateJumpToLatest,
     revealMessageId,
   ]);

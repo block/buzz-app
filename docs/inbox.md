@@ -150,7 +150,8 @@ behavior.
 
 A DM is one conversation row, and so is a session's flat top-level timeline;
 Inbox opens that session row in the channel reader. Elsewhere, including session
-threads, each thread root or top-level message is its own row.
+threads, each thread root or top-level message is its own row; a session message
+whose replies are in Inbox stays with its thread.
 
 DM read clears the channel through its newest retained evidence. Thread read
 advances the thread prefix, including earlier unshown replies, plus individually

@@ -916,15 +916,18 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        // A session's top-level timeline is one conversation; its threads
-        // stay separate.
         const session = channel.channelType === "session";
-        const groups = new Map<string, Evidence[]>();
-        for (const entry of byChannel.get(channel.id) ?? []) {
+        const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
+          return entry.event.pubkey !== viewer && !!category(entry, dm);
+        });
+        // A session's top-level timeline is one conversation; its threads,
+        // roots included, stay separate.
+        const roots = new Set(evidence.map((entry) => entry.rootId));
+        const groups = new Map<string, Evidence[]>();
+        for (const entry of evidence) {
           const id =
-            dm || (session && !entry.parentId)
+            dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
           const group = groups.get(id) ?? [];

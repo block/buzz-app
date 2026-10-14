@@ -2707,6 +2707,40 @@ it("inbox groups a session's top-level timeline into one conversation, keeping i
   expect(session().map((item) => item.unreadCount)).toEqual([1, 0]);
 });
 
+it("inbox keeps a mentioned session root with its thread so reading the thread clears it", async () => {
+  const h = setup();
+  h.grant("session");
+  h.emit([
+    metadata(h.relay, "session", "Session", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ]),
+  ]);
+  const root = message(h.alice, "session", "Question", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = (author: typeof h.alice, content: string, at: number) =>
+    message(author, "session", content, at, [["e", root.id, "", "reply"]]);
+  h.emit([
+    root,
+    reply(h.viewer, "Answer", 21),
+    reply(h.alice, "Follow-up", 22),
+  ]);
+  const items = () => h.session.unread.inbox().items;
+  expect(items()).toEqual([
+    expect.objectContaining({
+      id: `session:${root.id}`,
+      target: { kind: "thread", channelId: "session", rootId: root.id },
+      unreadCount: 2,
+    }),
+  ]);
+  const [item] = items();
+  for (const step of item?.readThrough ?? [])
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(items().map((item) => item.unreadCount)).toEqual([0]);
+});
+
 it.each([false, true])(
   "inbox hides archived channels and restores retained unread state (subscribed=%s)",
   async (subscribed) => {

@@ -877,6 +877,9 @@ test.describe("thread activity", () => {
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
       .toBe(true);
+    // Own the signal's business time while browser timers and animation stay real.
+    let businessNow = Math.floor(Date.now() / 1000) * 1000;
+    await page.clock.setFixedTime(businessNow);
     const key = generateSecretKey(),
       agent = getPublicKey(key);
     const onlyAgent = new RegExp(
@@ -908,11 +911,19 @@ test.describe("thread activity", () => {
     const marker = page
       .locator('[data-channel-id="alpha"]')
       .getByRole("img", { name: /working in Alpha$/ });
-    const sendEvent = (kind, threadId, signingKey = key, content = "") => {
+    const sendEvent = async (
+      kind,
+      threadId,
+      signingKey = key,
+      content = "",
+    ) => {
+      // Renewals need distinct signed timestamps, even when the UI is fast.
+      businessNow += 1000;
+      await page.clock.setFixedTime(businessNow);
       const event = finalizeEvent(
         {
           kind,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: businessNow / 1000,
           content,
           tags: [
             ["h", "alpha"],
@@ -931,21 +942,29 @@ test.describe("thread activity", () => {
     };
     const sendTyping = (threadId, signingKey) =>
       sendEvent(20002, threadId, signingKey);
+    const observe = (kind, turnId) =>
+      app.observer(
+        {
+          ...activity(kind, "alpha", turnId),
+          timestamp: new Date(businessNow).toISOString(),
+        },
+        key,
+      );
     // Pointer exit closes the hover popup; Escape is covered separately.
     const closePopup = async () => {
       await page.mouse.move(0, 0);
       await expect(popup).toHaveCount(0);
     };
     // Owner telemetry recognizes the agent; its channel-wide turn has no thread.
-    app.observer(activity("turn_liveness", "alpha", "previous"), key);
+    observe("turn_liveness", "previous");
     await expect(channelTrigger).toHaveAccessibleName(onlyAgent);
     await expect(threadTrigger).toHaveCount(0);
-    app.observer(activity("turn_completed", "alpha", "previous"), key);
+    observe("turn_completed", "previous");
     await expect(channelTrigger).toHaveCount(0);
     const unrecognized = generateSecretKey();
     const otherThread = "b".repeat(64);
-    sendTyping(root.id, unrecognized);
-    sendTyping(otherThread);
+    await sendTyping(root.id, unrecognized);
+    await sendTyping(otherThread);
     // An unrecognized signer is ordinary typing, never an agent avatar.
     await expect(threadStatus).toHaveText(/^\S+ is typing$/);
     // Another thread's agent work lights the channel control with that thread's
@@ -957,8 +976,13 @@ test.describe("thread activity", () => {
     await expect(threadTrigger).toHaveCount(0);
     await closePopup();
     // A completed message ends public typing in both scopes.
-    sendEvent(9, root.id, unrecognized, "Unrecognized participant finished");
-    sendEvent(9, otherThread, key, "Other thread finished");
+    await sendEvent(
+      9,
+      root.id,
+      unrecognized,
+      "Unrecognized participant finished",
+    );
+    await sendEvent(9, otherThread, key, "Other thread finished");
     await expect(threadStatus).toBeEmpty();
     await expect(channelTrigger).toHaveCount(0);
     // Finish panel entrance before starting the eight-second working signal.
@@ -967,7 +991,7 @@ test.describe("thread activity", () => {
         element.getAnimations().map((animation) => animation.finished),
       );
     });
-    const typing = sendTyping(root.id);
+    const typing = await sendTyping(root.id);
     await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
     await expect(threadStatus).toHaveText(/ is working$/);
     await expect(marker).toHaveCount(0); // Thread-only fallback must not light channel scope.
@@ -998,9 +1022,9 @@ test.describe("thread activity", () => {
     await closePopup();
     // Same agent, two observer turns, and scoped thread typing. Do not infer
     // that either channel-wide turn belongs to this thread, or hide other work.
-    app.observer(activity("turn_liveness", "alpha", "parallel-one"), key);
-    app.observer(activity("turn_liveness", "alpha", "parallel-two"), key);
-    sendTyping(root.id);
+    observe("turn_liveness", "parallel-one");
+    observe("turn_liveness", "parallel-two");
+    await sendTyping(root.id);
     await openWorkingNow(page, composer);
     await expect(agentRow(popup, agent)).toContainText(
       "Work with unconfirmed thread",
@@ -1043,7 +1067,7 @@ test.describe("thread activity", () => {
       thread.getByRole("region", { name: "Thread messages", exact: true }),
     ).toContainText(root.content);
     await page.setViewportSize({ width: 390, height: 844 });
-    sendTyping(root.id);
+    await sendTyping(root.id);
     await expect(threadTrigger).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
@@ -1070,7 +1094,7 @@ test.describe("thread activity", () => {
       )
       .click();
     await expect(thread).toHaveCount(0);
-    sendTyping(root.id);
+    await sendTyping(root.id);
     await openWorkingNow(page, composer);
     await expect(agentRow(popup, agent)).toHaveAccessibleName(
       /^Open thread for /,
@@ -1080,11 +1104,11 @@ test.describe("thread activity", () => {
     await expect(
       thread.getByRole("region", { name: "Thread messages", exact: true }),
     ).toContainText(root.content);
-    app.observer(activity("turn_completed", "alpha", "parallel-one"), key);
-    app.observer(activity("turn_completed", "alpha", "parallel-two"), key);
-    sendEvent(9, root.id, key, "Thread work finished");
+    observe("turn_completed", "parallel-one");
+    observe("turn_completed", "parallel-two");
+    await sendEvent(9, root.id, key, "Thread work finished");
     await expect(threadTrigger).toHaveCount(0);
-    sendTyping();
+    await sendTyping();
     await expect(marker).toBeVisible();
     const workingBox = await marker.boundingBox();
     expect(workingBox).toEqual(
@@ -1107,6 +1131,10 @@ test.describe("thread activity", () => {
     await expect(popup).toHaveCount(0);
     await expect(thread).toBeVisible();
     await page.mouse.move(0, 0);
+    await page.clock.setFixedTime(businessNow + 7999);
+    await expect(marker).toBeVisible();
+    await expect(channelStatus).toHaveText(/ is working$/);
+    await page.clock.setFixedTime(businessNow + 8000);
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelTrigger).toHaveCount(0);
     await expect(channelStatus).toBeEmpty();

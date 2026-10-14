@@ -26,6 +26,11 @@ vi.mock("virtua", async () => {
     ) {
       useImperativeHandle(ref, () => ({
         cache: undefined,
+        get scrollSize() {
+          return Number.parseFloat(
+            document.querySelector("ol")?.style.height ?? "0",
+          );
+        },
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
@@ -38,8 +43,8 @@ const resizes = new Set<() => void>();
 let nextFrame = 0;
 const owners: { dispose(): void }[] = [];
 beforeEach(() => {
-  scroll.toIndex.mockClear();
-  scroll.toOffset.mockClear();
+  scroll.toIndex.mockReset();
+  scroll.toOffset.mockReset();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2000);
@@ -558,6 +563,69 @@ it.each([
     });
   },
 );
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "bottom restoration retains the native end, unmeasured overflow=%s, reveal=%s",
+  async (overflow, reveal) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    // Width reflow exposes overflow before Virtua commits the new row height.
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this === region || overflow ? 2118 : 2000;
+      },
+    );
+    region.scrollTop = 1518;
+    scroll.toIndex.mockImplementation(() => {
+      const committedHeight = Number.parseFloat(
+        screen.getByRole("list").style.height,
+      );
+      const edge = overflow ? 0 : 118;
+      region.scrollTop =
+        Math.min(committedHeight + edge, region.scrollHeight) -
+        region.clientHeight;
+    });
+    scroll.toOffset.mockImplementation((offset: number) => {
+      region.scrollTop = Math.min(
+        offset,
+        region.scrollHeight - region.clientHeight,
+      );
+    });
+    await act(async () => {
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+        700,
+      );
+      for (const resize of resizes) resize();
+    });
+    if (reveal) {
+      h.reveal();
+      fireEvent.scroll(region);
+    }
+    await frame();
+    expect(region.scrollHeight - region.clientHeight - region.scrollTop).toBe(
+      0,
+    );
+    fireEvent.scroll(region);
+    if (!overflow) expect(scroll.toOffset).not.toHaveBeenCalled();
+    await h.measured();
+    await frame();
+    expect(region.scrollHeight - region.clientHeight - region.scrollTop).toBe(
+      0,
+    );
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+  },
+);
+
 it.each(["keyboard", "wheel", "scrollbar"])(
   "%s movement survives a frame and shrink during the same gesture",
   async (input) => {

@@ -82,15 +82,26 @@ export function createHeadPersistence(
   }
   async function transact<T>(
     mode: IDBTransactionMode,
-    work: (store: IDBObjectStore, done: (value: T) => void) => void,
+    work: (
+      store: IDBObjectStore,
+      done: (value: T) => void,
+      guard: (callback: () => void) => () => void,
+    ) => void,
     name = STORE,
   ): Promise<T> {
     const db = await database();
     if (closed) throw new Error("Cache closed");
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(name, mode);
-      let result: T;
+      let result: { value: T } | undefined;
+      let retired = false;
+      const fail = (error: unknown) => {
+        retired = true;
+        clearTimeout(timeout);
+        reject(error);
+      };
       const timeout = setTimeout(() => {
+        retired = true;
         try {
           tx.abort();
         } catch (error) {
@@ -102,44 +113,64 @@ export function createHeadPersistence(
               error.name === "InvalidStateError"
             )
           )
-            reject(error);
+            fail(error);
         }
       }, 2000);
       tx.oncomplete = () => {
+        retired = true;
         clearTimeout(timeout);
-        resolve(result);
+        if (result) resolve(result.value);
+        else reject(new Error("Cache transaction completed before its work"));
       };
       tx.onabort = tx.onerror = () => {
-        clearTimeout(timeout);
-        reject(tx.error ?? new Error("Cache transaction aborted"));
+        fail(tx.error ?? new Error("Cache transaction aborted"));
       };
-      work(tx.objectStore(name), (value) => {
-        result = value;
-      });
+      const guard = (callback: () => void) => () => {
+        if (retired) return;
+        try {
+          callback();
+        } catch (error) {
+          fail(error);
+          try {
+            tx.abort();
+          } catch {
+            // Preserve the callback failure if abort races native completion.
+          }
+        }
+      };
+      guard(() =>
+        work(
+          tx.objectStore(name),
+          (value) => {
+            result = { value };
+          },
+          guard,
+        ),
+      )();
     });
   }
   return {
     readStartup: () =>
       transact(
         "readonly",
-        (store, done) => {
+        (store, done, guard) => {
           const request = store.get(scope);
-          request.onsuccess = () => done(request.result?.data);
+          request.onsuccess = guard(() => done(request.result?.data));
         },
         STARTUP,
       ),
     writeStartup: (patch) =>
       transact(
         "readwrite",
-        (store, done) => {
+        (store, done, guard) => {
           const request = store.get(scope);
-          request.onsuccess = () => {
+          request.onsuccess = guard(() => {
             const data = { ...request.result?.data, ...patch };
             const bytes = byteSize(data);
             if (bytes <= MAX_BYTES) {
               store.put({ key: scope, data, bytes, savedAt: Date.now() });
               const all = store.getAll();
-              all.onsuccess = () => {
+              all.onsuccess = guard(() => {
                 let total = 0;
                 for (const row of all.result.sort(
                   (a, b) => b.savedAt - a.savedAt,
@@ -147,17 +178,17 @@ export function createHeadPersistence(
                   total += row.bytes;
                   if (total > MAX_BYTES) store.delete(row.key);
                 }
-              };
-            }
-            done(undefined);
-          };
+                done(undefined);
+              });
+            } else done(undefined);
+          });
         },
         STARTUP,
       ),
     read: () =>
-      transact("readonly", (store, done) => {
+      transact("readonly", (store, done, guard) => {
         const request = store.getAll();
-        request.onsuccess = () =>
+        request.onsuccess = guard(() =>
           done(
             (request.result as Record[])
               .filter(
@@ -166,10 +197,11 @@ export function createHeadPersistence(
               )
               .sort((a, b) => b.savedAt - a.savedAt)
               .slice(0, MAX_HEADS),
-          );
+          ),
+        );
       }),
     write: (head) =>
-      transact("readwrite", (store, done) => {
+      transact("readwrite", (store, done, guard) => {
         const bytes = byteSize(head);
         if (bytes > MAX_BYTES) {
           done(undefined);
@@ -183,7 +215,7 @@ export function createHeadPersistence(
         };
         store.put(row);
         const request = store.getAll();
-        request.onsuccess = () => {
+        request.onsuccess = guard(() => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
@@ -200,7 +232,7 @@ export function createHeadPersistence(
               store.delete(entry.key);
           }
           done(undefined);
-        };
+        });
       }),
     remove: (channelId) =>
       transact("readwrite", (store, done) => {
@@ -208,15 +240,15 @@ export function createHeadPersistence(
         done(undefined);
       }),
     retain: (ids) =>
-      transact("readwrite", (store, done) => {
+      transact("readwrite", (store, done, guard) => {
         const allowed = new Set(ids),
           request = store.getAll();
-        request.onsuccess = () => {
+        request.onsuccess = guard(() => {
           for (const row of request.result as Record[])
             if (row.scope === scope && !allowed.has(row.channelId))
               store.delete(row.key);
           done(undefined);
-        };
+        });
       }),
     clear: async () => {
       await transact(
@@ -227,13 +259,13 @@ export function createHeadPersistence(
         },
         STARTUP,
       );
-      await transact("readwrite", (store, done) => {
+      await transact("readwrite", (store, done, guard) => {
         const request = store.getAll();
-        request.onsuccess = () => {
+        request.onsuccess = guard(() => {
           for (const row of request.result as Record[])
             if (row.scope === scope) store.delete(row.key);
           done(undefined);
-        };
+        });
       });
     },
     close() {

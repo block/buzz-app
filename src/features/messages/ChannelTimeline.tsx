@@ -556,10 +556,18 @@ function Timeline({
         } else handle.current.scrollTo(restore.offset);
         follow.current = false;
       } else if (follow.current) {
-        handle.current.scrollToIndex(
-          revealIndex >= 0 ? revealIndex : rows.length - 1,
-          { align: "end" },
-        );
+        const element = scroller.current;
+        const targetIndex = revealIndex >= 0 ? revealIndex : rows.length - 1;
+        // Row overflow can reach the native end before Virtua measures it.
+        // An older index target would rewind our own bottom-follow position.
+        if (
+          targetIndex === rows.length - 1 &&
+          element &&
+          (element.querySelector("ol")?.scrollHeight ?? 0) >
+            Math.ceil(handle.current.scrollSize)
+        )
+          handle.current.scrollTo(element.scrollHeight - element.clientHeight);
+        else handle.current.scrollToIndex(targetIndex, { align: "end" });
         if (revealIndex >= 0) {
           revealed.current = revealMessageId;
           pendingReveal.current = undefined;

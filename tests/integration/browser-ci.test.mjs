@@ -37,7 +37,7 @@ const matrixValues = (key) => {
   return values.split(",").map((value) => value.trim());
 };
 
-test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
+test("normal shards cover every case once and repeat shards preserve ten repetitions", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
   )?.[1];
@@ -87,52 +87,6 @@ test("Linux shards and macOS recording discover every functional test/project ex
       t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
     }
   }
-  const browserJob = parse(workflow).jobs.browser;
-  const crowded = browserJob.steps.find(
-    (step) => step.name === "Crowded reply width",
-  );
-  assert.equal(crowded?.if, "env.BUZZ_CROWDED_WIDTH != '0'");
-  const widths = browserJob.env.BUZZ_CROWDED_WIDTH.match(
-    /^\$\{\{ fromJSON\('([^']+)'\)\[matrix\.shard\] \}\}$/,
-  )?.[1];
-  assert.ok(widths, "crowded widths must have a literal shard mapping");
-  const widthByShard = JSON.parse(widths);
-  assert.equal(widthByShard.length, matrixValues("shard").length + 1);
-  assert.equal(widthByShard[0], 0);
-  const crowdedCommand = crowded.run.match(
-    / -- (\.\/bin\/pnpm test:browser:ci .+)$/,
-  )?.[1];
-  assert.ok(crowdedCommand, "crowded invocation must exist");
-  const outputDir = crowdedCommand.match(/ --output (\S+)/)?.[1];
-  assert.ok(outputDir, "crowded run must own a separate output directory");
-  assert.notEqual(outputDir, "test-results/browser");
-  assert.equal(
-    crowded.env.PLAYWRIGHT_JSON_OUTPUT_FILE,
-    `${outputDir}/ci-report.json`,
-  );
-  const upload = browserJob.steps.find(
-    (step) => step.name === "Browser evidence",
-  );
-  assert.deepEqual(
-    upload.with.path.trim().split(/\s+/).sort(),
-    ["test-results/browser", outputDir].sort(),
-  );
-  for (const engine of matrixValues("engine")) {
-    for (const shard of matrixValues("shard")) {
-      const width = widthByShard[Number(shard)];
-      if (width === 0) continue;
-      const expanded = crowdedCommand
-        .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
-        .replaceAll(/\$\{BUZZ_CROWDED_WIDTH\}/g, String(width));
-      const selected = discover(
-        expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
-      );
-      assert.equal(selected.length, 1, `${engine}/${shard}: one crowded width`);
-      assert.ok(selected[0].startsWith(`${engine}:`));
-      actual.push(...selected);
-      t.diagnostic(`${engine}/${shard}: crowded width ${width}`);
-    }
-  }
   const recording = parse(workflow).jobs.media_recorder.steps.find(
     (step) => step.name === "Recording journeys",
   );
@@ -159,6 +113,46 @@ test("Linux shards and macOS recording discover every functional test/project ex
     expected.sort(),
     "Linux and macOS must cover full local functional discovery",
   );
+  const repeat = parse(workflow).jobs.flake_browser;
+  const repeatCommand = repeat.steps
+    .find((step) => step.name === "Repeat changed journeys")
+    ?.run.match(/ -- (\.\/bin\/pnpm test:browser:ci .+)$/)?.[1];
+  assert.ok(repeatCommand, "repeat invocation must exist");
+  const selected = "tests/browser/sidebar-unread.spec.mjs";
+  for (const engine of repeat.strategy.matrix.engine) {
+    const expanded = repeatCommand
+      .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
+      .replaceAll("$SELECTED", selected);
+    const commandArgs = (command) =>
+      command.replace(/^\.\/bin\/pnpm /, "").split(/\s+/);
+    const allRepetitions = discover(
+      commandArgs(
+        expanded
+          .replaceAll(/\$\{\{ matrix\.shard \}\}/g, "1")
+          .replace(/ --shard=\S+/, ""),
+      ),
+    );
+    const once = discover([
+      "test:browser:ci",
+      selected,
+      "--project",
+      engine,
+      "--no-deps",
+    ]);
+    assert.equal(allRepetitions.length, once.length * 10);
+    const shardedRepetitions = repeat.strategy.matrix.shard.flatMap((shard) =>
+      discover(
+        commandArgs(
+          expanded.replaceAll(/\$\{\{ matrix\.shard \}\}/g, String(shard)),
+        ),
+      ),
+    );
+    assert.equal(new Set(shardedRepetitions).size, shardedRepetitions.length);
+    assert.deepEqual(shardedRepetitions.sort(), allRepetitions.sort());
+    t.diagnostic(
+      `${engine}: ${shardedRepetitions.length} repetitions across ${repeat.strategy.matrix.shard.length} shards`,
+    );
+  }
 });
 
 test("classic-scrollbar cases run exactly once, after the measurements, without clearing their evidence", () => {

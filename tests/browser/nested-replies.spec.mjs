@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -468,7 +468,7 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-test.describe("crowded replies", () => {
+test.describe(() => {
   test.describe.configure({ mode: "parallel" });
   for (const width of [1492, 1280, 1024, 700, 390])
     test(`crowded capped branches expand once with readable actions at ${width}`, async ({
@@ -569,13 +569,33 @@ test.describe("crowded replies", () => {
         await row.scrollIntoViewIfNeeded();
         // Exercise the lifted bar away from the top edge. Morgan accepted
         // clipping at that boundary; scrolling the row down restores access.
-        await row.evaluate((node) => {
+        const atBottom = await row.evaluate((node) => {
           const history = node.closest('[aria-label="Thread messages"]');
-          history.scrollTop +=
-            node.getBoundingClientRect().top -
-            history.getBoundingClientRect().top -
-            history.clientHeight / 2;
+          const end = history.scrollHeight - history.clientHeight;
+          const centered = Math.max(
+            0,
+            Math.min(
+              end,
+              history.scrollTop +
+                node.getBoundingClientRect().top -
+                history.getBoundingClientRect().top -
+                history.clientHeight / 2,
+            ),
+          );
+          // Thread readers within 80px follow the tail. Use its actual end so
+          // a normal background refresh cannot move this pointer baseline.
+          const atBottom = end - centered < 80;
+          history.scrollTop = atBottom ? end : centered;
+          return atBottom;
         });
+        const history = panel.getByRole("region", {
+          name: "Thread messages",
+          exact: true,
+        });
+        await settle(page, history);
+        await expect(
+          panel.locator("[data-jump-to-latest]").locator("../.."),
+        ).toHaveAttribute("data-visible", String(!atBottom));
         const restingHeight = (await row.boundingBox()).height;
         await row.hover();
         expect((await row.boundingBox()).height).toBe(restingHeight);

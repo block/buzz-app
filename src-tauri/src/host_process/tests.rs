@@ -260,17 +260,6 @@ fn directories_are_absolute_or_under_home() {
     assert!(expand_home("~other/dir").is_err());
 }
 
-#[test]
-fn bundled_programs_come_from_the_app_resources() {
-    let program = bundled_program(Path::new("/app/Resources"), "goose-acp");
-    let name = if cfg!(windows) {
-        "goose-acp.exe"
-    } else {
-        "goose-acp"
-    };
-    assert_eq!(program, Path::new("/app/Resources/bin").join(name));
-}
-
 /// Waits until `pid` has died. A process its new parent has not reaped yet
 /// still answers kill(0), as a zombie, so a zombie counts as dead.
 #[cfg(unix)]

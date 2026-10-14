@@ -18,18 +18,6 @@ if (
 const port = values.port === undefined ? undefined : Number(values.port);
 
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
-// Build the bundled goose-acp before Tauri compiles, so a cold build does not
-// count against its dev-server timeout. Local runs skip the size optimizations.
-if (!help) {
-  const goose = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./build-goose-acp.mjs", import.meta.url)), "--dev"],
-    { stdio: "inherit" },
-  );
-  if (goose.error) console.error(goose.error.message);
-  if (goose.signal) process.kill(process.pid, goose.signal);
-  if (goose.status !== 0) process.exit(goose.status ?? 1);
-}
 const root = fileURLToPath(new URL("../", import.meta.url));
 const config = desktopOverlay(root);
 // Tauri's own --port controls its static-file server, not our Vite server.

@@ -134,7 +134,9 @@ export class GooseProcess {
       onStderr: (data) => goose?.readError(data),
     }).catch((error: unknown) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
-        ? new Error("goose-acp is missing from this Buzz build.")
+        ? new Error(
+            "goose-acp is not installed. Buzz looks for it on your PATH, including ~/.local/bin.",
+          )
         : error;
     });
     goose = new GooseProcess(process, launch.tools, launch.serve);

@@ -322,6 +322,9 @@ export function MessageLink({
             <MenuItem
               onClick={() => {
                 if (!active) return;
+                // The host records the focused link as the tab's return target.
+                if (trigger.current?.isConnected)
+                  trigger.current.focus({ preventScroll: true });
                 // A workspace that cannot show the thread opens it as a click would.
                 if (
                   openThreadTab?.(

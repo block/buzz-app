@@ -226,6 +226,14 @@ test("a message link's context menu opens its thread as a tab without leaving th
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   expect((await state(page)).entry).toEqual(before);
+  // Closing the tab returns focus to the link that opened it.
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:beta:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
+  await expect(thread).toHaveCount(0);
+  await expect(link).toBeFocused();
 });
 
 // Retained DOM, scroll geometry, focus, and CSS motion need a real browser.

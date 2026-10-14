@@ -845,6 +845,20 @@ function ChannelWorkspace({
       tabState.leaveVisit,
     ],
   );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
+  );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
@@ -1514,23 +1528,20 @@ function ChannelWorkspace({
         </div>
       </Panel>
       {showingMediaReview && (
-        // Review comment links stay inert; they never open tabs behind it.
-        <LinkThreadTabContext value={undefined}>
-          <MediaReviewViewer
-            extensions={extensions}
-            attachment={showingMediaReview.attachment}
-            session={queries}
-            scope={scope}
-            channelId={showingMediaReview.channelId}
-            channelName={showingMediaReview.channelName}
-            messageId={showingMediaReview.messageId}
-            initialTime={showingMediaReview.initialTime}
-            hasComments={showingMediaReview.hasComments}
-            restoreFocus={mediaReviewTrigger}
-            onOpenLink={openLink}
-            close={() => setMediaReview(undefined)}
-          />
-        </LinkThreadTabContext>
+        <MediaReviewViewer
+          extensions={extensions}
+          attachment={showingMediaReview.attachment}
+          session={queries}
+          scope={scope}
+          channelId={showingMediaReview.channelId}
+          channelName={showingMediaReview.channelName}
+          messageId={showingMediaReview.messageId}
+          initialTime={showingMediaReview.initialTime}
+          hasComments={showingMediaReview.hasComments}
+          restoreFocus={mediaReviewTrigger}
+          onOpenLink={openLink}
+          close={() => setMediaReview(undefined)}
+        />
       )}
       {secondary.drag.feedback}
       {secondary.hosts}
@@ -1610,7 +1621,7 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      <LinkThreadTabContext value={secondary.openLinkedThread}>
+      <LinkThreadTabContext value={openLinkedThread}>
         {workspace}
       </LinkThreadTabContext>
     </MessageManagement>

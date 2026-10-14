@@ -729,6 +729,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     var(--channel-preview-inset, 0px)
   );
   padding-bottom: var(--history-bottom-inset);
+  /* ThreadPanel owns every layout-shift correction here (resize, older-page and
+     exact-target anchors). Browser scroll anchoring would correct the same shift
+     first, and the exact-target anchor would then apply it a second time. */
+  overflow-anchor: none;
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;

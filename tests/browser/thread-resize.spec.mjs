@@ -291,10 +291,15 @@ test.describe("exact history resize ownership", () => {
     exactMessages: true,
     historyCounts: { alpha: 103, beta: 0 },
   });
-  test("held exact target resize followed by live reply", async ({
-    page,
-    app,
-  }) => {
+  test("held exact target resize followed by live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "before reply"));
+  // The shift lands in the live reply's own commit, before ResizeObserver
+  // delivery. Browser scroll anchoring must not correct it ahead of the
+  // thread's exact-target anchor, which would then apply it a second time.
+  test("exact target shift committed with a live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "with reply"));
+
+  async function heldResizeThenReply({ page, app }, shift) {
     const key = generateSecretKey();
     await page.route("**/agent-library", (route) =>
       route.fulfill({
@@ -415,13 +420,38 @@ test.describe("exact history resize ownership", () => {
         );
 
       // Controlled child-only geometry change above the exact row; no React parent commit.
-      await target.evaluate((el) => {
-        const spacer = document.createElement("div");
-        spacer.style.height = "37px";
-        el.before(spacer);
-      });
-      await settle(page, history);
-      const resized = await y();
+      let resized;
+      if (shift === "before reply") {
+        await target.evaluate((el) => {
+          const spacer = document.createElement("div");
+          spacer.style.height = "37px";
+          el.before(spacer);
+        });
+        await settle(page, history);
+        resized = await y();
+      } else {
+        resized = await y();
+        // Add the spacer when React inserts the next reply's row: inside that
+        // commit and before its layout effects run.
+        await target.evaluate((el) => {
+          const originals = {
+            appendChild: Node.prototype.appendChild,
+            insertBefore: Node.prototype.insertBefore,
+          };
+          for (const [name, original] of Object.entries(originals))
+            Node.prototype[name] = function (node, ...rest) {
+              const result = original.call(this, node, ...rest);
+              if (node?.textContent?.includes("Review live reply 15")) {
+                Object.assign(Node.prototype, originals);
+                const spacer = document.createElement("div");
+                spacer.style.height = "37px";
+                el.before(spacer);
+                el.getBoundingClientRect();
+              }
+              return result;
+            };
+        });
+      }
       reply();
       await expect(
         history.getByText("Review live reply 15", { exact: true }),
@@ -436,5 +466,5 @@ test.describe("exact history resize ownership", () => {
       await page.evaluate(() => window.releaseExactReveal());
       release();
     }
-  });
+  }
 });

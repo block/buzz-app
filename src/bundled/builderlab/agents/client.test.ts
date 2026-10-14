@@ -496,6 +496,29 @@ it("refuses to link without a local Buzz identity", async () => {
   );
   expect(h.host.request).not.toHaveBeenCalled();
 });
+it("signs out when the identity check finds the session expired", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({}, 401));
+  await expect(
+    h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
+  ).rejects.toThrow("session expired");
+  expect(h.session.snapshot().status).toBe("signed-out");
+  expect(h.host.request).toHaveBeenCalledTimes(1);
+});
+it("attests without linking when there is no native identity", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({ status: 1 }));
+  await createAgentClient(h.host, h.session, null).activate(
+    row.agent_pubkey,
+    proof,
+    undefined,
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toMatch(
+    /\/attest-agent$/,
+  );
+});
 it("does not verify a binding signed under a replaced session", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)

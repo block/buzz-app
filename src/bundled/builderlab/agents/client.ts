@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { nativeIdentityEnabled } from "../../../features/identity/service";
 import type {
   Host,
   HostResponse,
@@ -69,7 +70,9 @@ const LINK_ERRORS: Record<string, string> = {
 export function createAgentClient(
   host: Host,
   session: OAuthSession,
-  owner: OwnerIdentity = nativeOwner,
+  // Without native identity (the dev viewer), owner proofs come from the
+  // dev broker, which has no binding signer, so linking is skipped.
+  owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -78,6 +81,14 @@ export function createAgentClient(
       session.credential() !== credential
     )
       throw new DOMException("Builderlab session changed.", "AbortError");
+  }
+  function signOutIfExpired(response: HostResponse) {
+    if (response.status !== 401) return;
+    session.signOut();
+    throw Object.assign(
+      new Error("Your Builderlab session expired. Sign in again."),
+      { status: 401 },
+    );
   }
   async function request(
     path: string,
@@ -103,13 +114,7 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    if (response.status === 401) {
-      session.signOut();
-      throw Object.assign(
-        new Error("Your Builderlab session expired. Sign in again."),
-        { status: 401 },
-      );
-    }
+    signOutIfExpired(response);
     if (response.status === 403)
       throw Object.assign(
         new Error("This Builderlab account cannot manage remote agents."),
@@ -157,6 +162,7 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
+    signOutIfExpired(response);
     let result: Record<string, unknown> | undefined;
     try {
       const parsed = JSON.parse(response.body);
@@ -185,16 +191,20 @@ export function createAgentClient(
   let linking: { credential: Credential; done: Promise<void> } | undefined;
   /** Binds this device's Buzz key to the signed-in account; attestation requires it. */
   function link(signal: AbortSignal): Promise<void> {
+    if (!owner) return Promise.resolve();
     const credential = session.credential();
     if (linking?.credential !== credential) {
-      const done = bind(signal).finally(() => {
+      const done = bind(owner, signal).finally(() => {
         if (linking?.done === done) linking = undefined;
       });
       linking = { credential, done };
     }
     return linking.done;
   }
-  async function bind(signal: AbortSignal): Promise<void> {
+  async function bind(
+    owner: OwnerIdentity,
+    signal: AbortSignal,
+  ): Promise<void> {
     const key = await owner.key().catch(() => null);
     signal.throwIfAborted();
     if (typeof key !== "string" || !/^[0-9a-f]{64}$/.test(key))

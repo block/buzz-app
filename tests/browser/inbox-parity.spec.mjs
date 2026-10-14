@@ -30,12 +30,14 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
     [["p", app.viewer]],
   );
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
-  const conversation = inbox
+  // The thread's preview follows whichever reply loaded last.
+  await inbox
     .getByRole("list", { name: "Inbox conversations" })
-    .getByRole("listitem")
-    .filter({ hasText: "Broadcast reply" });
-  await conversation.getByRole("button", { name: /^Open / }).click();
+    .getByRole("button", { name: "Open Alice Fixture in #Alpha", exact: true })
+    .click();
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
+  // A pending exact reveal would take focus from the profile dialog below.
+  await expect(detail.locator("[data-message-id]:focus")).toHaveCount(1);
   const row = detail.locator(`[data-message-id="${message.id}"]`);
   const mention = row.getByRole("button", {
     name: "View Fixture Reader profile",
@@ -51,8 +53,16 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   await mention.focus();
   await mention.press("Enter");
   const profile = page.getByRole("dialog", { name: "Profile", exact: true });
+  // The dialog owns entry focus; an earlier Escape would reach Inbox detail.
+  const entered = () =>
+    expect
+      .poll(() =>
+        profile.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
   await expect(profile).toBeVisible();
   await expect(profile).toContainText("Fixture Reader");
+  await entered();
   await page.keyboard.press("Escape");
   await expect(mention).toBeFocused();
   await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");
@@ -61,6 +71,7 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   await page.addStyleTag({ content: "html { font-size: 125%; }" });
   await mention.click();
   await expect(profile).toBeVisible();
+  await entered();
   await page.keyboard.press("Escape");
   await expect(mention).toBeFocused();
   await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");

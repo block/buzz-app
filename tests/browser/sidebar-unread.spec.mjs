@@ -1,7 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test as base, expect } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
 
 // Preserve the failing handoff and capture original-reader delivery on Linux.
@@ -70,6 +70,29 @@ const heads = (app) =>
     ({ filter }) => filter.kinds?.includes(9) && filter["#h"]?.length === 1,
   );
 
+async function establishAlpha(app, alphaHeads) {
+  await expect
+    .poll(() => ({
+      heads: alphaHeads().length,
+      heldRoute: app.relay.hasRoute("primary", "alpha"),
+    }))
+    .toEqual({ heads: 1, heldRoute: true });
+  app.relay.releaseEose("alpha");
+  await expect.poll(() => alphaHeads().length).toBe(2);
+}
+
+async function openAlpha(page, app) {
+  await page.goto(app.origin);
+  await page.getByRole("tab", { name: "Messages", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator("[data-channel-timeline] [data-message-id]").first(),
+  ).toBeVisible();
+  await settle(page);
+}
+
 test("DM hide control removes a row and a new message restores it", async ({
   page,
   app,
@@ -121,6 +144,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   const alphaHeads = () =>
     app.report.queries.filter(
       ({ community, filter }) =>
@@ -142,19 +166,24 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   app.relay.holdEose("alpha");
   app.relay.holdUnread();
   try {
-    await open(page, app);
-    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
-    expect(evidence()[0].filter["#h"]).toContain("alpha");
-    expect(evidence()[0].filter["#h"]).toContain("dm-090");
-    expect(alphaHeads()).toHaveLength(1);
-    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
-
-    // Establish only after unread is in flight; observe the real finite catch-up
-    // before releasing evidence. No sleep or scheduler luck creates the overlap.
-    app.relay.releaseEose("alpha");
-    await expect.poll(() => alphaHeads().length).toBe(2);
-    expect(app.report.unreadHolds).toEqual([{ pending: true, aborted: false }]);
-    app.relay.releaseUnread();
+    // Release on the wire/read boundary: a slow UI can outlive the live
+    // subscriber's setup deadline while the fixture is holding EOSE.
+    await Promise.all([
+      openAlpha(page, app),
+      (async () => {
+        await expect.poll(() => alphaHeads().length).toBe(1);
+        await expect.poll(() => app.report.unreadHolds.length).toBe(1);
+        expect(evidence()[0].filter["#h"]).toContain("alpha");
+        expect(evidence()[0].filter["#h"]).toContain("dm-090");
+        await establishAlpha(app, alphaHeads);
+        expect(app.report.unreadHolds).toEqual([
+          { pending: true, aborted: false },
+        ]);
+        await expect(row(page, "dm-090")).toHaveCount(1);
+        await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+        app.relay.releaseUnread();
+      })(),
+    ]);
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
@@ -183,11 +212,10 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
 }, info) => {
   // This journey measures sidebar intent, never reading the selected channel.
   await holdReadingFocus(page);
-  // Visible rows can precede the post-establishment catch-up. Force that late
-  // ordering, then account for its head read before measuring cue-triggered work.
+  // Hold establishment until the initial head read, then account for its
+  // catch-up before measuring cue-triggered work.
   app.relay.holdEose("alpha");
   try {
-    await open(page, app);
     const alphaHeads = () =>
       heads(app).filter(
         ({ community, filter }) =>
@@ -196,9 +224,7 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
           filter.top_level === true &&
           filter.until === undefined,
       );
-    expect(alphaHeads()).toHaveLength(1);
-    app.relay.releaseEose("alpha");
-    await expect.poll(() => alphaHeads().length).toBe(2);
+    await Promise.all([openAlpha(page, app), establishAlpha(app, alphaHeads)]);
   } finally {
     app.relay.releaseEose("alpha");
   }

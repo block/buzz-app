@@ -6,9 +6,11 @@ import {
   type Delivery,
   type Models,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
+import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
@@ -33,6 +35,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -50,7 +53,7 @@ type Request = {
   model?: string;
   effort?: string;
   /** Called once a final send answers this request, or one steered after it,
-   * or a steering rejection is posted in its place. */
+   * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
@@ -74,8 +77,6 @@ type Active = {
   effort?: string;
   workspace: string;
   signal: AbortSignal;
-  version: number;
-  sentVersion?: number;
   /** Every request this turn has taken in, the first and each steered one. */
   requests: Request[];
   /** Latest acknowledged mention per Buzz thread; independent of session scope. */
@@ -112,8 +113,6 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
-/** Bindings listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -135,11 +134,13 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -150,7 +151,7 @@ export class CodexRuntime {
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
-    const settings = config(agent.config);
+    const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([
       settings.workspace,
       settings.model,
@@ -216,7 +217,7 @@ export class CodexRuntime {
     const code = await process.exited;
     const workspace = directory.trim();
     if (code !== 0 || !absoluteWorkspace(workspace))
-      throw new Error("Could not resolve the default Codex workspace.");
+      throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
@@ -258,10 +259,16 @@ export class CodexRuntime {
       );
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
+          if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
+            .catch((error) =>
+              console.error(
+                "Codex could not clean a stopped agent's terminals",
+                error,
+              ),
+            );
         }
     })();
     this.stopping.set(pubkey, stopped);
@@ -336,7 +343,7 @@ export class CodexRuntime {
     }
     return {};
   }
-  /** The agent's most recently used bindings in this community. */
+  /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const snapshot = this.relay(pubkey)?.snapshot();
     const ready = snapshot?.status === "ready" ? snapshot : undefined;
@@ -367,8 +374,44 @@ export class CodexRuntime {
           return [];
         }
       })
-      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-      .slice(0, CONVERSATION_LIMIT);
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
@@ -419,12 +462,22 @@ export class CodexRuntime {
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = config(delivery.config);
+    const settings = this.resolveConfig(delivery.config);
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
+    const topLevel =
+      trigger.type === "mention" &&
+      (await meChat(
+        () => this.relay(agent.pubkey),
+        agent.owner,
+        channelId,
+        delivery.signal,
+      ));
     const toolRoot =
-      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+      channel?.channelType === "dm" || topLevel
+        ? undefined
+        : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
@@ -448,6 +501,7 @@ export class CodexRuntime {
         channelId,
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
+        ...(topLevel ? { topLevel } : {}),
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
@@ -470,7 +524,7 @@ export class CodexRuntime {
       );
       await this.publish(
         request,
-        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+        "Choose an absolute or ~/… workspace path in Codex settings first.",
       );
       return;
     }
@@ -495,10 +549,13 @@ export class CodexRuntime {
           // Steering cannot carry a model or effort, so a differing pick
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
-          // messages first.
+          // messages first. A turn keeps the posting policy it was admitted
+          // with, so a request under the other policy waits for it too.
           if (
             active.finished ||
             lane.queued ||
+            request.conversation.topLevel !==
+              active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
@@ -523,7 +580,6 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
-          active.version++;
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -554,10 +610,13 @@ export class CodexRuntime {
   }
 
   /** A positive harness response transfers presentation, not execution or
-   * success. Watches have no bubble; mentions in other threads keep theirs. */
+   * success. Watches have no bubble; mentions in other threads keep theirs,
+   * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = rootOf(request.event);
+    const scope = request.conversation.topLevel
+      ? request.conversation.channelId
+      : rootOf(request.event);
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -611,7 +670,9 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ["e", rootOf(request.event), "", "reply"],
+        ...(request.conversation.topLevel
+          ? []
+          : [["e", rootOf(request.event), "", "reply"]]),
         ["p", request.agent.owner],
       ],
     });
@@ -643,7 +704,6 @@ export class CodexRuntime {
     )
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
-    const version = active.version;
     const request = active.reply;
     const answering = [...active.requests];
     const client = appClient(request.agent, {
@@ -652,23 +712,14 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
+        const { entries } = await this.memories(request, active.signal);
+        check();
+        return entries;
+      },
+      remembered: () => {
         const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
-          throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-        const abort = () => view.dispose();
-        active.signal.addEventListener("abort", abort, { once: true });
-        try {
-          await view.refresh();
-          check();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          active.signal.removeEventListener("abort", abort);
-          view.dispose();
-        }
+        if (snapshot?.status === "ready")
+          this.memoryReads.forget(snapshot.session, request.agent.pubkey);
       },
     });
     const reply = await callTool(
@@ -676,13 +727,13 @@ export class CodexRuntime {
       {
         channel: request.conversation.channelId,
         ...(request.toolRoot ? { root: request.toolRoot } : {}),
+        ...(request.conversation.topLevel ? { topLevel: true } : {}),
       },
       call.tool,
       args,
     );
     const final = call.tool === "send" && args.final === true;
     if (final) {
-      active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
     return {
@@ -696,6 +747,39 @@ export class CodexRuntime {
             },
       ],
     };
+  }
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private async memories(request: Request, signal: AbortSignal) {
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+      throw new Error("Buzz is not connected to this community");
+    const { session } = snapshot;
+    const listing = await this.memoryReads.read(
+      session,
+      request.agent.pubkey,
+      signal,
+    );
+    signal.throwIfAborted();
+    const current = this.relay(request.agent.pubkey)?.snapshot();
+    if (
+      current?.status !== "ready" ||
+      current.scope !== request.scope ||
+      current.session !== session
+    )
+      throw new Error("Buzz is not connected to this community");
+    return listing;
+  }
+  /** The agent's `core` memory for a turn: its text, `null` when it has none,
+   * or undefined when it could not be read, so the turn goes on without it. */
+  private async core(request: Request, signal: AbortSignal) {
+    try {
+      return coreOf(await this.memories(request, signal));
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Codex could not read the agent's memory", error);
+      return undefined;
+    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -759,7 +843,6 @@ export class CodexRuntime {
       finished: false,
       workspace: request.settings.workspace,
       signal,
-      version: 0,
       requests: [request],
       activity: new Map(),
     };
@@ -823,7 +906,7 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
-      // The process host expands ~/.buzz and creates it; Codex's RPC needs
+      // The process host expands ~/… and creates the directory; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
@@ -919,7 +1002,10 @@ export class CodexRuntime {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
       });
-      const context = await this.history(request, signal);
+      const [context, memory] = await Promise.all([
+        this.history(request, signal),
+        this.core(request, signal),
+      ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
@@ -932,7 +1018,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team),
+            value: developerInstructions(agent, settings, request.team, memory),
           },
         },
       });
@@ -959,11 +1045,8 @@ export class CodexRuntime {
         );
         this.status(agent.pubkey, key, "Interrupted");
       } else {
-        if (active.sentVersion !== active.version)
-          await this.publish(
-            active.reply,
-            "Codex ended this turn without a final reply through buzz.send. Send another mention to ask it to continue.",
-          );
+        // A turn may end without a reply when there is nothing new to say.
+        for (const taken of active.requests) taken.answered();
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {

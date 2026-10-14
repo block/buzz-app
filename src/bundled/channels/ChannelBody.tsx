@@ -6,6 +6,7 @@ import type { Attachment } from "../../features/relay/contracts";
 import { useChannelWindow } from "../../features/relay/react";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
 
@@ -22,7 +23,9 @@ export const ChannelBody = memo(function ChannelBody({
   onOpenThread,
   onOpenMediaReview,
   navigation,
+  onContentReady,
 }: {
+  onContentReady?(channelId: string): void;
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
@@ -30,7 +33,7 @@ export const ChannelBody = memo(function ChannelBody({
   viewer?: string | undefined;
   channelId: string;
   navigation?: PageNavigation | undefined;
-  onOpenLink(url: string): boolean;
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?:
@@ -52,6 +55,9 @@ export const ChannelBody = memo(function ChannelBody({
   }, [channelId]);
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
+  useEffect(() => {
+    if (newest || settled) onContentReady?.(channelId);
+  }, [channelId, newest, settled, onContentReady]);
   useLayoutEffect(() => {
     // Repeat calls for the same open are ignored; only the first rows count.
     // Any row counts as content, since a saved scroll position may keep the

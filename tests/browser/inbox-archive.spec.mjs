@@ -145,8 +145,13 @@ test("Inbox status choices combine with attention filters and preserve them", as
     name: "Archived",
     exact: true,
   });
-  await expect(archived).toBeVisible();
+  await expect(
+    page.getByRole("menuitemradio", { name: "All", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("End");
+  await expect(
+    page.getByRole("menuitemradio", { name: "Drafts", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(archived).toBeFocused();
   app.append(
@@ -294,7 +299,9 @@ test.describe("DM archive delivery", () => {
     await expect(rows).toHaveCount(1);
     await rows.getByRole("button", { name: /^Open / }).click();
     await expect(
-      inbox.getByText("Earlier DM reply", { exact: true }),
+      inbox
+        .getByRole("complementary", { name: "Thread", exact: true })
+        .getByText("Earlier DM reply", { exact: true }),
     ).toBeVisible();
     await inbox.getByRole("button", { name: "Archive conversation" }).click();
     await expect(rows).toHaveCount(0);
@@ -416,6 +423,9 @@ test("Inbox sending keeps the conversation open until manually archived", async 
   const rows = inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
+  await expect(
+    inbox.getByText("Checking recent activity…", { exact: true }),
+  ).toHaveCount(0);
   await expect(rows).toHaveCount(1);
   await rows.getByRole("button", { name: /^Open / }).click();
   await expect(
@@ -425,6 +435,9 @@ test("Inbox sending keeps the conversation open until manually archived", async 
   await editor.fill("Keep this conversation");
   await inbox.getByRole("button", { name: "Send message" }).click();
   await expect(editor).toHaveText("");
+  await expect(
+    inbox.getByText("Keep this conversation", { exact: true }),
+  ).toBeVisible();
   await expect(rows).toHaveCount(1);
   await expect(editor).toBeVisible();
   await inbox.getByRole("button", { name: "Archive conversation" }).click();

@@ -70,6 +70,7 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/        Agents page and agent types (harness plugins register theirs)
 features/agents/       Agents service: saved agents, creation, deletion
 features/agents/        session-owned agent inventory, choices, local agents and activity
+features/agent-harness/ Buzz base prompt and memory reads shared by harness plugins
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
@@ -110,6 +111,18 @@ plugins do not supply header React or a second navigation stack. Placement is fi
 for a registration's lifetime. An invalid value is dropped with a page-named warning,
 falling back to the sidebar without failing activation. Older hosts ignore placement
 and continue to show primary pages in their sidebar.
+
+Harness plugins register an agent type with `ctx.agents.register`. Per-agent
+configuration belongs in its `tabs`; the Agents host adds Attention. An optional
+`provider` contribution exposes a stable readiness snapshot, subscription,
+read-only `check()` and `DialogBody`. The Agents page supplies the Providers
+health submenu plus provider title, registered icon, modal framing, dismissal,
+focus restoration and error boundary. The plugin body supplies Connection and,
+when supported, explicit-save Defaults sections. It also marks active install or
+authentication work as blocking and supplies its cancellation control. Only
+active registered types appear there; plugin activation remains owned by
+Settings → Plugins. Provider defaults are versioned device preferences, not
+agent-record migrations; blank per-agent values inherit them.
 
 ```ts
 ctx.pages.register({
@@ -268,7 +281,7 @@ session capabilities through injection. Host boundaries isolate rendering errors
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
 The channel template extension point (`ctx.channelTemplates`) was removed with the
-v1 Agents system. The host sidebar owns personal groups and the existing + creation
+v1 Agents system. The host sidebar owns channel groups and the existing + creation
 buttons. Channel templates are now device-local (`buzz.channel-templates.v1`,
 `features/channel-templates/local.ts`): a name, agent pubkeys, Agents team ids
 and a starting Canvas, managed under Settings → Channel templates. Picking one in

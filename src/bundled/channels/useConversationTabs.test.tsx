@@ -450,6 +450,24 @@ it.each([
   },
 );
 
+it("a launcher's tab keeps its channel when another conversation opens its target", () => {
+  const h = launcherHarness();
+  h.toggle("work:a");
+  act(() => {
+    h.workspace().openConversationLink("beta", "work:a", { rootId: "r" });
+  });
+  expect(h.entries()).toHaveLength(1);
+  expect(h.entries()[0]).toMatchObject({
+    channelId: "alpha",
+    channelContext: { channelId: "alpha" },
+  });
+  expect(h.entries()[0]?.rootId).toBeUndefined();
+  expect(h.pressed()).toBe(true);
+  // A later non-append opening keeps the retained tab.
+  act(() => h.workspace().open(undefined));
+  expect(h.entries().map((entry) => entry.target)).toEqual(["work:a"]);
+});
+
 it("a launcher whose target changes replaces its one tab in place", () => {
   const h = launcherHarness();
   h.toggle("work:a");

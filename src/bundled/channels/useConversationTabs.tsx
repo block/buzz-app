@@ -162,14 +162,15 @@ export function useConversationTabs({
           )
         : undefined;
       // A tab retained for its channel stays retained when a link reopens it,
-      // and a channel tool that reopens a link's tab takes it over.
+      // and a channel tool that reopens a link's tab takes it over. A link
+      // from another conversation selects the retained tab unchanged.
       const kept =
-        found?.channelContext && found.channelId === next?.channelId
-          ? found.channelContext
-          : undefined;
+        next && !next.channelContext ? found?.channelContext : undefined;
       const wanted =
-        next && !next.channelContext && kept
-          ? { ...next, channelContext: kept }
+        next && kept
+          ? found?.channelId === next.channelId
+            ? { ...next, channelContext: kept }
+            : found
           : next;
       const existing =
         found && (append || found.channelContext) ? found : undefined;

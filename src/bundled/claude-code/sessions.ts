@@ -17,7 +17,8 @@ import {
 } from "./claude";
 import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 
-/** A conversation's process stops after this long without a message. */
+/** A conversation's process stops after this long without a message or its
+ * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
 /** How long a one-off turn can run before it is given up; Janet's turn
  * deadline. */
@@ -196,7 +197,7 @@ export class AgentSessions {
       live &&
       (!live.process.running ||
         (live.fingerprint !== this.options.fingerprint(key) &&
-          !live.process.busy))
+          !live.process.active))
     ) {
       this.drop(key, live);
       live = undefined;
@@ -300,14 +301,14 @@ export class AgentSessions {
     }
   }
 
-  /** Stops idle processes started with old settings; busy ones stop when they
-   * next fall idle. */
+  /** Stops idle processes started with old settings; active ones stop when
+   * they next fall idle. */
   reconfigure() {
     this.clearDiscovery();
     for (const [key, live] of this.live)
       if (
         live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
+        !live.process.active
       )
         this.drop(key, live);
   }
@@ -349,6 +350,7 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
+    live.process.onQuiet = () => this.quiet(key, live);
     this.live.set(key, live);
     this.touch(key, live, seen);
     this.options.onChange?.();
@@ -366,15 +368,18 @@ export class AgentSessions {
     // Sending made it busy; a snapshot read when it started is not.
     this.options.onChange?.();
     const settled = await sent;
-    if (this.live.get(key) === live) {
-      this.touch(key, live);
-      if (
-        live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
-      )
-        this.drop(key, live);
-    }
+    this.quiet(key, live);
     return settled;
+  }
+  /** Restarts the idle countdown, or stops a process left with old settings. */
+  private quiet(key: string, live: Live) {
+    if (this.live.get(key) !== live) return;
+    this.touch(key, live);
+    if (
+      live.fingerprint !== this.options.fingerprint(key) &&
+      !live.process.active
+    )
+      this.drop(key, live);
   }
   /** Saves the session as used now, when it takes in a message or ends a
    * turn, and restarts its idle countdown. */
@@ -390,12 +395,12 @@ export class AgentSessions {
       at: live.used,
     });
   }
-  /** Stops the process after IDLE_MS, or waits again while it is busy: a
-   * long turn is not new use. */
+  /** Stops the process after IDLE_MS, or waits again while it is active:
+   * a long turn or background work is not new use. */
   private countdown(key: string, live: Live) {
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.process.busy) this.countdown(key, live);
+      if (live.process.active) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
   }

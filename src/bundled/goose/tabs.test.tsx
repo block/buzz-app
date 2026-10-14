@@ -11,12 +11,6 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent } from "../../features/agents/service";
-import { Button } from "../../shared/design-system/ui/Button";
-import {
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
 import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
@@ -85,11 +79,11 @@ function created(
     saved,
     reply: options.reply ?? "OK",
   });
-  const { Create, CreateModelMenu } = createTabs({
+  const { Create, CreateModel } = createTabs({
     setup: options.spawn?.(fake) ?? new GooseSetup(fake.spawn),
     ...unused,
   });
-  if (!CreateModelMenu) throw new Error("no model menu");
+  if (!CreateModel) throw new Error("no model field");
   const changes: Config[] = [];
   function Harness() {
     const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
@@ -100,17 +94,7 @@ function created(
     return (
       <>
         <Create config={config} disabled={false} onChange={onChange} />
-        <MenuRoot>
-          <MenuTrigger render={<Button>Goose</Button>} />
-          <MenuPopup>
-            <CreateModelMenu
-              config={config}
-              disabled={false}
-              onChange={onChange}
-              requestCustomModel={() => {}}
-            />
-          </MenuPopup>
-        </MenuRoot>
+        <CreateModel config={config} disabled={false} onChange={onChange} />
       </>
     );
   }
@@ -124,27 +108,24 @@ async function choose(label: string, option: string) {
   await user.click(await screen.findByRole("option", { name: option }));
 }
 
-/** Opens the provider dialog from the type menu. */
+/** The model field, labeled with goose's default or the agent's choice. */
+const modelButton = () =>
+  screen.getByRole("button", { name: /goose default|Anthropic/ });
+
+/** Opens the provider dialog from the model field. */
 async function openChoices() {
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Goose" }));
-  await user.click(
-    await screen.findByRole("menuitem", {
-      name: /Choose provider and model/,
-    }),
-  );
+  await userEvent.setup().click(modelButton());
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("keeps New agent's card to instructions; goose's default leads the menu", async () => {
+it("keeps New agent's card to instructions; the model field shows goose's default", async () => {
   created();
   expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Goose" }));
-  expect(
-    await screen.findByRole("menuitemradio", {
-      name: /goose default \(Databricks · goose-claude\)/,
-    }),
-  ).toHaveAttribute("aria-checked", "true");
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent(
+      "goose default (Databricks · goose-claude)",
+    ),
+  );
 });
 
 it("chooses a provider in its dialog, saves its key into goose, and tests it", async () => {
@@ -196,12 +177,7 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  await user.click(screen.getByRole("button", { name: "Goose" }));
-  expect(
-    await screen.findByRole("menuitemradio", {
-      name: /Anthropic · claude-opus-5-5/,
-    }),
-  ).toHaveAttribute("aria-checked", "true");
+  expect(modelButton()).toHaveTextContent("Anthropic · claude-opus-5-5");
 });
 
 it("shows what the provider said when the test fails", async () => {

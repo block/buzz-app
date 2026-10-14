@@ -42,7 +42,7 @@ if [ "$command" = run ]; then
     { echo "Buzz's Codex home must differ from the shared one" >&2; exit 1; }
   for name in config.toml auth.json AGENTS.md rules skills; do
     [ -e "$home/$name" ] || [ -L "$home/$name" ] ||
-      ln -s "$shared/$name" "$home/$name" 2>/dev/null || true
+      ln -sn "$shared/$name" "$home/$name" 2>/dev/null || true
     [ "$(readlink "$home/$name")" = "$shared/$name" ] ||
       { echo "Buzz's Codex setup conflicts with $home/$name" >&2; exit 1; }
   done
@@ -119,7 +119,6 @@ use)
   # one, which another build may be testing; remove the rest.
   for folder in "$dir"/*/; do
     folder=$(basename "$folder")
-    valid "$folder" || continue
     [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] ||
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done

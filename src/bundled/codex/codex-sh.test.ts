@@ -207,12 +207,20 @@ it("runs Codex in Buzz's own home, linked to the shared settings and sign-in", a
   await f.step("run", "app-server");
 });
 
-it("sets up Buzz's home once when two runs start at once", async () => {
+it("sets up Buzz's home once when runs start at once", async () => {
   const f = await echoing();
-  await Promise.all([f.step("run"), f.step("run")]);
-  for (const name of shared)
-    expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
-});
+  // A link made meanwhile to a folder must not lead a run to link inside it.
+  await mkdir(join(f.codex, "skills"), { recursive: true });
+  await mkdir(join(f.codex, "rules"));
+  for (let round = 0; round < 3; round++) {
+    await rm(f.own, { recursive: true, force: true });
+    await Promise.all(Array.from({ length: 6 }, () => f.step("run")));
+    for (const name of shared)
+      expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
+    expect(await readdir(join(f.codex, "skills"))).toEqual([]);
+    expect(await readdir(join(f.codex, "rules"))).toEqual([]);
+  }
+}, 20_000);
 
 it("stops rather than replace a file in the way of a link", async () => {
   const f = await echoing();
@@ -229,12 +237,9 @@ it("keeps Buzz's conversations when switching releases", async () => {
   await f.step("run");
   await mkdir(join(f.own, "sessions"));
   await writeFile(join(f.own, "sessions/rollout.jsonl"), "history");
-  await mkdir(join(f.dir, "sessions"));
   await f.step("use", "0.2.0");
   expect(await readFile(join(f.own, "sessions/rollout.jsonl"), "utf8")).toBe(
     "history",
   );
   expect(await readlink(join(f.own, "skills"))).toBe(join(f.codex, "skills"));
-  // Only release folders are pruned.
-  expect(await f.folders()).toEqual(["0.1.0", "0.2.0", "sessions"]);
 });

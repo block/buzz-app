@@ -555,6 +555,25 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
   expect(published).toEqual([]);
 });
 
+it.each([
+  [9_999, 9_999],
+  [10_000, 10_000],
+  [10_001, "More than 10000 to read."],
+])("lists %i channels a page at a time, up to 10000", async (count, listed) => {
+  const channels = Array.from({ length: count }, (_, n) =>
+    event({
+      id: n.toString(16).padStart(64, "0"),
+      kind: 39000,
+      tags: [["d", `room-${n}`]],
+    }),
+  );
+  const listing = callTool(fake(channels).client, {}, "channels", {
+    all: true,
+  }).then((rows) => (rows as string).split("\n").length);
+  if (typeof listed === "number") await expect(listing).resolves.toBe(listed);
+  else await expect(listing).rejects.toThrow(listed);
+});
+
 it("creates a channel from its owner's template, reporting each agent it could not add", async () => {
   const { client, published } = relay({
     [bob]: "policy:owner_only — only the agent owner can add this agent",

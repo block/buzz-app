@@ -602,10 +602,10 @@ class Tools {
         { ...filter, ...cursor, limit: PAGE },
       ]);
       events.push(...page);
+      if (events.length > MAX_EVENTS)
+        throw new Error(`More than ${MAX_EVENTS} to read.`);
       const last = page.at(-1);
       if (!last || page.length < PAGE) return events;
-      if (events.length >= MAX_EVENTS)
-        throw new Error(`More than ${MAX_EVENTS} to read.`);
       // The relay reads newest first, then by id.
       cursor = { until: last.created_at, before_id: last.id };
     }

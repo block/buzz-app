@@ -59,6 +59,8 @@ export function useChannelMenuActions() {
   );
 }
 
+type LifecycleCallbacks = { close(): void; completed(): void };
+
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
   session: RelaySession;
@@ -72,6 +74,7 @@ type State = {
         trigger?: HTMLElement;
         focusFallback?: HTMLElement | undefined;
         origin?: AbortSignal | undefined;
+        callbacks?: LifecycleCallbacks | undefined;
       }
     | undefined;
 };
@@ -102,6 +105,7 @@ type Handoff = State & {
     action: ChannelLifecycleAction,
     trigger?: HTMLElement,
     origin?: AbortSignal,
+    callbacks?: LifecycleCallbacks,
   ): void;
   beginLifecycle(): void;
   closeLifecycle(): void;
@@ -197,7 +201,7 @@ export function ChannelNavigationProvider({
           },
         }));
       },
-      openLifecycle(channel, action, trigger, origin) {
+      openLifecycle(channel, action, trigger, origin, callbacks) {
         update((previous) =>
           origin?.aborted || previous.lifecycleDialog
             ? previous
@@ -206,6 +210,7 @@ export function ChannelNavigationProvider({
                 lifecycleDialog: {
                   channel,
                   action,
+                  callbacks,
                   ...(trigger ? { trigger } : {}),
                   // Settings actions can remount after an archive-state change;
                   // the tab header lives outside the settings aside.
@@ -266,11 +271,15 @@ export function ChannelNavigationProvider({
             lifecycle={connection.session.channelLifecycle}
             onSubmit={value.beginLifecycle}
             close={() => {
-              lifecycleCallbacks.current?.close();
+              (
+                state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
+              )?.close();
               value.closeLifecycle();
             }}
             completed={() => {
-              lifecycleCallbacks.current?.completed();
+              (
+                state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
+              )?.completed();
               value.closeLifecycle();
             }}
             failed={(title, message) => {

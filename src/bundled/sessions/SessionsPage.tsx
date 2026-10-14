@@ -17,7 +17,6 @@ import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
-import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -152,33 +151,25 @@ type Lifecycle = {
   origin?: AbortSignal | undefined;
 };
 
-// Lifecycle actions remove the conversation from Me, so the dialog outlives
-// the view but not the visit that opened it.
+// Confirmations belong to their visit; submitted writes and feedback belong to
+// the session owner, even when Me is no longer mounted.
 function LiveSessions(props: LiveProps) {
-  const { session, scope, navigator } = props;
-  const [lifecycle, setLifecycle] = useState<Lifecycle>();
+  const { scope, navigator } = props;
+  const handoff = useChannelNavigation();
   return (
-    <>
-      <SessionsView {...props} chooseLifecycle={setLifecycle} />
-      {lifecycle && !lifecycle.origin?.aborted && (
-        <ChannelLifecycleDialog
-          channelId={lifecycle.channel.id}
-          channelName={lifecycle.channel.name}
-          action={lifecycle.action}
-          lifecycle={session.channelLifecycle}
-          close={() => {
-            setLifecycle(undefined);
-            if (lifecycle.trigger?.isConnected)
-              lifecycle.trigger.focus({ preventScroll: true });
-          }}
-          completed={() => {
-            setLifecycle(undefined);
-            if (!lifecycle.origin?.aborted)
-              void navigator?.open(meTarget(scope));
-          }}
-        />
-      )}
-    </>
+    <SessionsView
+      {...props}
+      chooseLifecycle={({ channel, action, trigger, origin }) =>
+        handoff?.openLifecycle(channel, action, trigger, origin, {
+          close() {
+            if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+          },
+          completed() {
+            if (!origin?.aborted) void navigator?.open(meTarget(scope));
+          },
+        })
+      }
+    />
   );
 }
 

@@ -655,15 +655,6 @@ export class CodexRuntime {
       agent,
       scope,
     };
-    let finish!: (status: string) => void;
-    let fail!: (error: Error) => void;
-    const completed = new Promise<string>((resolve, reject) => {
-      finish = resolve;
-      fail = reject;
-    });
-    void completed.catch(() => undefined);
-    const abort = () => fail(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
     const deadline = setTimeout(
       () =>
         turnAbort.abort(
@@ -673,27 +664,7 @@ export class CodexRuntime {
         ),
       STANDALONE_DEADLINE_MS,
     );
-    const off = server.rpc.onMessage((wire) => {
-      const p = wire.params as
-        | {
-            threadId?: string;
-            message?: string;
-            turn?: { id: string; status: string; error?: { message: string } };
-          }
-        | undefined;
-      if (wire.method === "connection/closed") {
-        fail(new Error(p?.message ?? "Codex connection closed"));
-        return;
-      }
-      if (!p || !once.threadId || p.threadId !== once.threadId) return;
-      if (wire.method === "turn/started" && p.turn) once.turnId = p.turn.id;
-      if (wire.method === "turn/completed" && p.turn) {
-        once.finished = true;
-        if (p.turn.status === "failed")
-          fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
-        else finish(p.turn.status);
-      }
-    });
+    const followed = follow(server.rpc, signal, once);
     entry.onces.add(once);
     try {
       const rpc = await server.opening;
@@ -731,7 +702,7 @@ export class CodexRuntime {
       );
       once.turnId ??= turnStarted.turn.id;
       this.status(agent.pubkey, key, "Working");
-      const status = await completed;
+      const status = await followed.completed;
       if (status === "interrupted") {
         this.status(agent.pubkey, key, "Interrupted");
         return { ok: false, error: "Codex’s turn was interrupted" };
@@ -752,8 +723,7 @@ export class CodexRuntime {
     } finally {
       once.finished = true;
       clearTimeout(deadline);
-      signal.removeEventListener("abort", abort);
-      off();
+      followed.stop();
       entry.onces.delete(once);
       const { threadId } = once;
       // Nothing resumes the thread, so the shells it left are ended now.
@@ -1075,59 +1045,20 @@ export class CodexRuntime {
     void active.ready.catch(() => undefined);
     lane.active = active;
     const { settings, agent } = request;
-    let finish!: (status: string) => void;
-    let fail!: (error: Error) => void;
-    const completed = new Promise<string>((resolve, reject) => {
-      finish = resolve;
-      fail = reject;
-    });
-    void completed.catch(() => undefined);
-    const abort = () => fail(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    const off = server.rpc.onMessage((wire) => {
-      const p = wire.params as
-        | {
-            threadId?: string;
-            message?: string;
-            turn?: { id: string; status: string; error?: { message: string } };
-            item?: {
-              type: string;
-              text?: string;
-              phase?: string;
-              command?: string;
-              aggregatedOutput?: string;
-            };
-          }
-        | undefined;
-      if (wire.method === "connection/closed") {
-        fail(new Error(p?.message ?? "Codex connection closed"));
-        return;
-      }
-      if (!p || p.threadId !== active.threadId) return;
-      if (wire.method === "turn/started" && p.turn) active.turnId = p.turn.id;
-      const step =
-        wire.method === "item/started" ? codexStep(p.item) : undefined;
+    const followed = follow(server.rpc, signal, active, (method, item) => {
+      const step = method === "item/started" ? codexStep(item) : undefined;
       if (step)
         for (const taken of active.activity.values())
           taken.step?.(step.tool, step.target);
-      if (wire.method === "item/started" && p.item?.command)
-        this.status(agent.pubkey, key, "Working", p.item.command);
-      if (
-        wire.method === "item/completed" &&
-        p.item?.type === "commandExecution"
-      )
+      if (method === "item/started" && item.command)
+        this.status(agent.pubkey, key, "Working", item.command);
+      if (method === "item/completed" && item.type === "commandExecution")
         this.status(
           agent.pubkey,
           key,
           "Working",
-          `${p.item.command ?? ""}\n${p.item.aggregatedOutput ?? ""}`,
+          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
-      if (wire.method === "turn/completed" && p.turn) {
-        active.finished = true;
-        if (p.turn.status === "failed")
-          fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
-        else finish(p.turn.status);
-      }
     });
     try {
       const rpc = await server.opening;
@@ -1205,7 +1136,7 @@ export class CodexRuntime {
       });
       ready();
       this.status(agent.pubkey, key, "Working");
-      const status = await completed;
+      const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted") {
@@ -1251,9 +1182,8 @@ export class CodexRuntime {
     } finally {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");
-      signal.removeEventListener("abort", abort);
+      followed.stop();
       turnAbort.abort(new Error("The Codex turn has ended"));
-      off();
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
       if (active.threadId)
@@ -1263,6 +1193,63 @@ export class CodexRuntime {
       if (lane.active === active) delete lane.active;
     }
   }
+}
+/** A started or completed item, as the app-server reports it. */
+type Item = {
+  type: string;
+  text?: string;
+  phase?: string;
+  command?: string;
+  aggregatedOutput?: string;
+};
+/** Follows `turn`'s thread on `rpc`: notes its turn id, passes its items to
+ * `onItem`, and settles `completed` with the turn's status. Rejects when the
+ * turn fails, `signal` aborts or the connection closes. */
+function follow(
+  rpc: AppServer,
+  signal: AbortSignal,
+  turn: { threadId?: string; turnId?: string; finished: boolean },
+  onItem?: (method: string, item: Item) => void,
+) {
+  let finish!: (status: string) => void;
+  let fail!: (error: Error) => void;
+  const completed = new Promise<string>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  void completed.catch(() => undefined);
+  const abort = () => fail(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  const off = rpc.onMessage((wire) => {
+    const p = wire.params as
+      | {
+          threadId?: string;
+          message?: string;
+          turn?: { id: string; status: string; error?: { message: string } };
+          item?: Item;
+        }
+      | undefined;
+    if (wire.method === "connection/closed") {
+      fail(new Error(p?.message ?? "Codex connection closed"));
+      return;
+    }
+    if (!p || !turn.threadId || p.threadId !== turn.threadId) return;
+    if (wire.method === "turn/started" && p.turn) turn.turnId = p.turn.id;
+    if (p.item && wire.method) onItem?.(wire.method, p.item);
+    if (wire.method === "turn/completed" && p.turn) {
+      turn.finished = true;
+      if (p.turn.status === "failed")
+        fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
+      else finish(p.turn.status);
+    }
+  });
+  return {
+    completed,
+    stop() {
+      signal.removeEventListener("abort", abort);
+      off();
+    },
+  };
 }
 /** The Buzz tools every new thread gets. */
 const DYNAMIC_TOOLS = [

@@ -66,7 +66,11 @@ export function NewSessionComposer({
   const [selectedAgent, setSelectedAgent] = useState(() => {
     const receipt = readPending(scope, draftKey);
     if (receipt?.invitationId) return receipt.agent ?? "";
-    const saved = readView<unknown>(scope, `${draftKey}:new-agent`, "");
+    const saved = readView<unknown>(
+      scope,
+      `${draftKey}:new-agent`,
+      receipt?.agent ?? "",
+    );
     return typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved)
       ? saved
       : "";

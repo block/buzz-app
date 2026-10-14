@@ -1104,11 +1104,13 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
 
 it.each(
   [false, true].flatMap((saved) =>
-    [false, true].map((remount) => ({ saved, remount })),
+    [false, true].flatMap((remount) =>
+      [false, true].map((fromProject) => ({ saved, remount, fromProject })),
+    ),
   ),
 )(
-  "switching projects uses new defaults and clears old settings (saved=$saved, remount=$remount)",
-  async ({ saved, remount }) => {
+  "switching projects uses new defaults and clears old settings (saved=$saved, remount=$remount, fromProject=$fromProject)",
+  async ({ saved, remount, fromProject }) => {
     const f = await projectSetup();
     const user = userEvent.setup();
     const started = vi.fn();
@@ -1118,7 +1120,7 @@ it.each(
         personal
         session={f.session}
         scope="switch-project"
-        sectionId="work"
+        sectionId={fromProject ? "work" : undefined}
         onStarted={started}
       />
     );
@@ -1132,12 +1134,18 @@ it.each(
     };
     if (saved) {
       const canvas = await openSettings();
-      await waitFor(() => expect(canvas).toHaveValue("work instructions"));
+      await waitFor(() =>
+        expect(canvas).toHaveValue(fromProject ? "work instructions" : ""),
+      );
       await user.clear(canvas);
       await user.type(canvas, "Old project override");
       await user.click(screen.getByRole("button", { name: "Save changes" }));
     }
-    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: fromProject ? "Project: Work" : "Project: No project",
+      }),
+    );
     await user.click(
       await screen.findByRole("menuitemradio", { name: /^Other$/ }),
     );
@@ -1205,3 +1213,106 @@ it.each([false, true])(
     mounted.unmount();
   },
 );
+
+it.each([
+  { invited: true, saved: "a".repeat(64), mentioned: false },
+  { invited: true, saved: undefined, mentioned: false },
+  { invited: false, saved: undefined, mentioned: false },
+  { invited: false, saved: "", mentioned: false },
+  { invited: true, saved: undefined, mentioned: true },
+])(
+  "restores receipt routing (invited=$invited, saved=$saved, mentioned=$mentioned)",
+  async ({ invited, saved, mentioned }) => {
+    const f = setup();
+    const started = vi.fn();
+    const id = "22222222-2222-4222-8222-222222222222";
+    const recipient = "b".repeat(64);
+    if (saved !== undefined)
+      writeView("receipt-routing", "me:new-agent", saved);
+    writeView("receipt-routing", "me:pending", {
+      id,
+      text: mentioned ? "@Member agent Continue" : "Continue",
+      ...(mentioned
+        ? {
+            draft: {
+              text: "@Member agent Continue",
+              recipients: [
+                {
+                  pubkey: "a".repeat(64),
+                  name: "Member agent",
+                  start: 0,
+                  end: 13,
+                },
+              ],
+            },
+          }
+        : {}),
+      agent: recipient,
+      creationId: "c".repeat(64),
+      ...(invited ? { invitationId: "e".repeat(64) } : {}),
+    });
+    render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="receipt-routing"
+        onStarted={started}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledWith(id));
+    expect(f.messages.send).toHaveBeenCalledWith(
+      id,
+      mentioned ? "@Member agent Continue" : "Continue",
+      mentioned ? ["a".repeat(64)] : saved === "" ? [] : [recipient],
+    );
+    if (invited || saved === "")
+      expect(f.workSessions.invite).not.toHaveBeenCalled();
+    else expect(f.workSessions.invite).toHaveBeenCalledWith(id, recipient);
+    if (!mentioned && saved !== "")
+      expect(f.workSessions.refresh).toHaveBeenCalledWith(id, {
+        member: recipient,
+      });
+  },
+);
+
+it("allows changing an unavailable assistant before any remote creation", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const choices = f.session.agentChoices.snapshot();
+  vi.spyOn(f.session.agentChoices, "snapshot").mockReturnValue({
+    ...choices,
+    selectable: choices.selectable.filter(
+      (agent) => agent.pubkey === "a".repeat(64),
+    ),
+  });
+  writeView("unavailable-agent", "me:new-agent", "b".repeat(64));
+  writeView("unavailable-agent", "me:new-draft", "Keep my draft");
+  render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="unavailable-agent"
+      onStarted={started}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByText(
+    "Me can only use your available agents. Check mentions and section defaults.",
+  );
+  expect(f.workSessions.create).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Change selected agent" }),
+  );
+  await user.click(screen.getByRole("button", { name: /^Member agent$/ }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.messages.send).toHaveBeenCalledWith(
+    expect.any(String),
+    "Keep my draft",
+    ["a".repeat(64)],
+  );
+});

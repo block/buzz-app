@@ -1462,10 +1462,14 @@ button.mediaPreview {
 .text pre:has(> .codeCopy) code {
   padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
 }
+/* `pre` clips, so a focusable scroller draws its ring inside. */
+html[data-keyboard-navigation] .text pre code:focus-visible {
+  outline-offset: -2px;
+}
 .codeCopy {
   position: absolute;
-  top: var(--space-1h);
-  inset-inline-end: var(--space-1h);
+  top: var(--space-1);
+  inset-inline-end: var(--space-1);
   border-radius: var(--radius-icon-button);
   background: var(--surface-panel);
   user-select: none;

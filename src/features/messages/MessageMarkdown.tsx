@@ -737,7 +737,7 @@ function CopyCodeButton({ code }: { code: string }) {
     <span className={styles.codeCopy}>
       <IconButton
         aria-label="Copy code block"
-        title="Copy code"
+        title="Copy code block"
         disabled={copying}
         focusableWhenDisabled
         icon={<CopyIcon />}

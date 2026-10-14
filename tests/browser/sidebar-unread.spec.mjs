@@ -482,7 +482,10 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await page
       .getByRole("menuitem", { name: "Mark as Read", exact: true })
       .click();
-    await expect(page.getByRole("menu", { name: /Actions for / })).toBeHidden();
+    await expect(
+      page.getByRole("menu", { name: /Actions for / }),
+    ).toHaveAttribute("data-closed", "");
+    await page.clock.runFor(1000);
     await row(page, "alpha").click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Mark as Unread", exact: true })
@@ -500,6 +503,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
         response.ok(),
     );
     release();
+    await page.clock.resume();
     await refreshed;
     await expect(panel).not.toHaveAttribute("aria-busy", "true");
     expect(await list(page).evaluate((element) => element.scrollTop)).toBe(

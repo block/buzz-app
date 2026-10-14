@@ -220,9 +220,11 @@ it("starts an unfiled session from the Sessions heading plus without collapsing 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "New session" }));
   expect(h.onNew).toHaveBeenCalledWith(undefined);
-  expect(
-    screen.queryByRole("button", { name: "New session in Sessions" }),
-  ).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "New session in Sessions" }),
+  );
+  expect(h.onNew).toHaveBeenCalledTimes(2);
+  expect(h.onNew).toHaveBeenLastCalledWith(undefined);
   expect(screen.getByRole("button", { name: "Sessions" })).toHaveAttribute(
     "aria-expanded",
     "true",

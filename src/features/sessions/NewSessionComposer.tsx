@@ -389,16 +389,8 @@ export function NewSessionComposer({
   }
   const composer = (
     <div id="new-session-prompt" ref={prompt}>
-      {selectedProject && (
-        <p className={styles.availability}>
-          New chat in{" "}
-          {(personal ? session.mePreferences : session.sidebarPreferences)
-            .snapshot()
-            .data?.sections.find((section) => section.id === selectedProject)
-            ?.name ?? "this project"}
-        </p>
-      )}
       <MessageComposer
+        chatPresentation={personal}
         personalConversation={personal}
         session={session}
         extensions={extensions}

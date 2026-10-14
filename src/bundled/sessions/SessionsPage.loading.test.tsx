@@ -188,8 +188,9 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   );
   expect(screen.getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-  await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
-  expect(f.refresh).toHaveBeenCalledOnce();
+  // Relay recovery owns retries; this page stays read-only until it settles.
+  expect(screen.queryByRole("button", { name: "Retry Me" })).toBeNull();
+  expect(f.refresh).not.toHaveBeenCalled();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),

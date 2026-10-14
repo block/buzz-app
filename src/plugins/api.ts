@@ -7,6 +7,13 @@ export type PluginManifest = Readonly<{
   id: string;
   name: string;
   apiVersion: 1;
+  description?: string;
+  /** Author-supplied browsing metadata. It never grants host capabilities. */
+  discovery?: Readonly<{
+    /** Stable category slug. Hosts may group unrecognized values under Other. */
+    category?: string;
+    tags?: readonly string[];
+  }>;
   host?: Readonly<{
     commands?: readonly Readonly<{
       id: string;

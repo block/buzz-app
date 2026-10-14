@@ -38,6 +38,7 @@ import {
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
+import { createProfileSearch } from "./profile-search";
 import { createWorkSessions } from "./work-sessions";
 import { inventoryReader } from "../agents/inventory";
 import {
@@ -528,6 +529,20 @@ export function createRelaySession(
         );
   }
   const verified: RelayReader = { read: readVerified };
+  const searchProfiles = createProfileSearch(
+    transport && !options.cachedOnly
+      ? transport.searchProfiles?.bind(transport)
+      : undefined,
+    verified,
+    // Like directory reads, results stay out of the shared profile views:
+    // admitting a search page could evict conversation profiles.
+    () => {
+      const epoch = accessEpoch;
+      const cleared = cacheClearEpoch;
+      return () =>
+        closed || epoch !== accessEpoch || cleared !== cacheClearEpoch;
+    },
+  );
   function accept(
     events: readonly RelayEvent[],
     channelTraffic = true,
@@ -1766,6 +1781,7 @@ export function createRelaySession(
           }
         },
       },
+      searchProfiles,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -1965,6 +1981,8 @@ export function createRelaySession(
     media: (url: string, size?: "small") => transport?.media(url, size),
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
+    /** People by profile name only; see `createProfileSearch`. */
+    searchProfiles,
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const began = revision;
       const epoch = accessEpoch;

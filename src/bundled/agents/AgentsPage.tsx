@@ -235,42 +235,41 @@ export function AgentsPage({
     );
   })();
 
-  const panel =
-    tab !== "yours" ? undefined : selected ? (
-      selected.unfinished || selected.place === "elsewhere" ? (
-        <AgentPeek
-          key={selected.pubkey}
-          agents={agents}
-          agent={selected}
-          type={typeOf(selected)}
-          channels={channels}
-          onClose={() => browse()}
-        />
-      ) : (
-        <AgentDetails
-          messageAction={
-            <AgentMessageButton
-              pubkey={selected.pubkey}
-              relay={relay}
-              navigator={navigator}
-              navigation={navigation}
-            />
-          }
-          key={selected.pubkey}
-          agents={agents}
-          agent={selected}
-          type={typeOf(selected)}
-          types={types}
-          channels={channels}
-          memories={
-            connection.status === "ready"
-              ? connection.session.agentMemories
-              : undefined
-          }
-          onRemoved={() => browse()}
-        />
-      )
-    ) : undefined;
+  const panel = selected ? (
+    selected.unfinished || selected.place === "elsewhere" ? (
+      <AgentPeek
+        key={selected.pubkey}
+        agents={agents}
+        agent={selected}
+        type={typeOf(selected)}
+        channels={channels}
+        onClose={() => browse()}
+      />
+    ) : (
+      <AgentDetails
+        messageAction={
+          <AgentMessageButton
+            pubkey={selected.pubkey}
+            relay={relay}
+            navigator={navigator}
+            navigation={navigation}
+          />
+        }
+        key={selected.pubkey}
+        agents={agents}
+        agent={selected}
+        type={typeOf(selected)}
+        types={types}
+        channels={channels}
+        memories={
+          connection.status === "ready"
+            ? connection.session.agentMemories
+            : undefined
+        }
+        onRemoved={() => browse()}
+      />
+    )
+  ) : undefined;
   const body = (
     <div className={styles.inventory}>
       <div className={styles.content}>
@@ -309,7 +308,7 @@ export function AgentsPage({
         ref={split.ref}
         style={split.style}
         className={styles.browse}
-        data-side={panel ? "" : undefined}
+        data-side={panel && tab === "yours" ? "" : undefined}
       >
         <div className={styles.main}>
           <Panel aria-label="Agents">
@@ -337,7 +336,7 @@ export function AgentsPage({
           </Panel>
         </div>
         {panel && selected && (
-          <aside className={styles.side}>
+          <aside className={styles.side} hidden={tab !== "yours"}>
             {split.handle}
             <Panel aria-label="Agent profile">
               <PanelWorkspace

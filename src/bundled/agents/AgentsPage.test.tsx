@@ -1463,3 +1463,27 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
   );
   expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
 });
+
+it("retains the selected profile draft while viewing teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], { dirtySettings: true });
+  await user.click(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Ada"),
+  );
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.getByText("No teams yet.")).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(field).toBeInTheDocument();
+  expect(field).not.toBeVisible();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  expect(screen.getByRole("textbox", { name: "Reply" })).toBe(field);
+  expect(field).toBeVisible();
+  expect(field).toHaveValue("Unsaved reply");
+  expect(agents.save).not.toHaveBeenCalled();
+});

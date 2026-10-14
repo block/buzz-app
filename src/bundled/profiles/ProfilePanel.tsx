@@ -1,7 +1,3 @@
-import { activityTarget } from "../../features/agents/activity-target";
-import { PanelView } from "../../features/panels/PanelView";
-import { contributionKey } from "../../features/conversation/ContributionBoundary";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import {
   usePanelTabHost,
   usePanelTabTitle,
@@ -27,7 +23,6 @@ import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
 import {
   profileActivityViewKey,
@@ -46,13 +41,12 @@ import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
 import type { Agents } from "../../features/agents/service";
 import { agentSections } from "../../features/agents/tabs";
+import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 
 const noSubscribe = () => () => {};
-const emptyPanels: readonly RegisteredPanel[] = [];
-const noPanels = () => emptyPanels;
+const emptyAgentTypes = Object.freeze([]);
 
 export function ProfilePanel({
-  panels,
   relay,
   target,
   context,
@@ -60,7 +54,6 @@ export function ProfilePanel({
   agents,
   close,
 }: PanelProps & {
-  panels?: Panels;
   relay: RelayData;
   navigation?: Navigation;
   /** Agents show their type's tabs. */
@@ -76,7 +69,6 @@ export function ProfilePanel({
     <ProfileDetails
       key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
       initialTab={activityKey ? "activity" : "info"}
-      panels={panels}
       session={connection.session}
       pubkey={pubkey}
       agentHint={profileAgentHint(target) || !!activityKey}
@@ -90,7 +82,6 @@ export function ProfilePanel({
   );
 }
 function ProfileDetails({
-  panels,
   initialTab,
   agentHint,
   session,
@@ -103,7 +94,6 @@ function ProfileDetails({
   close,
 }: {
   agents: Agents | undefined;
-  panels: Panels | undefined;
   initialTab: "info" | "activity";
   agentHint: boolean;
   session: RelaySession;
@@ -134,36 +124,43 @@ function ProfileDetails({
   >(initialTab);
   // An agent's sections come from its type and the app, not the harness.
   const plugin = useAgent(agents, pubkey);
+  const agentTypes = useSyncExternalStore(
+    agents?.subscribe ?? noSubscribe,
+    agents?.types ?? (() => emptyAgentTypes),
+    () => emptyAgentTypes,
+  );
+  const settings = useAgentSettingsHost({
+    agents,
+    agent: plugin?.agent,
+    type: plugin?.type,
+    types: agentTypes,
+  });
   const channelChoices = useChannelChoices(
     plugin ? session.channels : undefined,
   );
-  const available = useSyncExternalStore(
-    panels?.subscribe ?? noSubscribe,
-    panels?.snapshot ?? noPanels,
-    noPanels,
-  );
   const sections =
-    plugin && agents
-      ? agentSections({ agents, ...plugin, channels: channelChoices })
+    settings.agent && agents
+      ? agentSections({
+          agents,
+          agent: settings.agent,
+          type: settings.type,
+          channels: channelChoices,
+          memories: session.agentMemories,
+          conversation: context && {
+            channelId: context.channelId,
+            ...(context.rootId && { rootId: context.rootId }),
+          },
+          ...(settings.settingsHost
+            ? { settingsHost: settings.settingsHost }
+            : {}),
+        })
       : [];
-  // Opened for activity, a plugin agent shows its type's own first tab (its
-  // sessions) until the reader picks a tab; harness agents keep Activity.
-  const [activityRequested, setActivityRequested] = useState(
-    initialTab === "activity",
-  );
+  // Opened for activity, an agent shows its type's Activity tab (its
+  // sessions), or its first tab when its type has none.
+  const typeActivity = sections.find((item) => item.value === "agent:activity");
   const requestedTab =
-    activityRequested && tab === "activity" && sections[0]
-      ? sections[0].value
-      : tab;
+    tab === "activity" ? ((typeActivity ?? sections[0])?.value ?? "info") : tab;
   const section = sections.find((item) => item.value === requestedTab);
-  const activity = activityTarget(pubkey, context?.channelId);
-  const resolvedActivity = panels?.resolve(activity);
-  const activityPanel =
-    resolvedActivity &&
-    available.includes(resolvedActivity) &&
-    context?.canOpen(activity)
-      ? resolvedActivity
-      : undefined;
   const tabHost = usePanelTabHost();
   const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
@@ -203,15 +200,8 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
-  useEffect(() => {
-    if (!activityPanel && !sections.length)
-      setTab((current) => (current === "activity" ? "info" : current));
-  }, [activityPanel, sections.length]);
   const selectedTab =
-    (requestedTab === "activity" && !activityPanel) ||
-    (requestedTab.startsWith("agent:") && !section)
-      ? "info"
-      : requestedTab;
+    requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -331,31 +321,17 @@ function ProfileDetails({
         </div>
         <Tabs
           value={selectedTab}
-          onValueChange={(value) => {
-            setActivityRequested(false);
-            setTab(value);
-          }}
+          onValueChange={setTab}
           items={[
             { value: "info", label: "Info" },
             ...sections.map(({ value, label }) => ({ value, label })),
             { value: "channels", label: "Channels" },
-            ...(displayAgent && activityPanel
-              ? [{ value: "activity" as const, label: "Activity" }]
-              : []),
           ]}
           label="Profile sections"
           variant="panel"
           renderPanel={(selected) => (
             <div className={styles.tabContent}>
-              {selected === "activity" && activityPanel ? (
-                <PanelView
-                  key={contributionKey(activityPanel)}
-                  panel={activityPanel}
-                  target={activity}
-                  context={context}
-                  close={close}
-                />
-              ) : selected.startsWith("agent:") ? (
+              {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
@@ -383,16 +359,6 @@ function ProfileDetails({
                         onRemoved={close}
                       />
                     </div>
-                  )}
-                  {knownAgent && (
-                    <ProfileActivity
-                      onViewActivity={
-                        activityPanel ? () => setTab("activity") : undefined
-                      }
-                      session={session}
-                      pubkey={pubkey}
-                      context={context}
-                    />
                   )}
                   <div className={styles.publicKey}>
                     <div className={styles.keyHeading}>

@@ -19,7 +19,6 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
-import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -34,7 +33,6 @@ import {
   useEffect,
   useCallback,
   useSyncExternalStore,
-  type FocusEvent,
   type ReactNode,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
@@ -79,6 +77,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 
+export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
@@ -91,7 +90,8 @@ export type MessageRowProps = {
   agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string, size?: "small"): string | undefined;
-  onOpenLink(url: string): boolean;
+  /** Receives the thread the link was opened from: the row's root, or the row. */
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
   /** Pins this row in a virtualized list; returns the release. */
@@ -104,6 +104,7 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  alignViewer?: boolean;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -116,48 +117,6 @@ export type MessageRowProps = {
     hasComments?: boolean,
   ) => void;
 };
-
-// Engines skip horizontal focus scrolling for a target that is already partly
-// visible: Blink sets the partial-visibility behaviour to no-scroll in
-// Element::UpdateSelectionOnFocus, and WebKit keeps its 32px legacy horizontal
-// visibility threshold for focus reveals. Only scrollIntoView() opts out of
-// both, so a thumbnail whose far edge is clipped keeps focus without ever
-// coming fully into view. Reveal it within the strip's scroll-padding.
-//
-// Keyboard focus only. React's onFocus is the bubbling focusin, so it also
-// fires for pointer focus, and Chromium focuses a link on mousedown (WebKit
-// does not): revealing there would slide the strip under a held pointer before
-// mouseup, so the press lands on a neighbour or on padding, and the strip
-// visibly jumps on every click of a clipped tile. DESIGN.md wants pointer
-// focus quiet, so gate on html[data-keyboard-navigation] like the composer and
-// the floating action bar. useKeyboardFocusVisibility sets that attribute in
-// a capturing keydown listener, which runs before Tab's default action moves
-// focus, and clears it on the capturing pointerdown that precedes mousedown,
-// so a Tab reveal still runs and a press never does.
-function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
-  const strip = event.currentTarget;
-  const target = event.target;
-  if (
-    !(target instanceof HTMLElement) ||
-    target === strip ||
-    !document.documentElement.hasAttribute("data-keyboard-navigation")
-  )
-    return;
-  const style = getComputedStyle(strip);
-  const bounds = strip.getBoundingClientRect();
-  const rect = target.getBoundingClientRect();
-  const start =
-    bounds.left +
-    strip.clientLeft +
-    (Number.parseFloat(style.scrollPaddingInlineStart) || 0);
-  const end =
-    bounds.left +
-    strip.clientLeft +
-    strip.clientWidth -
-    (Number.parseFloat(style.scrollPaddingInlineEnd) || 0);
-  if (rect.right > end) strip.scrollLeft += rect.right - end;
-  else if (rect.left < start) strip.scrollLeft -= start - rect.left;
-}
 
 const FullMessageRow = memo(function MessageRow(
   props: MessageRowProps & { shownRow?: ChannelMessage },
@@ -195,6 +154,7 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  alignViewer = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -222,6 +182,11 @@ function MessageRowContent({
     row.threadRootId ?? row.id,
     row.id,
     row.threadRootId,
+  );
+  const rootId = row.threadRootId ?? row.id;
+  const openLink = useCallback(
+    (url: string) => onOpenLink(url, { rootId }),
+    [onOpenLink, rootId],
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -288,16 +253,11 @@ function MessageRowContent({
       profile?.isAgent
     ) &&
     activityView &&
-    canOpenLink?.(activityView) &&
-    canOpenLink(activityTarget(row.authorId, row.channelId));
+    canOpenLink?.(activityView);
   const activityItem = canViewActivity && (
     <MenuItem
       onClick={() => {
-        if (
-          canOpenLink?.(activityView) &&
-          canOpenLink(activityTarget(row.authorId, row.channelId))
-        )
-          onOpenLink(activityView);
+        if (canOpenLink?.(activityView)) onOpenLink(activityView);
       }}
     >
       <MenuIcon>
@@ -401,7 +361,7 @@ function MessageRowContent({
       {action.title}
     </MenuItem>
   ));
-  // Keep mixed attachments in sender order; only adjacent images share a strip.
+  // Preserve attachment order; only adjacent images share a list.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url)) continue;
@@ -443,7 +403,7 @@ function MessageRowContent({
       row={displayRow}
       extensions={extensions}
       media={media}
-      onOpenLink={onOpenLink}
+      onOpenLink={openLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
       largeEmoji={emojiOnly}
@@ -452,7 +412,14 @@ function MessageRowContent({
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
-      <div ref={rowRef} className={styles.message} data-layout={layout}>
+      <div
+        ref={rowRef}
+        className={styles.message}
+        data-layout={layout}
+        data-viewer-message={
+          alignViewer && row.authorId === session?.viewer ? "" : undefined
+        }
+      >
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />
@@ -479,7 +446,7 @@ function MessageRowContent({
             aria-describedby={presence !== "unknown" ? presenceId : undefined}
             onClick={(event) => {
               event.currentTarget.focus();
-              onOpenLink(target);
+              openLink(target);
             }}
             icon={
               <>
@@ -644,7 +611,7 @@ function MessageRowContent({
                   ownerName={workflowOwnerName}
                   signer={row.signerId ?? row.authorId}
                   canOpenLink={canOpenLink}
-                  onOpenLink={onOpenLink}
+                  onOpenLink={openLink}
                 />
               ) : (
                 <strong className={styles.author}>{name}</strong>
@@ -674,7 +641,7 @@ function MessageRowContent({
                 registry={extensions?.links}
                 session={session}
                 scope={scope}
-                onOpenLink={onOpenLink}
+                onOpenLink={openLink}
                 label={
                   row.sentFromThread.excerpt
                     ? `Thread — ${row.sentFromThread.excerpt}`
@@ -719,7 +686,7 @@ function MessageRowContent({
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
-                    onOpenLink={onOpenLink}
+                    onOpenLink={openLink}
                   />
                 );
               if (attachment.kind === "audio") {
@@ -752,7 +719,7 @@ function MessageRowContent({
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
-                    onOpenLink={onOpenLink}
+                    onOpenLink={openLink}
                   />
                 );
               }
@@ -763,7 +730,6 @@ function MessageRowContent({
                     attachment={{ ...attachment, url }}
                     source={source}
                     cached={cached}
-                    thumbnail
                     keepMounted={keepRowMounted}
                     label={
                       group.length > 1
@@ -821,10 +787,9 @@ function MessageRowContent({
               <div className={styles.imageGroup} key={group[0]?.url}>
                 {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
                 <div
-                  className={styles.imageStrip}
+                  className={styles.imageList}
                   role="group"
                   aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
-                  onFocus={revealFocusedThumbnail}
                 >
                   {items}
                 </div>

@@ -231,21 +231,12 @@ export function ChannelActivityPopover({
     startedAt: number;
     messageId?: string;
     label?: string;
-    local?: boolean;
   } | null)[];
-  // Typing alone lists an agent while the Agent Activity plugin is off, when
-  // no activity panel is registered to open.
-  const openAgentActivity = useSyncExternalStore(
-    open && agentIds ? session.agentActivity.subscribe : noSubscribe,
-    () => !!agentIds && session.agentActivity.snapshot().status === "disabled",
-  )
-    ? undefined
-    : onOpenAgentActivity;
   const keyLabels = publicKeyLabels(activeAgents);
   const hasActivity = items.length > 0 || activeAgents.length > 0;
   useEffect(() => {
-    if (!hasActivity) setOpen(false);
-  }, [hasActivity]);
+    if (!hasActivity && open) actions.current?.close();
+  }, [hasActivity, open]);
   const stale = items.length > 0 && snapshot.freshness === "stale";
   // Row actions close through Base UI so its hover/press state resets; the
   // sidebar trigger stays mounted after the navigation they start.
@@ -330,8 +321,7 @@ export function ChannelActivityPopover({
                 {activeAgents.map((agent, index) => {
                   const profile = agentProfiles?.get(agent);
                   const name = profile?.name ?? keyLabels.get(agent) ?? "Agent";
-                  const { messageId, startedAt, label, local } =
-                    details[index] ?? {};
+                  const { messageId, startedAt, label } = details[index] ?? {};
                   return (
                     <AgentActivityRow
                       key={agent}
@@ -353,10 +343,10 @@ export function ChannelActivityPopover({
                         onOpenWorkingAgent?.(channelId, agent, messageId);
                       }}
                       onOpenActivity={
-                        openAgentActivity && !local
+                        onOpenAgentActivity
                           ? () => {
                               close();
-                              openAgentActivity(channelId, agent);
+                              onOpenAgentActivity(channelId, agent);
                             }
                           : undefined
                       }

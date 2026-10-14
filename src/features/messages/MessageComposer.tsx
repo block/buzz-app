@@ -95,6 +95,7 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
+import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
@@ -116,19 +117,21 @@ type AcceptedDraft = {
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
 const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
-type RecoveredSend = { draft: MentionDraft; preparationError?: unknown };
+type RecoveredSend = {
+  draft: MentionDraft;
+  picks?: MentionPicks;
+  preparationError?: unknown;
+};
 const recoveryListeners = new WeakMap<
   RelaySession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
-// Only undelivered preparation failures need replay. The saved draft and
-// attachment store remain the owners of the actual recovered content.
-const missedPreparation = new WeakMap<
-  RelaySession,
-  Map<string, RecoveredSend>
->();
-function takeMissedPreparation(session: RelaySession, key: string) {
-  const byKey = missedPreparation.get(session);
+// A recovery that no mounted composer consumed replays on remount. Only the
+// unpersisted parts need it: the pick snapshot and a preparation failure. The
+// saved draft and attachment store remain the owners of the recovered content.
+const missedRecovery = new WeakMap<RelaySession, Map<string, RecoveredSend>>();
+function takeMissedRecovery(session: RelaySession, key: string) {
+  const byKey = missedRecovery.get(session);
   const recovered = byKey?.get(key);
   byKey?.delete(key);
   return recovered;
@@ -138,16 +141,14 @@ function notifyRecovered(
   key: string,
   recovered: RecoveredSend,
 ) {
-  const listeners = recoveryListeners.get(session)?.get(key);
-  if (recovered.preparationError !== undefined) {
-    let byKey = missedPreparation.get(session);
-    if (!byKey) {
-      byKey = new Map();
-      missedPreparation.set(session, byKey);
-    }
-    byKey.set(key, recovered);
+  let byKey = missedRecovery.get(session);
+  if (!byKey) {
+    byKey = new Map();
+    missedRecovery.set(session, byKey);
   }
-  for (const listener of listeners ?? []) listener(recovered);
+  byKey.set(key, recovered);
+  for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
+    listener(recovered);
 }
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
@@ -196,6 +197,9 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
+  /** Me's explicit default recipient. Authored mentions still take precedence. */
+  selectedAgent?: string | undefined;
+  chatPresentation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -204,7 +208,9 @@ export type MessageComposerProps = {
   onDraftSaved?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
-  onOpenLink?: ((target: string) => boolean) | undefined;
+  onOpenLink?:
+    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
   replyParentId?: string | undefined;
@@ -301,6 +307,8 @@ function Composer({
   submission,
   sessionConversation,
   personalConversation = false,
+  selectedAgent,
+  chatPresentation = false,
   activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
@@ -605,45 +613,63 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
-  const reconcileDraft = useEffectEvent((restored?: MentionDraft) => {
-    if (submission || editing.target || writing.current) return;
-    if (accepted) {
-      // The recovered revision can precede attachment adoption. The explicit
-      // recovery notification below reconciles the mounted owner afterward.
-      if (recoveryFor(session).get(recoveryKey) === accepted) return;
-      const current = viewRevision(scope, draftKey);
-      if (current !== undefined) {
-        setAccepted(undefined);
-        loadSaved(current);
+  // Picks belong to the recovered revision alone. They return whenever the
+  // composer holds it unedited, never to a later edit that keeps a conflict.
+  const reconcileDraft = useEffectEvent(
+    (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
+      if (submission || editing.target || writing.current) return;
+      if (accepted) {
+        // The recovered revision can precede attachment adoption. The explicit
+        // recovery notification below reconciles the mounted owner afterward.
+        if (recoveryFor(session).get(recoveryKey) === accepted) return;
+        const current = viewRevision(scope, draftKey);
+        if (current !== undefined) {
+          setAccepted(undefined);
+          loadSaved(current);
+          if (restored && current === JSON.stringify(restored))
+            setPicks(recoveredPicks ?? {});
+        }
+        return;
       }
-      return;
-    }
-    const current = viewRevision(scope, draftKey);
-    if (current === undefined || current === revision.current) return;
-    // An explicit successful recovery may replace only the cleared follow-up,
-    // never a meaningful unsaved edit. Ordinary external revisions keep their
-    // conflict behavior.
-    if (
-      restored &&
-      current === JSON.stringify(restored) &&
-      !valueRef.current.text.trim() &&
-      !valueRef.current.recipients.length &&
-      !composerMarkdown(valueRef.current).trim() &&
-      !sendAttempt.current
-    )
-      loadSaved(current);
-    else if (dirty.current || sendAttempt.current) setConflict(true);
-    else loadSaved(current);
-  });
+      const current = viewRevision(scope, draftKey);
+      if (current === undefined) return;
+      const recovering = !!restored && current === JSON.stringify(restored);
+      if (current === revision.current) {
+        // The storage listener usually loads the recovered revision before
+        // its notification arrives.
+        if (recovering && !dirty.current) setPicks(recoveredPicks ?? {});
+        return;
+      }
+      // An explicit successful recovery may replace only the cleared follow-up,
+      // never a meaningful unsaved edit. Ordinary external revisions keep their
+      // conflict behavior.
+      if (
+        recovering &&
+        !valueRef.current.text.trim() &&
+        !valueRef.current.recipients.length &&
+        !composerMarkdown(valueRef.current).trim() &&
+        !sendAttempt.current
+      )
+        loadSaved(current);
+      else if (dirty.current || sendAttempt.current) {
+        setConflict(true);
+        return;
+      } else loadSaved(current);
+      if (recovering) setPicks(recoveredPicks ?? {});
+    },
+  );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(scope, () => reconcileDraft());
     // Reconcile changes while message-edit mode or mounting paused this listener.
-    reconcileDraft(deferredRecovery.current?.draft);
+    reconcileDraft(
+      deferredRecovery.current?.draft,
+      deferredRecovery.current?.picks,
+    );
     if (!editingDraft && deferredRecovery.current) {
-      takeMissedPreparation(session, recoveryKey);
+      takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
       deferredRecovery.current = undefined;
     }
@@ -651,9 +677,9 @@ function Composer({
   }, [scope, submission, editingDraft, session, recoveryKey]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
     if (editing.target) deferredRecovery.current = recovered;
-    reconcileDraft(recovered.draft);
+    reconcileDraft(recovered.draft, recovered.picks);
     if (!editing.target) {
-      takeMissedPreparation(session, recoveryKey);
+      takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(recovered.preparationError));
     }
   });
@@ -664,11 +690,11 @@ function Composer({
     // Recovery may have completed between unmount and this subscription. Replay
     // only if its saved caption still owns the draft; never attach an old error
     // to a replacement written while the composer was away.
-    const missed = missedPreparation.get(session)?.get(recoveryKey);
+    const missed = missedRecovery.get(session)?.get(recoveryKey);
     if (missed) {
       if (viewRevision(scope, draftKey) === JSON.stringify(missed.draft))
         receiveRecovery(missed);
-      else takeMissedPreparation(session, recoveryKey);
+      else takeMissedRecovery(session, recoveryKey);
     }
     return stop;
   }, [session, recoveryKey, scope, draftKey]);
@@ -953,10 +979,26 @@ function Composer({
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId &&
     (!personalConversation || session.mePlacement.has(channelId));
-  async function prepareRecipients(explicit: readonly string[]) {
+  async function prepareRecipients(
+    explicit: readonly string[],
+    selected: string | undefined,
+  ) {
     const channel = await session.workSessions.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    if (selected) {
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      if (
+        !session.agentChoices
+          .snapshot()
+          .selectable.some((agent) => agent.pubkey === selected)
+      )
+        throw new Error(
+          "The selected assistant is no longer available. Choose another assistant and retry.",
+        );
+    }
     const recipients = personalConversation
       ? [...explicit]
       : [
@@ -1086,11 +1128,17 @@ function Composer({
       }
       requireCompletedSessionStart();
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      const selected =
+        personalConversation && !captured.recipients.length
+          ? selectedAgent
+          : undefined;
+      let recipients = selected
+        ? [selected]
+        : captured.recipients.map((item) => item.pubkey);
       if (sessionConversation || personalConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        recipients = await prepareRecipients(recipients, selected);
       } else if (recipients.length) {
         const channel = session.channels
           .list()
@@ -1148,7 +1196,7 @@ function Composer({
         session.agentChoices.snapshot(),
       );
       const next = followupDraft(
-        rememberAgentsPreference()
+        !personalConversation && rememberAgentsPreference()
           ? captured.recipients.filter(
               (item) =>
                 agents.has(item.pubkey) &&
@@ -1257,8 +1305,11 @@ function Composer({
               return false;
             if (!target.adopt(files)) return false;
             recoveryFor(session).delete(recoveryKey);
+            // The whole captured pick set returns with the whole draft; the
+            // recipient filter above applies again on the next send.
             notifyRecovered(session, recoveryKey, {
               draft: captured,
+              picks: capturedPicks,
               preparationError,
             });
             return true;
@@ -1381,6 +1432,7 @@ function Composer({
       <form
         ref={form}
         className={styles.composer}
+        data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
         onKeyDown={(event) => {
@@ -1517,6 +1569,11 @@ function Composer({
                     )
               }
               data-single-emoji={largeEmojiDraft || undefined}
+              data-emoji-images-only={
+                (largeEmojiDraft &&
+                  /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
+                undefined
+              }
               // Choosing this conversation's tab resumes typing here.
               data-tab-focus=""
               maxLength={16000}
@@ -1616,76 +1673,89 @@ function Composer({
           )}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
-          {active && (
-            <ComposerFormattingTools
-              disabled={editingDisabled}
-              activeFormats={activeFormats}
-              toggleFormat={(format) => input.current?.toggleFormat(format)}
-              editLink={() => {
-                const edit = input.current?.editLink();
-                if (edit) setLinkEdit(edit);
-              }}
-            >
-              {extensions ? (
-                <ComposerTools
-                  registry={extensions.tools}
-                  capture={voice.begin}
-                  renderLeading={renderLeadingTools}
-                  session={session}
-                  scope={scope}
-                  channelId={channelId}
-                  threadRootId={threadRootId}
-                  disabled={editingDisabled}
-                  inviteAgents={agentChoices && !editing.target}
-                  insertText={(text) => insert(text)}
-                  insertMention={insertMention}
-                  insertMentions={insertMentions}
-                  insertResource={insertResource}
-                  focus={() => input.current?.focus()}
-                />
-              ) : (
-                renderLeadingTools(null)
-              )}
-            </ComposerFormattingTools>
-          )}
-          {active && !editing.target && trailingTool}
-          {active &&
-            !editing.target &&
-            !submission &&
-            !!value.recipients.length && (
-              <ComposerModels
-                pubkeys={value.recipients.map((item) => item.pubkey)}
-                value={picks}
+          <div className={styles.composerToolRow}>
+            {active && (
+              <ComposerFormattingTools
                 disabled={editingDisabled}
-                onChange={setPicks}
-              />
+                singleRow={chatPresentation || !!trailingTool}
+                activeFormats={activeFormats}
+                toggleFormat={(format) => input.current?.toggleFormat(format)}
+                editLink={() => {
+                  const edit = input.current?.editLink();
+                  if (edit) setLinkEdit(edit);
+                }}
+              >
+                {extensions ? (
+                  <ComposerTools
+                    registry={extensions.tools}
+                    capture={voice.begin}
+                    renderLeading={renderLeadingTools}
+                    session={session}
+                    scope={scope}
+                    channelId={channelId}
+                    threadRootId={threadRootId}
+                    disabled={editingDisabled}
+                    inviteAgents={agentChoices && !editing.target}
+                    insertText={(text) => insert(text)}
+                    insertMention={insertMention}
+                    insertMentions={insertMentions}
+                    insertResource={insertResource}
+                    focus={() => input.current?.focus()}
+                  />
+                ) : (
+                  renderLeadingTools(null)
+                )}
+              </ComposerFormattingTools>
             )}
-          <IconButton
-            variant={
-              draft.trim() || attachments.items.length ? "primary" : "ghost"
-            }
-            size="toolbar"
-            type="submit"
-            aria-label={editing.target ? "Save changes" : "Send message"}
-            title={editing.target ? "Save changes" : "Send message"}
-            disabled={
-              disabled ||
-              (!editing.target && (!!accepted || conflict || sendPending)) ||
-              (!!editing.target && (editing.locked || editDisabled)) ||
-              admitting ||
-              sending ||
-              submission?.disabled ||
-              (!editing.target && attachments.blocked) ||
-              (!draft.trim() &&
-                !attachments.items.length &&
-                !(
-                  editing.target &&
-                  requestDeletion &&
-                  session.outbox?.supports(5)
-                ))
-            }
-            icon={<ArrowUpIcon size={16} />}
-          />
+            {active &&
+              !editing.target &&
+              !submission &&
+              (!!value.recipients.length || !!selectedAgent) && (
+                <ComposerModels
+                  pubkeys={
+                    value.recipients.length
+                      ? value.recipients.map((item) => item.pubkey)
+                      : selectedAgent
+                        ? [selectedAgent]
+                        : []
+                  }
+                  value={picks}
+                  disabled={editingDisabled}
+                  onChange={setPicks}
+                />
+              )}
+            <IconButton
+              variant={
+                draft.trim() || attachments.items.length ? "primary" : "ghost"
+              }
+              size="toolbar"
+              type="submit"
+              aria-label={editing.target ? "Save changes" : "Send message"}
+              title={editing.target ? "Save changes" : "Send message"}
+              disabled={
+                disabled ||
+                (!editing.target && (!!accepted || conflict || sendPending)) ||
+                (!!editing.target && (editing.locked || editDisabled)) ||
+                admitting ||
+                sending ||
+                submission?.disabled ||
+                (!editing.target && attachments.blocked) ||
+                (!draft.trim() &&
+                  !attachments.items.length &&
+                  !(
+                    editing.target &&
+                    requestDeletion &&
+                    session.outbox?.supports(5)
+                  ))
+              }
+              icon={<ArrowUpIcon size={16} />}
+            />
+          </div>
+          {active && !editing.target && trailingTool && (
+            <div className={styles.composerConversationControls}>
+              {trailingTool}
+            </div>
+          )}
         </div>
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>

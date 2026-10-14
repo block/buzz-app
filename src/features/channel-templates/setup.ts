@@ -1,12 +1,9 @@
 import type { Outbox, LocalEvents } from "../relay/outbox";
-import type { KitEntry } from "./model";
 import { isDefinitiveCanvasConflict } from "./canvas-conflict";
 export type ChannelSetup = {
   canvas: string;
   agents: string[];
   groupId: string;
-  /** Absent keeps the original personal-group meaning of saved receipts. */
-  groupSource?: "legacy";
   templateId: string;
 };
 export type ChannelCreationInput = Readonly<{
@@ -14,6 +11,8 @@ export type ChannelCreationInput = Readonly<{
   description?: string | undefined;
   visibility: "open" | "private";
   ttlSeconds?: number | undefined;
+  /** NIP-CL labels to create the channel with. */
+  labels?: readonly string[] | undefined;
   setup?: ChannelSetup | undefined;
 }>;
 type Progress = {
@@ -71,7 +70,7 @@ export function createChannelSetup({
   confirm(id: string): Promise<void>;
   refresh(id: string, member: string): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
-  place(id: string, group: string, source?: "legacy"): Promise<void>;
+  place(id: string, group: string): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
   signal: AbortSignal;
   changed(): void;
@@ -274,8 +273,7 @@ export function createChannelSetup({
           const setup = p.input.setup;
           let placementError: unknown;
           try {
-            if (setup?.groupId)
-              await place(p.id, setup.groupId, setup.groupSource);
+            if (setup?.groupId) await place(p.id, setup.groupId);
           } catch (error) {
             placementError = error;
           }
@@ -397,13 +395,4 @@ export function createChannelSetup({
       }
     },
   });
-}
-
-export function personalGroups(entries: readonly KitEntry[]) {
-  return entries.find(
-    (e) =>
-      !e.record.deleted &&
-      e.record.value.type === "groups" &&
-      e.record.value.id === "personal",
-  );
 }

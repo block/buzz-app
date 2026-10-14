@@ -5,8 +5,8 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { RelayEvent } from "../relay/events";
-import { eventDto } from "../relay/events";
+import { channelTemplates } from "../channel-templates/local";
+import { eventDto, type RelayEvent } from "../relay/events";
 import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -86,8 +86,7 @@ function fakeRelay(origin = "https://relay.example.test") {
   const session = {
     archives,
     read: vi.fn(async () => [...listed]),
-    // STOPGAP(agent-local-typing): delete with local-typing.ts.
-    typing: { local: vi.fn() },
+    mePlacement: { snapshot: () => ({ status: "ready" }), has: () => false },
     // The agent is in `channel`; `private` is the owner's alone.
     channels: {
       list: () => ({
@@ -108,6 +107,13 @@ function fakeRelay(origin = "https://relay.example.test") {
       live.add(listener);
       return () => live.delete(listener);
     },
+    publishAgentPresence: vi.fn(
+      async (
+        _: "online" | "offline",
+        __: readonly string[],
+        ___: AbortSignal,
+      ) => true,
+    ),
   } as unknown as RelaySession;
   let snapshot: RelaySnapshot = {
     status: "ready",
@@ -157,6 +163,9 @@ function fakeRelay(origin = "https://relay.example.test") {
     archives,
     listed,
     session,
+    presence: session.publishAgentPresence as ReturnType<
+      typeof vi.fn<RelaySession["publishAgentPresence"]>
+    >,
     origin,
   };
 }
@@ -257,6 +266,9 @@ function fakeNative(identities: AgentIdentity[] = []) {
       const { picture: _, ...identity } = identities[index] as AgentIdentity;
       identities[index] = picture ? { ...identity, picture } : identity;
     }),
+    setType: vi.fn(async (pubkey: string, type: string) => {
+      change(pubkey, { type });
+    }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
       change(pubkey, { deleted: true });
@@ -325,6 +337,24 @@ async function setup({
     title: "Echo",
     timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
+    carry: ({ reply }) => ({ instructions: reply, workspace: "~/echo" }),
+    describeMigration: () => [
+      { id: "model", label: "Model", isOverride: true },
+      { id: "thinking", label: "Thinking", isOverride: true },
+      {
+        id: "sessions",
+        label: "Sessions",
+        isOverride: true,
+        unchangedKey: "channel",
+      },
+      {
+        id: "equivalent",
+        label: "Equivalent setting",
+        isOverride: true,
+        unchangedKey: "same",
+      },
+      { id: "default", label: "Default setting", isOverride: false },
+    ],
     defaults: () => ({
       config: { reply: "ok" },
       attention: {
@@ -375,6 +405,7 @@ async function setup({
     session: fake.session,
     authorize,
     plugin,
+    presence: fake.presence,
     second,
     select: client.select,
     leave: client.leave,
@@ -594,8 +625,9 @@ it("leaves the team section out for an agent on no team", () => {
   ).toBe("");
 });
 
-it("keeps handed-off activity local, without publishing working reactions", async () => {
-  const { service, run, emit, native, relay, activity } = await setup();
+it("keeps handed-off activity local, and pulses typing in the thread until the turn ends", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { service, run, emit, native, activity } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   let finish = () => {};
   const turn = new Promise<void>((resolve) => {
@@ -609,32 +641,55 @@ it("keeps handed-off activity local, without publishing working reactions", asyn
     ],
   });
   emit({ events: [mention], channelId: channel });
-  const typing = relay.snapshot().session.typing.local;
   try {
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(activity.reader.work()[0]?.state).toBe("working");
-    expect(typing).toHaveBeenCalledWith(
-      expect.objectContaining({
-        pubkey: bot,
-        kind: 20002,
-        tags: [
-          ["h", channel],
-          ["e", mention.id, "", "reply"],
-        ],
-      }),
-    );
+    expect(native.publish).toHaveBeenCalledWith(bot, {
+      kind: 20002,
+      content: "",
+      tags: [
+        ["h", channel],
+        ["e", mention.id, "", "reply"],
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await published(native, 20002)).toHaveLength(2);
     expect(await published(native, 7)).toEqual([]);
     finish();
     await vi.waitFor(() =>
-      expect(typing).toHaveBeenCalledWith(expect.objectContaining({ kind: 9 })),
+      expect(activity.reader.work()[0]?.state).toBe("done"),
     );
-    expect(activity.reader.work()[0]?.state).toBe("done");
+    // Pulses stop with the turn.
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(await published(native, 20002)).toHaveLength(2);
     expect(await published(native, 7)).toEqual([]);
     expect(await published(native, 5)).toEqual([]);
   } finally {
     finish();
   }
+});
+
+it("shows no typing for a mention its runtime ignores", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.());
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(await published(native, 20002)).toEqual([]);
 });
 
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
@@ -1062,6 +1117,146 @@ it("accepts relay workflow delegation only from this agent's owner", async () =>
   expect(await fromOwner(prompt, viewer, workflow)).toBe(true);
   expect(await fromOwner(prompt, other, workflow)).toBe(false);
   expect(await fromOwner(prompt, viewer)).toBe(false);
+});
+
+it("changes an agent's type between turns, carrying what the new type adopts", async () => {
+  const { service, native, run, emit, ctx, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const attention = service.find(bot)?.attention;
+  await service.save(bot, { config: { reply: "Triage." } });
+  const other = vi.fn<(delivery: Delivery<{ prompt: string }>) => void>();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string; model: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "", model: "small" } }),
+      adopt: (carry, saved) => ({
+        ...saved,
+        prompt: carry.instructions ?? saved.prompt,
+      }),
+      carry: ({ prompt }) => ({ instructions: prompt }),
+      describeMigration: () => [
+        { id: "model", label: "Model", isOverride: false },
+        {
+          id: "sessions",
+          label: "Sessions",
+          isOverride: false,
+          unchangedKey: "thread",
+        },
+        {
+          id: "equivalent",
+          label: "Equivalent setting",
+          isOverride: false,
+          unchangedKey: "same",
+        },
+        { id: "destination", label: "Destination only", isOverride: false },
+      ],
+      run: other,
+    });
+  // Not while a turn, or the work it handed off, is still going.
+  let finish = () => {};
+  run.mockImplementationOnce(async ({ workingUntil }) =>
+    workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+  );
+  const mention = (id: string) =>
+    event(id, {
+      tags: [
+        ["h", channel],
+        ["p", bot],
+      ],
+    });
+  emit({ events: [mention("m1")], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(service.previewRetype(bot, "other/relay")).toEqual({
+    config: { prompt: "Triage.", model: "small" },
+    moved: ["instructions"],
+    dropped: ["workspace"],
+    settings: [
+      { id: "model", label: "Model", outcome: "reset" },
+      { id: "thinking", label: "Thinking", outcome: "dropped" },
+      { id: "sessions", label: "Sessions", outcome: "reset" },
+    ],
+  });
+  expect(native.setType).not.toHaveBeenCalled();
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "Echo is answering",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  finish();
+  await settle();
+  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
+    throw new Error("QuotaExceededError");
+  });
+  await expect(
+    service.retype(bot, "other/relay", {
+      config: { prompt: "Reviewed target", model: "large" },
+    }),
+  ).rejects.toThrow("QuotaExceededError");
+  expect(native.setType.mock.calls).toEqual([
+    [bot, "other/relay"],
+    [bot, "example/echo"],
+  ]);
+  expect(service.find(bot)).toMatchObject({
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
+  native.setType.mockClear();
+  native.claim.mockResolvedValueOnce(false);
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "device that runs it",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  native.claim.mockRejectedValueOnce(new Error("claim unavailable"));
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "claim unavailable",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  let continueType = () => {};
+  const typeGate = new Promise<void>((resolve) => (continueType = resolve));
+  const persistType = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await typeGate;
+    return persistType?.(...args);
+  });
+  // The workspace has no place in the new type, so it stays behind.
+  const changing = service.retype(bot, "other/relay", {
+    config: { prompt: "Reviewed target", model: "large" },
+  });
+  await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "provider is already changing",
+  );
+  await expect(
+    service.save(bot, { config: { reply: "Lost edit" } }),
+  ).rejects.toThrow("provider is already changing");
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [mention("m2")], channelId: channel });
+  await settle();
+  expect(other).not.toHaveBeenCalled();
+  expect(run).toHaveBeenCalledOnce();
+  continueType();
+  await expect(changing).resolves.toEqual(["workspace"]);
+  expect(native.setType).toHaveBeenCalledWith(bot, "other/relay");
+  expect(service.find(bot)).toMatchObject({
+    type: "other/relay",
+    config: { prompt: "Reviewed target", model: "large" },
+    attention,
+    attentionEnabled: true,
+  });
+  // The new type answers from now on.
+  await vi.waitFor(() => expect(other).toHaveBeenCalledOnce());
+  expect(other.mock.calls[0]?.[0].config).toEqual({
+    prompt: "Reviewed target",
+    model: "large",
+  });
+  expect(run).toHaveBeenCalledOnce();
+  // Its own type, or one not available, changes nothing.
+  expect(await service.retype(bot, "other/relay")).toEqual([]);
+  await expect(service.retype(bot, "missing/type")).rejects.toThrow(
+    "not available",
+  );
+  expect(native.setType).toHaveBeenCalledOnce();
 });
 
 it("sets and clears a picture through native, and publishes it", async () => {
@@ -2570,6 +2765,32 @@ it("projects accepted queued work and keeps working past handover until the plug
   }
 });
 
+it("shows a request whose run failed before handing anything over as failed, with why", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  f.run.mockRejectedValueOnce(new Error("Couldn't read your Me chats"));
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "Couldn't read your Me chats",
+      }),
+    );
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("keeps a handed-off request and its original scope through reconnect, without reviving it from old callbacks", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
@@ -2813,5 +3034,105 @@ it("stops watches and timers while attention is off, keeps every object, and res
     "mention",
     "watch",
     "timer",
+  ]);
+});
+
+/** What each presence call said, as `status:agents`. */
+const said = (presence: { mock: { calls: unknown[][] } }) =>
+  presence.mock.calls.map(
+    ([status, agents]) => `${status}:${(agents as string[]).join(",")}`,
+  );
+
+it("says the agents it runs are online, again every minute and on a new session, and offline once removed", async () => {
+  vi.useFakeTimers();
+  const { service, presence, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(said(presence)).toEqual([`online:${bot}`]);
+  await vi.advanceTimersByTimeAsync(50_000);
+  expect(said(presence)).toEqual([`online:${bot}`]);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(said(presence)).toEqual([`online:${bot}`, `online:${bot}`]);
+  connect(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(said(presence)).toHaveLength(3);
+  await service.remove(bot);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(said(presence).at(-1)).toBe(`offline:${bot}`);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(said(presence)).toHaveLength(4);
+});
+
+it("leaves an agent another copy of the app holds to that copy, and does not say it went offline", async () => {
+  vi.useFakeTimers();
+  const { service, presence, native } = await setup();
+  native.claim.mockResolvedValue(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(said(presence)).toEqual([]);
+  native.claim.mockResolvedValue(true);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(said(presence)).toEqual([`online:${bot}`]);
+  native.claim.mockResolvedValue(false);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(said(presence)).toEqual([`online:${bot}`]);
+});
+
+it("tries a refused presence again after half a minute, not every tick", async () => {
+  vi.useFakeTimers();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { service, presence } = await setup();
+  presence.mockRejectedValueOnce(new Error("rate-limited"));
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(presence).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(presence).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(presence).toHaveBeenCalledTimes(2);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent presence was not sent",
+    expect.any(Error),
+  );
+  warn.mockRestore();
+});
+
+it("stops trying presence on a session that cannot send it", async () => {
+  vi.useFakeTimers();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { service, presence, connect } = await setup();
+  presence.mockResolvedValue(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(presence).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(1);
+  presence.mockResolvedValue(true);
+  connect(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(presence).toHaveBeenCalledTimes(2);
+  warn.mockRestore();
+});
+
+it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  const team = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [sibling],
+  });
+  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
+    {
+      id: "t",
+      name: "Launch",
+      teams: [team.id],
+      agents: [other, bot],
+      canvas: "# Plan",
+    },
+  ]);
+  const { templates } = await handleOf(run, emit);
+  expect(templates()).toEqual([
+    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });

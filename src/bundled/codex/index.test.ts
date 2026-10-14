@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentType } from "../../features/agents/service";
+import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
+import { CodexSetup } from "./setup";
+import { CodexProvider } from "./tabs";
 import { apply } from "./index";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -12,6 +15,7 @@ beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
 });
 afterEach(() => {
+  localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -37,11 +41,20 @@ function applied() {
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
-  expect(applied()).toMatchObject({
+  const check = vi.spyOn(CodexProvider.prototype, "check").mockResolvedValue();
+  const type = applied();
+  expect(check).not.toHaveBeenCalled();
+  expect(type).toMatchObject({
     id: "codex",
     title: "Codex",
     Create: expect.any(Function),
+    icon: CodexLogoIcon,
   });
+  expect(type?.provider).toBeDefined();
+  expect(type?.tabs?.map(({ title, role }) => [title, role])).toEqual([
+    ["Settings", "settings"],
+    ["Activity", "activity"],
+  ]);
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
@@ -51,7 +64,7 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
-it("adopts a brought-over agent's instructions and workspace, nothing else", () => {
+it("adopts and carries an agent's instructions and workspace, nothing else", () => {
   const type = applied();
   const saved = type?.defaults().config;
   expect(
@@ -61,8 +74,48 @@ it("adopts a brought-over agent's instructions and workspace, nothing else", () 
     ...(saved as object),
     workspace: "/work/code",
   });
+  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual({
+    ...(saved as object),
+    workspace: "~/code",
+  });
   // A workspace Codex cannot run in stays the default.
-  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual(saved);
+  expect(type?.adopt?.({ workspace: "code" }, saved)).toEqual(saved);
+  expect(
+    type?.carry?.({ ...(saved as object), model: "gpt", instructions: " " }),
+  ).toEqual({});
+  expect(
+    type?.carry?.({ instructions: "Triage.", workspace: "/work/code" }),
+  ).toEqual({ instructions: "Triage.", workspace: "/work/code" });
+  expect(type?.describeMigration?.(saved)).toEqual([
+    { id: "model", label: "Model", isOverride: false },
+    { id: "thinking", label: "Thinking", isOverride: false },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: false,
+      unchangedKey: "thread",
+    },
+  ]);
+  expect(
+    type?.describeMigration?.({
+      ...(saved as object),
+      model: "gpt-5",
+      effort: "high",
+      scope: "channel",
+    }),
+  ).toEqual([
+    { id: "model", label: "Model", isOverride: true },
+    { id: "thinking", label: "Thinking", isOverride: true },
+    {
+      id: "sessions",
+      label: "Sessions",
+      isOverride: true,
+      unchangedKey: "channel",
+    },
+  ]);
+  expect(type?.migrationWarning).toBe(
+    "Any commands Codex left running will stop.",
+  );
 });
 
 it("stops agents that stop running even when the agent list could not be read", () => {
@@ -89,4 +142,103 @@ it("stops agents that stop running even when the agent list could not be read", 
   state = { ...state, status: "error", agents: [], running: [] };
   notify();
   expect(sync).toHaveBeenLastCalledWith([]);
+});
+
+it("starts the server once Codex is updated and checked, only while a Codex agent runs", async () => {
+  /** What the next update and check leave behind. */
+  let left: { running?: "install"; readiness: string } = { readiness: "ready" };
+  /** Held updates and checks, released in order. */
+  const held: (() => void)[] = [];
+  const hold = (target: object, change: () => object) =>
+    new Promise<void>((resolve) => {
+      held.push(() => {
+        const own = target as { state: object };
+        own.state = { ...own.state, ...change() };
+        resolve();
+      });
+    });
+  const update = vi
+    .spyOn(CodexSetup.prototype, "update")
+    .mockImplementation(function (this: CodexSetup) {
+      return hold(this, () => ({ running: left.running }));
+    });
+  const check = vi
+    .spyOn(CodexProvider.prototype, "check")
+    .mockImplementation(function (this: CodexProvider) {
+      return hold(this, () => ({ readiness: left.readiness }));
+    });
+  const warm = vi
+    .spyOn(CodexRuntime.prototype, "warm")
+    .mockImplementation(() => undefined);
+  vi.spyOn(CodexRuntime.prototype, "sync").mockImplementation(() => undefined);
+  const release = async () => {
+    await vi.waitFor(() => expect(held.length).toBeGreaterThan(0));
+    held.shift()?.();
+  };
+  // Every step is a microtask, so a macrotask has seen the chain through.
+  const settled = () => new Promise((resolve) => setTimeout(resolve));
+  const agent = { pubkey: "agent", type: "buzz.codex/codex" };
+  let state = { status: "ready", agents: [agent], running: [agent] };
+  let notify = () => undefined;
+  const restart = () => {
+    state = { ...state, running: [] };
+    notify();
+    state = { ...state, running: [agent] };
+    notify();
+  };
+  let cleanup: () => void = () => undefined;
+  apply({
+    pluginOwner: { id: "buzz.codex" },
+    host: { spawn: vi.fn(), request: vi.fn() },
+    agents: {
+      register: () => undefined,
+      snapshot: () => state,
+      relay: () => undefined,
+      subscribe: (listener: () => undefined) => {
+        notify = listener;
+        return () => undefined;
+      },
+    },
+    effect: (setup: () => () => void) => {
+      cleanup = setup();
+    },
+  } as never);
+  expect(update).toHaveBeenLastCalledWith(true);
+  await release();
+  // Two first starts of Codex race on its state, so the check goes first.
+  await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
+  await settled();
+  expect(warm).not.toHaveBeenCalled();
+  await release();
+  await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+
+  // An agent that stops meanwhile, a Codex that needs attention, and an
+  // install in progress all leave the start to the mention.
+  restart();
+  state = { ...state, running: [] };
+  notify();
+  await release();
+  await release();
+  await settled();
+  expect(warm, "stopped").toHaveBeenCalledOnce();
+  for (const next of [
+    { readiness: "attention" },
+    { readiness: "ready", running: "install" as const },
+  ]) {
+    left = next;
+    restart();
+    await release();
+    await release();
+    await settled();
+    expect(warm, JSON.stringify(next)).toHaveBeenCalledOnce();
+  }
+  // Nor does a plugin disposed meanwhile start one.
+  left = { readiness: "ready" };
+  restart();
+  await release();
+  cleanup();
+  await release();
+  await settled();
+  expect(update).toHaveBeenCalledTimes(5);
+  expect(warm).toHaveBeenCalledOnce();
 });

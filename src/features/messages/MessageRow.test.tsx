@@ -15,7 +15,6 @@ import {
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
-import { activityTarget } from "../agents/activity-target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
@@ -70,12 +69,47 @@ it.each([false, true])(
       );
       expect(open).toHaveBeenCalledWith(
         profileTarget(authorId, { agent: agentEnvelope }),
+        { rootId: "root" },
       );
     } finally {
       cleanup();
     }
   },
 );
+
+it("tells link handlers the thread a reply was opened from", () => {
+  const open = vi.fn(() => true);
+  const authorId = "ab".repeat(32);
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          authorId,
+          id: "reply",
+          threadRootId: "thread",
+          replyCount: 0,
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `View ${authorId.slice(0, 10)} profile`,
+      }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(authorId), {
+      rootId: "thread",
+    });
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps plain agent presence without avatar activity, and omits human presence from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
@@ -573,9 +607,15 @@ it.each([9, 40002])(
   },
 );
 
-it.each([{ width: 1600, height: 900 }])(
-  "uses fixed thumbnails regardless of image dimensions: %j",
-  (dimensions) => {
+it.each([
+  { dimensions: { width: 1600, height: 900 }, width: "360px" },
+  { dimensions: { width: 200, height: 800 }, width: "80px" },
+  { dimensions: { width: 40, height: 20 }, width: "40px" },
+  { dimensions: { width: 999999, height: 1 }, width: "" },
+  { dimensions: { width: 1, height: 999999 }, width: "" },
+])(
+  "reserves a bounded preview from image dimensions: %j",
+  ({ dimensions, width }) => {
     const html = renderToStaticMarkup(
       <MessageRow
         row={{
@@ -591,8 +631,13 @@ it.each([{ width: 1600, height: 900 }])(
         retry={undefined}
       />,
     );
-    expect(html).toContain('data-thumbnail="true"');
-    expect(html).not.toContain("aspect-ratio:");
+    const preview = new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector<HTMLAnchorElement>("a[data-media-preview]");
+    expect(preview?.style.width).toBe(width);
+    expect(preview?.style.aspectRatio).toBe(
+      width ? `${dimensions.width} / ${dimensions.height}` : "",
+    );
     expect(html).toContain('aria-label="Open image attachment"');
     expect(html).toContain('loading="lazy"');
   },
@@ -640,15 +685,23 @@ it.each([undefined, { width: 640, height: 400 }])(
       );
       expect(placeholder).not.toBeNull();
       expect(placeholder).toBeEmptyDOMElement();
-      expect(placeholder).toHaveAttribute("data-thumbnail", "true");
-      expect(placeholder).not.toHaveAttribute("style"); // Strip CSS owns fixed geometry.
+      if (dimensions)
+        expect(placeholder).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(placeholder).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
-      expect(
-        view.container.querySelector('[class*="attachmentImage"]'),
-      ).toBeNull();
+      const unavailable = screen.getByRole("status");
+      expect(unavailable).toHaveTextContent("Image unavailable");
+      if (dimensions)
+        expect(unavailable).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
     } finally {
@@ -948,7 +1001,7 @@ it.each([9, 40002])(
     if (!resent) throw new Error("missing resent message");
     expect(resent.mentions).toEqual([]);
     expect(messageCopyText(resent, profiles, [])).toBe(content);
-    const open = vi.fn((_target: string) => true);
+    const open = vi.fn((_target: string, _origin?: unknown) => true);
     try {
       renderDom(
         <MessageRow
@@ -971,7 +1024,10 @@ it.each([9, 40002])(
         expect(document.activeElement).toBe(reference);
       });
       expect(open.mock.calls).toEqual(
-        people.map(({ pubkey }) => [profileTarget(pubkey)]),
+        people.map(({ pubkey }) => [
+          profileTarget(pubkey),
+          { rootId: resent.id },
+        ]),
       );
       expect(resent.mentions).toEqual([]);
     } finally {
@@ -1478,7 +1534,7 @@ it("bounds reply participants and projects artwork with fallback initials", () =
 });
 
 it.each([1, 2, 10])(
-  "keeps all %i images reachable in a labelled strip",
+  "keeps all %i images reachable in a labelled list",
   (count) => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -1499,7 +1555,10 @@ it.each([1, 2, 10])(
     expect(html).toContain(
       `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
     );
-    expect(html.match(/data-thumbnail="true"/g)).toHaveLength(count);
+    const document = new DOMParser().parseFromString(html, "text/html");
+    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
+      count,
+    );
     expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
     const text = new DOMParser().parseFromString(html, "text/html").body
       .textContent;
@@ -1688,6 +1747,7 @@ it("opens the exact source thread from a shared message", () => {
     fireEvent.click(screen.getByRole("link", { name: "Thread" }));
     expect(open).toHaveBeenCalledWith(
       `buzz://message?channel=channel&id=${rootId}&thread=${rootId}`,
+      { rootId: "root" },
     );
   } finally {
     cleanup();
@@ -1836,7 +1896,9 @@ it("presents automation, links the owner and discloses the separate relay signer
     fireEvent.click(
       screen.getByRole("button", { name: "View workflow owner Wes profile" }),
     );
-    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId), {
+      rootId: "root",
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Workflow message details" }),
     );
@@ -2174,24 +2236,15 @@ it("keeps an agents message that opens with prose, or is only a mention, as writ
   expect(line("@Rivet")).toBe("Morgarita: @Rivet");
 });
 
-it.each([
-  "available",
-  "human",
-  "activity disabled",
-  "profiles disabled",
-  "retired",
-])(
+it.each(["available", "human", "profiles disabled", "retired"])(
   "message activity action respects exact agent and active destinations: %s",
   async (mode) => {
     const author = "ab".repeat(32);
     let retired = false;
     const target = profileActivityViewTarget(author);
-    const raw = activityTarget(author, row.channelId);
     const open = vi.fn();
     const canOpen = (value: string) =>
-      !retired &&
-      !(mode === "activity disabled" && value === raw) &&
-      !(mode === "profiles disabled" && value === target);
+      !retired && !(mode === "profiles disabled" && value === target);
     try {
       renderDom(
         <MessageRow

@@ -60,9 +60,11 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, and desktop Settings share an animated header toggle; hiding
-  the sidebar preserves its mounted state and saved width. Reduced motion disables
-  the transition. Other desktop pages retain the visible sidebar.
+  Me, Messages, Agents, desktop Settings, and any selected primary page share an
+  animated header toggle; hiding the sidebar preserves its mounted state and saved
+  width. Pages without a Channel or Me-specific label use generic "Hide sidebar" /
+  "Show sidebar" labels. Reduced motion disables the transition. Non-primary
+  desktop destinations retain the visible sidebar.
   The same header keeps history and account/search actions, plus a centered
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise
@@ -298,9 +300,10 @@ The host owns the single rounded outer surface and sidebar divider. Messages
 owns flush conversation and contributed-panel regions separated by one-pixel
 dividers. A single right panel fills the conversation height;
 the right-column grid splits available height evenly between a local link card
-and the launched companion card. Below 1000px
-the right column overlays the conversation; it also overlays when the content
-pane is too narrow for two columns. Below 650px it fills the page area.
+and the launched companion card. The right column stays beside the conversation
+whenever the workspace has room for both, accounting for sidebar width and
+interface size. It overlays when the content pane is too narrow for two columns.
+At 650px and below it fills the page area.
 Each region contains its own overflow, keeping the composer and close control visible.
 Ordinary thread opens show a loading status until bounded history and initial
 bottom positioning finish; the first painted replies are already in place.

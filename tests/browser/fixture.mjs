@@ -33,6 +33,9 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  /** The production broker's live setup deadline. It runs in Node, so the
+   * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
+  liveSetupTimeoutMs: [undefined, { option: true }],
   archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
@@ -51,7 +54,6 @@ export const test = base.extend({
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
-  personalSidebar: [false, { option: true }],
   meChannels: [[], { option: true }],
   meAgentNames: [[], { option: true }],
   meOutsideAgentNames: [[], { option: true }],
@@ -91,6 +93,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      liveSetupTimeoutMs,
       archiveOnDisk,
       actionProfile,
       agentMessageDeletion,
@@ -109,7 +112,6 @@ export const test = base.extend({
       sessionParents,
       sidebarUnread,
       savedSidebar,
-      personalSidebar,
       meChannels,
       meAgentNames,
       meOutsideAgentNames,
@@ -206,8 +208,10 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const meAgentKeys = [];
     const meAgents = [...meAgentNames, ...meOutsideAgentNames].map((name) => {
       const key = generateSecretKey();
+      meAgentKeys.push(key);
       const pubkey = getPublicKey(key);
       servedProfiles.set(
         pubkey,
@@ -269,7 +273,6 @@ export const test = base.extend({
           : inboxDm || inboxDmOldAnchor
             ? ["dm-peer"]
             : [];
-    const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
@@ -292,7 +295,6 @@ export const test = base.extend({
     const rosterIds = [
       ...new Set([
         ...channels,
-        ...(personalSidebar ? [personalChannel] : []),
         ...dmIds,
         ...sortingIds,
         ...lifecycleRows.map((row) => row.id),
@@ -351,44 +353,6 @@ export const test = base.extend({
         }
       }
     }
-    if (personalSidebar) {
-      for (const community of ["primary", "secondary"]) {
-        const scope = JSON.parse(fixtureAliases)[community];
-        const coordinate = `buzz-channel-kit-v1:${encodeURIComponent(scope)}:groups:personal`;
-        const record = {
-          version: 1,
-          community: scope,
-          deleted: false,
-          value: {
-            type: "groups",
-            id: "personal",
-            groups: [
-              {
-                id: "personal-work",
-                name: "Personal work",
-                defaultTemplateId: "template",
-              },
-            ],
-            assignments: { [personalChannel]: "personal-work" },
-          },
-        };
-        readEvents.get(community).set(
-          coordinate,
-          sign(
-            30078,
-            [
-              ["d", coordinate],
-              ["t", "buzz-channel-kit-v1"],
-            ],
-            nip44.v2.encrypt(
-              JSON.stringify(record),
-              nip44.v2.utils.getConversationKey(userKey, viewer),
-            ),
-            userKey,
-          ),
-        );
-      }
-    }
     if (meChannels.length) {
       if (!productionBroker)
         throw new Error("Me placement fixtures require the production decoder");
@@ -434,9 +398,6 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const parent of Object.values(sessionParents))
         histories.set(`${community}/${parent}`, []);
-    if (personalSidebar)
-      for (const community of ["primary", "secondary"])
-        histories.set(`${community}/${personalChannel}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -894,7 +855,7 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
-      if ((personalSidebar || meChannels.length > 0) && filter.ids)
+      if (meChannels.length > 0 && filter.ids)
         return [...readEvents.get(community).values()].filter((event) =>
           filter.ids.includes(event.id),
         );
@@ -1698,18 +1659,14 @@ export const test = base.extend({
           "channel-stars",
           "channel-sort",
         ].includes(sidebarCoordinate) ||
-        (personalSidebar &&
-          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:")) ||
         (meChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
       ) {
         expect(event.tags).toContainEqual([
           "t",
-          sidebarCoordinate.startsWith("buzz-channel-kit-v1:")
-            ? "buzz-channel-kit-v1"
-            : sidebarCoordinate.startsWith("buzz-me-kit-v1:")
-              ? "buzz-me-kit-v1"
-              : sidebarCoordinate,
+          sidebarCoordinate.startsWith("buzz-me-kit-v1:")
+            ? "buzz-me-kit-v1"
+            : sidebarCoordinate,
         ]);
         const blob = JSON.parse(
           nip44.v2.decrypt(
@@ -2051,6 +2008,7 @@ export const test = base.extend({
                       }),
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
+                  liveSetupTimeoutMs,
                 });
                 await broker.configureServer(server);
               } else server.middlewares.use(middleware);
@@ -2255,6 +2213,22 @@ export const test = base.extend({
         },
         participants,
         meAgents,
+        meAgentMessage(channelId, content) {
+          const agent = meAgents[0];
+          expect(agent).toBeTruthy();
+          const history = histories.get(`primary/${channelId}`);
+          expect(history).toBeTruthy();
+          const event = sign(
+            9,
+            [["h", channelId]],
+            content,
+            meAgentKeys[0],
+            (history.at(-1)?.created_at ?? 1700000100) + 1,
+          );
+          history.push(event);
+          relay.publish("primary", event);
+          return event;
+        },
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {
@@ -2491,7 +2465,11 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
-      const githubFailures = [...(report.githubFailures ?? [])];
+      // Edge 403 pages (e.g. a VPN reconnecting) injected on relay reads.
+      const githubFailures = [
+        ...(report.githubFailures ?? []),
+        ...(report.relayFailures ?? []),
+      ];
       const injectedGitHubFailure = (message, index) => {
         if (
           !/^Failed to load resource: the server responded with a status of 403/.test(

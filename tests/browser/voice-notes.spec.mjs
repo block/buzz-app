@@ -18,6 +18,9 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await server?.close();
 });
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "wait" });
+});
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/relay/media?*", async (route) => {
     const url = new URL(route.request().url()).searchParams.get("url");
@@ -98,6 +101,13 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
+});
+// WebKit defers voice-card media reads until the first click and keeps issuing
+// them until the page closes, so a test that ends just after a click can close
+// the page under a media route still reading bytes from it. Those reads serve
+// no assertion once the test has finished.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 async function record(page) {
   await page
@@ -392,6 +402,11 @@ test("rejects a full attachment draft before opening the microphone", async ({
       buffer: Buffer.from("test"),
     })),
   );
+  // The attachment rows grow as the draft settles, moving the toolbar under a
+  // pointer aimed at its earlier position. Click once every file is Ready.
+  await expect(
+    page.getByRole("status").filter({ hasText: /· Ready$/ }),
+  ).toHaveCount(10);
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();

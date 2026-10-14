@@ -61,7 +61,9 @@ const watchPickerLayout = (picker) =>
     };
     sample();
     return {
-      stop() {
+      async stop() {
+        // DOM assertions can finish before the next browser frame is sampled.
+        await new Promise(requestAnimationFrame);
         cancelAnimationFrame(frame);
         return frames;
       },

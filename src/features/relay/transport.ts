@@ -183,10 +183,16 @@ export function mediaUrl(
 ): string | undefined {
   if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
+    // Desktop appends `#buzz-anim=<url>` to animated avatars. A fragment never
+    // reaches the relay, and both media proxies reject it, so load the still.
+    const still = url.split("#", 1)[0] ?? url;
     const media =
       size === "small"
-        ? url.replace(/\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/, "/$1.thumb.jpg")
-        : url;
+        ? still.replace(
+            /\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/,
+            "/$1.thumb.jpg",
+          )
+        : still;
     return relayProxy?.(media);
   }
   return /^https:\/\//.test(url) ? url : undefined;

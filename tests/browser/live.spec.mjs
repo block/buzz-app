@@ -1,4 +1,3 @@
-import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
   open,
@@ -27,14 +26,6 @@ const heads = (app, channel) =>
       filter.top_level === true &&
       filter.until === undefined,
   );
-/** Cross a quota cooldown in controlled time. The app starts its own deadline
- * when it consumes the refusal, which precedes the visible error and ignored
- * clicks; advancing the page clock by the full delay from here passes it. The
- * broker's lane uses real time, so also wait for its exact reopening. */
-async function crossCooldown(page, app) {
-  await page.clock.runFor(app.relay.rejected[0].retryAfterMs);
-  await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
-}
 /** Cross a quota cooldown in real time, for a page whose timeline must keep
  * the browser's own clock. The app arms its deadline when it consumes the
  * refusal, after the broker paused its lane and the fixture stamped the
@@ -244,9 +235,10 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   });
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
-  await page.clock.install();
+  // Exact cooldown boundaries live in live-demand.test.ts. Startup presence
+  // needs its real timer here before we record the healthy subscriptions.
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await page.getByRole("tab", { name: "Messages", exact: true }).click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
     page
@@ -289,10 +281,6 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   const rosters = () =>
     app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
   const calls = rosters().length;
-  await retry(page).click();
-  await retry(page).click();
-  expect(rosters()).toHaveLength(calls);
-  await crossCooldown(page, app);
   const previousGeneration = displayGeneration;
   const observerUpdated = page.waitForResponse(
     (response) =>
@@ -300,7 +288,7 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
       response.ok() &&
       response.request().postDataJSON().observer > previousGeneration,
   );
-  await retry(page).click();
+  await retryAfterCooldown(page, app, () => rosters().length > calls);
   await expect(
     page.getByText("No channels yet.", { exact: true }),
   ).toBeVisible();

@@ -61,7 +61,7 @@ export function useMessageReveal({
         inline: "nearest",
         behavior: "instant",
       });
-      settled.current = true;
+      settled.current = false;
       // A replacement may recover lost focus, but must not take it from another
       // control after this request already focused a row successfully.
       let focusPending = false;
@@ -76,20 +76,42 @@ export function useMessageReveal({
         focusPending = document.activeElement !== row;
         if (!focusPending) focused.current = { signal, row };
       }
+      const positionedBox = row.getBoundingClientRect();
+      const positionedViewport = container.getBoundingClientRect();
+      const positionedWindowHeight = window.innerHeight;
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
           return;
         const box = row.getBoundingClientRect();
         const viewport = container.getBoundingClientRect();
+        const viewportTop = Math.max(viewport.top, 0);
+        const viewportBottom = Math.min(viewport.bottom, window.innerHeight);
+        // A divider alone can intersect before the message is readable. Rows
+        // that fit need full height; taller rows need the available viewport.
         const visible =
+          viewportBottom > viewportTop &&
           box.height > 0 &&
           box.width > 0 &&
-          box.bottom > Math.max(viewport.top, 0) &&
-          box.top < Math.min(viewport.bottom, window.innerHeight) &&
+          Math.min(box.bottom, viewportBottom) -
+            Math.max(box.top, viewportTop) >=
+            Math.min(box.height, viewportBottom - viewportTop) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if ((focus && (focusPending || row.closest("[inert]"))) || !visible)
+        if (focus && (focusPending || row.closest("[inert]"))) return;
+        if (!visible) {
+          // A late correction can follow native positioning without a DOM
+          // mutation. Reposition on measured progress, never retry a stuck row.
+          if (
+            box.top !== positionedBox.top ||
+            box.bottom !== positionedBox.bottom ||
+            viewport.top !== positionedViewport.top ||
+            viewport.bottom !== positionedViewport.bottom ||
+            window.innerHeight !== positionedWindowHeight
+          )
+            schedule();
           return;
+        }
+        settled.current = true;
         revealed.current = signal;
         cancel();
         readingPositioned(container);

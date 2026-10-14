@@ -111,6 +111,81 @@ it("notifies reading after the revealed row is verified", async () => {
   expect(complete).toHaveBeenCalledOnce();
 });
 
+it.each([
+  [100, 100],
+  [200, 100],
+  [100, 200],
+])(
+  "waits for readable positioning of a %sx%s target",
+  async (height, width) => {
+    const { row, complete } = mount();
+    const bounds = row.getBoundingClientRect();
+    const positioned = vi.fn();
+    row.parentElement?.addEventListener("reading-positioned", positioned);
+    const clipped = vi
+      .fn(() => bounds)
+      .mockReturnValue({
+        ...bounds,
+        bottom: height,
+        right: width,
+        height,
+        width,
+      });
+    row.getBoundingClientRect = clipped;
+    await frame();
+    await frame();
+    // Native positioning runs before the virtualizer's late correction.
+    clipped.mockReturnValue({
+      ...bounds,
+      top: 80,
+      bottom: 80 + height,
+      right: width,
+      height,
+      width,
+    });
+    await frame();
+    expect(complete).not.toHaveBeenCalled();
+    expect(positioned).not.toHaveBeenCalled();
+    // A virtualizer correction need not mutate a row after its height commit.
+    clipped.mockReturnValue({
+      ...bounds,
+      bottom: height,
+      right: width,
+      height,
+      width,
+    });
+    await frame();
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(positioned).toHaveBeenCalledOnce();
+  },
+);
+
+it("waits for layout progress when native positioning cannot expose the target", async () => {
+  const { row, complete, request } = mount();
+  const bounds = row.getBoundingClientRect();
+  const clipped = vi
+    .fn(() => bounds)
+    .mockReturnValue({
+      ...bounds,
+      top: 80,
+      bottom: 180,
+    });
+  row.getBoundingClientRect = clipped;
+  await frame();
+  await frame();
+  await frame();
+  expect(complete).not.toHaveBeenCalled();
+  expect(frames.size).toBe(0);
+  clipped.mockReturnValue(bounds);
+  await mutate(row);
+  await frame();
+  request.abort();
+  await frame();
+  expect(complete).not.toHaveBeenCalled();
+  expect(frames.size).toBe(0);
+});
+
 it.each([false, true])(
   "preserves moved focus before verification (mutation: %s)",
   async (mutation) => {

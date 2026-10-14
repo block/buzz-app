@@ -383,6 +383,7 @@ for (const kind of ["mention", "thread reply"]) {
         page.evaluate(() => window.fixtureNavigation.snapshot().status),
       )
       .toBe("opened");
+    await expect(row).toBeInViewport({ ratio: 1 });
     app.report.measurements.push({
       mode: `live ${kind} click to exact conversation row`,
       clickToOpenedMs: performance.now() - start,

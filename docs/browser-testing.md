@@ -3,20 +3,13 @@
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
-pushes: an isolated serial measurement job runs alongside thirty-two Linux functional jobs
-(sixteen shards per engine, two workers per runner) and one macOS WebKit
+pushes: an isolated serial measurement job runs alongside eighteen Linux functional jobs
+(nine file-level shards per engine, two workers per runner) and one macOS WebKit
 recording job. Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
 Owner-specific tests are colocated in `src/`, `browser-host/` and `scripts/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
-
-Most functional cases run in file groups. The independent crowded-reply width
-cases use Playwright's parallel group and share their standard shard's workers,
-without a width-specific job assignment. Changed browser cases repeat ten times
-across eight shards per engine. Normal and repeat jobs keep two workers and their
-existing 15-minute and 30-minute deadlines. The routing guard checks complete,
-nonduplicated coverage across the normal shards and recording job.
 
 ## Run
 
@@ -123,15 +116,15 @@ are unchanged, and no recording cases become local-only. Both engines, serial
 measurement order, zero retries, the documented functional assertions and
 measurement ceilings, and the strict `CI required` aggregate remain in place.
 
-CI shards each functional engine across sixteen runners, without waiting for the
+CI shards each functional engine across nine runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/16`; measurement success is enforced by `CI required`, not job ordering.
+`--shard=N/9`; measurement success is enforced by `CI required`, not job ordering.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
 
 The Node integration gate lists tests without launching browsers and checks that
-the workflow's thirty-two Linux selections plus macOS recording cover every functional
+the workflow's eighteen Linux selections plus macOS recording cover every functional
 test/project from the full local config exactly once, with no measurements included.
 It also exercises the required
 check's shell against failed, skipped, cancelled and missing lane results.

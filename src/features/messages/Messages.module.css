@@ -616,11 +616,25 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-1h);
 }
 .dayCalendar {
-  display: block;
+  display: grid;
   flex: none;
   width: var(--space-5);
   height: var(--space-5);
   user-select: none;
+}
+.dayCalendar > * {
+  grid-area: 1 / 1;
+}
+.dayCalendar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* Matches the former SVG numeral: half the tile, centred below the red band. */
+.dayCalendar [data-calendar-date] {
+  place-self: center;
+  padding-top: calc(var(--space-5) * 7 / 24);
+  line-height: 1;
 }
 .threadUnread {
   width: 0.5rem;

@@ -48,6 +48,7 @@ function setup() {
   };
 }
 it("Retry live updates recovers roster catch-up refused after globals established", async () => {
+  const now = vi.spyOn(performance, "now").mockReturnValue(1000);
   const h = setup();
   try {
     h.connected();
@@ -67,12 +68,13 @@ it("Retry live updates recovers roster catch-up refused after globals establishe
       state: "error",
       error: "Relay requests paused",
     });
+    now.mockReturnValue(60999);
     h.owner.session.live.retry();
     h.owner.session.channels.refreshList?.();
     h.owner.session.channels.ensureList();
     await flush();
     expect(h.wire.pending).toHaveLength(0);
-    vi.spyOn(performance, "now").mockReturnValue(performance.now() + 61000);
+    now.mockReturnValue(61000);
     h.owner.session.live.retry();
     await flush();
     expect(h.wire.pending).toHaveLength(1);

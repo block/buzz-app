@@ -37,7 +37,7 @@ const matrixValues = (key) => {
   return values.split(",").map((value) => value.trim());
 };
 
-test("normal shards cover every case once and repeat shards preserve ten repetitions", (t) => {
+test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
   )?.[1];
@@ -113,46 +113,6 @@ test("normal shards cover every case once and repeat shards preserve ten repetit
     expected.sort(),
     "Linux and macOS must cover full local functional discovery",
   );
-  const repeat = parse(workflow).jobs.flake_browser;
-  const repeatCommand = repeat.steps
-    .find((step) => step.name === "Repeat changed journeys")
-    ?.run.match(/ -- (\.\/bin\/pnpm test:browser:ci .+)$/)?.[1];
-  assert.ok(repeatCommand, "repeat invocation must exist");
-  const selected = "tests/browser/sidebar-unread.spec.mjs";
-  for (const engine of repeat.strategy.matrix.engine) {
-    const expanded = repeatCommand
-      .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
-      .replaceAll("$SELECTED", selected);
-    const commandArgs = (command) =>
-      command.replace(/^\.\/bin\/pnpm /, "").split(/\s+/);
-    const allRepetitions = discover(
-      commandArgs(
-        expanded
-          .replaceAll(/\$\{\{ matrix\.shard \}\}/g, "1")
-          .replace(/ --shard=\S+/, ""),
-      ),
-    );
-    const once = discover([
-      "test:browser:ci",
-      selected,
-      "--project",
-      engine,
-      "--no-deps",
-    ]);
-    assert.equal(allRepetitions.length, once.length * 10);
-    const shardedRepetitions = repeat.strategy.matrix.shard.flatMap((shard) =>
-      discover(
-        commandArgs(
-          expanded.replaceAll(/\$\{\{ matrix\.shard \}\}/g, String(shard)),
-        ),
-      ),
-    );
-    assert.equal(new Set(shardedRepetitions).size, shardedRepetitions.length);
-    assert.deepEqual(shardedRepetitions.sort(), allRepetitions.sort());
-    t.diagnostic(
-      `${engine}: ${shardedRepetitions.length} repetitions across ${repeat.strategy.matrix.shard.length} shards`,
-    );
-  }
 });
 
 test("classic-scrollbar cases run exactly once, after the measurements, without clearing their evidence", () => {

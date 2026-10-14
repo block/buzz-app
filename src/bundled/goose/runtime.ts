@@ -29,7 +29,7 @@ import {
   turnPrompt,
   watchPrompt,
 } from "../claude-code/prompt";
-import type { Settled, Spawn, ToolServer } from "./goose";
+import type { ServeMcp, Settled, Spawn, ToolServer } from "./goose";
 import { AgentSessions } from "./sessions";
 
 export type Config = Readonly<{
@@ -122,6 +122,11 @@ export class GooseRuntime {
     const spawn = this.host.spawn?.bind(this.host);
     if (!spawn) throw new Error("goose agents run only in the desktop app");
     return spawn;
+  }
+  private get serve(): ServeMcp {
+    const serve = this.host.serveMcp?.bind(this.host);
+    if (!serve) throw new Error("goose agents run only in the desktop app");
+    return serve;
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
@@ -532,6 +537,7 @@ export class GooseRuntime {
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       tools,
+      serve: (handler) => this.serve(handler),
       onChange: () => this.notify(),
       processFingerprint: () =>
         JSON.stringify([

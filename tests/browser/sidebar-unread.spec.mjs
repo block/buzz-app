@@ -457,6 +457,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
   });
   await holdReadingFocus(page);
   try {
+    await page.clock.install();
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
     await page
@@ -475,6 +476,8 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toHaveCount(0);
+    // Hold the request's deadline while exercising delayed preference completion.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now()));
     await row(page, "alpha").click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Mark as Read", exact: true })

@@ -194,6 +194,7 @@ export function NewSessionComposer({
           current.id,
           [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
           parent?.id,
+          personal,
         );
         save({ ...current });
       }

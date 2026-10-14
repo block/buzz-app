@@ -218,6 +218,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     ),
     "Fresh start",
     undefined,
+    false,
   );
 });
 
@@ -802,6 +803,12 @@ it("retries Me placement on the same created channel before sending, including a
   expect(f.messages.send).not.toHaveBeenCalled();
   const id = f.workSessions.create.mock.calls[0]?.[0];
   if (!id) throw new Error("Missing creation");
+  expect(f.workSessions.create).toHaveBeenCalledWith(
+    id,
+    "Private thought",
+    undefined,
+    true,
+  );
   view.unmount();
   render(
     <NewSessionComposer

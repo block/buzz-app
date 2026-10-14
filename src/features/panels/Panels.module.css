@@ -265,20 +265,6 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
     transform: translateX(-20%);
   }
 }
-html[data-keyboard-input] .workspacePane {
-  animation: none;
-}
-html[data-keyboard-input] .workspacePane[data-leaving][data-covered] {
-  visibility: hidden;
-}
-@media (prefers-reduced-motion: reduce) {
-  .workspacePane {
-    animation: none;
-  }
-  .workspacePane[data-leaving][data-covered] {
-    visibility: hidden;
-  }
-}
 .tabDetail {
   --space-panel-inset: var(--space-5);
   display: flex;

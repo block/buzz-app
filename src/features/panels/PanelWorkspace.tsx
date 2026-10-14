@@ -55,6 +55,16 @@ export function usePanelTabTitle(label: string, icon?: ReactNode) {
   }, [title, owner, label, icon]);
 }
 
+// Keyboard opens and reduced motion skip the push. Deciding here, rather than
+// in CSS, keeps a suppressed animation from leaving the pane marked as
+// entering, which would replay the push once those conditions change.
+function suppressPush() {
+  return (
+    document.documentElement.dataset.keyboardInput !== undefined ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
 /** The channel owns target tabs; private details retain their feature's lifetime. */
 export function PanelWorkspace({
   items,
@@ -252,7 +262,7 @@ export function PanelWorkspace({
       });
       if (main && previous.current && previous.current !== selected)
         setMotion(
-          items.find((item) => item.id === selected)?.close
+          items.find((item) => item.id === selected)?.close && !suppressPush()
             ? { enter: selected, leave: previous.current }
             : undefined,
         );

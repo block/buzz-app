@@ -189,15 +189,7 @@ export function nativeSidebar(transport: ReadTransport) {
         "channel-sections",
         signal,
         prepare,
-        (value) => {
-          const live = project("channel-sections", value)
-            .sections.map(({ id }) => id)
-            .filter((id) => sectionIds.includes(id));
-          return same(
-            live,
-            sectionIds.filter((id) => live.includes(id)),
-          );
-        },
+        (value) => same(value, editSidebarSectionOrder(value, 0, sectionIds)),
         "Sidebar groups changed on another device; reload and try again",
       );
     },

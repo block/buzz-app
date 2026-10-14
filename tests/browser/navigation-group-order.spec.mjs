@@ -192,3 +192,95 @@ test("group move recovery keeps keyboard focus on the group header", async ({
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
   await expect(header(page, "work")).toBeFocused();
 });
+
+test("saved groups accept gap drops in both directions", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:work", "group:missing", "group:laptop"]);
+  for (const id of ["work", "missing", "laptop"]) {
+    await header(page, id).click();
+    await expect(
+      page.locator(`[data-sidebar-section="group:${id}"] details`),
+    ).not.toHaveAttribute("open");
+  }
+  const missing = page.locator('[data-sidebar-section="group:missing"]');
+  const dropInGap = async (from, above, below, offset, edge, expected) => {
+    await pull(page, from, "missing");
+    const top = await page
+      .locator(`[data-sidebar-section="group:${above}"]`)
+      .boundingBox();
+    const bottom = await page
+      .locator(`[data-sidebar-section="group:${below}"]`)
+      .boundingBox();
+    expect(bottom.y).toBeGreaterThan(top.y + top.height);
+    const y = (top.y + top.height + bottom.y) / 2 + offset;
+    // Outside the saved groups horizontally is still not a target.
+    await page.mouse.move(top.x + top.width + 10, y);
+    await expect(page.locator("[data-drop-edge]")).toHaveCount(0);
+    await page.mouse.move(top.x + top.width / 2, y);
+    await expect(missing).toHaveAttribute("data-drop-edge", edge);
+    await page.mouse.up();
+    await expect.poll(() => groups(page)).toEqual(expected);
+  };
+  await dropInGap("laptop", "work", "missing", 1, "before", [
+    "group:work",
+    "group:laptop",
+    "group:missing",
+  ]);
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
+  await dropInGap("work", "laptop", "missing", 1, "after", [
+    "group:laptop",
+    "group:missing",
+    "group:work",
+  ]);
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(2);
+  expect(orders(app)).toEqual({ laptop: 0, missing: 1, work: 2 });
+});
+
+test("group landing edge follows list order when text size changes during a drag", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 960, height: 1200 });
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-appearance.v1", "dark"),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const work = page.locator('[data-sidebar-section="group:work"]');
+  const missing = page.locator('[data-sidebar-section="group:missing"]');
+  await expect(work).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "32px";
+  });
+  const initial = await header(page, "work").boundingBox();
+  const enlarged = await header(page, "missing").boundingBox();
+  // At enlarged text sizes, grab the header's leading edge, clear of its actions.
+  await page.mouse.move(initial.x + 12, initial.y + initial.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(enlarged.x + 12, enlarged.y + enlarged.height / 2, {
+    steps: 8,
+  });
+  await expect(missing).toHaveAttribute("data-drop-edge", "after");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "16px";
+  });
+  const target = await header(page, "missing").boundingBox();
+  // The stale initial pixel comparison would now put the line on the wrong side.
+  expect(initial.y).toBeGreaterThan(target.y);
+  await page.mouse.move(
+    target.x + target.width / 2,
+    target.y + target.height / 2,
+  );
+  await expect(missing).toHaveAttribute("data-drop-edge", "after");
+  await page.mouse.up();
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:missing", "group:work", "group:laptop"]);
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
+});

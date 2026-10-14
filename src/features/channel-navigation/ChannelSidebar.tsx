@@ -1101,6 +1101,9 @@ function ReadySidebar({
               {sections.map((section) => (
                 <DroppableSidebarSection
                   key={section.key}
+                  groupIndex={groupIds.indexOf(
+                    section.key.slice("group:".length),
+                  )}
                   disabled={
                     !placementWritable || !isChannelDropSectionKey(section.key)
                   }
@@ -1352,6 +1355,11 @@ function ReadySidebar({
                 The previous placement is shown. A partial save may already
                 exist on the relay.
               </p>
+              {!preferences.sectionOrderWritable && (
+                <p>
+                  Refresh saved sidebar preferences before retrying this move.
+                </p>
+              )}
               <button
                 type="button"
                 disabled={!preferences.sectionOrderWritable}

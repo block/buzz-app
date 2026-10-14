@@ -731,3 +731,54 @@ it("does not report a section order overwritten before readback as saved", async
     ),
   ).rejects.toThrow("Sidebar groups changed on another device");
 });
+
+it.each([
+  { live: ["c", "b", "a"], conflict: true },
+  { live: ["b", "c", "a"], conflict: true },
+  { live: ["b", "a", "c"], conflict: false },
+  { live: ["b", "c"], conflict: false },
+])(
+  "confirms the full live order after concurrent changes: $live",
+  async ({ live, conflict }) => {
+    const sections = (ids: string[]) =>
+      ids.map((id, order) => ({ id, name: id.toUpperCase(), order }));
+    records.set(
+      "channel-sections",
+      signedRecord("channel-sections", {
+        version: 1,
+        sections: sections(["a", "b"]),
+        assignments: {},
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const original = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const result = await original?.(command, args);
+      if (
+        command === "relay_http" &&
+        (args as { path?: string }).path === "/events"
+      )
+        records.set(
+          "channel-sections",
+          signedRecord("channel-sections", {
+            version: 1,
+            sections: sections(live),
+            assignments: {},
+          }),
+        );
+      return result;
+    });
+    if (!transport.writeSidebarSectionOrder)
+      throw new Error("Missing section order writer");
+    const write = transport.writeSidebarSectionOrder(["b", "a"], signal);
+    if (conflict)
+      await expect(write).rejects.toThrow(
+        "Sidebar groups changed on another device",
+      );
+    else
+      await expect(write).resolves.toEqual({
+        sections: sections(live),
+        assignments: {},
+      });
+  },
+);

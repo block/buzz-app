@@ -2,6 +2,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  closestCenter,
   pointerWithin,
   useDraggable,
   useDroppable,
@@ -47,18 +48,43 @@ export function ChannelSidebarDnd({
     <DndContext
       sensors={sensors}
       // A group lands only among saved groups; channels keep their targets.
-      collisionDetection={(args) =>
-        pointerWithin(
-          args.active.data.current?.group
-            ? {
-                ...args,
-                droppableContainers: args.droppableContainers.filter(({ id }) =>
-                  String(id).startsWith("group:"),
-                ),
-              }
-            : args,
+      collisionDetection={(args) => {
+        if (!args.active.data.current?.group) return pointerWithin(args);
+        const groups = {
+          ...args,
+          droppableContainers: args.droppableContainers.filter(({ id }) =>
+            String(id).startsWith("group:"),
+          ),
+        };
+        const hits = pointerWithin(groups);
+        if (hits.length) return hits;
+        const rects = groups.droppableContainers.flatMap(({ id }) => {
+          const rect = args.droppableRects.get(id);
+          return rect ? [rect] : [];
+        });
+        const pointer = args.pointerCoordinates;
+        // Fill only the saved-group gaps, never adjacent built-ins or panes.
+        if (
+          !pointer ||
+          !rects.length ||
+          pointer.x < Math.min(...rects.map((rect) => rect.left)) ||
+          pointer.x > Math.max(...rects.map((rect) => rect.right)) ||
+          pointer.y < Math.min(...rects.map((rect) => rect.top)) ||
+          pointer.y > Math.max(...rects.map((rect) => rect.bottom))
         )
-      }
+          return [];
+        return closestCenter({
+          ...groups,
+          // The pointer identifies the gap, independent of header grab offset.
+          collisionRect: {
+            ...args.collisionRect,
+            left: pointer.x,
+            top: pointer.y,
+            width: 0,
+            height: 0,
+          },
+        });
+      }}
       // The sidebar's own status is its loading notice; drag announcements live outside it.
       accessibility={{ container: document.body }}
       onDragStart={({ active }) =>
@@ -124,22 +150,24 @@ export function DraggableChannel({
 export function DroppableSidebarSection({
   disabled,
   reorderable,
+  groupIndex,
   ...section
 }: ComponentProps<typeof SidebarSection> & {
   disabled: boolean;
   reorderable: boolean;
+  groupIndex: number;
 }) {
-  const { setNodeRef, isOver, active, rect } = useDroppable({
+  const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
     disabled,
   });
   const drag = useDraggable({
     id: section.sectionKey,
-    data: { group: true },
+    data: { group: true, groupIndex },
     disabled: !reorderable,
   });
   const group = !!active?.data.current?.group;
-  const from = active?.rect.current.initial?.top;
+  const from = active?.data.current?.groupIndex;
   return (
     <SidebarSection
       {...section}
@@ -151,7 +179,7 @@ export function DroppableSidebarSection({
       }
       dropEdge={
         group && isOver && active?.id !== section.sectionKey
-          ? from !== undefined && from < (rect.current?.top ?? 0)
+          ? from !== undefined && from < groupIndex
             ? "after"
             : "before"
           : undefined

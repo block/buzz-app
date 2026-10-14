@@ -761,8 +761,9 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
       assignments: data.assignments,
     }))
     .mockRejectedValueOnce(new Error("offline"));
+  const read = vi.fn(async () => data);
   const preferences = createSidebarPreferencesStore(
-    async () => data,
+    read,
     true,
     async () => data,
     async () => [],
@@ -800,6 +801,22 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
       await screen.findByText("Couldn’t save the move for Work. offline"),
     ).toBeVisible();
     expect(groups()).toEqual(["group:work", "group:later"]);
+    read.mockRejectedValueOnce(new Error("refresh failed"));
+    await act(() => preferences.queries.refresh());
+    const retry = screen.getByRole("button", { name: "Retry move" });
+    expect(retry).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Refresh saved sidebar preferences before retrying this move.",
+      ),
+    ).toBeVisible();
+    await act(() => preferences.queries.refresh());
+    expect(retry).toBeEnabled();
+    expect(
+      screen.queryByText(
+        "Refresh saved sidebar preferences before retrying this move.",
+      ),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry move" }));
     await waitFor(() =>
       expect(groups()).toEqual(["group:later", "group:work"]),

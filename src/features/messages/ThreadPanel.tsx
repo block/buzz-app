@@ -1096,10 +1096,13 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
+  const firstReply = tree.children.get(undefined)?.[0];
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return (tree.children.get(parent) ?? []).map((row) => {
+    const siblings = tree.children.get(parent) ?? [];
+    return siblings.map((row, index) => {
+      const nextRow = siblings[index + 1];
       const children = tree.children.get(row.id);
       const continuation =
         previousParent === parent && continuesMessageGroup(previousReply, row);
@@ -1125,6 +1128,12 @@ function ThreadMessages({
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
           getThreadRoot={getThreadRoot}
+          stackPrevious={continuation}
+          stackNext={
+            !!nextRow &&
+            continuesMessageGroup(row, nextRow) &&
+            !children?.length
+          }
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}
@@ -1343,6 +1352,9 @@ function ThreadMessages({
               scope={scope}
               onReply={focusReply}
               row={snapshot.root}
+              stackNext={
+                !!firstReply && continuesMessageGroup(snapshot.root, firstReply)
+              }
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}

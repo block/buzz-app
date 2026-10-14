@@ -153,20 +153,12 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Model fields may use the compact card treatment in the library. */
+  modelAppearance?: "subtle";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
 };
-export type AgentCreateModelMenuProps<Config = unknown> =
-  AgentCreateProps<Config> & {
-    /** Whether this provider is the create form's current selection. */
-    active?: boolean;
-    /** Opens Create's host-owned model-ID dialog after its menu closes. */
-    requestCustomModel(
-      initialValue: string,
-      onChange: (model: string) => void,
-    ): void;
-  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
@@ -254,6 +246,25 @@ export type Trigger =
       /** This is its last allowed occurrence. */
       spent: boolean;
     }>;
+/** A turn with no conversation and nothing saved, such as for a watch or a
+ * timer. */
+export type StandaloneTurn<Config = unknown> = Readonly<{
+  /** The watch's or timer's delivery. */
+  delivery: Delivery<Config>;
+  /** Names the turn, for status views. */
+  key: string;
+  /** Aborts when the agent is removed, its type is replaced, or
+   * STANDALONE_DEADLINE_MS after the turn starts (agent-harness/standalone).
+   * Unlike the delivery's signal, it does not count time spent waiting in
+   * the lane. A harness waits for readiness under it and stops its turn when
+   * it aborts. */
+  signal: AbortSignal;
+  /** The turn's whole prompt, asked once the harness is ready to start it.
+   * Undefined means it is no longer wanted, so no turn starts. */
+  prompt(): Promise<string | undefined>;
+}>;
+/** How a standalone turn ended. */
+export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   /** The live route's channel; absent when the wire scope was ambiguous. */
@@ -356,10 +367,8 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
-  /** Model rows contributed to this type's submenu in the New agent dialog. */
-  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
-  /** Non-default model detail appended to this type's New agent trigger. */
-  createModelLabel?(config: Config): string | undefined;
+  /** Compact model field for creation and library cards; the type owns discovery and configuration. */
+  CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
@@ -370,6 +379,10 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Runs a standalone turn and settles when it ends, stopping it when
+   * `turn.signal` aborts. With it, the host runs watches and timers as
+   * standalone turns in their Interest's lane, and `run` gets only mentions. */
+  runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,

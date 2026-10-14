@@ -493,6 +493,13 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
+  const autoMemory = screen.getByRole("switch", {
+    name: "Claude auto memory",
+  });
+  expect(autoMemory).toBeChecked();
+  expect(autoMemory).toHaveAccessibleDescription(
+    "Let Claude write its own auto memory in addition to Buzz memory.",
+  );
   expect(defaultModel).toHaveTextContent("Claude default (Opus 5.5)");
   await user.click(defaultModel);
   expect(
@@ -506,7 +513,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     "Most capable for your hardest tasks",
   );
   await user.click(fable);
-  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(onClose).toHaveBeenCalledOnce();
   cleanup();
 
@@ -547,14 +554,25 @@ it("says when Claude's models could not be loaded and tries again", async () => 
 it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {
   localStorage.setItem("buzz.claude-code.provider-defaults.v1", "not json");
   const defaults = new ClaudeDefaults(localStorage);
-  expect(defaults.resolve(DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
-  defaults.save({ model: "sonnet" });
+  expect(defaults.resolve(DEFAULT_CONFIG)).toEqual({
+    ...DEFAULT_CONFIG,
+    disableAutoMemory: false,
+  });
+  defaults.save({ model: "sonnet", autoMemory: false });
   const inherited = { ...DEFAULT_CONFIG };
   expect(defaults.resolve(inherited).model).toBe("sonnet");
+  expect(defaults.resolve(inherited).disableAutoMemory).toBe(true);
   expect(inherited).toEqual(DEFAULT_CONFIG);
   expect(defaults.resolve({ ...DEFAULT_CONFIG, model: "opus" }).model).toBe(
     "opus",
   );
+  localStorage.setItem(
+    "buzz.claude-code.provider-defaults.v1",
+    JSON.stringify({ version: 1, model: "haiku" }),
+  );
+  expect(
+    new ClaudeDefaults(localStorage).resolve(DEFAULT_CONFIG).disableAutoMemory,
+  ).toBe(false);
 });
 
 it("can cancel sign-in and try again", async () => {

@@ -1390,7 +1390,7 @@ function ThreadMessages({
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
           {snapshot.root && (
-            <div className={`${styles.day} ${styles.replyDivider}`}>
+            <div className={styles.replyDivider}>
               <span>{replyLabel}</span>
             </div>
           )}

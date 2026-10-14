@@ -83,6 +83,24 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
+  padding: var(--space-2) 0;
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: var(--space-5) 0;
+}
+.day::before,
+.day::after {
+  content: "";
+  height: 0.5px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
+}
+.replyDivider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
   /* Every label row matches the calendar artwork's height, so the line sits
      space-6 from adjacent message content: subtract half that row and the
      neighbouring .message row padding. */
@@ -98,8 +116,6 @@
       var(--space-half)
     );
 }
-/* Date dividers are label-only; the reply divider keeps its rule so the
-   original reads as separate from the replies. */
 .replyDivider::before,
 .replyDivider::after {
   content: "";

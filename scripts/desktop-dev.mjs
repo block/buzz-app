@@ -39,7 +39,10 @@ if (!help) {
   );
   if (goose.error) console.error(goose.error.message);
   if (goose.signal) process.kill(process.pid, goose.signal);
-  if (goose.status !== 0) process.exit(goose.status ?? 1);
+  // Work that never touches Goose should still start; Goose then says
+  // goose-acp is missing.
+  if (goose.status !== 0)
+    console.warn("goose-acp did not build; Goose agents will not start.");
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
 const config = desktopOverlay(root);

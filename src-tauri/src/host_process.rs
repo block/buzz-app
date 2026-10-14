@@ -5,8 +5,10 @@
 //! app exits. It runs with the user's own access: there is no sandbox.
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
+use buzzodz_plugins::HostProcess;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
@@ -294,17 +296,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         return Err("Invalid process arguments".into());
     }
     let path = effective_path();
-    // A bundled program is in the app's `bin` resources, which `tauri dev` also
-    // copies beside the debug executable. Windows adds `.exe` to a path itself.
-    let program = if declared.bundled {
-        app.path()
-            .resource_dir()
-            .map_err(|_| format!("Could not start {}", declared.program))?
-            .join("bin")
-            .join(&declared.program)
-    } else {
-        resolve_program(&declared.program, &path)
-    };
+    let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
     let mut command = Command::new(program);
     command
         .args(&declared.args)
@@ -420,6 +412,21 @@ fn take_text(pending: &mut Vec<u8>) -> String {
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.
+/// Where a declared program runs from. A bundled one is in the app's `bin`
+/// resources, which `tauri dev` also copies beside the debug executable, and is
+/// never looked up on `path`. Windows adds `.exe` to a path itself.
+fn program_path(
+    declared: &HostProcess,
+    resources: impl FnOnce() -> Option<PathBuf>,
+    path: &OsStr,
+) -> Result<PathBuf, String> {
+    if !declared.bundled {
+        return Ok(resolve_program(&declared.program, path));
+    }
+    let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
+    Ok(resources.join("bin").join(&declared.program))
+}
+
 fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?

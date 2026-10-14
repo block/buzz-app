@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 /* Cards share one grid; each is a soft control surface. */
 .grid {
   display: grid;

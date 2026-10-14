@@ -263,6 +263,7 @@ function setup({
     children: unknown[];
     onScroll: (event: unknown) => void;
     onPointerDown: () => void;
+    onPointerUp: () => void;
     onWheel: (event: { deltaY: number; ctrlKey: boolean }) => void;
     onFocus: (event: unknown) => void;
     onBlur: (event: unknown) => void;
@@ -419,6 +420,7 @@ function setup({
       render();
       if (user) section.props.onPointerDown();
       section.props.onScroll({ currentTarget: element });
+      if (user) section.props.onPointerUp();
     },
     edit(runFrames = true) {
       rows = rows.map((row) =>
@@ -995,6 +997,25 @@ it("keeps bottom follow when a rows change lands between the height commit and i
   h.element.scrollTop -= 1;
   h.dispatchScroll();
   h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("keeps bottom follow when a measured correction scrolls before its height commit", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  // Virtua's scrollBy correction lands before the committed list height.
+  h.handle.scrollSize -= 118;
+  h.element.scrollTop -= 118;
+  h.dispatchScroll();
+  // Rows below grew in the same measurement, so only a restore reaches bottom.
+  h.element.scrollHeight += 200;
+  h.measureRows();
   expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
   h.unmount();
   expect(h.saved().bottom).toBe(true);

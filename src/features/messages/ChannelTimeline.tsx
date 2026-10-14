@@ -258,9 +258,12 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
-  // Set from a Virtua height commit until its restore frame or reader input. The
-  // browser can deliver Virtua's own offset correction as a scroll in between.
+  // Set when the timeline itself positions a following reader, until the next
+  // reader input. Its own end alignment and Virtua's offset corrections can
+  // scroll upward before rows re-measure; only reader input may cancel follow.
   const layoutCorrection = useRef(false);
+  // A held pointer can drag the scrollbar without directional input events.
+  const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -311,9 +314,9 @@ function Timeline({
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
-      // A measured list-height mutation can likewise include Virtua's own offset
-      // correction, in that callback or in a scroll delivered before its restore
-      // frame; only explicit upward input may cancel follow there.
+      // A measured list-height mutation or the timeline's own end alignment can
+      // likewise move the offset upward; until reader input, only explicit
+      // upward input may cancel follow.
       // Explicit upward input wins even when shrink and reader movement share
       // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
@@ -360,6 +363,7 @@ function Timeline({
     scroller.current?.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
+    layoutCorrection.current = true;
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
     });
@@ -563,6 +567,7 @@ function Timeline({
         } else handle.current.scrollTo(restore.offset);
         follow.current = false;
       } else if (follow.current) {
+        layoutCorrection.current = true;
         handle.current.scrollToIndex(
           revealIndex >= 0 ? revealIndex : rows.length - 1,
           { align: "end" },
@@ -574,8 +579,6 @@ function Timeline({
       }
     };
     let frame = requestAnimationFrame(() => {
-      // A replaced effect's correction window ends at this effect's first frame.
-      layoutCorrection.current = false;
       if (intent.current === scheduledIntent && handle.current) {
         // Input can move the DOM before its scroll event is delivered.
         if (!restore && scroller.current && measuredPosition.current)
@@ -610,10 +613,7 @@ function Timeline({
               layoutCorrection.current = true;
             }
             cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(() => {
-              layoutCorrection.current = false;
-              restorePosition();
-            });
+            frame = requestAnimationFrame(restorePosition);
           });
           observer.observe(list, {
             attributes: true,
@@ -738,7 +738,16 @@ function Timeline({
         touchY.current = next;
       }}
       onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
-      onPointerDown={() => gesture()}
+      onPointerDown={() => {
+        pointerHeld.current = true;
+        gesture();
+      }}
+      onPointerUp={() => {
+        pointerHeld.current = false;
+      }}
+      onPointerCancel={() => {
+        pointerHeld.current = false;
+      }}
       onScrollEnd={() => {
         upwardGesture.current = false;
       }}
@@ -764,7 +773,10 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          recordPosition(element, layoutCorrection.current);
+          recordPosition(
+            element,
+            layoutCorrection.current && !pointerHeld.current,
+          );
           updateJumpToLatest(element);
         }
         loadNearTop(element);

@@ -491,7 +491,12 @@ function SessionWork({
             />
           )}
           {placement.status !== "ready" && (
-            <p role="status">{placement.error ?? "Loading Me placement…"}</p>
+            <p role="status">
+              {placement.error ?? "Loading Me placement…"}{" "}
+              <Button onClick={() => void session.mePlacement.refresh()}>
+                Retry Me
+              </Button>
+            </p>
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">

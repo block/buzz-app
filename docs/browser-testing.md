@@ -4,12 +4,18 @@
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
 pushes: an isolated serial measurement job runs alongside sixteen Linux functional jobs
-(eight file-level shards per engine, two workers per runner) and one macOS WebKit
+(eight shards per engine, two workers per runner) and one macOS WebKit
 recording job. Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
 Owner-specific tests are colocated in `src/`, `browser-host/` and `scripts/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
+
+Most functional cases run in file groups. The five crowded-reply width cases
+in `nested-replies.spec.mjs` use a scoped parallel group: each owns its page,
+relay state and signed data, and the existing two workers can run them independently.
+This avoids serializing the geometry matrix at the end of one shard without
+adding runners or extending test/job deadlines.
 
 ## Run
 

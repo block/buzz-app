@@ -468,261 +468,277 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-for (const width of [1492, 1280, 1024, 700, 390])
-  test(`crowded capped branches expand once with readable actions at ${width}`, async ({
-    page,
-    app,
-  }) => {
-    const root = app.histories
-      .get("primary/alpha")
-      .find((e) => e.content === "Thread root 0");
-    let parent = root.id;
-    const ids = [];
-    for (let i = 0; i < 13; i++) {
-      parent = app.append(
+test.describe(() => {
+  // Independent width fixtures share the existing worker pool instead of
+  // serializing the entire geometry matrix at the end of one shard.
+  test.describe.configure({ mode: "parallel" });
+  for (const width of [1492, 1280, 1024, 700, 390])
+    test(`crowded capped branches expand once with readable actions at ${width}`, async ({
+      page,
+      app,
+    }) => {
+      const root = app.histories
+        .get("primary/alpha")
+        .find((e) => e.content === "Thread root 0");
+      let parent = root.id;
+      const ids = [];
+      for (let i = 0; i < 13; i++) {
+        parent = app.append(
+          "primary",
+          "alpha",
+          `Crowded reply ${i}`,
+          false,
+          i < 9 ? i % 2 === 0 : true,
+          root.id,
+          parent,
+        ).id;
+        ids.push(parent);
+      }
+      const continuation = app.append(
         "primary",
         "alpha",
-        `Crowded reply ${i}`,
+        "Same-parent continuation",
         false,
-        i < 9 ? i % 2 === 0 : true,
+        true,
         root.id,
-        parent,
-      ).id;
-      ids.push(parent);
-    }
-    const continuation = app.append(
-      "primary",
-      "alpha",
-      "Same-parent continuation",
-      false,
-      true,
-      root.id,
-      ids.at(-2),
-    );
-    await open(page, app);
-    await page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
-    const panel = page.getByRole("complementary", {
-      name: "Thread",
-      exact: true,
-    });
-    const branchFor = (id) =>
-      panel.locator(`[data-message-id="${id}"]`).locator("../..");
-    const expandAll = async () => {
-      for (const id of ids.slice(0, -1)) {
-        const branch = branchFor(id);
-        if ((await branch.getAttribute("data-open")) === "false")
-          await branch
-            .locator(":scope > div")
-            .nth(1)
-            .getByRole("button")
-            .press("Enter");
-        await expect(
-          panel.locator(`[data-message-id="${ids[ids.indexOf(id) + 1]}"]`),
-        ).toBeFocused();
-      }
-    };
-    await page.setViewportSize({ width, height: 950 });
-    await expandAll();
-    // Retain the existing continuation-clock contract on a real same-parent
-    // sibling now that crossing a branch deliberately repeats the author.
-    const continuationRow = panel.locator(
-      `[data-message-id="${continuation.id}"]`,
-    );
-    await expect(
-      continuationRow.locator('[data-layout="continuation"]'),
-    ).toBeVisible();
-    const clock = continuationRow.locator("time");
-    await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
-    await page
-      .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
-      .hover();
-    await expect(clock).toHaveCSS("opacity", "0");
-    await continuationRow.hover();
-    await expect(clock).toHaveCSS("opacity", "1");
-    await clock.hover();
-    await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
-    await continuationRow
-      .getByRole("button", { name: "More message actions", exact: true })
-      .focus();
-    await page
-      .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
-      .hover();
-    await expect(clock).toHaveCSS("opacity", "1");
-    for (const id of [...ids.slice(0, -1), continuation.id]) {
-      const branch = branchFor(id);
-      const row = panel.locator(`[data-message-id="${id}"]`);
+        ids.at(-2),
+      );
+      await open(page, app);
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      const branchFor = (id) =>
+        panel.locator(`[data-message-id="${id}"]`).locator("../..");
+      const expandAll = async () => {
+        for (const id of ids.slice(0, -1)) {
+          const branch = branchFor(id);
+          if ((await branch.getAttribute("data-open")) === "false")
+            await branch
+              .locator(":scope > div")
+              .nth(1)
+              .getByRole("button")
+              .press("Enter");
+          await expect(
+            panel.locator(`[data-message-id="${ids[ids.indexOf(id) + 1]}"]`),
+          ).toBeFocused();
+        }
+      };
+      await page.setViewportSize({ width, height: 950 });
+      await expandAll();
+      // Retain the existing continuation-clock contract on a real same-parent
+      // sibling now that crossing a branch deliberately repeats the author.
+      const continuationRow = panel.locator(
+        `[data-message-id="${continuation.id}"]`,
+      );
+      await expect(
+        continuationRow.locator('[data-layout="continuation"]'),
+      ).toBeVisible();
+      const clock = continuationRow.locator("time");
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
       await page
         .locator(
           '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
         )
         .hover();
-      await row.scrollIntoViewIfNeeded();
-      // Exercise the lifted bar away from the top edge. Morgan accepted
-      // clipping at that boundary; scrolling the row down restores access.
-      await row.evaluate((node) => {
-        const history = node.closest('[aria-label="Thread messages"]');
-        history.scrollTop +=
-          node.getBoundingClientRect().top -
-          history.getBoundingClientRect().top -
-          history.clientHeight / 2;
-      });
-      const restingHeight = (await row.boundingBox()).height;
-      await row.hover();
-      expect((await row.boundingBox()).height).toBe(restingHeight);
-      // Every reply, nested or not, exposes the same full bar. Revealing it must
-      // not reflow the row.
-      const actions = row.getByRole("group", {
-        name: "Message actions",
-        exact: true,
-      });
-      await expect(actions).toHaveCount(1);
-      await expect(actions).toHaveCSS("opacity", "1");
-      if (width >= 640) {
-        // Both author headers and headerless continuations end the bar at the
-        // body edge, independent of row padding and toolbar height.
-        const placement = await row.evaluate((node) => {
-          const bar = node.querySelector('[aria-label="Message actions"]');
-          const body = node.querySelector(
-            '[class*="_text_"], [class*="_plainText_"]',
-          );
-          return {
-            actual: bar.getBoundingClientRect().bottom,
-            expected: body.getBoundingClientRect().top,
-          };
-        });
-        expect(placement.actual).toBeCloseTo(placement.expected, 1);
-        // Header anchoring must not wrap a full toolbar inside the narrower
-        // body column before the row-width action reductions take effect.
-        const centres = await actions.evaluate((bar) =>
-          [...bar.querySelectorAll("button")]
-            .map((button) => button.getBoundingClientRect())
-            .filter((box) => box.width > 0 && box.height > 0)
-            .map((box) => box.top + box.height / 2),
-        );
-        expect(Math.max(...centres) - Math.min(...centres)).toBeLessThan(1);
-      }
-      // Reaching the bar from the byline is the natural pointer path, and the bar
-      // is allowed to sit over the timestamp. The date hint must therefore never
-      // take ownership of the pointer where the bar is: it outranks the bar in the
-      // layer stack, so a hoverable hint would swallow every action click.
-      const stamp = row.locator("time");
-      if (await stamp.count()) {
-        const hint = await stamp.boundingBox();
-        await page.mouse.move(hint.x + 4, hint.y + hint.height / 2);
-        await expect
-          .poll(() =>
-            actions.evaluate((bar) =>
-              [...bar.querySelectorAll("button")]
-                .filter((button) => {
-                  const box = button.getBoundingClientRect();
-                  return box.width > 0 && box.height > 0;
-                })
-                .every((button) => {
-                  const box = button.getBoundingClientRect();
-                  return document
-                    .elementsFromPoint(
-                      (box.left + box.right) / 2,
-                      (box.top + box.bottom) / 2,
-                    )[0]
-                    ?.isSameNode(button);
-                }),
-            ),
-          )
-          .toBe(true);
-        await row.hover();
-      }
-      for (const button of await actions.getByRole("button").all()) {
-        await expect(button).toBeInViewport();
-        await button.click({ trial: true });
-      }
-      // The bar must not cover this row's own message text. Compare against the
-      // rendered body only, inset by half-leading so leading is not read as ink.
-      // Include headerless continuation rows: the shared lift must clear them too.
-      await expect
-        .poll(() =>
-          row.evaluate((node) => {
-            const tray = node
-              .querySelector('[aria-label="Message actions"]')
-              .getBoundingClientRect();
-            const body = node.querySelectorAll(
-              '[class*="_text_"], [class*="_plainText_"]',
-            );
-            for (const element of body) {
-              const size = parseFloat(getComputedStyle(element).fontSize);
-              const walker = document.createTreeWalker(
-                element,
-                NodeFilter.SHOW_TEXT,
-              );
-              for (
-                let text = walker.nextNode();
-                text;
-                text = walker.nextNode()
-              ) {
-                if (!text.textContent.trim()) continue;
-                const range = document.createRange();
-                range.selectNodeContents(text);
-                for (const rect of range.getClientRects()) {
-                  if (!rect.width || !rect.height) continue;
-                  const lead = Math.max(0, (rect.height - size) / 2);
-                  const dx =
-                    Math.min(tray.right, rect.right) -
-                    Math.max(tray.left, rect.left);
-                  const dy =
-                    Math.min(tray.bottom, rect.bottom - lead) -
-                    Math.max(tray.top, rect.top + lead);
-                  if (dx > 0.5 && dy > 0.5) return true;
-                }
-              }
-            }
-            return false;
-          }),
+      await expect(clock).toHaveCSS("opacity", "0");
+      await continuationRow.hover();
+      await expect(clock).toHaveCSS("opacity", "1");
+      await clock.hover();
+      await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
+      await continuationRow
+        .getByRole("button", { name: "More message actions", exact: true })
+        .focus();
+      await page
+        .locator(
+          '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
         )
-        .toBe(false);
-      if (width >= 640 && id === continuation.id) {
-        // Real diagonal pointer travel must not drop the hover-only toolbar.
+        .hover();
+      await expect(clock).toHaveCSS("opacity", "1");
+      for (const id of [...ids.slice(0, -1), continuation.id]) {
+        const branch = branchFor(id);
+        const row = panel.locator(`[data-message-id="${id}"]`);
         await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
-        const body = await row
-          .getByText("Same-parent continuation", { exact: true })
-          .boundingBox();
-        await page.mouse.move(body.x + 4, body.y + body.height / 2);
-        await expect(actions).toHaveCSS("opacity", "1");
-        const reply = actions.getByRole("button", {
-          name: "Reply",
+        await page
+          .locator(
+            '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+          )
+          .hover();
+        await row.scrollIntoViewIfNeeded();
+        // Exercise the lifted bar away from the top edge. Morgan accepted
+        // clipping at that boundary; scrolling the row down restores access.
+        await row.evaluate((node) => {
+          const history = node.closest('[aria-label="Thread messages"]');
+          history.scrollTop +=
+            node.getBoundingClientRect().top -
+            history.getBoundingClientRect().top -
+            history.clientHeight / 2;
+        });
+        const restingHeight = (await row.boundingBox()).height;
+        await row.hover();
+        expect((await row.boundingBox()).height).toBe(restingHeight);
+        // Every reply, nested or not, exposes the same full bar. Revealing it must
+        // not reflow the row.
+        const actions = row.getByRole("group", {
+          name: "Message actions",
           exact: true,
         });
-        const target = await reply.boundingBox();
-        await page.mouse.move(
-          target.x + target.width / 2,
-          target.y + target.height / 2,
-          { steps: 20 },
-        );
+        await expect(actions).toHaveCount(1);
         await expect(actions).toHaveCSS("opacity", "1");
-        await reply.click({ trial: true });
+        if (width >= 640) {
+          // Both author headers and headerless continuations end the bar at the
+          // body edge, independent of row padding and toolbar height.
+          const placement = await row.evaluate((node) => {
+            const bar = node.querySelector('[aria-label="Message actions"]');
+            const body = node.querySelector(
+              '[class*="_text_"], [class*="_plainText_"]',
+            );
+            return {
+              actual: bar.getBoundingClientRect().bottom,
+              expected: body.getBoundingClientRect().top,
+            };
+          });
+          expect(placement.actual).toBeCloseTo(placement.expected, 1);
+          // Header anchoring must not wrap a full toolbar inside the narrower
+          // body column before the row-width action reductions take effect.
+          const centres = await actions.evaluate((bar) =>
+            [...bar.querySelectorAll("button")]
+              .map((button) => button.getBoundingClientRect())
+              .filter((box) => box.width > 0 && box.height > 0)
+              .map((box) => box.top + box.height / 2),
+          );
+          expect(Math.max(...centres) - Math.min(...centres)).toBeLessThan(1);
+        }
+        // Reaching the bar from the byline is the natural pointer path, and the bar
+        // is allowed to sit over the timestamp. The date hint must therefore never
+        // take ownership of the pointer where the bar is: it outranks the bar in the
+        // layer stack, so a hoverable hint would swallow every action click.
+        const stamp = row.locator("time");
+        if (await stamp.count()) {
+          const hint = await stamp.boundingBox();
+          await page.mouse.move(hint.x + 4, hint.y + hint.height / 2);
+          await expect
+            .poll(() =>
+              actions.evaluate((bar) =>
+                [...bar.querySelectorAll("button")]
+                  .filter((button) => {
+                    const box = button.getBoundingClientRect();
+                    return box.width > 0 && box.height > 0;
+                  })
+                  .every((button) => {
+                    const box = button.getBoundingClientRect();
+                    return document
+                      .elementsFromPoint(
+                        (box.left + box.right) / 2,
+                        (box.top + box.bottom) / 2,
+                      )[0]
+                      ?.isSameNode(button);
+                  }),
+              ),
+            )
+            .toBe(true);
+          await row.hover();
+        }
+        const buttons = await actions.getByRole("button").all();
+        await Promise.all(
+          buttons.map((button) => expect(button).toBeInViewport()),
+        );
+        for (const button of buttons) {
+          await button.click({ trial: true });
+        }
+        // The bar must not cover this row's own message text. Compare against the
+        // rendered body only, inset by half-leading so leading is not read as ink.
+        // Include headerless continuation rows: the shared lift must clear them too.
+        await expect
+          .poll(() =>
+            row.evaluate((node) => {
+              const tray = node
+                .querySelector('[aria-label="Message actions"]')
+                .getBoundingClientRect();
+              const body = node.querySelectorAll(
+                '[class*="_text_"], [class*="_plainText_"]',
+              );
+              for (const element of body) {
+                const size = parseFloat(getComputedStyle(element).fontSize);
+                const walker = document.createTreeWalker(
+                  element,
+                  NodeFilter.SHOW_TEXT,
+                );
+                for (
+                  let text = walker.nextNode();
+                  text;
+                  text = walker.nextNode()
+                ) {
+                  if (!text.textContent.trim()) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(text);
+                  for (const rect of range.getClientRects()) {
+                    if (!rect.width || !rect.height) continue;
+                    const lead = Math.max(0, (rect.height - size) / 2);
+                    const dx =
+                      Math.min(tray.right, rect.right) -
+                      Math.max(tray.left, rect.left);
+                    const dy =
+                      Math.min(tray.bottom, rect.bottom - lead) -
+                      Math.max(tray.top, rect.top + lead);
+                    if (dx > 0.5 && dy > 0.5) return true;
+                  }
+                }
+              }
+              return false;
+            }),
+          )
+          .toBe(false);
+        if (width >= 640 && id === continuation.id) {
+          // Real diagonal pointer travel must not drop the hover-only toolbar.
+          await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
+          const body = await row
+            .getByText("Same-parent continuation", { exact: true })
+            .boundingBox();
+          await page.mouse.move(body.x + 4, body.y + body.height / 2);
+          await expect(actions).toHaveCSS("opacity", "1");
+          const reply = actions.getByRole("button", {
+            name: "Reply",
+            exact: true,
+          });
+          const target = await reply.boundingBox();
+          await page.mouse.move(
+            target.x + target.width / 2,
+            target.y + target.height / 2,
+            { steps: 20 },
+          );
+          await expect(actions).toHaveCSS("opacity", "1");
+          await reply.click({ trial: true });
+        }
+        await expect(
+          branch.getByRole("button", {
+            name: /Hide replies|Collapse this branch/,
+          }),
+        ).toHaveCount(0);
       }
-      await expect(
-        branch.getByRole("button", {
-          name: /Hide replies|Collapse this branch/,
-        }),
-      ).toHaveCount(0);
-    }
-    await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
-    await page
-      .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
-      .hover();
-    // Resting state must match the contract for every rendered reply, not just
-    // the first: hidden on desktop hover-capable widths, always usable below 640.
-    for (const id of [...ids.slice(0, -1), continuation.id]) {
-      await expect(
-        panel
-          .locator(`[data-message-id="${id}"]`)
-          .getByRole("group", { name: "Message actions", exact: true }),
-      ).toHaveCSS("opacity", "0");
-    }
-    await panel.screenshot({
-      path: test.info().outputPath(`crowded-${width}.png`),
+      await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
+      await page
+        .locator(
+          '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+        )
+        .hover();
+      // Resting state must match the contract for every rendered reply, not just
+      // the first: hidden on desktop hover-capable widths, always usable below 640.
+      await Promise.all(
+        [...ids.slice(0, -1), continuation.id].map((id) =>
+          expect(
+            panel
+              .locator(`[data-message-id="${id}"]`)
+              .getByRole("group", { name: "Message actions", exact: true }),
+          ).toHaveCSS("opacity", "0"),
+        ),
+      );
+      await panel.screenshot({
+        path: test.info().outputPath(`crowded-${width}.png`),
+      });
     });
-  });
+});

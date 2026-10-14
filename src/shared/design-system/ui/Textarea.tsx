@@ -6,6 +6,7 @@ export type TextareaProps = Omit<ComponentProps<"textarea">, "className">;
 export function Textarea({
   variant = "text",
   surface = "inset",
+  appearance = "field",
   id,
   name,
   value,
@@ -17,6 +18,8 @@ export function Textarea({
 }: TextareaProps & {
   variant?: "text" | "code";
   surface?: "inset" | "panel";
+  /** Content inside a container that already supplies the field boundary. */
+  appearance?: "field" | "content";
 }) {
   return (
     <BaseField.Control
@@ -39,6 +42,7 @@ export function Textarea({
       className="buzz-textarea"
       data-variant={variant}
       data-surface={surface}
+      data-appearance={appearance}
     />
   );
 }

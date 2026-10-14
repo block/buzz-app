@@ -34,6 +34,7 @@ export function AgentCreateHeader({
   avatarActionTarget,
   onAvatarActiveChange,
   nameRef,
+  initialAvatarPicker = false,
 }: {
   name: string;
   picture?: string | undefined;
@@ -49,9 +50,12 @@ export function AgentCreateHeader({
   avatarActionTarget?: HTMLElement | null;
   onAvatarActiveChange?: (active: boolean) => void;
   nameRef?: Ref<HTMLInputElement>;
+  initialAvatarPicker?: boolean;
 }) {
   const preview = useAvatarPreview(picture ?? "", community);
-  const [view, setView] = useState("selected");
+  const [view, setView] = useState(
+    initialAvatarPicker ? "collections" : "selected",
+  );
   const [movingAvatar, setMovingAvatar] = useState<string>();
   useEffect(() => {
     onAvatarActiveChange?.(view !== "selected");

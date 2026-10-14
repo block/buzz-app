@@ -1,5 +1,12 @@
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // Claude's provider controls, New agent choices, and agent settings.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useId,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import type { Transcript } from "../../features/agents/activity-transcript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -82,11 +89,11 @@ const providerDefaultLabel = (
   model: string,
   models: readonly ClaudeModel[],
 ) => {
-  if (model) return `Provider default · ${modelName(model, models)}`;
+  if (model) return modelName(model, models);
   const native = models.find((candidate) => candidate.value === "default");
   return native?.resolvedModel
-    ? `Claude default (${resolvedModelName(native.resolvedModel)})`
-    : "Claude default";
+    ? resolvedModelName(native.resolvedModel)
+    : "Model unavailable";
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -103,6 +110,7 @@ function ClaudeSignIn({
   const [open, setOpen] = useState(false);
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
   const missing = state.status?.state === "missing";
+  const outdated = state.status?.state === "outdated";
   return (
     <>
       <Button
@@ -112,14 +120,14 @@ function ClaudeSignIn({
         onClick={() => {
           if (setup.snapshot().running) return;
           setOpen(true);
-          void setup.run(missing ? "install" : "login");
+          void setup.run(missing || outdated ? "install" : "login");
         }}
       >
-        {missing ? "Install Claude" : "Sign in"}
+        {missing ? "Install Claude" : outdated ? "Update Claude" : "Sign in"}
       </Button>
       <Dialog
         open={open}
-        title={missing ? "Set up Claude" : "Sign in to Claude"}
+        title={missing || outdated ? "Set up Claude" : "Sign in to Claude"}
         description="Continue in your browser. If it gives you a code to paste, choose Enter a code below."
         onOpenChange={(next) => {
           setOpen(next);
@@ -152,19 +160,23 @@ function ClaudeSetupPanel({
       ? "Checking Claude…"
       : status.state === "missing"
         ? "Claude is not installed."
-        : status.state === "signed-out"
-          ? `Claude ${status.version} needs you to sign in.`
-          : status.state === "ready"
-            ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
-            : status.message;
+        : status.state === "outdated"
+          ? `Claude ${status.version} is older than Buzz needs.`
+          : status.state === "signed-out"
+            ? `Claude ${status.version} needs you to sign in.`
+            : status.state === "ready"
+              ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
+              : status.message;
   // One button per slot, so focus stays put as Install becomes Sign in and
   // Cancel becomes Check again.
   const action =
     status?.state === "missing"
       ? ({ step: "install", label: "Install Claude" } as const)
-      : status?.state === "signed-out"
-        ? ({ step: "login", label: "Sign in" } as const)
-        : undefined;
+      : status?.state === "outdated"
+        ? ({ step: "install", label: "Update Claude" } as const)
+        : status?.state === "signed-out"
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
   return (
     <section className="grid gap-2">
       {!(variant === "compact" && status?.state === "signed-out") && (
@@ -203,9 +215,10 @@ function ClaudeSetupPanel({
       </div>
       {status?.state === "missing" && (
         <p className="m-0 text-body-sm text-subtle">
-          Runs the official installer,{" "}
-          <code>curl -fsSL https://claude.ai/install.sh | bash</code>, which
-          puts <code>claude</code> in <code>~/.local/bin</code>.
+          Downloads Buzz's own copy of Claude (about 250 MB) from
+          downloads.claude.ai and keeps it on the latest release. It does not
+          change the <code>claude</code> in your terminal, and uses the same
+          sign-in and settings.
         </p>
       )}
       {state.output && (
@@ -290,9 +303,13 @@ export function createTabs({
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
     useEffect(() => {
-      if (state.status?.state === "ready" && state.models.length === 0)
+      if (
+        !state.checking &&
+        state.status?.state === "ready" &&
+        state.models.length === 0
+      )
         void setup.loadModels();
-    }, [state.status, state.models.length]);
+    }, [state.status, state.checking, state.models.length]);
     return state;
   }
 
@@ -324,6 +341,7 @@ export function createTabs({
           providerDefaults.model,
           state.models,
         )}
+        defaultDescription="Following the provider's model default"
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
@@ -719,7 +737,10 @@ export function createTabs({
     save,
     settingsHost,
     conversation,
+    settingsSection,
+    settingsContent,
   }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const setupState = useSetupCatalog();
     const providerDefaults = useSyncExternalStore(
@@ -730,6 +751,10 @@ export function createTabs({
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -761,64 +786,69 @@ export function createTabs({
     );
     return (
       <form
+        id={form}
         className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        {modelControl}
-        <Field
-          label="Workspace"
-          description="The folder Claude works in. Use ~/ for your home folder."
-        >
-          <Input
-            value={draft.workspace}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Sessions"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={false}
-          description="Added to every session's system prompt, after Buzz's own."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          {/* Stays focusable while saving and once there is nothing to save. */}
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed}
-            focusableWhenDisabled
-          >
-            Save
-          </Button>
-        </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
+        {settingsSection !== "runtime" && (
+          <>
+            {settingsHost?.typeControl?.(configChanged)}
+            {modelControl}
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={false}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <Field
+              label="Workspace"
+              description="The folder Claude works in. Use ~/ for your home folder."
+            >
+              <Input
+                value={draft.workspace}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Sessions"
+              variant="field"
+              value={draft.scope}
+              groups={SCOPES}
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        {settingsSection !== "identity" && settingsContent}
+        {settingsSection !== "identity" && (
+          <details className="grid gap-2">
+            <summary>Runtime diagnostics</summary>
+            <div className="mt-2">
+              <Conversations agent={agent} conversation={conversation} />
+            </div>
+          </details>
+        )}
       </form>
     );
   }

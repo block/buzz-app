@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
+  AgentConversation,
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
@@ -18,8 +19,35 @@ export function AgentTabs(props: {
   channels: readonly ChannelChoice[];
   settingsHost: AgentSettingsHost;
   memories: AgentMemories | undefined;
+  settingsContent: ReactNode;
+  conversation?: AgentConversation | undefined;
 }) {
-  const sections = agentSections(props);
+  const split = props.type?.tabs?.some(
+    (section) => section.role === "settings" && section.splitSettings,
+  );
+  const supplied = agentSections({
+    ...props,
+    ...(split ? { settingsSection: "identity" as const } : {}),
+  });
+  const runtime = split
+    ? agentSections({ ...props, settingsSection: "runtime" }).find(
+        (section) => section.value === "agent:settings",
+      )
+    : undefined;
+  const identity = supplied.find(
+    (section) => section.value === "agent:settings",
+  );
+  const sections = [
+    ...(identity ? [{ ...identity, label: "Identity" }] : []),
+    ...supplied.filter((section) => section.value.startsWith("agent:type:")),
+    ...supplied.filter((section) => section.value === "agent:memory"),
+    ...supplied.filter((section) => section.value === "agent:attention"),
+    {
+      value: "agent:management",
+      label: "Settings",
+      render: () => <>{runtime ? runtime.render() : props.settingsContent}</>,
+    },
+  ];
   const [tab, setTab] = useState<string>(sections[0]?.value ?? "");
   const selected =
     sections.find((section) => section.value === tab) ?? sections.at(-1);
@@ -31,7 +59,7 @@ export function AgentTabs(props: {
       label={`${props.agent.name} sections`}
       variant="panel"
       renderPanel={(value) => (
-        <div className="pt-4">
+        <div className="grid gap-6 pt-4">
           {sections.find((section) => section.value === value)?.render()}
         </div>
       )}

@@ -506,7 +506,7 @@ it("applies provider precedence without rewriting records and falls back for inc
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Model B",
+      "Model B",
     ),
   );
   expect(screen.getByLabelText("Thinking")).toHaveTextContent(
@@ -623,7 +623,10 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+    await screen.findByRole("option", {
+      name: "Model A",
+      description: "Following the provider's model default",
+    }),
   ).toHaveAccessibleDescription("Following the provider's model default");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
@@ -698,7 +701,10 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
   expect(thinkingControl).toHaveTextContent("Medium");
   await user.click(modelControl);
   await user.click(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+    await screen.findByRole("option", {
+      name: "Model A",
+      description: "Following the provider's model default",
+    }),
   );
   expect(screen.getByLabelText("Thinking")).toHaveTextContent(
     "Codex default (Low)",
@@ -812,7 +818,7 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
     model: "model-b",
     effort: "medium",
   });
-  fireEvent.change(screen.getByLabelText("Describe what I should do"), {
+  fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Triage." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -822,7 +828,8 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   await user.click(await screen.findByRole("combobox", { name: "Model" }));
   await user.click(
     await screen.findByRole("option", {
-      name: "Codex default (Model A)",
+      name: "Model A",
+      description: "Following the provider's model default",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({
@@ -1057,4 +1064,27 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   expect(provider.snapshot()).toMatchObject({ readiness: "ready" });
   expect(provider.snapshot()).not.toHaveProperty("blocking");
   provider.dispose();
+});
+
+it("separates identity fields from runtime settings without changing the stored config", () => {
+  const f = fixture();
+  const Settings = f.tabs.SettingsTab;
+  const props = f.props();
+  const view = render(<Settings {...props} settingsSection="identity" />);
+  const instructions = screen.getByLabelText("Instructions");
+  const model = screen.getByLabelText("Model");
+  expect(
+    model.compareDocumentPosition(instructions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  view.rerender(<Settings {...props} settingsSection="runtime" />);
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.getByText("Runtime diagnostics")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+  expect(props.save).not.toHaveBeenCalled();
 });

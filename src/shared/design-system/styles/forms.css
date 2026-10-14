@@ -186,6 +186,9 @@
     min-width: 0;
   }
   .buzz-select-trigger {
+    --border: var(--border-standard);
+    background: transparent;
+    border-radius: var(--radius-control);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -390,6 +393,16 @@
     border-radius: 0;
     background: transparent;
   }
+  .buzz-input[data-appearance="heading"] {
+    display: block;
+    @apply text-heading;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: inherit;
+  }
   .buzz-input[data-appearance="title"]::placeholder {
     color: var(--text-unavailable);
   }
@@ -480,5 +493,17 @@
   .buzz-calendar button:disabled {
     color: var(--text-unavailable);
     cursor: not-allowed;
+  }
+}
+
+@layer components {
+  .buzz-textarea[data-appearance="content"] {
+    display: block;
+    background: transparent;
+    --border: transparent;
+    padding-inline: 0;
+  }
+  .buzz-textarea[data-appearance="content"]:not(:focus) {
+    resize: none;
   }
 }

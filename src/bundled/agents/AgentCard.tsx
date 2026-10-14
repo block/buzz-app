@@ -50,15 +50,10 @@ export function AgentCard({
   children?: ReactNode;
   menu?: ReactNode;
 }) {
-  const animated = agentAvatars.some((avatar) => avatar.url === agent.picture);
   return (
     <div {...props} className={styles.card}>
       {menu && <div className={styles.menu}>{menu}</div>}
-      <span
-        className={styles.portrait}
-        data-animated={animated || undefined}
-        aria-hidden="true"
-      >
+      <span className={styles.portrait} aria-hidden="true">
         <AgentPortrait agent={agent} community={community} />
       </span>
       <span className={`${styles.name} text-label`}>{agent.name}</span>

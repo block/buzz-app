@@ -1,3 +1,6 @@
+import { AgentDetails } from "../agents/AgentDetails";
+import { AgentMessageButton } from "../agents/AgentMessageButton";
+import { useAgents } from "../../features/agents/react";
 import { activityTarget } from "../../features/agents/activity-target";
 import { PanelView } from "../../features/panels/PanelView";
 import { contributionKey } from "../../features/conversation/ContributionBoundary";
@@ -71,9 +74,29 @@ export function ProfilePanel({
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
   const pubkey = profilePanelKey(target) ?? activityKey;
+  const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
+  if (
+    agents &&
+    owned &&
+    owned.agent.owner === connection.viewer &&
+    !owned.agent.unfinished &&
+    owned.agent.place !== "elsewhere"
+  )
+    return (
+      <OwnedAgentProfile
+        key={`${connection.scope}:${connection.generation}:${pubkey}`}
+        agents={agents}
+        pubkey={pubkey}
+        relay={relay}
+        session={connection.session}
+        navigation={navigation}
+        context={context}
+        close={close}
+      />
+    );
   return (
     <ProfileDetails
       key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
@@ -91,6 +114,54 @@ export function ProfilePanel({
     />
   );
 }
+function OwnedAgentProfile({
+  agents,
+  pubkey,
+  relay,
+  session,
+  navigation,
+  context,
+  close,
+}: {
+  agents: Agents;
+  pubkey: string;
+  relay: RelayData;
+  session: RelaySession;
+  navigation: Navigation | undefined;
+  context: PanelProps["context"];
+  close(): void;
+}) {
+  const { types } = useAgents(agents);
+  const owned = useAgent(agents, pubkey);
+  const channels = useChannelChoices(session.channels);
+  if (!owned) return null;
+  return (
+    <AgentDetails
+      agents={agents}
+      agent={owned.agent}
+      type={owned.type}
+      types={types}
+      channels={channels}
+      memories={session.agentMemories}
+      onRemoved={close}
+      conversation={
+        context && {
+          channelId: context.channelId,
+          ...(context.rootId && { rootId: context.rootId }),
+        }
+      }
+      messageAction={
+        <AgentMessageButton
+          pubkey={pubkey}
+          relay={relay}
+          navigator={navigation}
+          navigation={undefined}
+        />
+      }
+    />
+  );
+}
+
 function ProfileDetails({
   panels,
   initialTab,

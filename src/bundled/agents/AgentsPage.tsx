@@ -1,3 +1,7 @@
+import { AgentDetails } from "./AgentDetails";
+import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
+import { AgentMessageButton } from "./AgentMessageButton";
+import { ProviderDialog } from "./ProviderDialog";
 // Agents and teams, with creation, import and marketplace entry from New agent.
 import {
   useEffect,
@@ -6,20 +10,16 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
-  type RefObject,
 } from "react";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
 import { AgentBrowse } from "./AgentBrowse";
 import { AgentCard, AgentPortrait } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
-import { AgentTabs } from "./AgentTabs";
-import { useAgentSettingsHost } from "./AgentSettingsHost";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
-import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
   PortableAgent,
@@ -33,18 +33,12 @@ import type {
   Team,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
-import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
+import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
 import {
-  ContributionBoundary,
-  contributionKey,
-} from "../../features/conversation/ContributionBoundary";
-import {
-  ArrowLeftIcon,
   CircleNotchIcon,
-  CopyIcon,
   DotsThreeIcon,
   DownloadIcon,
   StorefrontIcon,
@@ -57,7 +51,7 @@ import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
@@ -77,20 +71,12 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   canonicalPublicKey,
-  formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
 import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
-type Frame =
-  | {
-      view: "browse";
-      selected?: string;
-    }
-  | { view: "build"; pubkey: string };
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
@@ -127,7 +113,7 @@ export function AgentsPage({
     connection.status === "ready" ? connection.session.channels : undefined,
   );
   const [tab, setTab] = useState<Tab>("yours");
-  const [frame, setFrame] = useState<Frame>({ view: "browse" });
+  const [selectedKey, setSelectedKey] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [flow, setFlow] = useState<"import" | "browse">();
   const newAgentButton = useRef<HTMLButtonElement>(null);
@@ -164,16 +150,9 @@ export function AgentsPage({
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
-  const building = frame.view === "build" ? find(frame.pubkey) : undefined;
-  const selected = frame.view === "browse" ? find(frame.selected) : undefined;
-  const browse = (selected?: string) =>
-    setFrame(selected ? { view: "browse", selected } : { view: "browse" });
-  const build = (pubkey: string) => {
-    // A just-made agent may not be shown yet.
-    const agent = find(pubkey);
-    if (agent?.place !== "elsewhere" && !agent?.unfinished)
-      setFrame({ view: "build", pubkey });
-  };
+  const selected = find(selectedKey);
+  const browse = (pubkey?: string) => setSelectedKey(pubkey);
+  const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   const returnToAgents = () => {
@@ -263,14 +242,31 @@ export function AgentsPage({
     );
   })();
 
-  const body = (() => {
-    if (building)
-      return (
-        <AgentBuild
-          key={building.pubkey}
+  const panel =
+    tab !== "yours" ? undefined : selected ? (
+      selected.unfinished || selected.place === "elsewhere" ? (
+        <AgentPeek
+          key={selected.pubkey}
           agents={agents}
-          agent={building}
-          type={typeOf(building)}
+          agent={selected}
+          type={typeOf(selected)}
+          channels={channels}
+          onClose={() => browse()}
+        />
+      ) : (
+        <AgentDetails
+          messageAction={
+            <AgentMessageButton
+              pubkey={selected.pubkey}
+              relay={relay}
+              navigator={navigator}
+              navigation={navigation}
+            />
+          }
+          key={selected.pubkey}
+          agents={agents}
+          agent={selected}
+          type={typeOf(selected)}
           types={types}
           channels={channels}
           memories={
@@ -280,121 +276,120 @@ export function AgentsPage({
           }
           onRemoved={() => browse()}
         />
-      );
-    const panel =
-      tab !== "yours" ? undefined : selected ? (
-        <AgentPeek
-          key={selected.pubkey}
-          agents={agents}
-          agent={selected}
-          type={typeOf(selected)}
-          channels={channels}
-          onBuild={() => build(selected.pubkey)}
-          onClose={() => browse()}
-        />
-      ) : undefined;
-    return (
-      <div className={styles.browse} data-side={panel ? "" : undefined}>
-        <div className={styles.inventory}>
-          <div className={styles.content}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Tabs
-                variant="panel"
-                label="Agent tabs"
-                value={tab}
-                onValueChange={setTab}
-                items={TABS}
-              />
-              {toolbarAction && newAgentMenu}
-            </div>
-            <section
-              id={`agents-${tab}`}
-              role="tabpanel"
-              aria-labelledby={`agents-${tab}-tab`}
-            >
-              {tab === "yours" ? (
-                yours
-              ) : (
-                <Teams
-                  agents={agents}
-                  saved={snapshot.agents.filter(
-                    (agent) => agent.place === "here",
-                  )}
-                  teams={snapshot.teams}
-                />
-              )}
-            </section>
-          </div>
+      )
+    ) : undefined;
+  const body = (
+    <div className={styles.inventory}>
+      <div className={styles.content}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Tabs
+            variant="panel"
+            label="Agent tabs"
+            value={tab}
+            onValueChange={setTab}
+            items={TABS}
+          />
+          {toolbarAction && newAgentMenu}
         </div>
-        {panel && <aside className={styles.side}>{panel}</aside>}
+        <section
+          id={`agents-${tab}`}
+          role="tabpanel"
+          aria-labelledby={`agents-${tab}-tab`}
+        >
+          {tab === "yours" ? (
+            yours
+          ) : (
+            <Teams
+              agents={agents}
+              saved={snapshot.agents.filter((agent) => agent.place === "here")}
+              teams={snapshot.teams}
+            />
+          )}
+        </section>
       </div>
-    );
-  })();
+    </div>
+  );
 
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Agents">
-        <div className="flex h-full min-h-0 flex-col">
-          <PanelHeader
-            {...(building
-              ? {
-                  navigation: (
-                    <IconButton
-                      aria-label="All agents"
-                      size="sm"
-                      icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
-                      onClick={() => browse(building.pubkey)}
-                    />
-                  ),
-                }
-              : {})}
-            title={
-              building ? (
-                building.name
-              ) : (
-                <Tabs
-                  variant="navigation"
-                  label="Agents header"
-                  value="agents"
-                  onValueChange={() => {}}
-                  showSelection={false}
-                  items={[
-                    {
-                      value: "agents",
-                      label: "Agents",
-                      icon: <RobotIcon size="1rem" />,
-                    },
-                  ]}
-                />
-              )
-            }
-            actions={
-              !building && snapshot.status === "ready" ? (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={
-                      <IconButton
-                        ref={more}
-                        aria-label="More agent actions"
-                        title="More agent actions"
-                        size="sm"
-                        icon={<DotsThreeIcon size={16} aria-hidden="true" />}
-                      />
-                    }
+      <div className={styles.browse} data-side={panel ? "" : undefined}>
+        <div className={styles.main}>
+          <Panel aria-label="Agents">
+            <div className="flex h-full min-h-0 flex-col">
+              <PanelHeader
+                title={
+                  <Tabs
+                    variant="navigation"
+                    label="Agents header"
+                    value="agents"
+                    onValueChange={() => {}}
+                    showSelection={false}
+                    items={[
+                      {
+                        value: "agents",
+                        label: "Agents",
+                        icon: <RobotIcon size="1rem" />,
+                      },
+                    ]}
                   />
-                  <MenuPopup align="end">
-                    <ProviderSubmenu types={types} onSelect={setProviderKey} />
-                    <MenuItem onClick={openTeams} disabled={tab === "teams"}>
-                      Teams
-                    </MenuItem>
-                  </MenuPopup>
-                </MenuRoot>
-              ) : undefined
-            }
-          />
-          <div className="min-h-0 flex-1">{body}</div>
+                }
+                actions={
+                  snapshot.status === "ready" ? (
+                    <MenuRoot>
+                      <MenuTrigger
+                        render={
+                          <IconButton
+                            ref={more}
+                            aria-label="More agent actions"
+                            title="More agent actions"
+                            size="sm"
+                            icon={
+                              <DotsThreeIcon size={16} aria-hidden="true" />
+                            }
+                          />
+                        }
+                      />
+                      <MenuPopup align="end">
+                        <ProviderSubmenu
+                          types={types}
+                          onSelect={setProviderKey}
+                        />
+                        <MenuItem
+                          onClick={openTeams}
+                          disabled={tab === "teams"}
+                        >
+                          Teams
+                        </MenuItem>
+                      </MenuPopup>
+                    </MenuRoot>
+                  ) : undefined
+                }
+              />
+              <div className="min-h-0 flex-1">{body}</div>
+            </div>
+          </Panel>
         </div>
-      </FullPageSurface>
+        {panel && selected && (
+          <aside className={styles.side}>
+            <Panel aria-label="Agent profile">
+              <PanelWorkspace
+                focusOnMount={false}
+                adoptSelection={selected.pubkey}
+                value={selected.pubkey}
+                select={() => {}}
+                items={[
+                  {
+                    id: selected.pubkey,
+                    label: selected.name,
+                    content: panel,
+                    close: () => browse(),
+                  },
+                ]}
+              />
+            </Panel>
+          </aside>
+        )}
+      </div>
       {flow && (
         <Dialog
           open
@@ -581,82 +576,6 @@ function ProviderHealthMenuItem({
       )}
       {label}
     </MenuItem>
-  );
-}
-
-function ProviderDialog({
-  type,
-  finalFocus,
-  onClose,
-}: {
-  type: RegisteredAgentType | undefined;
-  finalFocus: RefObject<HTMLButtonElement | null>;
-  onClose(): void;
-}) {
-  const provider = type?.provider;
-  if (!type || !provider) return null;
-  return (
-    <ContributionBoundary
-      key={contributionKey(type)}
-      fallback={
-        <Dialog
-          open
-          onOpenChange={(open) => !open && onClose()}
-          title={type.title}
-          dismissOnOutsideClick
-          finalFocus={() => finalFocus.current}
-        >
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            Provider controls are unavailable.
-          </p>
-        </Dialog>
-      }
-    >
-      <ManagedProviderDialog
-        type={type}
-        provider={provider}
-        finalFocus={finalFocus}
-        onClose={onClose}
-      />
-    </ContributionBoundary>
-  );
-}
-
-function ManagedProviderDialog({
-  type,
-  provider,
-  finalFocus,
-  onClose,
-}: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
-  finalFocus: RefObject<HTMLButtonElement | null>;
-  onClose(): void;
-}) {
-  const state = useSyncExternalStore(
-    provider.subscribe,
-    provider.snapshot,
-    provider.snapshot,
-  );
-  const Icon = type.icon;
-  const Body = provider.DialogBody;
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title={
-        <span className="flex items-center gap-2">
-          {Icon && <Icon size={22} aria-hidden="true" />}
-          {type.title}
-        </span>
-      }
-      headerGap="compact"
-      dismissOnOutsideClick
-      preventClose={!!state.blocking}
-      finalFocus={() => finalFocus.current}
-    >
-      <Body onClose={onClose} />
-    </Dialog>
   );
 }
 
@@ -912,67 +831,44 @@ function AgentPeek({
   agent,
   type,
   channels,
-  onBuild,
   onClose,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
-  onBuild(): void;
   onClose(): void;
 }) {
-  const Peek = type?.Peek;
-  const summary = summaryOf(agent, type);
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
-  const finishButton = useRef<HTMLButtonElement>(null);
-  const openButton = useRef<HTMLButtonElement>(null);
-  // Finish setup is replaced by Open on success; focus moves with it.
-  const handoff = useRef(false);
   const finish = async () => {
-    handoff.current = document.activeElement === finishButton.current;
     setFinishing(true);
     setError("");
     try {
       await agents.finish(agent.pubkey);
     } catch (reason) {
-      handoff.current = false;
       setError(message(reason));
     }
     setFinishing(false);
   };
-  useEffect(() => {
-    if (agent.unfinished || !handoff.current) return;
-    handoff.current = false;
-    openButton.current?.focus();
-  }, [agent.unfinished]);
-  if (agent.place === "elsewhere")
-    return (
-      <div className={styles.sideBody}>
-        <PeekIdentity agent={agent} detail={summary} onClose={onClose} />
-        <p className="m-0 text-body-sm text-secondary">
-          Its key is on another of your devices, which runs it. Open Agents
-          there to change or delete it.
-        </p>
-      </div>
-    );
   return (
     <div className={styles.sideBody}>
       <PeekIdentity
         agent={agent}
-        detail={`${type?.title ?? "Type unavailable"}${
-          type && !Peek && summary !== type.title ? ` · ${summary}` : ""
-        }`}
+        detail={summaryOf(agent, type)}
         onClose={onClose}
       />
-      {agent.unfinished ? (
+      {agent.place === "elsewhere" ? (
+        <p className="m-0 text-body-sm text-secondary">
+          Its key is on another of your devices, which runs it. Open Agents
+          there to change or delete it.
+        </p>
+      ) : (
         <>
           <p className="m-0 text-body-sm text-secondary">
             Its provider made it, but its setup did not finish.
           </p>
           <Button
-            ref={finishButton}
             variant="primary"
             loading={finishing}
             onClick={() => void finish()}
@@ -985,25 +881,12 @@ function AgentPeek({
             </p>
           )}
           <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
+          {agent.place === "here" && (
+            <Section title="Wakes on">
+              <AttentionSummary agent={agent} channels={channels} />
+            </Section>
+          )}
         </>
-      ) : (
-        <Button ref={openButton} variant="primary" onClick={onBuild}>
-          Open
-        </Button>
-      )}
-      {Peek && !agent.unfinished ? (
-        <div className={styles.peekPlugin}>
-          <Peek agent={agent} />
-        </div>
-      ) : !type ? (
-        <p className="m-0 text-body-sm text-secondary">
-          Enable the plugin that provides this agent's type to run or change it.
-        </p>
-      ) : null}
-      {agent.place === "here" && (
-        <Section title="Wakes on">
-          <AttentionSummary agent={agent} channels={channels} />
-        </Section>
       )}
     </div>
   );
@@ -1395,144 +1278,5 @@ function TeamEditor({
         )}
       </div>
     </form>
-  );
-}
-
-function AgentBuild({
-  agents,
-  agent,
-  type,
-  types,
-  channels,
-  memories,
-  onRemoved,
-}: {
-  agents: Agents;
-  agent: Agent;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
-  channels: readonly ChannelChoice[];
-  memories: AgentMemories | undefined;
-  onRemoved(): void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [pictureError, setPictureError] = useState("");
-  const settings = useAgentSettingsHost({ agents, agent, type, types });
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  return (
-    <div className={styles.build}>
-      <aside className={styles.rail} aria-label={`${agent.name} identity`}>
-        <div className={styles.portraitEdit}>
-          <AvatarEditor
-            size="compact"
-            shape="squircle"
-            value={agent.picture ?? ""}
-            name={agent.name}
-            community={agent.relay}
-            onChange={(picture) => {
-              setPictureError("");
-              agents
-                .save(agent.pubkey, { picture: picture || null })
-                .catch((error: unknown) => setPictureError(message(error)));
-            }}
-          />
-          {pictureError && (
-            <p role="alert" className="m-0 text-body-sm">
-              {pictureError}
-            </p>
-          )}
-        </div>
-        <NameField
-          name={agent.name}
-          onSave={(name) => agents.save(agent.pubkey, { name })}
-        />
-        <dl className={styles.facts}>
-          <dt>Key</dt>
-          <dd className="flex items-center gap-1">
-            <code className="truncate">{formatPublicKey(agent.pubkey, 8)}</code>
-            <IconButton
-              aria-label={copied ? "Copied" : "Copy public key"}
-              size="sm"
-              icon={<CopyIcon size={14} aria-hidden="true" />}
-              onClick={() =>
-                void navigator.clipboard
-                  ?.writeText(agent.pubkey)
-                  .then(() => setCopied(true))
-              }
-            />
-          </dd>
-        </dl>
-        <div className="mt-auto">
-          <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
-        </div>
-      </aside>
-      <section className={styles.work} aria-label={`${agent.name} settings`}>
-        {!type && (
-          <p className="m-0 mb-4 text-body-sm text-secondary">
-            Enable the plugin that provides this agent's type to change its
-            settings. Its attention can still be edited.
-          </p>
-        )}
-        <AgentTabs
-          agents={agents}
-          agent={settings.agent}
-          type={settings.type}
-          channels={channels}
-          settingsHost={settings.settingsHost}
-          memories={memories}
-        />
-      </section>
-    </div>
-  );
-}
-
-/** Rename in place: saves on Enter or blur, Escape puts the name back. */
-function NameField({
-  name,
-  onSave,
-}: {
-  name: string;
-  onSave(name: string): Promise<void>;
-}) {
-  const [draft, setDraft] = useState(name);
-  const [error, setError] = useState("");
-  // Escape blurs too, and blur saves; this skips that one save.
-  const cancelled = useRef(false);
-  useEffect(() => setDraft(name), [name]);
-  const commit = () => {
-    if (cancelled.current) {
-      cancelled.current = false;
-      return;
-    }
-    const next = draft.trim();
-    if (!next) return setDraft(name);
-    if (next === name) return;
-    setError("");
-    onSave(next).catch((reason) => {
-      setError(message(reason));
-      setDraft(name);
-    });
-  };
-  return (
-    <Field label="Name" labelVisibility="hidden" error={error || undefined}>
-      <Input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            cancelled.current = true;
-            setDraft(name);
-            event.currentTarget.blur();
-            cancelled.current = false;
-          }
-        }}
-      />
-    </Field>
   );
 }

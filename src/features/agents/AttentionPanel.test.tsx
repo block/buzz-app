@@ -238,3 +238,39 @@ it("never names a new object after a skipped one it would replace", async () => 
     attention: { "watch/messages-2": expect.any(Object) },
   });
 });
+
+it("adds an interest in a modal and retains the draft after a save error", async () => {
+  const user = userEvent.setup();
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Try again"))
+    .mockResolvedValue(undefined);
+  render(<AttentionPanel agent={agent} save={save} channels={[]} />);
+  await user.click(screen.getByRole("button", { name: "Add interest" }));
+  const dialog = screen.getByRole("dialog", { name: "Add interest" });
+  await user.type(within(dialog).getByLabelText("Interest name"), "Releases");
+  await user.type(
+    within(dialog).getByPlaceholderText(
+      "What should the agent do for this task?",
+    ),
+    "Track releases.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Add interest" }),
+  );
+  expect(await within(dialog).findByText("Try again")).toBeVisible();
+  expect(within(dialog).getByLabelText("Interest name")).toHaveValue(
+    "Releases",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Add interest" }),
+  );
+  expect(save).toHaveBeenLastCalledWith({
+    attention: {
+      "interest/releases": {
+        type: "interest",
+        instructions: "Track releases.",
+      },
+    },
+  });
+});

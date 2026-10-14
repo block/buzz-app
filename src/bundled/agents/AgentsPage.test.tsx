@@ -1,3 +1,6 @@
+import { ProfilePanel } from "../profiles/ProfilePanel";
+import { createRelaySession } from "../../features/relay/session";
+import { profileTarget } from "../../features/profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -325,7 +328,7 @@ function setup(
   return { agents, echoProvider, types, show, relay, ...view };
 }
 
-it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
+it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1), agent("Bo", 2)]);
   const grid = screen.getByRole("grid", { name: "Agents" });
@@ -337,27 +340,52 @@ it("peeks at a selected agent beside the grid and follows the arrow keys", async
     "aria-selected",
     "true",
   );
-  expect(screen.getByText("Peek of Ada")).toBeInTheDocument();
-  expect(screen.getByText("Every hour")).toBeInTheDocument();
-  expect(screen.getByText("Mentions")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  const profilePane = screen.getByRole("region", { name: "Agent profile" });
+  expect(screen.getByRole("region", { name: "Agents" })).not.toContainElement(
+    profilePane,
+  );
+  expect(
+    within(profilePane).getByRole("tablist", { name: "Panel tabs" }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Open" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
 
   await user.keyboard("{ArrowRight}");
-  expect(screen.getByText("Peek of Bo")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: /Bo/ })).toHaveFocus();
 
   await user.keyboard("{Escape}");
-  expect(screen.queryByText("Peek of Bo")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("tab", { name: "Identity" }),
+  ).not.toBeInTheDocument();
   expect(grid).toBeInTheDocument();
 });
 
-it("opens the build view with the type's tabs and the app's Attention and Memory tabs", async () => {
+it("opens the side panel with the type's tabs and the app's Attention and Memory tabs", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
-  expect(tabs).toEqual(["Settings", "Reply", "Attention", "Memory"]);
+  expect(tabs).toEqual([
+    "Agents",
+    "Your agents",
+    "Your teams",
+    "AAda",
+    "Identity",
+    "Reply",
+    "Memory",
+    "Attention",
+    "Settings",
+  ]);
   expect(
     within(
       screen.getByRole("complementary", { name: "Ada identity" }),
@@ -368,10 +396,10 @@ it("opens the build view with the type's tabs and the app's Attention and Memory
   await user.click(screen.getByRole("tab", { name: "Attention" }));
   expect(screen.getByText("Default")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "All agents" }));
+  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
   expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
     "aria-selected",
-    "true",
+    "false",
   );
 });
 
@@ -621,7 +649,7 @@ it("restores a provider dialog from page history and writes open and close visit
   );
 });
 
-it("shows an agent's picture in the grid, peek and build view", async () => {
+it("shows an agent's picture in the grid and side panel", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
   setup([{ ...agent("Ada", 1), picture }]);
@@ -629,25 +657,47 @@ it("shows an agent's picture in the grid, peek and build view", async () => {
     document.querySelectorAll(`img[src="${picture}"]`).length;
   expect(pictures()).toBe(1);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
-  expect(pictures()).toBe(2);
+  expect(pictures()).toBe(3);
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("grid")).not.toBeInTheDocument();
-  expect(pictures()).toBe(1);
+  expect(screen.getByRole("grid")).toBeInTheDocument();
+  expect(pictures()).toBe(3);
 });
 
-it("edits the picture from the build view and shows why a save failed", async () => {
+it("keeps name edits inline and lets a failed save retry", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
   const { agents } = setup([{ ...agent("Ada", 1), picture }]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   agents.save.mockRejectedValueOnce(new Error("Could not save"));
-  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.click(
-    await screen.findByRole("button", { name: "Remove avatar" }),
+    screen.getByRole("button", { name: "Agent profile actions" }),
   );
-  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  const field = screen.getByRole("textbox", { name: "Agent name" });
+  expect(field).toHaveAttribute("data-appearance", "heading");
+  await waitFor(() => expect(field).toHaveFocus());
+  expect((field as HTMLInputElement).selectionStart).toBe(3);
+  expect((field as HTMLInputElement).selectionEnd).toBe(3);
+  await user.clear(field);
+  await user.type(field, "Updated");
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
+    name: "Updated",
+  });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
+  expect(
+    screen.getByRole("textbox", { name: "Agent name" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Agent name" }),
+    ).not.toBeInTheDocument(),
+  );
 });
 
 it("saves a reviewed provider change with the destination settings", async () => {
@@ -828,23 +878,35 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
 });
 
-it("saves a rename on Enter and discards it on Escape", async () => {
+it("cancels inline name edits and rejects an empty name", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
-  await user.keyboard("{Enter}");
-  const field = within(
-    screen.getByRole("complementary", { name: "Ada identity" }),
-  ).getByLabelText("Name");
-  await user.clear(field);
-  await user.type(field, "Discarded{Escape}");
+  const edit = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change name" }),
+    );
+  };
+  await edit();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Message" }),
+  ).not.toBeInTheDocument();
+  await user.clear(screen.getByRole("textbox", { name: "Agent name" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Agent name" }),
+    "Discarded",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
-  expect(field).toHaveValue("Ada");
-  await user.clear(field);
-  await user.type(field, "Kept{Enter}");
-  expect(agents.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
-    name: "Kept",
-  });
+  await edit();
+  expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue(
+    "Ada",
+  );
 });
 
 it("imports an earlier agent as the chosen type and shows it in Your agents", async () => {
@@ -998,7 +1060,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   expect(screen.getByRole("grid")).toBeInTheDocument();
 });
 
-it("moves focus from Finish setup to Open once the setup finishes", async () => {
+it("moves focus from Finish setup to Identity once the setup finishes", async () => {
   const user = userEvent.setup();
   const finished: Agent = {
     ...agent("Sky", 4),
@@ -1013,7 +1075,7 @@ it("moves focus from Finish setup to Open once the setup finishes", async () => 
   await user.click(screen.getByText("Sky"));
   screen.getByRole("button", { name: "Finish setup" }).focus();
   await user.keyboard("{Enter}");
-  expect(await screen.findByRole("button", { name: "Open" })).toHaveFocus();
+  expect(await screen.findByRole("tab", { name: "Identity" })).toHaveFocus();
 });
 
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {
@@ -1032,7 +1094,7 @@ it("opens deletion from the card menu without selecting it and requires confirma
   await user.click(
     await screen.findByRole("menuitem", { name: "Open settings" }),
   );
-  expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -1098,3 +1160,166 @@ it.each(["loading", "error", "unavailable"] as const)(
     ).toBeVisible();
   },
 );
+
+it("keeps the copy and delete rows in Settings, below the agent identity", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  const copy = vi.spyOn(navigator.clipboard, "writeText");
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  const identity = screen.getByRole("complementary", { name: "Ada identity" });
+  expect(within(identity).queryByText("Public key")).not.toBeInTheDocument();
+  expect(
+    within(identity).queryByRole("button", { name: "Delete agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Copy public key" }));
+  expect(copy).toHaveBeenCalledWith(expect.stringMatching(/^npub1/));
+  expect(
+    await screen.findByRole("button", { name: "Copied" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete Ada?" });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("tab", { name: "Attention" }));
+  expect(
+    screen.queryByRole("button", { name: "Delete agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  copy.mockRejectedValueOnce(new Error("Clipboard denied"));
+  await user.click(
+    screen.getByRole("button", { name: /Copied|Copy public key/ }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not copy the public key",
+  );
+  copy.mockRestore();
+});
+
+it("opens provider setup before staging an unready provider, and leaves the switch unsaved", async () => {
+  const user = userEvent.setup();
+  const install = vi.fn();
+  const destination = provider("attention", ({ onClose }) => (
+    <>
+      <p>Provider installation and sign-in</p>
+      <button
+        type="button"
+        onClick={() => {
+          install();
+          destination.set({ readiness: "ready" });
+          onClose();
+        }}
+      >
+        Install and connect
+      </button>
+    </>
+  ));
+  const target = {
+    key: "test/destination",
+    pluginId: "test",
+    revision: "1",
+    id: "destination",
+    title: "Destination",
+    defaults: () => ({ config: {} }),
+    provider: destination.contribution,
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [target] });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  const choose = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Change provider from Echo" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Destination" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    return screen.findByRole("dialog", { name: "Destination" });
+  };
+  const setupDialog = await choose();
+  expect(destination.check).toHaveBeenCalledOnce();
+  expect(install).not.toHaveBeenCalled();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
+  expect(
+    screen.getByRole("button", { name: "Change provider from Echo" }),
+  ).toBeInTheDocument();
+  await choose();
+  await user.click(screen.getByRole("button", { name: "Install and connect" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("button", { name: "Change provider from Destination" }),
+  ).toBeInTheDocument();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.retype).toHaveBeenCalledWith("1".repeat(64), target.key, {
+    config: expect.anything(),
+  });
+});
+
+it("opens avatar and name editing from the profile menu", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  const menu = screen.getByRole("button", { name: "Agent profile actions" });
+  await user.click(menu);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  expect(dialog).toHaveAttribute("data-height", "stable-tall");
+  expect(
+    within(dialog).getByRole("button", { name: "Use image" }),
+  ).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(menu).toHaveFocus());
+  await user.click(menu);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  expect(
+    await screen.findByRole("textbox", { name: "Agent name" }),
+  ).toHaveValue("Ada");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("shares the editable owner profile with chat profile targets", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    viewer: ada.owner,
+    session: owner.session,
+  };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  const close = vi.fn();
+  try {
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        target={profileTarget(ada.pubkey, { agent: true }) ?? ""}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Ada" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Identity" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Info" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change name" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBeVisible();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});

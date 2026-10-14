@@ -147,6 +147,10 @@ export type AgentViewProps<Config = unknown> = {
   save(config: Config): Promise<void>;
   /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
   settingsHost?: AgentSettingsHost;
+  /** Optional presentation split for providers that declare splitSettings. */
+  settingsSection?: "identity" | "runtime";
+  /** Host management rows, shown before provider diagnostics. */
+  settingsContent?: ReactNode;
 };
 /** What a type's part of the New agent dialog receives: the new agent's
  * starting config, from `defaults`, to fill in. The app owns its key, name and
@@ -163,6 +167,8 @@ export type AgentTab<Config = unknown> = Readonly<{
   title: string;
   /** Lets the Agents build view place host-owned Type controls in this tab. */
   role?: "settings";
+  /** Supports separate identity and runtime settings presentations. */
+  splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */

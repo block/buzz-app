@@ -1,4 +1,5 @@
 import type { ComponentProps, Ref } from "react";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import styles from "./AgentCard.module.css";
@@ -31,6 +32,11 @@ export function NewAgentTile({
         className={`${styles.newLabel} text-label-sm`}
       >
         New agent
+        <CaretDownIcon
+          size={14}
+          className="buzz-dropdown-chevron"
+          aria-hidden="true"
+        />
       </SurfaceButton>
     );
   return (

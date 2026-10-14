@@ -223,6 +223,33 @@
     border-radius: var(--radius-pill);
   }
 
+  /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
+     interactive wrapper's keyboard focus indicator remains visible. */
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+    [data-disabled]
+  ) {
+    isolation: isolate;
+    background: transparent;
+  }
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--affordance-prominent);
+    mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
+    transition: background-color var(--duration-state) var(--easing-state);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+        [data-disabled]
+      )::before {
+      background: var(--affordance-prominent-hover);
+    }
+  }
+
   /* Trailing row actions keep their size-selected width and fill the row height. */
   .buzz-button[data-icon-variant][data-icon-shape="row-end"] {
     --interaction-hover: var(--interaction-row-hover);

@@ -120,9 +120,12 @@ export function Select({
             render={(props) => (
               <Button
                 {...props}
+                shape="control"
                 variant={
-                  variant === "compact" && appearance !== "subtle"
-                    ? "outline"
+                  variant === "compact"
+                    ? appearance === "subtle"
+                      ? "subtle"
+                      : "outline"
                     : "ghost"
                 }
                 size={variant === "compact" ? "sm" : "md"}

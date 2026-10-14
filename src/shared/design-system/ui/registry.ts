@@ -461,7 +461,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "avatar",
       "media",
       "bare (glyph-state toggle, no background in any state; 20px artwork at sm)",
-      "shape: control (default, 10px) | round (avatar default) | row-end",
+      "shape: control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],

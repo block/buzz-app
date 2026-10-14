@@ -37,7 +37,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
         .poll(() =>
           name.evaluate((field) => getComputedStyle(field).borderBottomColor),
         )
-        .not.toBe("rgba(0, 0, 0, 0)");
+        .toBe("rgba(0, 0, 0, 0)");
       await expect(name).toBeInViewport();
       const label = dialog
         .locator(".buzz-preference-row-label")
@@ -81,4 +81,35 @@ test("agent cards expose selection and creation preserves focus and selected bor
       option.evaluate((element) => getComputedStyle(element).borderColor),
     )
     .toBe(selectedBorder);
+});
+
+test("owner profile keeps its pane and caret stable during inline name editing", async ({
+  page,
+}, info) => {
+  await page.goto("/tests/fixtures/agent-library.html");
+  await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
+  const profile = page.getByRole("region", {
+    name: "Agent profile",
+    exact: true,
+  });
+  const agents = page.getByRole("region", { name: "Agents", exact: true });
+  expect((await profile.boundingBox()).y).toBe((await agents.boundingBox()).y);
+  await page.getByRole("tab", { name: "Attention", exact: true }).click();
+  const before = await profile.boundingBox();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.screenshot({ path: info.outputPath("agent-profile.png") });
+  await profile.getByRole("button", { name: "Agent profile actions" }).click();
+  await page.getByRole("menuitem", { name: "Change name" }).click();
+  const input = profile.getByRole("textbox", { name: "Agent name" });
+  await expect(input).toBeFocused();
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([3, 3]);
+  expect((await profile.boundingBox()).height).toBe(before.height);
+  await input.fill("Ada renamed");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    profile.getByRole("heading", { name: "Ada", exact: true }),
+  ).toBeVisible();
+  expect((await profile.boundingBox()).height).toBe(before.height);
 });

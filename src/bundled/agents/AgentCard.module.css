@@ -17,7 +17,7 @@
   padding: var(--space-8) var(--space-3) var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius-container);
-  background: var(--surface-control);
+  background: var(--interaction-row-hover);
   text-align: center;
   user-select: none;
 }
@@ -33,10 +33,6 @@
 }
 .portrait {
   flex-shrink: 0;
-  width: 6rem;
-  height: 6rem;
-}
-.portrait[data-animated] {
   width: 8rem;
   height: 8rem;
 }
@@ -68,6 +64,8 @@
   white-space: nowrap;
 }
 .actions {
+  --interaction-fill: var(--interaction-selected);
+  --interaction-hover: var(--interaction-pressed);
   max-width: 100%;
   display: flex;
   flex-wrap: wrap;
@@ -144,7 +142,9 @@
   top: 45%;
 }
 .newLabel {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-pill);
   color: var(--text-inverse);

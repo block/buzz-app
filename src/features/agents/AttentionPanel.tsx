@@ -1,8 +1,9 @@
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 // The app's editor for an agent's `agent-attention/v1` objects. Every agent type is
 // woken through them, so the app edits them once instead of each plugin. Watches
 // and timers sit under the Interest they serve; raw JSON covers what the forms
 // leave out (tags, classifiers). Validation is the spec's, at save.
-import { useState } from "react";
+import { useId, useState } from "react";
 import { formatItemTimestamp } from "../../shared/datetime";
 import {
   AtIcon,
@@ -151,26 +152,19 @@ export function AttentionPanel({
   );
   return (
     <div className="grid content-start gap-6">
-      <p className="m-0 text-body-sm text-secondary">
-        What wakes this agent. Mentions always do. For anything else, including
-        replies in its threads that don't mention it, add an Interest: something
-        it looks after, with instructions. The watches and timers under an
-        Interest decide when it wakes for it.
-      </p>
       <SettingsGroup>
         <PreferenceRow
           icon={<AtIcon size={16} />}
           title="Mentions"
-          subtitle="Messages that mention it. Always on."
+          subtitle="Responds when someone @mentions it. Always on."
         />
         <PreferenceRow
           icon={<EyeIcon size={16} />}
           title="Attention"
           subtitle={
             <>
-              Lets the agent add and change its own Interests, watches and
-              timers, and wakes it for them. Off, nothing below wakes it, and it
-              is not offered the tools.
+              Let the agent manage tasks and run on events or schedules. Turn
+              off to pause these tasks; mentions still work.
               <Problem error={switched.error} />
             </>
           }
@@ -186,6 +180,14 @@ export function AttentionPanel({
           }
         />
       </SettingsGroup>
+      <div className="grid gap-2">
+        <h4 className="m-0 text-label">Interests</h4>
+        <p className="m-0 text-body-sm text-secondary">
+          Tasks the agent looks after, like tracking releases. Give each one
+          instructions, then add a watch for new messages or a timer for a
+          schedule.
+        </p>
+      </div>
       {interests.map((object) => {
         const id = parseSlug(object.slug)?.id ?? object.slug;
         return (
@@ -332,8 +334,7 @@ function InterestGroup({
       ) : (
         !draft && (
           <p className="m-0 text-body-sm text-secondary">
-            Nothing wakes it for this yet. Add a watch to wake it on events, or
-            a timer to wake it on a schedule.
+            Add a watch or timer to choose when the agent works on this task.
           </p>
         )
       )}
@@ -693,10 +694,12 @@ function NewInterest({
   save: Save;
   onDone(): void;
 }) {
+  const form = useId();
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const action = useAction();
   const submit = () => {
+    if (action.pending) return;
     const slug = freeSlug("interest", name, agent);
     const value = { type: "interest", instructions } as const;
     const problem = !name.trim()
@@ -709,32 +712,58 @@ function NewInterest({
         .then((ok) => ok && onDone());
   };
   return (
-    <section
-      className="grid gap-3 rounded-container bg-surface-inset p-4"
-      aria-label="New interest"
+    <Dialog
+      open
+      title="Add interest"
+      preventClose={action.pending}
+      onOpenChange={(open) => {
+        if (!open) onDone();
+      }}
+      actions={
+        <>
+          <Button disabled={action.pending} onClick={onDone}>
+            Cancel
+          </Button>
+          <Button
+            variant="prominent"
+            type="submit"
+            form={form}
+            loading={action.pending}
+          >
+            Add interest
+          </Button>
+        </>
+      }
     >
-      <Field
-        label="Interest"
-        description="Something it looks after, e.g. Releases"
+      <form
+        id={form}
+        className="grid gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
       >
-        <Input value={name} onChange={(event) => setName(event.target.value)} />
-      </Field>
-      <Field label="Instructions">
-        <Textarea
-          rows={3}
-          value={instructions}
-          placeholder="Keep the release checklist current and flag blockers."
-          onChange={(event) => setInstructions(event.target.value)}
-        />
-      </Field>
-      <Problem error={action.error} />
-      <FormActions
-        pending={action.pending}
-        submit="Add interest"
-        onSubmit={submit}
-        onCancel={onDone}
-      />
-    </section>
+        <Field label="Interest name">
+          <Input
+            disabled={action.pending}
+            value={name}
+            placeholder="Release tracking"
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="Instructions">
+          <Textarea
+            disabled={action.pending}
+            rows={3}
+            value={instructions}
+            placeholder="What should the agent do for this task?"
+            onChange={(event) => setInstructions(event.target.value)}
+          />
+        </Field>
+
+        <Problem error={action.error} />
+      </form>
+    </Dialog>
   );
 }
 

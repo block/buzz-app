@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { ProviderDialog } from "./ProviderDialog";
+import { useRef, useState } from "react";
 import type {
   Agent,
   AgentSettingsHost,
@@ -137,6 +138,9 @@ function TypeField({
   const selectedType = available.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
+  const providerButton = useRef<HTMLButtonElement>(null);
+  const [checking, setChecking] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
   const [migration, setMigration] = useState<{
     target: RegisteredAgentType;
     preview: ReturnType<Agents["previewRetype"]>;
@@ -165,6 +169,23 @@ function TypeField({
     onSelect({ key: migration.target.key, config: migration.preview.config });
     setMigration(undefined);
   };
+  const prepare = async () => {
+    if (!migration || checking) return;
+    const provider = migration.target.provider;
+    if (!provider) return stage();
+    setChecking(true);
+    setError("");
+    try {
+      await provider.check();
+      if (provider.snapshot().readiness === "ready") stage();
+      else setConfiguring(true);
+    } catch {
+      // The provider owns install/auth recovery, including failed checks.
+      setConfiguring(true);
+    } finally {
+      setChecking(false);
+    }
+  };
   const value = (
     <span className="flex min-w-0 items-center gap-2">
       {TypeIcon && <TypeIcon size={20} aria-hidden="true" />}
@@ -178,7 +199,7 @@ function TypeField({
           <MenuRoot onOpenChange={(open) => open && setError("")}>
             <MenuTrigger
               aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
-              render={<FieldButton>{value}</FieldButton>}
+              render={<FieldButton ref={providerButton}>{value}</FieldButton>}
             />
             <MenuPopup>
               <MenuRadioGroup
@@ -214,7 +235,8 @@ function TypeField({
         </p>
       )}
       <Dialog
-        open={Boolean(migration)}
+        open={Boolean(migration) && !configuring}
+        preventClose={checking}
         onOpenChange={(open) => {
           if (!open) {
             setMigration(undefined);
@@ -229,8 +251,14 @@ function TypeField({
         headerGap="compact"
         actions={
           <>
-            <Button onClick={() => setMigration(undefined)}>Cancel</Button>
-            <Button variant="primary" onClick={stage}>
+            <Button disabled={checking} onClick={() => setMigration(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={checking}
+              onClick={() => void prepare()}
+            >
               Continue
             </Button>
           </>
@@ -245,6 +273,18 @@ function TypeField({
           />
         )}
       </Dialog>
+      {configuring && migration && (
+        <ProviderDialog
+          type={migration.target}
+          finalFocus={providerButton}
+          onClose={() => {
+            setConfiguring(false);
+            if (migration.target.provider?.snapshot().readiness === "ready")
+              stage();
+            else setMigration(undefined);
+          }}
+        />
+      )}
     </>
   );
 }

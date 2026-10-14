@@ -1,6 +1,14 @@
+import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
 // and its part of the New agent dialog.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useId,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
@@ -270,11 +278,11 @@ const providerDefaultLabel = (model: string, data?: Catalog) => {
       (candidate) => candidate.model === model,
     );
     if (!data || selected)
-      return `Provider default · ${selected?.displayName || selected?.model || model}`;
+      return selected?.displayName || selected?.model || model;
   }
   const native = data?.models.find((candidate) => candidate.isDefault);
   const name = native?.displayName || native?.model;
-  return name ? `Codex default (${name})` : "Codex default";
+  return name || "Model unavailable";
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
@@ -368,6 +376,7 @@ export function createTabs(
         models={choices(data)}
         value={current.model}
         defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+        defaultDescription="Following the provider's model default"
         loading={checking}
         error={error}
         retry={retry}
@@ -379,6 +388,7 @@ export function createTabs(
   }
 
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
+    const defaultsForm = useId();
     const state = useProvider();
     const { data, error, checking } = state;
     const installing = useSyncExternalStore(
@@ -432,7 +442,6 @@ export function createTabs(
                   ? "Waiting for Codex sign-in…"
                   : "Installing Codex…"}
               </p>
-              <Button onClick={() => void setup.cancel()}>Cancel</Button>
             </div>
           ) : checking ? (
             <p role="status" className="m-0">
@@ -443,17 +452,6 @@ export function createTabs(
               <strong>{error}</strong>
             </p>
           ) : null}
-          {action && !installing.running && !checking && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                autoFocus
-                variant="prominent"
-                onClick={() => void setup.run(action.step)}
-              >
-                {action.label}
-              </Button>
-            </div>
-          )}
           {action?.step === "install" && !installing.running && (
             <p className="m-0 text-body-sm text-subtle">
               Downloads Buzz's own copy of Codex (about 130 MB) from
@@ -473,6 +471,7 @@ export function createTabs(
           )}
         </div>
         <form
+          id={defaultsForm}
           className="grid gap-3"
           hidden={state.readiness !== "ready"}
           onSubmit={(event) => {
@@ -537,9 +536,19 @@ export function createTabs(
               {saveError}
             </p>
           )}
-          <div>
+        </form>
+        <ProviderDialogActions>
+          <Button
+            onClick={() =>
+              installing.running ? void setup.cancel() : onClose()
+            }
+          >
+            Cancel
+          </Button>
+          {state.readiness === "ready" ? (
             <Button
               type="submit"
+              form={defaultsForm}
               variant="prominent"
               disabled={
                 JSON.stringify(draft) === JSON.stringify(state.defaults)
@@ -548,8 +557,16 @@ export function createTabs(
             >
               Save defaults
             </Button>
-          </div>
-        </form>
+          ) : action && !installing.running && !checking ? (
+            <Button
+              autoFocus
+              variant="prominent"
+              onClick={() => void setup.run(action.step)}
+            >
+              {action.label}
+            </Button>
+          ) : null}
+        </ProviderDialogActions>
       </div>
     );
   }
@@ -760,11 +777,18 @@ export function createTabs(
     save,
     settingsHost,
     conversation,
+    settingsSection,
+    settingsContent,
   }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const {
       data,
       error: catalogError,
@@ -857,68 +881,73 @@ export function createTabs(
     );
     return (
       <form
+        id={form}
         className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        {customization}
-        <Field
-          label="Workspace"
-          description="Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
-        >
-          <Input
-            value={draft.workspace}
-            placeholder="~/.buzz"
-            disabled={saving}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Sessions"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          disabled={saving}
-          description="DMs always share one conversation."
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={saving}
-          description="Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn. A workspace change starts a fresh session."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          {/* Stays focusable while saving and once there is nothing to save. */}
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed}
-            focusableWhenDisabled
-          >
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
+        {settingsSection !== "runtime" && (
+          <>
+            {settingsHost?.typeControl?.(configChanged)}
+            {customization}
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={saving}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <Field
+              label="Workspace"
+              description="Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+            >
+              <Input
+                value={draft.workspace}
+                placeholder="~/.buzz"
+                disabled={saving}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Sessions"
+              variant="field"
+              value={draft.scope}
+              groups={SCOPES}
+              disabled={saving}
+              description="DMs always share one conversation."
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        {settingsSection !== "identity" && settingsContent}
+        {settingsSection !== "identity" && (
+          <details className="grid gap-2">
+            <summary>Runtime diagnostics</summary>
+            <div className="mt-2">
+              <Conversations agent={agent} conversation={conversation} />
+            </div>
+          </details>
+        )}
       </form>
     );
   }

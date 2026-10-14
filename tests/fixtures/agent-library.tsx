@@ -1,3 +1,4 @@
+import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import type {
@@ -21,8 +22,9 @@ const type: RegisteredAgentType = {
   Create: () => (
     <AgentInstructions value="" disabled={false} onChange={() => {}} creation />
   ),
-  CreateModel: ({ disabled }) => (
+  CreateModel: ({ disabled, modelAppearance }) => (
     <CreateModelChoices
+      modelAppearance={modelAppearance}
       models={[{ id: "example", label: "Example model" }]}
       value="example"
       defaultLabel=""
@@ -43,6 +45,7 @@ const snapshot = {
         owner: "f".repeat(64),
         type: type.key,
         name,
+        picture: agentAvatars[index]?.url,
         config: {},
         relay: "",
         place: "here",

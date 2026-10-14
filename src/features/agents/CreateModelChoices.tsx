@@ -7,6 +7,7 @@ export function CreateModelChoices({
   models,
   value,
   defaultLabel,
+  defaultDescription,
   includeDefault = true,
   onChange,
   loading = false,
@@ -18,6 +19,7 @@ export function CreateModelChoices({
   models: readonly ModelChoice[];
   value: string;
   defaultLabel: string;
+  defaultDescription?: string;
   includeDefault?: boolean;
   onChange(value: string): void;
   loading?: boolean;
@@ -32,6 +34,7 @@ export function CreateModelChoices({
           includeDefault={includeDefault}
           appearance={modelAppearance ?? "outlined"}
           {...{ models, value, defaultLabel, onChange, loading, disabled }}
+          {...(defaultDescription && { defaultDescription })}
           compact
         />
         {error && retry && (

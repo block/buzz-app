@@ -58,10 +58,12 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 function applied({
   loggedIn = true,
   available = true,
+  version = "2.1.292",
   files = {},
 }: {
   loggedIn?: boolean;
   available?: boolean;
+  version?: string;
   files?: Record<string, string>;
 } = {}) {
   let type: AgentType<Config> | undefined;
@@ -132,7 +134,7 @@ function applied({
             : name === "platform"
               ? "Darwin arm64\n"
               : args === "--version"
-                ? "2.1.292 (Claude Code)\n"
+                ? `${version} (Claude Code)\n`
                 : args === "auth status --json"
                   ? JSON.stringify({ loggedIn, email: "me@example.com" })
                   : "",
@@ -202,7 +204,7 @@ function applied({
         status: 200,
         headers: {},
         body: url.endsWith("/latest")
-          ? "2.1.292"
+          ? version
           : JSON.stringify({
               platforms: { "darwin-arm64": { checksum: "a".repeat(64) } },
             }),
@@ -489,7 +491,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Sonnet 5.5",
+      "Sonnet 5.5",
     ),
   );
   expect(save).not.toHaveBeenCalled();
@@ -602,10 +604,9 @@ it("saves settings as one config", async () => {
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   const user = userEvent.setup();
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   const sonnet = await screen.findByRole("option", { name: "Sonnet 5.5" });
   expect(sonnet).toHaveAccessibleDescription("Efficient for routine tasks");
@@ -643,7 +644,7 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Relay rejected the change",
   );
-  expect(saveButton).toHaveFocus();
+  expect(screen.getByRole("alert")).toHaveFocus();
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
@@ -674,12 +675,15 @@ it("starts a new agent with finite model choices and preserves its other setting
   expect(
     screen.queryByRole("option", { name: "Custom model" }),
   ).not.toBeInTheDocument();
-  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
-  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
-  expect(screen.getByLabelText("Describe what I should do")).toHaveValue(
-    "Triage.",
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Opus 5.5",
+      description: "Best for everyday, complex tasks",
+    }),
   );
-  fireEvent.change(screen.getByLabelText("Describe what I should do"), {
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
+  fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Plan." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -692,7 +696,7 @@ it("disables a new agent's controls while it is being created", () => {
   const Create = installed().type.Create;
   if (!Create) throw new Error("no create choices");
   render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Describe what I should do")).toBeDisabled();
+  expect(screen.getByLabelText("Instructions")).toBeDisabled();
 });
 
 it("edits a custom model and instructions in settings", async () => {
@@ -713,9 +717,9 @@ it("edits a custom model and instructions in settings", async () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(modelControl).toHaveTextContent("claude-opus-4-1");
-  expect(screen.getByLabelText("Instructions")).toHaveAccessibleDescription(
-    "Added to every session's system prompt, after Buzz's own.",
-  );
+  expect(
+    screen.getByLabelText("Instructions"),
+  ).not.toHaveAccessibleDescription();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Custom model" }));
   const modelId = await screen.findByRole("textbox", { name: "Model ID" });
@@ -808,17 +812,62 @@ it("does not open a competing Claude sign-in or let it cancel the owner", async 
       />
     )),
   );
-  const buttons = await screen.findAllByRole("button", { name: "Sign in" });
+  await waitFor(() => {
+    const buttons = screen.getAllByRole("button", { name: "Sign in" });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeEnabled();
+  });
+  const buttons = screen.getAllByRole("button", { name: "Sign in" });
   if (!buttons[0] || !buttons[1]) throw new Error("Missing sign-in");
   fireEvent.click(buttons[0]);
   fireEvent.click(buttons[1]);
   expect(
     spawn.mock.calls.filter(
-      ([, options]) => options?.args?.join(" ") === "auth login",
+      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
     ),
   ).toHaveLength(1);
   expect(
     screen.getAllByRole("dialog", { name: "Sign in to Claude" }),
   ).toHaveLength(1);
   expect(buttons[1]).toBeDisabled();
+});
+
+it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {
+  const { type, spawn } = installed({ version: "2.1.168" });
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Update Claude" })).toBeEnabled(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Sign in" }),
+  ).not.toBeInTheDocument();
+  expect(
+    spawn.mock.calls.filter(([, options]) =>
+      options?.args?.includes("--safe-mode"),
+    ),
+  ).toHaveLength(0);
+});
+
+it("separates identity fields from runtime settings without changing the stored config", () => {
+  const Settings = tab(installed().type, 0);
+  const props = { agent: agent(), save: vi.fn(async () => undefined) };
+  const view = render(<Settings {...props} settingsSection="identity" />);
+  const instructions = screen.getByLabelText("Instructions");
+  const model = screen.getByLabelText("Model");
+  expect(
+    model.compareDocumentPosition(instructions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  view.rerender(<Settings {...props} settingsSection="runtime" />);
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.getByText("Runtime diagnostics")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+  expect(props.save).not.toHaveBeenCalled();
 });

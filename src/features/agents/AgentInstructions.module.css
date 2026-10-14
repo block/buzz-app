@@ -1,0 +1,12 @@
+.creation [class~="buzz-settings-group"] {
+  background: transparent;
+  border-color: var(--border-primary);
+}
+
+.reading [class~="buzz-settings-group"] {
+  background: var(--surface-panel);
+}
+
+.reading [class~="buzz-settings-group"]:focus-within {
+  border-color: var(--interaction-border);
+}

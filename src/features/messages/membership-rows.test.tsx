@@ -260,8 +260,12 @@ it("member names open the subject's and the actor's profiles when the host can",
   mount(() => true);
   const paragraph = screen.getByTitle("Pinky and Brain");
   expect(paragraph.textContent).toBe("Pinky added by you, along with Brain");
-  fireEvent.click(screen.getByRole("button", { name: "View Pinky profile" }));
+  const subject = screen.getByRole("button", { name: "View Pinky profile" });
+  fireEvent.click(subject);
   expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
+  // jsdom clicks never focus, so this proves the explicit focus that keeps a
+  // return target for the profile tab under WebKit.
+  expect(subject).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "View your profile" }));
   expect(open).toHaveBeenLastCalledWith(profileTarget(wes));
   const agent = screen.getByRole("button", { name: "View Brain profile" });

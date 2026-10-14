@@ -98,7 +98,12 @@ export const MembershipRow = memo(function MembershipRow({
                     ? "View your profile"
                     : `View ${part.text} profile`
                 }
-                onClick={() => onOpenLink?.(target)}
+                onClick={(event) => {
+                  // WebKit skips focusing buttons on pointer click, so the
+                  // profile tab's close would have no origin to return to.
+                  event.currentTarget.focus();
+                  onOpenLink?.(target);
+                }}
               >
                 {part.text}
               </button>

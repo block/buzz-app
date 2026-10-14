@@ -62,6 +62,7 @@ import {
 import { composerMarkdown } from "./composer-markdown";
 import {
   buzzCopyMarkdown,
+  externalLinkMarkdown,
   composerClipboard,
   identityLink,
 } from "./composer-clipboard";
@@ -1482,13 +1483,11 @@ export function EditableInput({
             )
               return true;
             const code = editor.state.selection.$from.parent.type.spec.code;
-            // Code takes visible text verbatim. Outside code, only this app's
-            // own payload is read as HTML; other apps paste as text.
+            // Code takes visible text verbatim; prose preserves copied web links.
+            const html = event.clipboardData?.getData("text/html") ?? "";
             let text =
               (!code &&
-                buzzCopyMarkdown(
-                  event.clipboardData?.getData("text/html") ?? "",
-                )) ||
+                (buzzCopyMarkdown(html) ?? externalLinkMarkdown(html))) ||
               event.clipboardData?.getData("text/plain") ||
               "";
             if (!text) return true;

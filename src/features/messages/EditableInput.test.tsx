@@ -3106,3 +3106,46 @@ it("promotes only at a mention boundary, under the recipient cap and within maxL
   paste(long.input, "x", timelineHtml("y".repeat(16001)));
   expect(long.markdown()).toBe("");
 });
+
+it("preserves external linked labels, surrounding text and undo as one paste", () => {
+  const h = mount("Before replace after", { links: true });
+  act(() => h.input.setSelectionRange(7, 14));
+  paste(
+    h.input,
+    "Read the guide & notes",
+    '<p>Read <a href="https://example.com/guide"><b>the guide</b></a> &amp; <a href="https://example.com/notes">notes</a></p>',
+  );
+  expect(h.markdown()).toBe(
+    "Before Read [the guide](https://example.com/guide) & [notes](https://example.com/notes) after",
+  );
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe("Before replace after");
+});
+
+it("ignores unsafe external destinations and external identity metadata", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "unsafe safe",
+    '<a href="javascript:alert(1)">unsafe</a> <a data-profile-target="fake" href="https://example.com/">safe</a><script>alert(1)</script>',
+  );
+  expect(h.markdown()).toBe("unsafe [safe](https://example.com/)");
+  expect(h.draft().recipients).toEqual([]);
+});
+
+it("falls back to plain text when external HTML has no supported link", () => {
+  const h = mount();
+  paste(h.input, "original text", '<a href="/relative">different text</a>');
+  expect(h.markdown()).toBe("original text");
+});
+
+it("keeps external linked text literal in code blocks and enforces the paste limit", () => {
+  const html = '<a href="https://example.com/">guide</a>';
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  paste(h.input, "guide", html);
+  expect(h.markdown()).toBe("```\nguide\n```");
+  const limited = mount("", { maxLength: 10 });
+  paste(limited.input, "guide", html);
+  expect(limited.markdown()).toBe("");
+});

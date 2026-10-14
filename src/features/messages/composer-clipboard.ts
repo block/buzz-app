@@ -5,7 +5,7 @@ import {
 } from "prosemirror-model";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey, profileTarget } from "../profiles/target";
-import { scanMarkdown } from "../relay/message-content";
+import { safeLinkUrl, scanMarkdown } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 import { messageLinkParts } from "./message-link-parts";
@@ -168,4 +168,31 @@ export function buzzCopyMarkdown(html: string): string | undefined {
     .parseFromString(html, "text/html")
     .querySelector("[data-buzz-copy]");
   return copy ? serializeNode(copy, "markdown") : undefined;
+}
+
+/** External HTML contributes web links, never Buzz identity metadata or styling. */
+export function externalLinkMarkdown(html: string): string | undefined {
+  if (!html) return;
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  for (const node of body.querySelectorAll(
+    "script, style, template, iframe, object",
+  ))
+    node.remove();
+  let linked = false;
+  for (const element of body.querySelectorAll("*")) {
+    const href =
+      element.tagName === "A"
+        ? safeLinkUrl(element.getAttribute("href") ?? "")
+        : undefined;
+    for (const attribute of [...element.attributes])
+      element.removeAttribute(attribute.name);
+    if (href && element.textContent?.trim()) {
+      element.setAttribute("href", href);
+      linked = true;
+    }
+    // Keep text and line boundaries; importing other rich formatting is separate.
+    if (/^(STRONG|B|EM|I|S|DEL|CODE)$/.test(element.tagName))
+      element.replaceWith(...element.childNodes);
+  }
+  return linked ? serializeNode(body, "markdown") : undefined;
 }

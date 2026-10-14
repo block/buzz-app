@@ -477,7 +477,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toHaveCount(0);
     // Hold the request's deadline while exercising delayed preference completion.
-    await page.clock.pauseAt(await page.evaluate(() => Date.now()));
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     await row(page, "alpha").click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Mark as Read", exact: true })

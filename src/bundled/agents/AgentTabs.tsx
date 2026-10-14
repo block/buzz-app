@@ -48,6 +48,7 @@ export function AgentTabs(props: {
   const [tab, setTab] = useState<string>(
     props.initialActivity ? "agent:activity" : (sections[0]?.value ?? ""),
   );
+  const [visited, setVisited] = useState(() => new Set([tab]));
   const panelPrefix = useId();
   const selected =
     sections.find((section) => section.value === tab) ?? sections[0];
@@ -72,7 +73,10 @@ export function AgentTabs(props: {
     <>
       <Tabs
         value={selected?.value ?? ""}
-        onValueChange={setTab}
+        onValueChange={(value) => {
+          setVisited((previous) => new Set([...previous, tab, value]));
+          setTab(value);
+        }}
         items={sections.map(({ value, label }) => ({
           value,
           label,
@@ -91,16 +95,26 @@ export function AgentTabs(props: {
           <div className="grid gap-6 pt-4">{settings.render()}</div>
         </div>
       )}
-      {selected && !(settings && settingsSelected) && (
-        <div
-          role="tabpanel"
-          id={panelId(selected.value)}
-          aria-labelledby={`${panelId(selected.value)}-tab`}
-          key={selected.value}
-        >
-          <div className="grid gap-6 pt-4">{selected.render()}</div>
-        </div>
-      )}
+      {sections
+        .filter(
+          ({ value }) =>
+            !(
+              settings &&
+              (value === "agent:settings" || value === "agent:management")
+            ) &&
+            (value === selected?.value || visited.has(value)),
+        )
+        .map((section) => (
+          <div
+            role="tabpanel"
+            id={panelId(section.value)}
+            aria-labelledby={`${panelId(section.value)}-tab`}
+            key={section.value}
+            hidden={section.value !== selected?.value}
+          >
+            <div className="grid gap-6 pt-4">{section.render()}</div>
+          </div>
+        ))}
     </>
   );
 }

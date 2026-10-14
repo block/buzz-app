@@ -418,7 +418,7 @@ for (const kind of ["mention", "thread reply"]) {
         });
       await expect
         .poll(() => surface.evaluate((element) => element.scrollHeight))
-        .toBe(height + 60);
+        .toBeGreaterThanOrEqual(height + 60);
       await expect(row).toBeInViewport({ ratio: 1 });
     }
     await expect

@@ -389,6 +389,14 @@ function Timeline({
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   const completeTarget = useCallback(() => {
+    const element = scroller.current;
+    // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
+    // keeps its row where it placed it instead of re-aligning to the end.
+    if (
+      element &&
+      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+    )
+      follow.current = false;
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
   }, [navigation, targetSignal]);

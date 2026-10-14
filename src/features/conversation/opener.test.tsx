@@ -108,3 +108,29 @@ it("opens nothing outside a conversation host", () => {
   fireEvent.click(screen.getByRole("button", { name: "Probe" }));
   expect(result).toBe(false);
 });
+
+it("shows availability from the host's current render", () => {
+  const probe = {
+    ...attachmentRenderer,
+    component: ({ canOpen }: { canOpen(target: string): boolean }) => (
+      <button type="button" disabled={!canOpen("panel:file")}>
+        Probe
+      </button>
+    ),
+  };
+  const registry = reader<AttachmentRenderer>([probe]);
+  const view = (available: boolean) => (
+    <TargetOpenerProvider canOpen={() => available} open={() => true}>
+      <AttachmentView
+        registry={registry}
+        attachment={{ url: "https://example.com/a.txt" } as Attachment}
+        source="https://example.com/a.txt"
+        fallback={null}
+      />
+    </TargetOpenerProvider>
+  );
+  const { rerender } = render(view(false));
+  expect(screen.getByRole("button", { name: "Probe" })).toBeDisabled();
+  rerender(view(true));
+  expect(screen.getByRole("button", { name: "Probe" })).toBeEnabled();
+});

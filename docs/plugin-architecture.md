@@ -356,7 +356,8 @@ Channels renders these in its conversation header with public `context`, `presse
 in the bottom drawer by default or the existing companion column when the contribution
 sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
-the tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
+a new target replaces that tab, and a link tab already open for the target becomes it.
+The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel

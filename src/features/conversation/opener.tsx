@@ -29,16 +29,18 @@ export function TargetOpenerProvider({
   open?: ((target: string) => boolean) | undefined;
   children: ReactNode;
 }) {
-  const latest = useRef({ canOpen, open });
+  const latest = useRef(open);
   useLayoutEffect(() => {
-    latest.current = { canOpen, open };
+    latest.current = open;
   });
+  // Availability is read during render, so it follows this render's host;
+  // dispatch goes through the committed host.
   const value = useMemo<TargetOpener>(
     () => ({
-      canOpen: (target) => latest.current.canOpen?.(target) ?? false,
-      open: (target) => latest.current.open?.(target) ?? false,
+      canOpen: (target) => canOpen?.(target) ?? false,
+      open: (target) => latest.current?.(target) ?? false,
     }),
-    [],
+    [canOpen],
   );
   return (
     <OpenerContext.Provider value={value}>{children}</OpenerContext.Provider>

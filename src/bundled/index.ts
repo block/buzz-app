@@ -55,6 +55,8 @@ import hostedManifest from "./hosted-communities/manifest.json";
 import * as hosted from "./hosted-communities";
 import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
+import switchboardManifest from "./switchboard/manifest.json";
+import * as switchboard from "./switchboard";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -195,6 +197,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...sessionsManifest, apiVersion: 1 },
     module: sessions,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...switchboardManifest, apiVersion: 1 },
+    module: switchboard,
+    enabledByDefault: false,
   },
   {
     manifest: { ...hostedManifest, apiVersion: 1 },

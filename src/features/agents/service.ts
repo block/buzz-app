@@ -204,6 +204,22 @@ export type AgentTab<Config = unknown> = Readonly<{
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
+/** One of an agent's conversation sessions on this device. Without `root` it
+ * is the channel's one session: a channel-scoped agent's, a DM's or a Me
+ * chat's; with it, the thread's. `at` is when its latest turn started, in
+ * milliseconds. `status` is what the type observed of it while running here,
+ * such as "Working" or "Idle"; absent means unobserved, not idle. */
+export type AgentSession = Readonly<{
+  channelId: string;
+  root?: string;
+  at?: number;
+  status?: string;
+}>;
+/** Read-only: reading never starts, stops or changes a session. */
+export type AgentSessions = Readonly<{
+  list(pubkey: string): readonly AgentSession[];
+  subscribe(listener: () => void): () => void;
+}>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
   pubkey: string;
@@ -451,6 +467,8 @@ export type AgentType<Config = unknown> = {
   provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
+  /** Each agent's sessions, for views across agents such as Switchboard. */
+  sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */

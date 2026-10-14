@@ -507,9 +507,7 @@ it("applies provider precedence without rewriting records and falls back for inc
       "Model B",
     ),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Medium)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Medium");
   cleanup();
 
   localStorage.setItem("buzz.codex.provider-defaults.v1", "invalid");
@@ -579,7 +577,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent("High");
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
-    await screen.findByRole("option", { name: "Codex default (Low)" }),
+    await screen.findByRole("option", { name: "Low · Default" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
@@ -596,9 +594,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   await waitFor(() =>
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
@@ -607,9 +603,7 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
@@ -696,9 +690,7 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
       description: "Following the provider's model default",
     }),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith({ ...saved, model: "", effort: "" });
 });

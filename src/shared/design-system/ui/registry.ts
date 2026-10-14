@@ -722,6 +722,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "default",
       "form",
+      "settings",
       "navigation",
       "activity",
       "controlled expansion",

@@ -1,3 +1,4 @@
+import { PreferenceRow } from "./PreferenceRow";
 import { useId, type ReactNode } from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
@@ -22,7 +23,7 @@ export function Select({
   value,
   groups,
   onValueChange,
-  variant = "inline",
+  variant: requestedVariant = "inline",
   disabled = false,
   description,
   error,
@@ -50,13 +51,15 @@ export function Select({
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
-  variant?: "inline" | "field" | "compact";
+  variant?: "inline" | "field" | "compact" | "preference";
   appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
   onValueChange: (value: string) => void;
 }) {
+  const variant =
+    requestedVariant === "preference" ? "compact" : requestedVariant;
   const optionDescriptionId = useId();
   const items = groups.flatMap((group) => group.options);
   const selectedValue =
@@ -241,6 +244,22 @@ export function Select({
       </BaseSelect.Root>
     </div>
   );
+  if (requestedVariant === "preference")
+    return (
+      <>
+        <PreferenceRow
+          title={label}
+          subtitle={description}
+          disabled={disabled}
+          trailing={control}
+        />
+        {error && (
+          <p role="alert" className="buzz-field-error">
+            {error}
+          </p>
+        )}
+      </>
+    );
   return variant === "field" ? (
     <Field
       nativeLabel={false}

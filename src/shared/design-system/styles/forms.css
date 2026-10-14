@@ -403,9 +403,18 @@
     color: var(--text-unavailable);
   }
 
-  .buzz-input:where(:focus, [data-popup-open]),
+  .buzz-input:not([data-appearance="title"], [data-appearance="heading"]):where(
+    :focus,
+    [data-popup-open]
+  ),
   .buzz-textarea:where(:focus),
   .buzz-input-group:where(:focus-within) {
+    --border: var(--interaction-border);
+  }
+  /* Title edits stay visually inline on pointer/autofocus entry. Keep a
+     perimeter cue when navigating these borderless inputs with the keyboard. */
+  html[data-keyboard-navigation]
+  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):focus {
     --border: var(--interaction-border);
   }
   html[data-keyboard-navigation]

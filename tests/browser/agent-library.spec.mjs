@@ -23,6 +23,15 @@ test("agent cards expose selection and creation preserves focus and selected bor
     .click();
   const dialog = page.getByRole("dialog");
   const name = dialog.getByPlaceholder("Agent name");
+  await expect(name).toBeFocused();
+  await expect
+    .poll(() =>
+      name.evaluate((field) => getComputedStyle(field).borderBottomColor),
+    )
+    .toBe("rgba(0, 0, 0, 0)");
+  await page.screenshot({
+    path: info.outputPath("creation-pointer-focus.png"),
+  });
   for (const theme of ["light", "dark"]) {
     for (const width of [390, 768, 1280]) {
       await page.setViewportSize({ width, height: 950 });
@@ -107,6 +116,63 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   });
   const agents = page.getByRole("region", { name: "Agents", exact: true });
   expect((await profile.boundingBox()).y).toBe((await agents.boundingBox()).y);
+  const divider = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+  });
+  const originalWidth = (await profile.boundingBox()).width;
+  const originalListWidth = (await agents.boundingBox()).width;
+  const handle = await divider.boundingBox();
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(handle.x - 100, handle.y + handle.height / 2);
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await profile.boundingBox()).width)
+    .toBeGreaterThan(originalWidth + 80);
+  expect((await agents.boundingBox()).width).toBeLessThan(
+    originalListWidth - 80,
+  );
+  await divider.focus();
+  const draggedWidth = (await profile.boundingBox()).width;
+  await divider.press("ArrowRight");
+  await expect
+    .poll(async () => (await profile.boundingBox()).width)
+    .toBeLessThan(draggedWidth);
+  const adaCard = agents.getByRole("gridcell", { name: "Ada", exact: true });
+  const portrait = adaCard.locator('span[aria-hidden="true"]').first();
+  const widePortrait = (await portrait.boundingBox()).width;
+  await divider.press("End");
+  const agentGrid = agents.getByRole("grid", { name: "Agents", exact: true });
+  await expect
+    .poll(() =>
+      agentGrid.evaluate(
+        (element) =>
+          getComputedStyle(element.parentElement).gridTemplateColumns.split(" ")
+            .length,
+      ),
+    )
+    .toBe(1);
+  expect((await portrait.boundingBox()).width).toBeLessThan(widePortrait);
+  expect(
+    await agentGrid.evaluate(
+      (element) =>
+        element.parentElement.scrollWidth <= element.parentElement.clientWidth,
+    ),
+  ).toBe(true);
+  await adaCard.focus();
+  await adaCard.press("ArrowDown");
+  await expect(
+    agents.getByRole("gridcell", { name: "Bo", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await divider.dblclick();
+  await expect
+    .poll(async () => (await profile.boundingBox()).width)
+    .toBe(originalWidth);
+
   await page.getByRole("tab", { name: "Attention", exact: true }).click();
   await expect(
     profile.getByRole("button", { name: "Add interest" }),
@@ -121,11 +187,26 @@ test("owner profile keeps its pane and caret stable during inline name editing",
     .poll(() =>
       input.evaluate((element) => getComputedStyle(element).borderBottomColor),
     )
-    .not.toBe("rgba(0, 0, 0, 0)");
+    .toBe("rgba(0, 0, 0, 0)");
   await expect
     .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
     .toEqual([3, 3]);
   expect((await profile.boundingBox()).height).toBe(before.height);
+  await page.screenshot({
+    path: info.outputPath("name-edit-pointer-focus.png"),
+  });
+  // This isolated fixture does not install the app's modality tracker.
+  await page.evaluate(() => {
+    document.documentElement.dataset.keyboardNavigation = "";
+  });
+  await input.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(input).toBeFocused();
+  await expect
+    .poll(() =>
+      input.evaluate((field) => getComputedStyle(field).borderBottomColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
   await input.fill("Ada renamed");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(

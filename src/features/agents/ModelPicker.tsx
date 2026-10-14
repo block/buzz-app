@@ -164,7 +164,7 @@ export function ModelPicker({
           valueLabel={selected.label}
           valueTitle={selected.label}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
-          variant={compact ? "compact" : "field"}
+          variant={compact ? "compact" : "preference"}
           appearance={appearance}
           align={compact ? "end" : "start"}
           groups={[

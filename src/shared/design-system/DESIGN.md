@@ -128,6 +128,10 @@ gaps rather than each plugin inventing its own rhythm. Dependent preferences ret
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
+Use `Accordion variant="settings"` for disclosures alongside preference rows.
+Its full-row trigger uses the settings container shape and spacing; the chevron
+is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
+label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
@@ -519,7 +523,9 @@ border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
 the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
-around the input and actions; error strokes retain priority. Placeholders use
+around the input and actions; error strokes retain priority. Borderless title and
+heading inputs keep their perimeter transparent on pointer/autofocus entry and
+show the focus border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.

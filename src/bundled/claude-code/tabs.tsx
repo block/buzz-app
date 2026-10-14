@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
@@ -528,7 +529,7 @@ export function createTabs({
         >
           <Select
             label="Default model"
-            variant="field"
+            variant="preference"
             value={draftDefault}
             groups={[
               {
@@ -806,7 +807,7 @@ export function createTabs({
       setupState.models,
     );
     const effortOptions = [
-      { value: "", label: "Claude default" },
+      { value: "", label: "Automatic · Default" },
       // A saved level the model does not list; without Claude's list, it may.
       ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
         ? [
@@ -821,7 +822,7 @@ export function createTabs({
       ...efforts.map(({ id, label }) => ({ value: id, label })),
     ];
     const modelControl = (
-      <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+      <>
         <ModelPicker
           allowCustomModel
           models={modelChoices(setupState.models)}
@@ -851,12 +852,13 @@ export function createTabs({
         />
         <Select
           label="Thinking"
-          variant="field"
+          valueLabel={draft.effort ? undefined : "Automatic"}
+          variant="preference"
           value={draft.effort}
           groups={[{ label: "", options: effortOptions }]}
           onValueChange={(effort) => setDraft({ ...draft, effort })}
         />
-      </div>
+      </>
     );
     return (
       <form
@@ -879,8 +881,10 @@ export function createTabs({
         )}
         {settingsSection !== "runtime" && (
           <>
-            {settingsHost?.typeControl?.(configChanged)}
-            {modelControl}
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              {modelControl}
+            </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
               disabled={false}
@@ -901,7 +905,7 @@ export function createTabs({
             </Field>
             <Select
               label="Sessions"
-              variant="field"
+              variant="preference"
               value={draft.scope}
               groups={SCOPES}
               onValueChange={(value) =>

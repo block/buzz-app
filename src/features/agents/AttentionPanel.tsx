@@ -888,7 +888,7 @@ function WatchForm({
           </Field>
           <Select
             label="Wake on"
-            variant="field"
+            variant="preference"
             value={kinds}
             onValueChange={(value) => setKinds(value as keyof typeof KINDS)}
             groups={[
@@ -903,7 +903,7 @@ function WatchForm({
           />
           <Select
             label="In"
-            variant="field"
+            variant="preference"
             value={scope === "all" ? "all" : "some"}
             onValueChange={(value) =>
               setScope(value === "all" ? "all" : scope === "all" ? [] : scope)
@@ -955,7 +955,7 @@ function WatchForm({
           </Field>
           <Select
             label="Replies"
-            variant="field"
+            variant="preference"
             value={replies}
             onValueChange={(value) => setReplies(value as keyof typeof REPLIES)}
             groups={[

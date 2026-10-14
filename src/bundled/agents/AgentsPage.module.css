@@ -6,9 +6,13 @@
   min-height: 0;
 }
 .browse[data-side] {
-  grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
+  grid-template-columns: minmax(0, 1fr) minmax(
+      20rem,
+      var(--secondary-panel-width, 28rem)
+    );
 }
 .main {
+  container-type: inline-size;
   min-width: 0;
   min-height: 0;
 }
@@ -18,9 +22,9 @@
   overflow: auto;
 }
 .side {
+  position: relative;
   border-inline-start: 1px solid var(--border-standard);
   min-height: 0;
-  overflow: auto;
   min-width: 0;
 }
 .sideBody {
@@ -183,6 +187,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .browse[data-side] > .main {
+    display: none;
+  }
+  .side > [data-panel-resize] {
     display: none;
   }
   .side {

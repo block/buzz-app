@@ -1517,9 +1517,59 @@
   .buzz-accordion-trigger[aria-expanded="true"] > svg {
     transform: rotate(180deg);
   }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-item {
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-container);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger {
+    border-radius: var(--radius-container);
+    padding: var(--space-3) var(--space-4);
+    gap: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > span {
+    flex: 1;
+    min-width: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    flex-shrink: 0;
+  }
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-trigger[aria-expanded="true"] {
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-content {
+    border-block-start: 1px solid var(--border-standard);
+    padding: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-panel {
+    padding: 0;
+    height: var(--accordion-panel-height);
+    overflow: clip;
+    transition: height var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+    height: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  html[data-keyboard-navigation]
+    .buzz-accordion[data-variant="settings"]
+    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-accordion[data-variant="settings"]
+      :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+      transition: none;
+    }
+  }
+  .buzz-accordion[data-variant="settings"],
   .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;

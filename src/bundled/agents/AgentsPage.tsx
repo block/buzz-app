@@ -1,3 +1,4 @@
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
@@ -107,6 +108,7 @@ export function AgentsPage({
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
+  const split = usePanelSplit(448, 320);
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
   const channels = useChannelChoices(
@@ -312,7 +314,12 @@ export function AgentsPage({
 
   return (
     <div className="h-full min-h-0">
-      <div className={styles.browse} data-side={panel ? "" : undefined}>
+      <div
+        ref={split.ref}
+        style={split.style}
+        className={styles.browse}
+        data-side={panel ? "" : undefined}
+      >
         <div className={styles.main}>
           <Panel aria-label="Agents">
             <div className="flex h-full min-h-0 flex-col">
@@ -371,6 +378,7 @@ export function AgentsPage({
         </div>
         {panel && selected && (
           <aside className={styles.side}>
+            {split.handle}
             <Panel aria-label="Agent profile">
               <PanelWorkspace
                 focusOnMount={false}

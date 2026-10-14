@@ -1,10 +1,11 @@
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Header } from "../../shared/design-system/ui/Header";
 // The app's read-only view of an agent's memory. Every agent type keeps its
 // memory the same way, encrypted to the owner, so the app shows it once: `core`
 // (what each run is given) first, then the slugs the agent reads on demand.
-import { motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { useReducedMotion } from "motion/react";
+import { type ReactNode, useEffect, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatFullTimestamp } from "../../shared/datetime";
@@ -21,7 +22,6 @@ import {
   ArrowsClockwiseIcon,
   BrainIcon,
   ThinkingHighIcon,
-  CaretRightIcon,
   CircleNotchIcon,
 } from "../../shared/design-system/icons/index";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
@@ -125,7 +125,11 @@ export function MemoryPanel({
   const { status, listing } = snapshot;
   const core = listing?.entries.find((entry) => entry.slug === "core");
   const rest = listing?.entries.filter((entry) => entry.slug !== "core") ?? [];
-  const canRefresh = memories && status !== "loading" && status !== "denied";
+  const canRefresh =
+    memories &&
+    status !== "ready" &&
+    status !== "loading" &&
+    status !== "denied";
   const refreshButton = canRefresh ? (
     <IconButton
       aria-label="Refresh"
@@ -147,7 +151,6 @@ export function MemoryPanel({
             title="Core memories"
             description="Automatically included when the agent works."
             entries={core ? [core] : []}
-            actions={refreshButton}
             emptyIcon={<ThinkingHighIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
           />
@@ -196,14 +199,12 @@ function MemorySection({
   entries,
   emptyIcon,
   refreshing = false,
-  actions,
 }: {
   title: string;
   description: string;
   entries: readonly MemoryEntry[];
   emptyIcon: ReactNode;
   refreshing?: boolean;
-  actions?: ReactNode;
 }) {
   const ordered = [...entries].sort(
     (left, right) =>
@@ -212,12 +213,7 @@ function MemorySection({
   return (
     <section className="grid gap-2" aria-label={title}>
       <div className={`group ${styles.sectionHeader}`}>
-        <Header
-          level={4}
-          title={title}
-          subtitle={description}
-          actions={actions}
-        />
+        <Header level={4} title={title} subtitle={description} />
       </div>
       <div
         className={`grid gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}
@@ -244,76 +240,49 @@ function MemorySection({
 }
 
 function MemoryAccordion({ entry }: { entry: MemoryEntry }) {
-  // The shared Accordion cannot place an independent menu over each trigger
-  // or wrap the whole item in a context-menu target. Putting the menu inside
-  // its button would create nested controls, so this item owns its disclosure.
-  const [open, setOpen] = useState(false);
-  const contentId = useId();
-  const reducedMotion = useReducedMotion();
-  const transition = { duration: reducedMotion ? 0 : 0.2 };
-  const menu = <MemoryCopyMenu entry={entry} />;
   return (
     <ContextMenuRoot>
-      <ContextMenuTrigger
-        render={
-          <div className="grid overflow-hidden rounded-xl bg-surface-inset" />
-        }
-      >
-        <div className="col-start-1 row-start-1 grid">
-          <button
-            type="button"
-            className="col-start-1 row-start-1 flex w-full cursor-pointer items-center gap-2 p-4 text-left text-body-sm"
-            aria-label={entry.slug}
-            aria-description={formatFullTimestamp(entry.createdAt)}
-            aria-expanded={open}
-            aria-controls={contentId}
-            onClick={() => setOpen((value) => !value)}
-          >
-            {entry.slug === "core" ? (
-              <ThinkingHighIcon size={20} aria-hidden="true" />
-            ) : (
-              <BrainIcon size={20} aria-hidden="true" />
-            )}
-            <span className="min-w-0 flex-1 truncate text-label">
-              {entry.slug.startsWith("mem/") ? (
-                <>
-                  <span className="text-secondary font-normal">mem/</span>
-                  {entry.slug.slice(4)}
-                </>
-              ) : (
-                entry.slug
-              )}
-            </span>
-            <span
-              className="shrink-0 text-secondary"
-              title={formatFullTimestamp(entry.createdAt)}
-            >
-              {memoryTimestamp(entry.createdAt)}
-            </span>
-            <motion.span
-              className="flex shrink-0"
-              animate={{ rotate: open ? 90 : 0 }}
-              transition={transition}
-            >
-              <CaretRightIcon aria-hidden="true" />
-            </motion.span>
-          </button>
-        </div>
-        <motion.div
-          id={contentId}
-          initial={false}
-          animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
-          transition={transition}
-          className="col-start-1 row-start-2 overflow-hidden"
-          aria-hidden={!open}
-          inert={!open}
-        >
-          <div className="px-4 pb-4 text-body-sm">
-            <MemoryBody body={entry.body} />
-          </div>
-        </motion.div>
+      <ContextMenuTrigger render={<div />}>
+        <Accordion
+          variant="settings"
+          keepMounted
+          items={[
+            {
+              value: entry.slug,
+              title: (
+                <span className="flex min-w-0 items-center gap-2">
+                  {entry.slug === "core" ? (
+                    <ThinkingHighIcon size={20} aria-hidden="true" />
+                  ) : (
+                    <BrainIcon size={20} aria-hidden="true" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">
+                    {entry.slug.startsWith("mem/") ? (
+                      <>
+                        <span className="text-secondary font-normal">mem/</span>
+                        {entry.slug.slice(4)}
+                      </>
+                    ) : (
+                      entry.slug
+                    )}
+                  </span>
+                  <span
+                    className="shrink-0 text-body-sm text-secondary"
+                    title={formatFullTimestamp(entry.createdAt)}
+                    aria-hidden="true"
+                  >
+                    {memoryTimestamp(entry.createdAt)}
+                  </span>
+                </span>
+              ),
+              content: <MemoryBody body={entry.body} />,
+            },
+          ]}
+        />
       </ContextMenuTrigger>
-      <MenuPopup>{menu}</MenuPopup>
+      <MenuPopup>
+        <MemoryCopyMenu entry={entry} />
+      </MenuPopup>
     </ContextMenuRoot>
   );
 }

@@ -1,7 +1,7 @@
 /* Cards share one grid; each is a soft control surface. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
   gap: var(--space-2);
   outline: none;
 }
@@ -35,8 +35,8 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 8rem;
-  height: 8rem;
+  width: clamp(4rem, 16cqw, 8rem);
+  height: clamp(4rem, 16cqw, 8rem);
 }
 /* Solid photos need less area than the transparent pack artwork. */
 .portrait > [class~="buzz-avatar-status"] {

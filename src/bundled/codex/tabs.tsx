@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
@@ -286,7 +287,7 @@ const providerDefaultLabel = (model: string, data?: Catalog) => {
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
-  return resolved ? `Codex default (${effortName(resolved)})` : "Codex default";
+  return resolved ? effortName(resolved) : "Automatic";
 };
 /** A model's choice also resets the effort to that model's default. */
 const modelChange = (model: string, data?: Catalog) => ({
@@ -410,7 +411,10 @@ export function createTabs(
       ? data?.models.find((model) => model.model === draft.model)
       : nativeModel;
     const efforts = [
-      { value: "", label: codexDefaultEffortLabel("", selected) },
+      {
+        value: "",
+        label: `${codexDefaultEffortLabel("", selected)} · Default`,
+      },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
         (effort) => effort.reasoningEffort === draft.effort,
@@ -488,7 +492,7 @@ export function createTabs(
         >
           <Select
             label="Default model"
-            variant="field"
+            variant="preference"
             value={draft.model}
             disabled={checking || !data}
             groups={[
@@ -525,7 +529,10 @@ export function createTabs(
           />
           <Select
             label="Default thinking"
-            variant="field"
+            valueLabel={
+              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
+            }
+            variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
             disabled={checking || !selected}
@@ -807,7 +814,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: codexDefaultEffortLabel(effective.effort, selected),
+        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
       },
       ...(draft.effort &&
       !supported.some((effort) => effort.reasoningEffort === draft.effort)
@@ -856,7 +863,7 @@ export function createTabs(
             </Button>
           </div>
         )}
-        <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+        <>
           <ModelPicker
             allowCustomModel={false}
             models={choices(data)}
@@ -871,13 +878,18 @@ export function createTabs(
           />
           <Select
             label="Thinking"
-            variant="field"
+            valueLabel={
+              draft.effort
+                ? undefined
+                : codexDefaultEffortLabel(effective.effort, selected)
+            }
+            variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
             disabled={checking || saving || !selected}
             onValueChange={(effort) => setDraft({ ...draft, effort })}
           />
-        </div>
+        </>
       </>
     );
     return (
@@ -901,8 +913,10 @@ export function createTabs(
         )}
         {settingsSection !== "runtime" && (
           <>
-            {settingsHost?.typeControl?.(configChanged)}
-            {customization}
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              {customization}
+            </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
               disabled={saving}
@@ -925,7 +939,7 @@ export function createTabs(
             </Field>
             <Select
               label="Sessions"
-              variant="field"
+              variant="preference"
               value={draft.scope}
               groups={SCOPES}
               disabled={saving}

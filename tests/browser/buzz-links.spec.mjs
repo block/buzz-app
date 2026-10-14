@@ -15,11 +15,6 @@ test.use({
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const state = (page) =>
   page.evaluate(() => window.fixtureNavigation.snapshot());
-// Outlasts the navigation controller's 15 s open deadline.
-const opened = (page) =>
-  expect
-    .poll(async () => (await state(page)).status, { timeout: 20_000 })
-    .toBe("opened");
 
 test("Buzz channel and message links render, reveal verified targets, and preserve navigation history", async ({
   page,
@@ -121,7 +116,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(
     panel.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.messageId).toBe(target.id);
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
   await page
@@ -141,7 +136,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.channelId).toBe("beta");
 });
 
@@ -168,10 +163,10 @@ test("activating a panel from a linked thread retires the navigation-owned threa
     name: "Thread",
     exact: true,
   });
-  await opened(page);
   await expect(
     thread.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   // Open a panel while the linked thread is showing. Navigation still owns the
   // thread target, so it must be retired rather than share the rail slot with
   // the newly activated panel. (The fixture registers a catch-all panel.)
@@ -212,7 +207,7 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await expect(
     thread.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   const history = thread.getByRole("region", { name: "Thread messages" });
   const editor = thread.getByRole("textbox", {
     name: "Reply to thread",
@@ -308,7 +303,7 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await expect(dock).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(details).toHaveCount(1);
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   await expect(details).toHaveAttribute("aria-selected", "true");
   await expect(threadTab).toHaveCount(1);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -356,7 +351,7 @@ test("a mixed-case Buzz scheme activates in-app instead of falling through to an
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.channelId).toBe("beta");
 });
 
@@ -391,7 +386,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);
   await expect(targetRow).toBeFocused();
   await expect(targetRow).toBeInViewport();
-  await opened(page);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   // The deliberately wrong hint must not select a different root or force a
   // visible root out of the ordinary timeline.
   // Revealing the prior target can still reposition the timeline. Activate the

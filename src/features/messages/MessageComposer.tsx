@@ -95,6 +95,7 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
+import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
@@ -207,7 +208,9 @@ export type MessageComposerProps = {
   onDraftSaved?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
-  onOpenLink?: ((target: string) => boolean) | undefined;
+  onOpenLink?:
+    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
   replyParentId?: string | undefined;

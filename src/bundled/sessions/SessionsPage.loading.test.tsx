@@ -406,11 +406,14 @@ it.each(["archive", "delete"] as const)(
   "submitted Me %s survives page removal and reports its result",
   async (action) => {
     const f = fixture();
-    const pending = Promise.withResolvers<void>();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
     let signal: AbortSignal | undefined;
     f.run.mockImplementation(async (_action, _id, operationSignal) => {
       signal = operationSignal;
-      await pending.promise;
+      await pending;
     });
     const view = render(<ToastProvider>{f.page()}</ToastProvider>);
     const user = userEvent.setup();
@@ -432,7 +435,7 @@ it.each(["archive", "delete"] as const)(
         }),
       ).toBeVisible();
     } finally {
-      await act(async () => pending.resolve());
+      await act(async () => finish());
     }
     await screen.findByRole("dialog", {
       name:
@@ -462,8 +465,11 @@ it("retires an unsubmitted Me confirmation when its visit ends", async () => {
 
 it("keeps a Me action failure visible after leaving its page", async () => {
   const f = fixture();
-  const pending = Promise.withResolvers<void>();
-  f.run.mockImplementation(async () => pending.promise);
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.run.mockImplementation(async () => pending);
   const view = render(<ToastProvider>{f.page()}</ToastProvider>);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Session actions" }));
@@ -481,7 +487,7 @@ it("keeps a Me action failure visible after leaving its page", async () => {
     view.rerender(<ToastProvider>{f.page(false)}</ToastProvider>);
   } finally {
     await act(async () =>
-      pending.reject(
+      reject(
         new Error("Could not confirm deletion. Refresh to check its status."),
       ),
     );
@@ -499,11 +505,14 @@ it("keeps a Me action failure visible after leaving its page", async () => {
 
 it("cancels a submitted Me operation when the relay session is replaced", async () => {
   const f = fixture();
-  const pending = Promise.withResolvers<void>();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
   let signal: AbortSignal | undefined;
   f.run.mockImplementation(async (_action, _id, operationSignal) => {
     signal = operationSignal;
-    await pending.promise;
+    await pending;
   });
   const view = f.mount();
   const user = userEvent.setup();
@@ -522,7 +531,7 @@ it("cancels a submitted Me operation when the relay session is replaced", async 
     view.rerender(replacement.page());
     expect(signal?.aborted).toBe(true);
   } finally {
-    await act(async () => pending.resolve());
+    await act(async () => finish());
   }
   expect(f.open).not.toHaveBeenCalled();
 });

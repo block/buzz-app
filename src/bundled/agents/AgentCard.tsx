@@ -53,10 +53,7 @@ export function AgentCard({
   return (
     <div {...props} className={styles.card}>
       {menu && <div className={styles.menu}>{menu}</div>}
-      <span
-        className={styles.portrait}
-        aria-hidden="true"
-      >
+      <span className={styles.portrait} aria-hidden="true">
         <AgentPortrait agent={agent} community={community} />
       </span>
       <span className={`${styles.name} text-label`}>{agent.name}</span>

@@ -66,7 +66,18 @@ test("agent cards expose selection and creation preserves focus and selected bor
         name: "Instructions",
         exact: true,
       });
+      await expect(instructions).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      await expect(instructions.locator("..")).not.toHaveClass(
+        /buzz-settings-group/,
+      );
       await instructions.focus();
+      await expect(instructions).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
       await expect
         .poll(() =>
           instructions.evaluate(

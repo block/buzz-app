@@ -71,6 +71,12 @@
     padding: var(--space-control-inset);
     resize: vertical;
   }
+  /* Agent instructions intentionally use one outlined boundary and no inset fill. */
+  .buzz-textarea:where([data-appearance="outlined"]) {
+    --border: var(--border-standard);
+    background: transparent;
+    border-radius: var(--radius-container);
+  }
   .buzz-textarea[data-surface="panel"],
   .buzz-input-group[data-surface="panel"] {
     background: var(--surface-panel);
@@ -403,10 +409,9 @@
     color: var(--text-unavailable);
   }
 
-  .buzz-input:not([data-appearance="title"], [data-appearance="heading"]):where(
-    :focus,
-    [data-popup-open]
-  ),
+  .buzz-input:where(
+    :not([data-appearance="title"], [data-appearance="heading"])
+  ):where(:focus, [data-popup-open]),
   .buzz-textarea:where(:focus),
   .buzz-input-group:where(:focus-within) {
     --border: var(--interaction-border);
@@ -498,16 +503,5 @@
   .buzz-calendar button:disabled {
     color: var(--text-unavailable);
     cursor: not-allowed;
-  }
-}
-
-@layer components {
-  .buzz-textarea[data-appearance="content"] {
-    display: block;
-    background: transparent;
-    padding-inline: 0;
-  }
-  .buzz-textarea[data-appearance="content"]:not(:focus) {
-    resize: none;
   }
 }

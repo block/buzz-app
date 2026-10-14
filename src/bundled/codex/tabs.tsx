@@ -956,7 +956,6 @@ export function createTabs(
               value={draft.scope}
               groups={SCOPES}
               disabled={saving}
-              description="DMs always share one conversation."
               onValueChange={(value) =>
                 setDraft({
                   ...draft,

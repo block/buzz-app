@@ -18,7 +18,7 @@ export function AgentInstructions({
   return (
     <Field label="Instructions" description={description}>
       <Textarea
-        surface="inset"
+        appearance="outlined"
         rows={8}
         value={value}
         disabled={disabled}

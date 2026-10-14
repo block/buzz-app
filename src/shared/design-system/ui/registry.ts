@@ -245,7 +245,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Textarea",
     purpose: "A multiline field with shared label and validation behavior.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "panel surface", "disabled", "invalid"],
+    variants: ["default", "outlined", "panel surface", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Textarea.tsx",

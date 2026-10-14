@@ -18,8 +18,8 @@ export function Textarea({
 }: TextareaProps & {
   variant?: "text" | "code";
   surface?: "inset" | "panel";
-  /** Content inside a container that already supplies the field boundary. */
-  appearance?: "field" | "content";
+  /** A transparent, outlined field instead of the default inset fill. */
+  appearance?: "field" | "outlined";
 }) {
   return (
     <BaseField.Control

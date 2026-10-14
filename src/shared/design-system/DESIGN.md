@@ -714,6 +714,9 @@ text-body (14px / 20px), and the 16px control inset. Derive vertical padding fro
 size, text line height, and boundary; do not force a fixed height that clips
 larger text or wrapped Select values. Textarea uses the control inset on all four
 sides (16px at the default scale), with manual vertical resizing and a code variant.
+Agent instructions intentionally use `appearance="outlined"`: one container-radius
+border over a transparent background, with no inset fill or nested SettingsGroup.
+Focus strengthens that same border. Preserve this choice in creation and profiles.
 Use `surface="panel"` when a standalone textarea needs an opaque surface over a
 floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px

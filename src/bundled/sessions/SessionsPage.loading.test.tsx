@@ -309,7 +309,7 @@ it.each([
     await user.click(screen.getByRole("button", { name: "Session actions" }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", {
-      name: `${label}: Planning`,
+      name: action === "delete" ? "Delete Planning?" : `${label}: Planning`,
     });
     await user.click(within(dialog).getByRole("button", { name: label }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -339,7 +339,7 @@ it("drops a pending Delete confirmation when its visit ends", async () => {
     await screen.findByRole("menuitem", { name: "Delete channel" }),
   );
   const dialog = screen.getByRole("dialog", {
-    name: "Delete channel: Planning",
+    name: "Delete Planning?",
   });
   await user.click(
     within(dialog).getByRole("button", { name: "Delete channel" }),

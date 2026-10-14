@@ -30,17 +30,20 @@ async function pull(page, from, to) {
   });
 }
 
-test("dragging a group header moves the whole group, keeps its state, and persists", async ({
-  page,
-  app,
-}) => {
-  // The fixture groups use custom-emoji icons; serve every one as a plain image.
-  await page.route("**/media?*", (route) =>
+// The fixture groups use custom-emoji icons; serve every one as a plain image.
+test.beforeEach(({ page }) =>
+  page.route("**/media?*", (route) =>
     route.fulfill({
       contentType: "image/svg+xml",
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>',
     }),
-  );
+  ),
+);
+
+test("dragging a group header moves the whole group, keeps its state, and persists", async ({
+  page,
+  app,
+}) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
   await expect
@@ -72,6 +75,27 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await page.mouse.up();
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
+  expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+
+  // Built-in sections are not group targets.
+  const channels = await page
+    .locator('[data-sidebar-section="channels"] summary')
+    .boundingBox();
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(
+    channels.x + channels.width / 2,
+    channels.y + channels.height / 2,
+    { steps: 8 },
+  );
+  await expect(laptop).toHaveAttribute("data-section-dragging");
+  await expect(
+    page.locator("[data-drop-edge], [data-drop-target]"),
+  ).toHaveCount(0);
+  await page.mouse.up();
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:work", "group:missing", "group:laptop"]);
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
 
   // Collapsed last group upward to first.
@@ -117,4 +141,54 @@ test("dragging a group header moves the whole group, keeps its state, and persis
     .toEqual(["group:laptop", "group:work", "group:missing"]);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
   await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
+});
+
+test("group move recovery keeps keyboard focus on the group header", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:work", "group:missing", "group:laptop"]);
+  await page.route("**/sidebar-section-order", (route) => {
+    app.report.sidebarPreferenceFailures ??= [];
+    app.report.sidebarPreferenceFailures.push(route.request().url());
+    return route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Order save failed; retry" }),
+    });
+  });
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the move for Work" });
+  const failMove = async () => {
+    await page.getByRole("button", { name: "More actions for Work" }).click();
+    await page
+      .getByRole("menuitem", { name: "Move down", exact: true })
+      .click();
+    await expect(error).toBeVisible();
+    await expect
+      .poll(() => groups(page))
+      .toEqual(["group:work", "group:missing", "group:laptop"]);
+  };
+  const press = async (name) => {
+    await error.getByRole("button", { name, exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(error).toHaveCount(0);
+    await expect(header(page, "work")).toBeFocused();
+  };
+
+  await failMove();
+  await press("Dismiss");
+  await failMove();
+  await page.unroute("**/sidebar-section-order");
+  await press("Retry move");
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:missing", "group:work", "group:laptop"]);
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
+  await expect(header(page, "work")).toBeFocused();
 });

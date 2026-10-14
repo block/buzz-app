@@ -863,6 +863,20 @@ function ReadySidebar({
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, sidebar.list]);
+  const [groupFocus, setGroupFocus] = useState<string>();
+  // Group recovery removes its focused notice; return focus to the group header.
+  useLayoutEffect(() => {
+    if (!groupFocus) return;
+    (
+      sidebar.list.current?.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(groupFocus)}"] details > summary`,
+      ) ??
+      sidebar.list.current?.querySelector<HTMLElement>(
+        "[data-sidebar-section] details > summary",
+      )
+    )?.focus({ preventScroll: true });
+    setGroupFocus(undefined);
+  }, [groupFocus, sidebar.list]);
   const runReadAction = (channelId: string, action: () => Promise<unknown>) =>
     readAction.run(action, () => {
       setRowFocus(channelId);
@@ -1343,15 +1357,23 @@ function ReadySidebar({
                 disabled={!preferences.sectionOrderWritable}
                 onClick={() => {
                   const failed = preferences.orderError;
-                  if (failed)
-                    void preferences
-                      .reorderSections(failed.sectionId, failed.sectionIds)
-                      .catch(() => {});
+                  if (!failed) return;
+                  void preferences
+                    .reorderSections(failed.sectionId, failed.sectionIds)
+                    .catch(() => {});
+                  setGroupFocus(`group:${failed.sectionId}`);
                 }}
               >
                 Retry move
               </button>
-              <button type="button" onClick={preferences.dismissOrderError}>
+              <button
+                type="button"
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  preferences.dismissOrderError();
+                  if (failed) setGroupFocus(`group:${failed.sectionId}`);
+                }}
+              >
                 Dismiss
               </button>
             </div>

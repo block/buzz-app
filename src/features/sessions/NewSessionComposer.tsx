@@ -28,6 +28,20 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
 
+/** Starting a new chat from a project starts it in that project, even when an
+ * earlier draft there was switched to another one. */
+export function resetNewChatProject(
+  scope: string,
+  personal: boolean,
+  sectionId: string,
+) {
+  writeView(
+    scope,
+    `${personal ? "me" : "sessions"}:section:${sectionId}:new-project`,
+    null,
+  );
+}
+
 export function NewSessionComposer({
   session,
   scope,

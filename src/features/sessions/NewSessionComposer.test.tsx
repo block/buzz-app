@@ -703,7 +703,7 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   writeView("test", "sessions:settings", "Legacy Canvas");
   let mounted = render(view());
   await user.click(screen.getByRole("button", { name: "Session settings" }));
-  const canvas = await screen.findByRole("textbox", { name: "Canvas" });
+  const canvas = await screen.findByRole("textbox", { name: /^Instructions/ });
   expect(canvas).toHaveValue("Legacy Canvas");
   await user.clear(canvas);
   await user.type(canvas, "Keep the change small");
@@ -1071,7 +1071,7 @@ it.each([false, true])(
         }
       }
       await user.type(
-        await screen.findByRole("textbox", { name: "Canvas" }),
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
         "Keep this Me draft",
       );
       await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1081,7 +1081,7 @@ it.each([false, true])(
       render(view());
       await open();
       expect(
-        await screen.findByRole("textbox", { name: "Canvas" }),
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
       ).toHaveValue("Keep this Me draft");
       expect(
         screen.getByRole("button", { name: "Save changes" }),
@@ -1204,7 +1204,7 @@ it.each([-1, "broken"])(
     );
     expect(h.workSessions.create).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Session settings" }));
-    expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
+    expect(await screen.findByRole("textbox", { name: /^Instructions/ })).toHaveValue(
       "Keep parent Canvas",
     );
     expect(screen.queryByRole("radio", { name: /^Ongoing/ })).toBeNull();
@@ -1235,7 +1235,7 @@ it("invalid stored Canvas is safely editable without dropping a malformed lifeti
     />,
   );
   await user.click(screen.getByRole("button", { name: "Session settings" }));
-  const canvas = await screen.findByRole("textbox", { name: "Canvas" });
+  const canvas = await screen.findByRole("textbox", { name: /^Instructions/ });
   expect(canvas).toHaveValue("");
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -1354,7 +1354,7 @@ it.each(
       await user.click(
         screen.getByRole("button", { name: "Session settings" }),
       );
-      return screen.findByRole("textbox", { name: "Canvas" });
+      return screen.findByRole("textbox", { name: /^Instructions/ });
     };
     if (saved) {
       const canvas = await openSettings();

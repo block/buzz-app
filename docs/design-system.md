@@ -380,7 +380,7 @@ measures its rem-sized leading region for the virtualizer’s pixel start margin
 ## Preference rows
 
 `PreferenceRow` owns settings layout: an optional decorative Tabler `icon`,
-`title`, optional `subtitle`, and `trailing` content. Titles use `text-label-sm`;
+`title`, optional `subtitle`, and `trailing` content. Titles use Regular `text-body-sm` (14px);
 subtitles use `text-body-sm`. Text wraps and controls retain their own interaction,
 focus, disabled, and pending behavior. The row itself is not an action target.
 

@@ -307,6 +307,10 @@ async function relayAuthority(fetch, relay) {
     relayAuthor: author,
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
+    // NIP-CL: the relay keeps channel labels and answers label lookups.
+    channelIdentity:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("nip-cl"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -739,6 +743,8 @@ export function relayBrokerPlugin({
   agentLibrary = readAgentLibrary,
   builderlab: builderlabOptions = {},
   archiveFile,
+  // Tests that hold EOSE on purpose lengthen this real-time deadline.
+  liveSetupTimeoutMs,
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -900,6 +906,7 @@ export function relayBrokerPlugin({
               if (req.method !== "POST")
                 return json(res, 404, { error: "Unknown Builderlab route" });
               let raw = "";
+              req.setEncoding("utf8");
               for await (const part of req) {
                 raw += part;
                 if (raw.length > 4096)
@@ -931,6 +938,7 @@ export function relayBrokerPlugin({
           }
           if (url.pathname === "/api/relay/register" && req.method === "POST") {
             let raw = "";
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (raw.length > 4096)
@@ -959,6 +967,7 @@ export function relayBrokerPlugin({
             req.method === "POST"
           ) {
             let raw = "";
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (Buffer.byteLength(raw) > 4096)
@@ -1320,6 +1329,7 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/archive" && req.method === "POST") {
             let raw = "";
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (Buffer.byteLength(raw) > 4096)
@@ -1409,6 +1419,7 @@ export function relayBrokerPlugin({
               channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,
+              channelIdentity: (await getAuthority(relay)).channelIdentity,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
@@ -1440,6 +1451,7 @@ export function relayBrokerPlugin({
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
             let raw = "";
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (
@@ -1559,6 +1571,7 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stream" && req.method === "POST") {
             let raw = "";
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (Buffer.byteLength(raw) > 300000)
@@ -1738,6 +1751,8 @@ export function relayBrokerPlugin({
               },
               socketFactory,
               principal.live,
+              undefined,
+              liveSetupTimeoutMs,
             );
             principal.streams++;
             traffic.observe(observer);
@@ -1977,6 +1992,7 @@ export function relayBrokerPlugin({
             ? setTimeout(() => req.destroy(), 10000)
             : undefined;
           try {
+            req.setEncoding("utf8");
             for await (const part of req) {
               raw += part;
               if (

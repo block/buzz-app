@@ -621,6 +621,31 @@ it("applies one correction per shift jump and per measurement batch, none from s
   c.driver._();
 });
 
+it("keeps the same rows mounted when a page lands before a flushed correction's scroll event", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(40);
+  c.store.W(1, 2300); // the jump's own scroll event
+  // The prepended rows measure in the next frame: their correction is flushed
+  // and the range is held until that correction's scroll event arrives.
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J();
+  expect(c.store.i(1600)).toEqual([7, 39]);
+  // The next page lands first. Its 20 rows go in front of every held row, so
+  // the held range must move with them: [7, 39] would mount the new rows and
+  // unmount the rows just below the viewport, to be remounted one frame later.
+  c.store.W(5, [60, true]);
+  expect(c.store.i(1600)).toEqual([27, 59]);
+  c.driver.J();
+  c.store.W(1, c.viewport.scrollTop); // the scroll event: the range is live again
+  // Inside the held range: the rows it kept mounted stay, nothing remounts.
+  expect(c.store.i(1600)).toEqual([29, 59]);
+  c.driver._();
+});
+
 it("delivers the latest resize per target outside native observer delivery", () => {
   const h = resizeHarness();
   const first = h.node(),

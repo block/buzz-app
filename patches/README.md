@@ -161,6 +161,27 @@ keeps the viewport start as before. Installed-store regressions cover the late
 batch, unrelated/partial batches before completion, the stock window and an
 unmounted prepend.
 
+## A page that lands before a correction's scroll event
+
+After the store flushes a jump (a shift or a resize correction), it keeps the
+last rendered range until that jump's own scroll event arrives, so the frame in
+between cannot render from a scroll offset the DOM has already left. That range
+is a pair of item indices. When the next page of older history lands inside that
+window, which continuous paging makes common since corrections flush almost
+every frame, its prepend moves every mounted row by the page size and the held
+range now names the wrong rows: the render mounts the whole new page above the
+viewport and unmounts the rows just below it, and the jump's scroll event
+mounts those again one frame later. Measured in Chromium on the 640-row
+fixture, each such page mounted and unmounted 20 rows in its own task and
+remounted 20 in the scroll handler, 50–80 ms frames; the pages that landed with
+no pending jump cost a few milliseconds.
+
+The store moves the held range by the shift's item delta, so the rows it kept
+mounted stay mounted and the scroll event's live range is computed as before.
+Nothing changes when no jump is pending, for appends, or for the correction
+itself. The installed-store regression holds a correction's range across a
+second prepend and requires the live range that follows to lie inside it.
+
 ## Viewport size is delivered in the observer callback
 
 Row resizes are delivered in the next animation frame, outside the native

@@ -10,6 +10,7 @@ export function useMessageReveal({
   ready,
   complete,
   prepare,
+  hold,
   focus = true,
 }: {
   scroller: RefObject<HTMLElement | null>;
@@ -21,11 +22,21 @@ export function useMessageReveal({
   prepare?(): void;
   /** A covering modal owns focus; the underlying target still verifies/reveals. */
   focus?: boolean;
+  /**
+   * While this returns true after the reveal, keep the row where the reveal put
+   * it. Rows mounted around the target can measure after verification and push
+   * it out of view. The owner ends the hold on reader intent.
+   */
+  hold?: () => boolean;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
   const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
     undefined,
   );
+  // Outlives the reveal effect: a dependency change after completion must not
+  // end the hold, but unmount and the next reveal do.
+  const holding = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => () => holding.current?.(), []);
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -37,6 +48,7 @@ export function useMessageReveal({
       return;
     const container = scroller.current;
     if (!container) return;
+    const target = messageId;
     let frame = 0;
     const cancel = () => {
       cancelAnimationFrame(frame);
@@ -61,7 +73,7 @@ export function useMessageReveal({
         inline: "nearest",
         behavior: "instant",
       });
-      settled.current = false;
+      settled.current = true;
       // A replacement may recover lost focus, but must not take it from another
       // control after this request already focused a row successfully.
       let focusPending = false;
@@ -76,42 +88,35 @@ export function useMessageReveal({
         focusPending = document.activeElement !== row;
         if (!focusPending) focused.current = { signal, row };
       }
-      const positionedBox = row.getBoundingClientRect();
-      const positionedViewport = container.getBoundingClientRect();
-      const positionedWindowHeight = window.innerHeight;
+      const position = {
+        top:
+          row.getBoundingClientRect().top -
+          container.getBoundingClientRect().top,
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
           return;
+        if (focus && (focusPending || row.closest("[inert]"))) return;
+        holding.current?.();
+        holding.current = hold
+          ? keep(container, target, signal, hold, position)
+          : undefined;
         const box = row.getBoundingClientRect();
         const viewport = container.getBoundingClientRect();
-        const viewportTop = Math.max(viewport.top, 0);
-        const viewportBottom = Math.min(viewport.bottom, window.innerHeight);
-        // A divider alone can intersect before the message is readable. Rows
-        // that fit need full height; taller rows need the available viewport.
         const visible =
-          viewportBottom > viewportTop &&
           box.height > 0 &&
           box.width > 0 &&
-          Math.min(box.bottom, viewportBottom) -
-            Math.max(box.top, viewportTop) >=
-            Math.min(box.height, viewportBottom - viewportTop) &&
+          box.bottom > Math.max(viewport.top, 0) &&
+          box.top < Math.min(viewport.bottom, window.innerHeight) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if (focus && (focusPending || row.closest("[inert]"))) return;
         if (!visible) {
-          // A late correction can follow native positioning without a DOM
-          // mutation. Reposition on measured progress, never retry a stuck row.
-          if (
-            box.top !== positionedBox.top ||
-            box.bottom !== positionedBox.bottom ||
-            viewport.top !== positionedViewport.top ||
-            viewport.bottom !== positionedViewport.bottom ||
-            window.innerHeight !== positionedWindowHeight
-          )
-            schedule();
+          holding.current?.();
+          holding.current = undefined;
           return;
         }
-        settled.current = true;
         revealed.current = signal;
         cancel();
         readingPositioned(container);
@@ -140,6 +145,67 @@ export function useMessageReveal({
       cancel();
       signal.removeEventListener("abort", cancel);
     };
-  }, [scroller, settled, messageId, signal, ready, complete, prepare, focus]);
+  }, [
+    scroller,
+    settled,
+    messageId,
+    signal,
+    ready,
+    complete,
+    prepare,
+    focus,
+    hold,
+  ]);
   return revealed;
+}
+
+/** Undo layout drift of a revealed row until its owner, request or viewport ends the hold. */
+function keep(
+  container: HTMLElement,
+  messageId: string,
+  signal: AbortSignal,
+  hold: () => boolean,
+  { top: at, width, height }: { top: number; width: number; height: number },
+) {
+  const offset = () => {
+    const row = [
+      ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((element) => element.dataset.messageId === messageId);
+    return row
+      ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
+      : undefined;
+  };
+  let frame = 0;
+  const release = () => {
+    cancelAnimationFrame(frame);
+    observer.disconnect();
+    signal.removeEventListener("abort", release);
+  };
+  const check = () => {
+    const now = offset();
+    // A resized viewport is a new layout, not drift; the owner positions it.
+    if (
+      signal.aborted ||
+      !hold() ||
+      !container.isConnected ||
+      container.clientWidth !== width ||
+      container.clientHeight !== height ||
+      now === undefined
+    )
+      return release();
+    if (Math.abs(now - at) >= 0.5) container.scrollTop += now - at;
+  };
+  const observer = new MutationObserver(() => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(check);
+  });
+  observer.observe(container, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+  signal.addEventListener("abort", release, { once: true });
+  check();
+  return release;
 }

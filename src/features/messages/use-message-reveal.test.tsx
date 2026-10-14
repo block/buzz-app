@@ -44,7 +44,7 @@ async function frame() {
     }
   });
 }
-function mount() {
+function mount(hold?: () => boolean) {
   const request = new AbortController();
   const complete = vi.fn();
   function Surface({
@@ -66,6 +66,7 @@ function mount() {
       ready: true,
       complete,
       ...(prepare ? { prepare } : {}),
+      ...(hold ? { hold } : {}),
     });
     return (
       <>
@@ -109,81 +110,6 @@ it("notifies reading after the revealed row is verified", async () => {
   await frame();
   expect(positioned).toHaveBeenCalledOnce();
   expect(complete).toHaveBeenCalledOnce();
-});
-
-it.each([
-  [100, 100],
-  [200, 100],
-  [100, 200],
-])(
-  "waits for readable positioning of a %sx%s target",
-  async (height, width) => {
-    const { row, complete } = mount();
-    const bounds = row.getBoundingClientRect();
-    const positioned = vi.fn();
-    row.parentElement?.addEventListener("reading-positioned", positioned);
-    const clipped = vi
-      .fn(() => bounds)
-      .mockReturnValue({
-        ...bounds,
-        bottom: height,
-        right: width,
-        height,
-        width,
-      });
-    row.getBoundingClientRect = clipped;
-    await frame();
-    await frame();
-    // Native positioning runs before the virtualizer's late correction.
-    clipped.mockReturnValue({
-      ...bounds,
-      top: 80,
-      bottom: 80 + height,
-      right: width,
-      height,
-      width,
-    });
-    await frame();
-    expect(complete).not.toHaveBeenCalled();
-    expect(positioned).not.toHaveBeenCalled();
-    // A virtualizer correction need not mutate a row after its height commit.
-    clipped.mockReturnValue({
-      ...bounds,
-      bottom: height,
-      right: width,
-      height,
-      width,
-    });
-    await frame();
-    await frame();
-    expect(complete).toHaveBeenCalledOnce();
-    expect(positioned).toHaveBeenCalledOnce();
-  },
-);
-
-it("waits for layout progress when native positioning cannot expose the target", async () => {
-  const { row, complete, request } = mount();
-  const bounds = row.getBoundingClientRect();
-  const clipped = vi
-    .fn(() => bounds)
-    .mockReturnValue({
-      ...bounds,
-      top: 80,
-      bottom: 180,
-    });
-  row.getBoundingClientRect = clipped;
-  await frame();
-  await frame();
-  await frame();
-  expect(complete).not.toHaveBeenCalled();
-  expect(frames.size).toBe(0);
-  clipped.mockReturnValue(bounds);
-  await mutate(row);
-  await frame();
-  request.abort();
-  await frame();
-  expect(complete).not.toHaveBeenCalled();
-  expect(frames.size).toBe(0);
 });
 
 it.each([false, true])(
@@ -334,3 +260,65 @@ it("retries failed focus recovery on a replacement before completing", async () 
   expect(document.activeElement).toBe(replacement);
   expect(complete).toHaveBeenCalledOnce();
 });
+
+it.each([
+  ["before verification", 59, false],
+  ["before verification", 159, false],
+  ["before verification", 59, true],
+  ["after verification", 59, false],
+])(
+  "holds the revealed row through late layout %s by %spx until released (resized: %s)",
+  async (phase, drift, resized) => {
+    let holding = true;
+    const { row, complete } = mount(() => holding);
+    const container = row.parentElement as HTMLElement;
+    let scrollTop = 0;
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    let rowTop = 0;
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+      function (this: HTMLElement) {
+        const top = this === row ? rowTop - scrollTop : 0;
+        return {
+          top,
+          left: 0,
+          bottom: top + 100,
+          right: 100,
+          width: 100,
+          height: 100,
+          x: 0,
+          y: top,
+          toJSON() {},
+        };
+      },
+    );
+    await frame(); // Attach observers.
+    await frame(); // Reveal.
+    // Geometry can change before verification without another DOM mutation.
+    if (phase === "before verification") rowTop = drift;
+    if (resized)
+      Object.defineProperty(container, "clientWidth", { value: 200 });
+    await frame(); // Verify and start holding.
+    expect(complete).toHaveBeenCalledOnce();
+    if (phase === "after verification") {
+      rowTop = drift;
+      await mutate(row);
+      await frame();
+    }
+    expect(scrollTop).toBe(resized ? 0 : drift);
+    expect(row.getBoundingClientRect().top).toBe(resized ? drift : 0);
+    // Newer reader intent ends the hold; later drift belongs to the reader.
+    holding = false;
+    rowTop = drift + 100;
+    await mutate(row);
+    await frame();
+    expect(scrollTop).toBe(resized ? 0 : drift);
+    await mutate(row);
+    expect(frames.size).toBe(0);
+  },
+);

@@ -47,7 +47,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeVisible();
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toHaveCSS("text-decoration-line", "none");
+  await expect(link).toHaveCSS("text-decoration-line", "underline");
   await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
   // Release the held profile while the link is focused, before the navigation
   // below: profile reads give up after 10s, and a loaded engine can spend that

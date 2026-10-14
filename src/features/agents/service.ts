@@ -22,6 +22,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import { channelTemplates, templateAgents } from "../channel-templates/local";
 import type { LocalAgentsSnapshot } from "./local";
 import {
   deleteAgentRecord,
@@ -152,25 +153,18 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Model fields may use the compact card treatment in the library. */
+  modelAppearance?: "subtle";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
 };
-export type AgentCreateModelMenuProps<Config = unknown> =
-  AgentCreateProps<Config> & {
-    /** Whether this provider is the create form's current selection. */
-    active?: boolean;
-    /** Opens Create's host-owned model-ID dialog after its menu closes. */
-    requestCustomModel(
-      initialValue: string,
-      onChange: (model: string) => void,
-    ): void;
-  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
-  /** Lets the Agents build view place host-owned Type controls in this tab. */
-  role?: "settings";
+  /** `settings` lets the Agents build view place host-owned Type controls in
+   * this tab; `activity` makes it the agent's Activity tab in its profile. */
+  role?: "settings" | "activity";
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
@@ -189,6 +183,13 @@ export type AgentHandle = Readonly<{
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
+  /** The owner's channel templates on this device, each with the agents it
+   * adds that are the owner's agents in this agent's community. */
+  templates(): readonly Readonly<{
+    name: string;
+    canvas: string;
+    agents: readonly string[];
+  }>[];
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -245,6 +246,25 @@ export type Trigger =
       /** This is its last allowed occurrence. */
       spent: boolean;
     }>;
+/** A turn with no conversation and nothing saved, such as for a watch or a
+ * timer. */
+export type StandaloneTurn<Config = unknown> = Readonly<{
+  /** The watch's or timer's delivery. */
+  delivery: Delivery<Config>;
+  /** Names the turn, for status views. */
+  key: string;
+  /** Aborts when the agent is removed, its type is replaced, or
+   * STANDALONE_DEADLINE_MS after the turn starts (agent-harness/standalone).
+   * Unlike the delivery's signal, it does not count time spent waiting in
+   * the lane. A harness waits for readiness under it and stops its turn when
+   * it aborts. */
+  signal: AbortSignal;
+  /** The turn's whole prompt, asked once the harness is ready to start it.
+   * Undefined means it is no longer wanted, so no turn starts. */
+  prompt(): Promise<string | undefined>;
+}>;
+/** How a standalone turn ended. */
+export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   /** The live route's channel; absent when the wire scope was ambiguous. */
@@ -347,10 +367,8 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
-  /** Model rows contributed to this type's submenu in the New agent dialog. */
-  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
-  /** Non-default model detail appended to this type's New agent trigger. */
-  createModelLabel?(config: Config): string | undefined;
+  /** Compact model field for creation and library cards; the type owns discovery and configuration. */
+  CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
@@ -361,6 +379,10 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Runs a standalone turn and settles when it ends, stopping it when
+   * `turn.signal` aborts. With it, the host runs watches and timers as
+   * standalone turns in their Interest's lane, and `run` gets only mentions. */
+  runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
@@ -741,6 +763,24 @@ export class AgentsService extends Service implements Agents {
           this.identities.filter((identity) => !identity.deleted),
           pubkey,
         ),
+      templates: (agent) => {
+        // The agents Agents shows for this community, as the create dialog
+        // offers a template's.
+        const origin = originOf(agent.relay);
+        const here = new Set(
+          [
+            ...this.state.running.filter(
+              (a) => originOf(a.relay) === origin && this.bindingOf(a),
+            ),
+            ...this.listedAgents(origin),
+          ].map((a) => a.pubkey),
+        );
+        return channelTemplates.snapshot().map((template) => ({
+          name: template.name,
+          canvas: template.canvas,
+          agents: templateAgents(template, this.teamList, here),
+        }));
+      },
       classifier: () => this.classifier(),
       custody: native,
       activity: localActivity,

@@ -102,7 +102,9 @@ export function AgentTabs(props: {
               settings &&
               (value === "agent:settings" || value === "agent:management")
             ) &&
-            (value === selected?.value || visited.has(value)),
+            // Memory owns a one-shot read and a bounded session view, not a draft.
+            (value === selected?.value ||
+              (value !== "agent:memory" && visited.has(value))),
         )
         .map((section) => (
           <div

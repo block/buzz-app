@@ -165,7 +165,11 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   });
   // Settle the controller before looking for the panel so a failure records
   // the navigation status (opening/failed) rather than a missing element.
-  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  // Outlast the controller's 15 s open deadline so a stall records its
+  // terminal failure reason instead of a still-pending "opening".
+  await expect
+    .poll(async () => (await state(page)).status, { timeout: 20_000 })
+    .toBe("opened");
   await expect(
     thread.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();

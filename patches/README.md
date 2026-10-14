@@ -178,9 +178,14 @@ no pending jump cost a few milliseconds.
 
 The store moves the held range by the shift's item delta, so the rows it kept
 mounted stay mounted and the scroll event's live range is computed as before.
-Nothing changes when no jump is pending, for appends, or for the correction
-itself. The installed-store regression holds a correction's range across a
-second prepend and requires the live range that follows to lie inside it.
+A shift can also remove rows from the head, since the timeline reports one
+whenever the first row changes and the last does not; a removal past the held
+rows would move the range above the list, an inverted range that renders no
+row for a frame, so the range then holds the same number of rows from the top,
+where the clamped offset lands. Nothing changes when no jump is pending, for
+appends, or for the correction itself. The installed-store regressions hold a
+correction's range across a second prepend and across such a removal, and
+require the live range that follows to lie inside it.
 
 ## Viewport size is delivered in the observer callback
 

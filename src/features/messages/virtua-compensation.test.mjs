@@ -625,7 +625,7 @@ it("keeps the same rows mounted when a page lands before a flushed correction's 
   const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
   c.store.W(1, 300); // native upward scrolling, as when paging history
   c.prepend(40);
-  c.store.W(1, 2300); // the jump's own scroll event
+  c.store.W(1, c.viewport.scrollTop); // the jump's own scroll event
   // The prepended rows measure in the next frame: their correction is flushed
   // and the range is held until that correction's scroll event arrives.
   c.store.W(
@@ -643,6 +643,31 @@ it("keeps the same rows mounted when a page lands before a flushed correction's 
   c.store.W(1, c.viewport.scrollTop); // the scroll event: the range is live again
   // Inside the held range: the rows it kept mounted stay, nothing remounts.
   expect(c.store.i(1600)).toEqual([29, 59]);
+  c.driver._();
+});
+
+it("holds the top rows when a removal past the held range lands before a flushed correction's scroll event", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.store.W(5, [60, false]); // 40 newer rows below the viewport
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(80);
+  c.store.W(1, c.viewport.scrollTop); // the jump's own scroll event
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J(); // the measurement's correction is flushed: the range is held
+  expect(c.store.i(1600)).toEqual([7, 44]);
+  // A head removal past every held row lands first. Moved by its delta the
+  // range would name rows above the list, an inverted range that renders no
+  // row for a frame; the rows it keeps are the top ones the offset lands on.
+  c.store.W(5, [30, true]);
+  expect(c.store.i(1600)).toEqual([0, 29]);
+  c.driver.J();
+  // Its scroll event: nothing is left above the viewport, so layout clamps
+  // the corrected offset to the top and the live range lies in the held one.
+  c.store.W(1, 0);
+  expect(c.store.i(1600)).toEqual([0, 21]);
   c.driver._();
 });
 

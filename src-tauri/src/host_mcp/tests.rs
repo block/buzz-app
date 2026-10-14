@@ -1,5 +1,7 @@
 use super::*;
 use tauri::ipc::InvokeResponseBody;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 fn channel() -> (
@@ -23,12 +25,16 @@ async fn next(events: &mut mpsc::UnboundedReceiver<serde_json::Value>) -> serde_
         .expect("open channel")
 }
 
+/// The `host:port` of `info`'s server.
+fn authority(info: &McpServerInfo) -> &str {
+    info.url
+        .trim_start_matches("http://")
+        .trim_end_matches(ENDPOINT)
+}
+
 /// Sends a raw request to `info`'s server and returns the whole response.
 async fn send(info: &McpServerInfo, request: String) -> String {
-    let authority = info
-        .url
-        .trim_start_matches("http://")
-        .trim_end_matches(ENDPOINT);
+    let authority = authority(info);
     let mut socket = TcpStream::connect(authority).await.unwrap();
     socket.write_all(request.as_bytes()).await.unwrap();
     let mut response = String::new();
@@ -37,10 +43,7 @@ async fn send(info: &McpServerInfo, request: String) -> String {
 }
 
 fn post(info: &McpServerInfo, token: &str, extra: &str, body: &str) -> String {
-    let authority = info
-        .url
-        .trim_start_matches("http://")
-        .trim_end_matches(ENDPOINT);
+    let authority = authority(info);
     format!(
         "POST /mcp HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n{extra}Content-Length: {}\r\n\r\n{body}",
         body.len()
@@ -95,7 +98,9 @@ async fn answers_a_request_with_the_page_reply() {
         .unwrap();
     let response = client.await.unwrap();
     assert_eq!(status(&response), "200");
-    assert!(response.contains("Content-Type: application/json\r\n"));
+    assert!(response
+        .to_ascii_lowercase()
+        .contains("content-type: application/json\r\n"));
     assert!(response.ends_with(reply));
 }
 
@@ -143,10 +148,7 @@ async fn refuses_without_starting_oauth() {
     ] {
         assert_eq!(status(&send(&info, request).await), "404");
     }
-    let authority = info
-        .url
-        .trim_start_matches("http://")
-        .trim_end_matches(ENDPOINT);
+    let authority = authority(&info);
     let get = format!(
         "GET /mcp HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\n\r\n",
         info.token

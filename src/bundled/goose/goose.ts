@@ -179,10 +179,10 @@ export class GooseProcess {
   ): Promise<GooseSession> {
     let server: HostMcpServer | undefined;
     // goose connects while it opens the session, before it is known here.
-    const opened: { session?: GooseSession } = {};
+    let session: GooseSession | undefined;
     if (!launch.bare) {
       if (!this.serve) throw new Error("This goose serves no Buzz tools");
-      server = await this.serve((message) => this.mcp(opened, message));
+      server = await this.serve((message) => this.mcp(session, message));
     }
     const buzz = server && {
       type: "http",
@@ -209,8 +209,7 @@ export class GooseProcess {
       void server?.close();
       throw error;
     }
-    const session = new GooseSession(this, sessionId, server);
-    opened.session = session;
+    session = new GooseSession(this, sessionId, server);
     this.sessions.set(sessionId, session);
     try {
       // Appended under goose's own prompt, which carries each extension's
@@ -326,28 +325,18 @@ export class GooseProcess {
   }
   /** One MCP message for a session's Buzz tools, answered with its JSON-RPC
    * response; a notification gets none. A final `send` that succeeded ends
-   * its turn. */
+   * its turn. The host answers a throw with an internal error. */
   private async mcp(
-    opened: { readonly session?: GooseSession },
+    session: GooseSession | undefined,
     message: unknown,
   ): Promise<Wire | undefined> {
     const { id, method = "", params } = (message ?? {}) as Wire;
     if (id === undefined || id === null) return undefined;
-    const { session } = opened;
-    let response: Wire;
-    try {
-      response = (await this.tools(session?.conversation, {
-        id,
-        method,
-        params,
-      })) as Wire;
-    } catch (error) {
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32603, message: errorMessage(error) },
-      };
-    }
+    const response = (await this.tools(session?.conversation, {
+      id,
+      method,
+      params,
+    })) as Wire;
     if (method === "tools/call") session?.used();
     const call = (params ?? {}) as {
       name?: unknown;

@@ -20,14 +20,19 @@
 //!   when the plugin closes it, when the page reloads, or when the app exits.
 use crate::{with_manager, PluginManager};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::{Bytes, Incoming};
+use hyper::header::{self, HeaderName};
+use hyper::{server::conn::http1, service::service_fn, Method, Request, Response, StatusCode};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{tcp::OwnedReadHalf, tcp::OwnedWriteHalf, TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 
@@ -35,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 const MAX_SERVERS: usize = 64;
 /// Open connections per server: an agent may call several tools at once.
 const CONNECTIONS: usize = 32;
+/// hyper's smallest read buffer, which bounds a request head.
 const HEAD_LIMIT: usize = 8192;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 const BODY_LIMIT: usize = 4 * 1024 * 1024;
@@ -220,8 +226,20 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
         };
         let shared = shared.clone();
         tauri::async_runtime::spawn(async move {
+            let shared = &*shared;
+            // One request per connection. hyper drops a request whose client
+            // closes before its answer, so the page's late reply is refused.
+            let connection = http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEAD_TIMEOUT)
+                .max_buf_size(HEAD_LIMIT)
+                .keep_alive(false)
+                .serve_connection(
+                    TokioIo::new(socket),
+                    service_fn(move |request| answer(shared, request)),
+                );
             tokio::select! {
-                () = connection(&shared, socket) => {}
+                _ = connection => {}
                 () = shared.stop.cancelled() => {}
             }
             drop(permit);
@@ -229,34 +247,39 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
     }
 }
 
-async fn connection(shared: &Shared, socket: TcpStream) {
-    let (mut reader, mut writer) = socket.into_split();
-    let Ok(Some((head, start))) = tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut reader)).await
-    else {
-        return;
+async fn answer(
+    shared: &Shared,
+    request: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let (status, body) = match refuse(shared, &request) {
+        Some(status) => (status, None),
+        None => {
+            let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
+            match tokio::time::timeout(BODY_TIMEOUT, body).await {
+                Ok(Ok(body)) => match String::from_utf8(body.to_bytes().into()) {
+                    Ok(body) => forward(shared, body).await,
+                    Err(_) => (StatusCode::BAD_REQUEST, None),
+                },
+                _ => (StatusCode::BAD_REQUEST, None),
+            }
+        }
     };
-    let length = match parse(shared, &head) {
-        Ok(length) => length,
-        Err(status) => return write_reply(&mut writer, status, None).await,
-    };
-    let Ok(Some(body)) =
-        tokio::time::timeout(BODY_TIMEOUT, read_body(&mut reader, start, length)).await
-    else {
-        return write_reply(&mut writer, 400, None).await;
-    };
-    let Ok(body) = String::from_utf8(body) else {
-        return write_reply(&mut writer, 400, None).await;
-    };
-    // The page's answer is dropped once the client closes.
-    let (status, reply) = tokio::select! {
-        answer = forward(shared, body) => answer,
-        () = closed(&mut reader) => return,
-    };
-    write_reply(&mut writer, status, reply.as_deref()).await;
+    let mut response = Response::builder()
+        .status(status)
+        .header(header::CACHE_CONTROL, "no-store");
+    if status == StatusCode::OK {
+        response = response.header(header::CONTENT_TYPE, "application/json");
+    }
+    if status == StatusCode::METHOD_NOT_ALLOWED {
+        response = response.header(header::ALLOW, "POST");
+    }
+    Ok(response
+        .body(Full::new(body.unwrap_or_default().into()))
+        .unwrap_or_default())
 }
 
 /// Hands `body` to the page and waits for its answer.
-async fn forward(shared: &Shared, body: String) -> (u16, Option<String>) {
+async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) {
     struct Waiting<'a>(&'a Shared, u64);
     impl Drop for Waiting<'_> {
         fn drop(&mut self) {
@@ -279,166 +302,52 @@ async fn forward(shared: &Shared, body: String) -> (u16, Option<String>) {
     {
         // Nobody is listening: the page that started it is gone.
         shared.stop.cancel();
-        return (503, None);
+        return (StatusCode::SERVICE_UNAVAILABLE, None);
     }
     match receiver.await {
-        Ok(Some(reply)) => (200, Some(reply)),
-        Ok(None) => (202, None),
-        Err(_) => (503, None),
+        Ok(Some(reply)) => (StatusCode::OK, Some(reply)),
+        Ok(None) => (StatusCode::ACCEPTED, None),
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, None),
     }
 }
 
-/// The request head, without its blank line, and any body bytes read with it.
-async fn read_head(reader: &mut OwnedReadHalf) -> Option<(Vec<u8>, Vec<u8>)> {
-    let mut head = Vec::new();
-    let mut chunk = [0; 4096];
-    loop {
-        if let Some(end) = head.windows(4).position(|part| part == b"\r\n\r\n") {
-            if end + 4 > HEAD_LIMIT {
-                return None;
-            }
-            let start = head.split_off(end + 4);
-            head.truncate(end);
-            return Some((head, start));
-        }
-        if head.len() >= HEAD_LIMIT {
-            return None;
-        }
-        let count = reader.read(&mut chunk).await.ok()?;
-        if count == 0 {
-            return None;
-        }
-        head.extend_from_slice(&chunk[..count]);
-    }
-}
-
-async fn read_body(
-    reader: &mut OwnedReadHalf,
-    mut body: Vec<u8>,
-    length: usize,
-) -> Option<Vec<u8>> {
-    if body.len() > length {
-        return None;
-    }
-    body.reserve_exact(length - body.len());
-    let mut chunk = [0; 16 * 1024];
-    while body.len() < length {
-        let want = (length - body.len()).min(chunk.len());
-        let count = reader.read(&mut chunk[..want]).await.ok()?;
-        if count == 0 {
-            return None;
-        }
-        body.extend_from_slice(&chunk[..count]);
-    }
-    Some(body)
-}
-
-/// Resolves when the client closes its connection; it sends nothing else.
-async fn closed(reader: &mut OwnedReadHalf) {
-    let mut chunk = [0; 1024];
-    let mut extra = 0;
-    while extra <= HEAD_LIMIT {
-        match reader.read(&mut chunk).await {
-            Ok(0) | Err(_) => return,
-            Ok(count) => extra += count,
-        }
-    }
-}
-
-/// The body length of an authorized `POST /mcp`, or the status that refuses it.
-fn parse(shared: &Shared, head: &[u8]) -> Result<usize, u16> {
-    let text = std::str::from_utf8(head).map_err(|_| 400u16)?;
-    let mut lines = text.split("\r\n");
-    let mut first = lines.next().unwrap_or_default().split(' ');
-    let (Some(method), Some(target), Some("HTTP/1.1"), None) =
-        (first.next(), first.next(), first.next(), first.next())
-    else {
-        return Err(400);
-    };
-    let (mut host, mut authorization, mut length, mut json) = (None, None, None, false);
-    for line in lines {
-        let (name, value) = line.split_once(':').ok_or(400u16)?;
-        if name.is_empty() || name.ends_with([' ', '\t']) || line.starts_with([' ', '\t']) {
-            return Err(400);
-        }
-        let value = value.trim_matches([' ', '\t']);
-        match name.to_ascii_lowercase().as_str() {
-            "host" if host.replace(value).is_some() => return Err(400),
-            "authorization" if authorization.replace(value).is_some() => return Err(400),
-            // An agent never sends one; a web page always does.
-            "origin" => return Err(404),
-            "content-length" => {
-                let parsed = value.parse::<usize>().map_err(|_| 400u16)?;
-                if length.replace(parsed).is_some_and(|known| known != parsed) {
-                    return Err(400);
-                }
-            }
-            "transfer-encoding" => return Err(411),
-            "content-type" => {
-                json = value
-                    .split(';')
-                    .next()
-                    .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
-            }
-            _ => {}
-        }
-    }
-    if host != Some(shared.authority.as_str()) {
-        return Err(404);
-    }
-    let path = target.split('?').next().unwrap_or_default();
-    let token = authorization
+/// The status that refuses `request`, unless it is an authorized `POST /mcp`.
+fn refuse(shared: &Shared, request: &Request<Incoming>) -> Option<StatusCode> {
+    let token = header(request, header::AUTHORIZATION)
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
-    if path != ENDPOINT || !same(token.as_bytes(), shared.token.as_bytes()) {
-        return Err(404);
+    if header(request, header::HOST) != Some(shared.authority.as_str())
+        // An agent never sends one; a web page always does.
+        || request.headers().contains_key(header::ORIGIN)
+        || request.uri().path() != ENDPOINT
+        || !same(token.as_bytes(), shared.token.as_bytes())
+    {
+        return Some(StatusCode::NOT_FOUND);
     }
     // No server stream for `GET` and no session for `DELETE` to end.
-    if method != "POST" {
-        return Err(405);
+    if request.method() != Method::POST {
+        return Some(StatusCode::METHOD_NOT_ALLOWED);
     }
+    let json = header(request, header::CONTENT_TYPE)
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"));
     if !json {
-        return Err(415);
+        return Some(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
-    match length {
-        None => Err(411),
-        Some(length) if length > BODY_LIMIT => Err(413),
-        Some(length) => Ok(length),
+    let length = header(request, header::CONTENT_LENGTH).and_then(|value| value.parse().ok());
+    if length.is_some_and(|length: usize| length > BODY_LIMIT) {
+        return Some(StatusCode::PAYLOAD_TOO_LARGE);
     }
+    None
+}
+
+fn header(request: &Request<Incoming>, name: HeaderName) -> Option<&str> {
+    request.headers().get(name)?.to_str().ok()
 }
 
 /// Compares the token without exposing how much of it matched.
 fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |diff, (x, y)| diff | (x ^ y)) == 0
-}
-
-async fn write_reply(writer: &mut OwnedWriteHalf, status: u16, body: Option<&str>) {
-    let reason = match status {
-        200 => "OK",
-        202 => "Accepted",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        411 => "Length Required",
-        413 => "Content Too Large",
-        415 => "Unsupported Media Type",
-        _ => "Service Unavailable",
-    };
-    let body = body.unwrap_or_default();
-    let mut head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
-        body.len()
-    );
-    if status == 200 {
-        head.push_str("Content-Type: application/json\r\n");
-    }
-    if status == 405 {
-        head.push_str("Allow: POST\r\n");
-    }
-    head.push_str("\r\n");
-    let _ = writer.write_all(head.as_bytes()).await;
-    let _ = writer.write_all(body.as_bytes()).await;
-    let _ = writer.shutdown().await;
 }
 
 /// Starts a loopback MCP server for a plugin that declares `host.mcp`. Each

@@ -3,8 +3,9 @@
 // sent to the ACP session for its conversation; a watch or timer wake runs as
 // a one-off turn in a new session, in its Interest's lane. The run returns once
 // the turn is handed over, so one agent works in several conversations at once.
-// goose acts in Buzz with the in-process Buzz tools over MCP-over-ACP, signed
-// by the agent's native-held key; the runtime only reports a turn that fails.
+// goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
+// signed by the agent's native-held key; the runtime only reports a turn that
+// fails.
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";

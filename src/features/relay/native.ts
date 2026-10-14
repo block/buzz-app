@@ -1,4 +1,4 @@
-import type { IfcContext } from "../ifc/context";
+import type { IfcBinding, IfcContext } from "../ifc/context";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -108,21 +108,47 @@ export async function nativeRelayRequest(
     AbortSignal.timeout(30_000),
   ]);
   bounded.throwIfAborted();
-  const result = await invoke<{
-    status: number;
-    headers: Record<string, string>;
-    body: string;
-  }>("relay_http", {
-    community: communityDestination(community).url,
-    path,
-    method: body === undefined ? "GET" : "POST",
-    body: body === undefined ? null : JSON.stringify(body),
-    ...(ifc ? { ifc } : {}),
-  });
-  // IPC cannot abort reqwest. Retain the shared admission slot until native work
-  // settles (bounded by its timeout), then reject any obsolete result.
-  bounded.throwIfAborted();
-  return nativeResponse(result);
+  let settled = false;
+  const settle = (binding: IfcBinding | null) => {
+    if (settled) return;
+    settled = true;
+    try {
+      ifc?.onBinding?.(binding);
+    } catch (error) {
+      console.warn("IFC binding receipt failed", error);
+    }
+  };
+  const receipt = ifc ? new Channel<IfcBinding | null>(settle) : undefined;
+  try {
+    const result = await invoke<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>("relay_http", {
+      community: communityDestination(community).url,
+      path,
+      method: body === undefined ? "GET" : "POST",
+      body: body === undefined ? null : JSON.stringify(body),
+      ...(ifc
+        ? {
+            ifc: {
+              agent: ifc.agent,
+              trigger: ifc.trigger,
+              ...(ifc.history ? { history: ifc.history } : {}),
+            },
+            ifcReceipt: receipt,
+          }
+        : {}),
+    });
+    // IPC cannot abort reqwest. Release ordinary read admission when it settles;
+    // policy receipts have their own bounded lifetime outside this read signal.
+    bounded.throwIfAborted();
+    if (path !== "/query" || result.status !== 200) settle(null);
+    return nativeResponse(result);
+  } catch (error) {
+    settle(null);
+    throw error;
+  }
 }
 
 function nativeResponse(result: {

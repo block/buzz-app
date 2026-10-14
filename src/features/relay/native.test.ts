@@ -4,6 +4,7 @@ import {
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
 import historyReadFilter from "../ifc/history-read-filter.json";
+import bindingContract from "../ifc/retained-history-binding.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -21,7 +22,7 @@ import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
 import { createRelayReader } from "./reader";
-import type { IfcContext } from "../ifc/context";
+import type { IfcBinding, IfcContext } from "../ifc/context";
 import { createRelaySession } from "./session";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
@@ -49,13 +50,24 @@ type Request = {
   method: string;
   body: string | null;
   ifc?: IfcContext;
+  ifcReceipt?: { id: string };
 };
 let discovery: Record<string, unknown> = {};
-let respond: (
-  request: Request,
-) =>
-  | { status?: number; body: unknown }
-  | Promise<{ status?: number; body: unknown }>;
+let respond: (request: Request) =>
+  | {
+      status?: number;
+      body: unknown;
+      ifc?: IfcBinding | null;
+      observation?: Promise<IfcBinding | null>;
+      omitReceipt?: boolean;
+    }
+  | Promise<{
+      status?: number;
+      body: unknown;
+      ifc?: IfcBinding | null;
+      observation?: Promise<IfcBinding | null>;
+      omitReceipt?: boolean;
+    }>;
 const requests: Request[] = [];
 const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
 const received = new Map<string, Uint8Array[]>();
@@ -104,6 +116,16 @@ beforeEach(() => {
         request.path === "/"
           ? { body: { self: relay.pubkey, ...discovery } }
           : await respond(request);
+      if (
+        request.ifcReceipt &&
+        !("omitReceipt" in result && result.omitReceipt)
+      ) {
+        const report = progressChannels.get(request.ifcReceipt.id);
+        const observation =
+          ("observation" in result && result.observation) ||
+          Promise.resolve("ifc" in result ? (result.ifc ?? null) : null);
+        void observation.then((binding) => report?.(binding));
+      }
       return {
         status: result.status ?? 200,
         headers: {},
@@ -2190,10 +2212,17 @@ it("carries an IFC audit through the normal read scheduler to relay_http", async
   const channel = historyReadFilter[0]?.["#h"][0];
   assert(channel);
   const incoming = message(viewer, channel, "history", 1700000000);
-  respond = () => ({ body: [incoming] });
+  const binding: IfcBinding = { ...bindingContract, version: 1 };
+  respond = () => ({ body: [incoming], ifc: binding });
   const transport = await connectNativeTransport(community);
   const owner = createRelayReader(transport);
-  const ifc = { agent: viewer.pubkey, trigger: incoming };
+  const onBinding = vi.fn();
+  const wire = {
+    agent: viewer.pubkey,
+    trigger: incoming,
+    history: { id: "actual-id", fresh: true, binding: null },
+  };
+  const ifc = { ...wire, onBinding };
   try {
     expect(
       await owner.reader.read(
@@ -2203,10 +2232,55 @@ it("carries an IFC audit through the normal read scheduler to relay_http", async
     ).toEqual([incoming]);
     expect(requests.find((request) => request.path === "/query")).toMatchObject(
       {
-        ifc,
+        ifc: wire,
         body: JSON.stringify(historyReadFilter),
       },
     );
+    await vi.waitFor(() => expect(onBinding).toHaveBeenCalledWith(binding));
+    expect(
+      requests.find((request) => request.path === "/query")?.ifc,
+    ).not.toHaveProperty("onBinding");
+    onBinding.mockImplementation(() => {
+      throw new Error("storage failed");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+          ifc,
+        }),
+      ).resolves.toEqual([incoming]);
+      expect(warn).toHaveBeenCalledWith(
+        "IFC binding receipt failed",
+        expect.any(Error),
+      );
+      respond = () => ({ body: [incoming] });
+      onBinding.mockClear();
+      await expect(
+        owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+          ifc,
+        }),
+      ).resolves.toEqual([incoming]);
+      await vi.waitFor(() => expect(onBinding).toHaveBeenCalledWith(null));
+      respond = () => {
+        throw new Error("ordinary query failed");
+      };
+      onBinding.mockReset();
+      await expect(
+        owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+          ifc,
+        }),
+      ).rejects.toThrow("ordinary query failed");
+      expect(onBinding).toHaveBeenCalledWith(null);
+      const failed = requests
+        .filter((request) => request.path === "/query")
+        .at(-1);
+      assert(failed?.ifcReceipt);
+      progressChannels.get(failed.ifcReceipt.id)?.(binding);
+      expect(onBinding).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
     expect(
       vi
         .mocked(invoke)
@@ -2214,5 +2288,85 @@ it("carries an IFC audit through the normal read scheduler to relay_http", async
     ).toBe(true);
   } finally {
     owner.dispose();
+  }
+});
+
+it("releases ordinary read slots while IFC receipts are gated and preserves history on policy failure", async () => {
+  const channel = historyReadFilter[0]?.["#h"][0];
+  assert(channel);
+  const incoming = message(viewer, channel, "history", 1700000000);
+  const raw = deferred<null>(),
+    slow = deferred<null>(),
+    thread = deferred<null>();
+  const policy = deferred<IfcBinding | null>();
+  respond = async (request) => {
+    if (request.ifc) {
+      await raw.promise;
+      return { body: [incoming], observation: policy.promise };
+    }
+    const filters = JSON.parse(request.body ?? "[]");
+    if (filters[0]?.kinds) {
+      await slow.promise;
+      return { body: [] };
+    }
+    await thread.promise;
+    return { body: [incoming] };
+  };
+  const transport = await connectNativeTransport(community);
+  const owner = createRelayReader(transport);
+  const onBinding = vi.fn();
+  const ifc = { agent: viewer.pubkey, trigger: incoming, onBinding };
+  const audited = [1, 2].map(() =>
+    owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+      ifc,
+    }),
+  );
+  const ordinary = owner.reader.read([
+    { kinds: [40002], "#h": [channel], limit: 1 },
+  ]);
+  let queued: Promise<readonly unknown[]> | undefined;
+  try {
+    await vi.waitFor(() =>
+      expect(
+        requests.filter((request) => request.path === "/query"),
+      ).toHaveLength(3),
+    );
+    queued = owner.reader.read([
+      { ids: [incoming.id], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [incoming.id], limit: 200 },
+    ]);
+    expect(
+      requests.filter((request) => request.path === "/query"),
+    ).toHaveLength(3);
+    raw.resolve(null);
+    // A pending policy cannot retain those slots or delay the queued thread read.
+    await vi.waitFor(() =>
+      expect(
+        requests.filter((request) => request.path === "/query"),
+      ).toHaveLength(4),
+    );
+    await expect(Promise.all(audited)).resolves.toEqual([
+      [incoming],
+      [incoming],
+    ]);
+    thread.resolve(null);
+    await expect(queued).resolves.toEqual([incoming]);
+    expect(onBinding).not.toHaveBeenCalled();
+    policy.resolve(null);
+    await vi.waitFor(() => expect(onBinding).toHaveBeenCalledTimes(2));
+    expect(onBinding).toHaveBeenCalledWith(null);
+    slow.resolve(null);
+    await expect(ordinary).resolves.toEqual([]);
+  } finally {
+    raw.resolve(null);
+    slow.resolve(null);
+    thread.resolve(null);
+    policy.resolve(null);
+    owner.dispose();
+    await Promise.allSettled([
+      ...audited,
+      ordinary,
+      ...(queued ? [queued] : []),
+    ]);
   }
 });

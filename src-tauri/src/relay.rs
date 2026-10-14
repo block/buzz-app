@@ -652,15 +652,19 @@ fn client() -> Result<&'static reqwest::Client> {
 }
 
 #[tauri::command]
-pub(crate) async fn relay_http(
-    host: tauri::State<'_, IdentityHost>,
-    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+pub(crate) async fn relay_http<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     community: String,
     path: String,
     method: String,
     body: Option<String>,
     ifc: Option<serde_json::Value>,
+    ifc_receipt: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<RelayResponse> {
+    use tauri::Manager as _;
+    let host = webview.state::<IdentityHost>();
+    let agents = webview.state::<crate::app_agents::AppAgentHost>();
+    let ifc_receipt = ifc_receipt.map(|id| id.channel_on(webview.clone()));
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
         || (method == "GET" && body.is_some())
@@ -717,8 +721,13 @@ pub(crate) async fn relay_http(
                 context,
                 filters,
                 &response,
+                ifc_receipt,
             );
+        } else if let Some(receipt) = ifc_receipt {
+            let _ = receipt.send(None);
         }
+    } else if let Some(receipt) = ifc_receipt {
+        let _ = receipt.send(None);
     }
 
     Ok(response)

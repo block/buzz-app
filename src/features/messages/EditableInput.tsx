@@ -1485,10 +1485,14 @@ export function EditableInput({
             const code = editor.state.selection.$from.parent.type.spec.code;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
+            const plain = event.clipboardData?.getData("text/plain") ?? "";
+            const hasPlain =
+              !!plain || event.clipboardData?.types?.includes("text/plain");
             let text =
               (!code &&
-                (buzzCopyMarkdown(html) ?? externalLinkMarkdown(html))) ||
-              event.clipboardData?.getData("text/plain") ||
+                (buzzCopyMarkdown(html) ??
+                  externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
+              plain ||
               "";
             if (!text) return true;
             let link = false;

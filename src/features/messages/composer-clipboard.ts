@@ -171,7 +171,10 @@ export function buzzCopyMarkdown(html: string): string | undefined {
 }
 
 /** External HTML contributes web links, never Buzz identity metadata or styling. */
-export function externalLinkMarkdown(html: string): string | undefined {
+export function externalLinkMarkdown(
+  html: string,
+  plain?: string,
+): string | undefined {
   if (!html) return;
   const body = new DOMParser().parseFromString(html, "text/html").body;
   for (const node of body.querySelectorAll(
@@ -199,5 +202,16 @@ export function externalLinkMarkdown(html: string): string | undefined {
       element.replaceWith(block);
     }
   }
-  return linked ? serializeNode(body, "markdown") : undefined;
+  if (!linked) return;
+  if (plain !== undefined) {
+    // Compare the serializer's actual labels, not the source HTML's textContent:
+    // serialization can lose image emoji or boundaries inside an anchor.
+    const visible = body.ownerDocument.createElement("div");
+    visible.innerHTML = serializeNode(body, "html");
+    for (const anchor of visible.querySelectorAll("a"))
+      anchor.replaceWith(...anchor.childNodes);
+    const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+    if (normalize(serializeNode(visible, "text")) !== normalize(plain)) return;
+  }
+  return serializeNode(body, "markdown");
 }

@@ -3164,3 +3164,51 @@ it.each(["ul", "ol", "blockquote", "pre"])(
     expect(h.input.querySelector("ul, ol, blockquote, pre")).toBeNull();
   },
 );
+
+it.each([
+  ["first\nsecond", '<a href="https://example.com">first<br>second</a>'],
+  [
+    "Ship 🚀 guide",
+    'Ship <img data-stringify-type="emoji" alt="🚀"> <a href="https://example.com">guide</a>',
+  ],
+  [
+    "guide",
+    '<span hidden>hidden</span><a href="https://example.com">guide</a>',
+  ],
+  [
+    "guide",
+    '<noscript>hidden</noscript><a href="https://example.com">guide</a>',
+  ],
+])("keeps plain clipboard text authoritative: %s", (plain, html) => {
+  const h = mount();
+  paste(h.input, plain, html);
+  expect(h.markdown()).toBe(plain);
+});
+
+it("accepts matching normalized whitespace and HTML without a plain flavor", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "Read   guide",
+    '<p>Read <a href="https://example.com">guide</a></p>',
+  );
+  expect(h.markdown()).toBe("Read [guide](https://example.com/)");
+  const htmlOnly = mount();
+  paste(htmlOnly.input, "", '<a href="https://example.com">guide</a>');
+  expect(htmlOnly.markdown()).toBe("[guide](https://example.com/) ");
+});
+
+it.each([
+  "https://e.com/?q=\\",
+  "https://e.com/?q=a\\*b",
+  "https://e.com/?q=&lt;",
+])("preserves the pasted destination %s through Markdown parsing", (href) => {
+  const h = mount();
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.textContent = "guide";
+  paste(h.input, "guide", anchor.outerHTML);
+  expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+    href,
+  ]);
+});

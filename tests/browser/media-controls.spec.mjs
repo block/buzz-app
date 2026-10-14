@@ -19,7 +19,7 @@ for (const kind of ["image", "video"]) {
       "background-color",
       "rgb(0, 0, 0)",
     );
-    await expect(heading).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(heading).toHaveCSS("color", "rgb(15, 15, 15)");
     await expect(heading).toHaveCSS("font-size", "14px");
     const header = heading.locator("xpath=ancestor::header");
     await expect(header.locator(".panel-header-title svg")).toHaveCount(0);
@@ -48,8 +48,54 @@ for (const kind of ["image", "video"]) {
       await expect(portrait).toHaveAttribute("data-loaded", "true");
       await expect(portrait).toHaveCSS("object-fit", "cover");
     }
+    const comments = dialog.getByRole("complementary", {
+      name: "Media comments",
+    });
+    const composer = comments.getByRole("textbox", { name: "Reply to thread" });
+    await composer.fill("Keep this draft through theme changes");
+    const composerNode = await composer.elementHandle();
     for (const width of [320, 800, 1280]) {
       await page.setViewportSize({ width, height: 720 });
+      for (const mode of ["light", "dark", "light"]) {
+        await page.evaluate((mode) => {
+          document.documentElement.dataset.colorMode = mode;
+        }, mode);
+        const foreground =
+          mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)";
+        const surface =
+          mode === "light" ? "rgb(255, 255, 255)" : "rgb(26, 26, 26)";
+        await expect(heading).toHaveCSS("color", foreground);
+        await expect(comments).toHaveCSS("background-color", surface);
+        await expect(
+          comments.getByRole("heading", { name: "Comments" }),
+        ).toHaveCSS("color", foreground);
+        await expect(composer).toHaveCSS("color", foreground);
+        await expect(
+          dialog.getByRole("button", { name: "Hide comments" }),
+        ).toHaveCSS("color", foreground);
+        await expect(dialog.locator("[data-review-stage]")).toHaveCSS(
+          "background-color",
+          "rgb(0, 0, 0)",
+        );
+        await expect(
+          dialog.getByRole("button", {
+            name: kind === "image" ? /^Image zoom:/ : "Play video",
+            exact: true,
+          }),
+        ).toHaveCSS("color", "rgb(255, 255, 255)");
+        expect(
+          await composerNode.evaluate(
+            (node) =>
+              node ===
+              document.querySelector(
+                '[aria-label="Media comments"] [role="textbox"]',
+              ),
+          ),
+        ).toBe(true);
+        await expect(composer).toHaveText(
+          "Keep this draft through theme changes",
+        );
+      }
       if (kind === "video") {
         await page.evaluate(() =>
           window.dispatchEvent(new Event("fixture-typing")),

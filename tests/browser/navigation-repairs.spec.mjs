@@ -73,9 +73,9 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
     `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.me", pageId: "me" }))}`,
   );
   await expect(
-    page.getByRole("tab", { name: "Me", exact: true }),
+    page.getByRole("tab", { name: "Berd", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  const messages = page.getByRole("tab", { name: "Messages", exact: true });
+  const messages = page.getByRole("tab", { name: "Buzz", exact: true });
   await messages.focus();
   await messages.press("Enter");
   await expect(
@@ -110,7 +110,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   });
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("tabpanel", { name: "Messages", exact: true }),
+    page.getByRole("tabpanel", { name: "Buzz", exact: true }),
   ).toBeFocused();
 });
 

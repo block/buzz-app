@@ -80,7 +80,7 @@ const panel = (page) =>
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Buzz");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -418,7 +418,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
       page.getByRole("region", { name: "Settings", exact: true }),
     ).toBeVisible();
     if (width <= 650) await button(page, "Show navigation").click();
-    await openPage(page, "Messages");
+    await openPage(page, "Buzz");
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
@@ -474,7 +474,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     const choices = await pageChoices(page);
     // Messages proves the Pages group rendered before counting Projects.
     await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
+      choices.getByRole("option", { name: "Buzz", exact: true }),
     ).toBeVisible();
     await expect(
       choices.getByRole("option", { name: "Projects", exact: true }),
@@ -814,7 +814,7 @@ companionTest(
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
-    await openPage(page, "Messages");
+    await openPage(page, "Buzz");
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
@@ -969,7 +969,7 @@ todosOverlapTest(
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
-    await openPage(page, "Messages");
+    await openPage(page, "Buzz");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -1195,8 +1195,8 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
-    "Me",
-    "Messages",
+    "Berd",
+    "Buzz",
     "Inbox",
     "Reminders",
     "Bestie",
@@ -1278,8 +1278,8 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectPageOrder([
-    "Me",
-    "Messages",
+    "Berd",
+    "Buzz",
     "Inbox",
     "Reminders",
     "Bestie",

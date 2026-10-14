@@ -703,8 +703,8 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     .find((row) => row.content.startsWith("Thread root"));
   const main = page.locator("[data-main-workspace]");
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
-  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
-  const me = topbar.getByRole("tab", { name: "Me", exact: true });
+  const messages = topbar.getByRole("tab", { name: "Buzz", exact: true });
+  const me = topbar.getByRole("tab", { name: "Berd", exact: true });
   const inbox = page
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Inbox", exact: true });

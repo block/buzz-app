@@ -7,7 +7,7 @@
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import { BUZZ_SESSION, turnNote } from "../../buzz-mcp/session-tools";
+import { turnNote } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -629,7 +629,6 @@ export class ClaudeRuntime {
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
-            buzz: BUZZ_SESSION.prompt,
             ...(memory === undefined ? {} : { memory }),
           }),
         };

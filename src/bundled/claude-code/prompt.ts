@@ -26,12 +26,10 @@ export function systemPrompt(
     team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
     memory?: string | null;
-    /** The Buzz tools' guidance for the session's tool set. */
-    buzz?: string;
   }>,
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
-  const base = [BASE_PROMPT, input.buzz ?? BUZZ_PROMPT, model];
+  const base = [BASE_PROMPT, BUZZ_PROMPT, model];
   return [
     input.agent
       ? section(

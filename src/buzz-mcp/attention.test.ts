@@ -9,8 +9,9 @@ import type { AgentAttention } from "../features/agents/service";
 import type { AgentRecord } from "../features/agents/store";
 import { ATTENTION_TOOLS } from "./attention";
 import type { BuzzClient } from "./client";
+import { BUZZ_PROMPT } from "./prompt";
 import { respond } from "./rpc";
-import { BUZZ_SESSION, turnNote } from "./session-tools";
+import { turnNote } from "./session-tools";
 import { TOOLS } from "./tools";
 
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
@@ -104,7 +105,7 @@ describe("the tool list", () => {
           attention: agent({ enabled }).api,
         } as unknown as BuzzClient),
       ).toEqual(names);
-    expect(BUZZ_SESSION.prompt).toContain("## Attention");
+    expect(BUZZ_PROMPT).toContain("## Attention");
     expect(turnNote({ attention: agent().api })).toMatch(
       /^<attention>\nHandle the work/,
     );

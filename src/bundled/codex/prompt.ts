@@ -1,5 +1,4 @@
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import type { AgentHandle } from "../../features/agents/service";
@@ -25,7 +24,7 @@ The buzz namespace provides the shared Buzz tools, including messages, reactions
 
 ${BASE_PROMPT}
 
-${BUZZ_SESSION.prompt}`;
+${BUZZ_PROMPT}`;
 }
 
 /** Codex truncates the middle of any additional-context value over 1,000

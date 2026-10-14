@@ -4,7 +4,6 @@
 // them. A harness passes all of this on without knowing what is in it.
 import {
   ATTENTION_OFF,
-  ATTENTION_PROMPT,
   ATTENTION_REVIEW,
 } from "../features/agent-harness/attention-prompt";
 import {
@@ -13,14 +12,9 @@ import {
   isAttentionTool,
 } from "./attention";
 import type { BuzzClient, Context } from "./client";
-import { BUZZ_PROMPT } from "./prompt";
 import { callTool, type Reply, TOOLS, type Tool } from "./tools";
 
-export type BuzzSession = Readonly<{
-  tools: readonly Tool[];
-  /** The Buzz tools' guidance, for the session's system prompt. */
-  prompt: string;
-}>;
+export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
 /** What every session of an agent in the app gets. It never changes with
  * the owner's attention setting, so a session (and its cached prompt prefix)
@@ -28,7 +22,6 @@ export type BuzzSession = Readonly<{
  * tools refuse calls while it is off, and `turnNote` says which it is. */
 export const BUZZ_SESSION: BuzzSession = Object.freeze({
   tools: [...TOOLS, ...ATTENTION_TOOLS],
-  prompt: `${BUZZ_PROMPT}\n\n${ATTENTION_PROMPT}`,
 });
 
 /** Text for the end of a turn's prompt, as the agent's attention is now. */

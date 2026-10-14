@@ -187,14 +187,8 @@ it("wraps a message that arrives mid-turn", () => {
   );
 });
 
-it("uses the Buzz tools' guidance it is given in place of the plain one", () => {
-  const plain = systemPrompt({ scope: "thread", cwd: "/w" });
-  expect(plain).toContain(BUZZ_PROMPT);
-  const given = systemPrompt({
-    scope: "thread",
-    cwd: "/w",
-    buzz: "## Test tools\nUse them.",
-  });
-  expect(given).toContain("## Test tools\nUse them.");
-  expect(given).not.toContain(BUZZ_PROMPT);
+it("always includes the Buzz tools' guidance, attention included", () => {
+  const prompt = systemPrompt({ scope: "thread", cwd: "/w" });
+  expect(prompt).toContain(BUZZ_PROMPT);
+  expect(prompt).toContain("## Attention");
 });

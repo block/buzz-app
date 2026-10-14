@@ -974,7 +974,7 @@ export function InboxView({
                                     </span>
                                   </span>
                                   <time
-                                    className="text-caption text-subtle"
+                                    className={`text-caption text-subtle ${styles.rowDate}`}
                                     dateTime={new Date(
                                       item.createdAt * 1000,
                                     ).toISOString()}
@@ -1026,7 +1026,6 @@ export function InboxView({
                           <span className={styles.rowArchive}>
                             <IconButton
                               size="sm"
-                              shape="row-end"
                               variant="ghost"
                               disabled={pending}
                               aria-label={`${rowArchived ? "Restore" : "Archive"} ${sender} in ${context}`}

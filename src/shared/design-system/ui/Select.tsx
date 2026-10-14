@@ -34,6 +34,7 @@ export function Select({
   valueTitle,
   leading,
   align = "start",
+  size,
 }: {
   label: string;
   description?: ReactNode;
@@ -50,6 +51,8 @@ export function Select({
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact";
+  /** Match adjacent controls without changing the selection treatment. */
+  size?: "sm" | "md";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -119,7 +122,7 @@ export function Select({
               <Button
                 {...props}
                 variant={variant === "compact" ? "outline" : "ghost"}
-                size={variant === "compact" ? "sm" : "md"}
+                size={size ?? (variant === "compact" ? "sm" : "md")}
               >
                 <span className="buzz-select-value-content">
                   {leading && (

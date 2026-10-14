@@ -23,8 +23,8 @@ export type DialogProps = {
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
   headerGap?: "default" | "compact";
-  /** Keep a final body control close to its confirmation actions. */
-  footerGap?: "default" | "compact";
+  /** Compact groups actions; none lets a footerless scrollport reach the bottom edge. */
+  footerGap?: "default" | "compact" | "none";
   /** Replace a step inside this modal; scale defines its recessed/raised position. */
   step?: { key: string; scale: number };
   leadingActions?: ReactNode;

@@ -172,6 +172,15 @@
   .buzz-dialog-content[data-footer-gap="compact"] {
     padding-block-end: var(--space-2);
   }
+  /* Footerless lists own their end padding inside the scrollport. */
+  :is(.buzz-dialog, .buzz-dialog-step):has(
+    > .buzz-dialog-content[data-footer-gap="none"]:last-child
+  ) {
+    padding-bottom: 0;
+  }
+  .buzz-dialog-content[data-footer-gap="none"]:last-child {
+    padding-bottom: 0;
+  }
   .buzz-dialog-actions {
     min-width: 0;
     flex-shrink: 0;

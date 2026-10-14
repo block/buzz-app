@@ -194,7 +194,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
       "Base UI owns focus, positioning, dismissal and transition presence; shared motion tokens animate entry and exit.",
-    variants: ["default", "wide", "expanded", "motion none", "flex body"],
+    variants: [
+      "default",
+      "wide",
+      "expanded",
+      "motion none",
+      "flex body",
+      "footer gap none",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Dialog.tsx",
@@ -792,6 +799,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inline",
       "compact",
       "field",
+      "button size: sm | md",
       "disabled",
       "align: start | center | end",
     ],

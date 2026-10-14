@@ -64,6 +64,8 @@ export function NewSessionComposer({
         : namespace);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(() => {
+    const receipt = readPending(scope, draftKey);
+    if (receipt?.invitationId) return receipt.agent ?? "";
     const saved = readView<unknown>(scope, `${draftKey}:new-agent`, "");
     return typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved)
       ? saved
@@ -337,7 +339,7 @@ export function NewSessionComposer({
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-agent`, "");
-      writeView(scope, `${draftKey}:new-project`, "");
+      writeView(scope, `${draftKey}:new-project`, null);
       writeSelectedAssistant(scope, current.id, selectedAgent);
       setPending(undefined);
       onStarted(current.id);
@@ -367,6 +369,7 @@ export function NewSessionComposer({
         if (failedId === next.invitationId) {
           delete next.invitationId;
           delete next.agent;
+          setSelectedAgent("");
           writeView(scope, `${draftKey}:new-agent`, "");
         } else delete next.messageId;
         save(next);
@@ -410,7 +413,9 @@ export function NewSessionComposer({
                   setSelectedAgent(agent);
                   writeView(scope, `${draftKey}:new-agent`, agent);
                 }}
-                disabled={busy || !!pending}
+                disabled={
+                  busy || !!pending?.invitationId || !!pending?.messageId
+                }
                 emptyLabel="Choose follow-up assistant"
                 clearLabel="No assistant"
               />
@@ -419,8 +424,11 @@ export function NewSessionComposer({
                   session={session}
                   value={selectedProject}
                   onChange={(project) => {
+                    if (project === selectedProject) return;
                     setSelectedProject(project);
                     writeView(scope, `${draftKey}:new-project`, project);
+                    setDraftCanvas(undefined);
+                    writeView(scope, `${draftKey}:settings`, null);
                   }}
                   disabled={busy || !!pending}
                 />
@@ -519,7 +527,7 @@ export function NewSessionComposer({
         <DraftSessionSettings
           personal={personal}
           session={session}
-          sectionId={sectionId}
+          sectionId={selectedProject || undefined}
           canvas={draftCanvas}
           close={() => setSettingsOpen(false)}
           save={(canvas) => {

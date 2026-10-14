@@ -13,6 +13,7 @@ import { readSelectedAssistant } from "./selected-assistant";
 
 composerDOMFixture();
 afterEach(cleanup);
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(() => localStorage.clear());
 const parent = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -855,7 +856,7 @@ it("starts a Me chat with a visible assistant and remembers it for the created c
 it("freezes the assistant while a Me creation receipt is pending", () => {
   const f = setup();
   const id = "22222222-2222-4222-8222-222222222222";
-  writeView("me-pending", "me:new-agent", "b".repeat(64));
+  writeView("me-pending", "me:new-agent", "a".repeat(64));
   writeView("me-pending", "me:pending", {
     id,
     text: "Retry this thought",
@@ -1024,3 +1025,183 @@ it("opens and saves local draft settings in a fresh Me-only group", async () => 
     vi.unstubAllGlobals();
   }
 });
+
+async function projectSetup() {
+  vi.stubGlobal("crypto", webcrypto);
+  const f = setup();
+  const entries = await Promise.all(
+    ["work", "other"].map(async (id) => ({
+      eventId: id,
+      record: {
+        value: {
+          type: "template",
+          id: await sectionTemplateId(id, true),
+          canvas: `${id} instructions`,
+          agents: [],
+          teamIds: [],
+        },
+      },
+    })),
+  );
+  const preferences = {
+    status: "ready",
+    data: {
+      sections: [
+        { id: "work", name: "Work" },
+        { id: "other", name: "Other" },
+      ],
+      assignments: {},
+    },
+  };
+  const saveCanvas = vi.fn(async () => {});
+  Object.assign(f.session, {
+    mePreferences: {
+      writable: true,
+      refresh: async () => {},
+      snapshot: () => preferences,
+      subscribe: () => () => {},
+      assign: async () => {},
+    },
+    channelKit: {
+      refresh: async () => {},
+      snapshot: () => ({ status: "ready", entries }),
+    },
+    canvas: { read: async () => undefined, save: saveCanvas },
+  });
+  return { ...f, saveCanvas };
+}
+
+it("inherits the project's defaults for two consecutive new chats", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  for (let index = 0; index < 2; index++) {
+    const view = render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="repeat-project"
+        sectionId="work"
+        onStarted={started}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Project: Work" })).toBeVisible();
+    await user.type(screen.getByRole("textbox"), `Chat ${index}`);
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledTimes(index + 1));
+    expect(f.saveCanvas).toHaveBeenNthCalledWith(
+      index + 1,
+      expect.any(String),
+      "work instructions",
+      undefined,
+    );
+    view.unmount();
+  }
+  expect(f.workSessions.create.mock.calls[0]?.[0]).not.toBe(
+    f.workSessions.create.mock.calls[1]?.[0],
+  );
+});
+
+it.each(
+  [false, true].flatMap((saved) =>
+    [false, true].map((remount) => ({ saved, remount })),
+  ),
+)(
+  "switching projects uses new defaults and clears old settings (saved=$saved, remount=$remount)",
+  async ({ saved, remount }) => {
+    const f = await projectSetup();
+    const user = userEvent.setup();
+    const started = vi.fn();
+    const view = () => (
+      <NewSessionComposer
+        standalone
+        personal
+        session={f.session}
+        scope="switch-project"
+        sectionId="work"
+        onStarted={started}
+      />
+    );
+    const mounted = render(view());
+    const openSettings = async () => {
+      await user.click(screen.getByRole("button", { name: "Session actions" }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Chat settings…" }),
+      );
+      return screen.findByRole("textbox", { name: "Canvas" });
+    };
+    if (saved) {
+      const canvas = await openSettings();
+      await waitFor(() => expect(canvas).toHaveValue("work instructions"));
+      await user.clear(canvas);
+      await user.type(canvas, "Old project override");
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: /^Other$/ }),
+    );
+    if (remount) {
+      mounted.unmount();
+      render(view());
+    }
+    const canvas = await openSettings();
+    await waitFor(() => expect(canvas).toHaveValue("other instructions"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.type(screen.getByRole("textbox"), "New project chat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "other instructions",
+      undefined,
+    );
+    expect(f.mePlacement.admit).toHaveBeenCalledWith(expect.any(String), {
+      sectionId: "other",
+    });
+  },
+);
+
+it.each([false, true])(
+  "editing a failed invitation clears the assistant consistently (remount=%s)",
+  async (remount) => {
+    const f = setup();
+    const user = userEvent.setup();
+    const started = vi.fn();
+    const invitation = "e".repeat(64);
+    f.workSessions.failed = (id) => id === invitation;
+    f.workSessions.delivered.mockImplementation(async (id) => {
+      if (id === invitation) throw new Error("Invitation rejected");
+    });
+    writeView("failed-agent", "me:new-agent", "b".repeat(64));
+    writeView("failed-agent", "me:new-draft", "Keep the text");
+    const view = () => (
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="failed-agent"
+        onStarted={started}
+      />
+    );
+    let mounted = render(view());
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Invitation rejected");
+    await user.click(screen.getByRole("button", { name: "Edit and retry" }));
+    if (remount) {
+      mounted.unmount();
+      mounted = render(view());
+    }
+    expect(
+      screen.getByRole("button", { name: "Choose follow-up assistant" }),
+    ).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.workSessions.invite).toHaveBeenCalledTimes(1);
+    expect(f.messages.send).toHaveBeenCalledWith(
+      expect.any(String),
+      "Keep the text",
+      [],
+    );
+    mounted.unmount();
+  },
+);

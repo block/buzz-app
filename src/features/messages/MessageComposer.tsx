@@ -1674,7 +1674,7 @@ function Composer({
             {active && (
               <ComposerFormattingTools
                 disabled={editingDisabled}
-                singleRow={chatPresentation}
+                singleRow={chatPresentation || !!trailingTool}
                 activeFormats={activeFormats}
                 toggleFormat={(format) => input.current?.toggleFormat(format)}
                 editLink={() => {

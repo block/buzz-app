@@ -28,6 +28,40 @@ test("Me has a wide new chat, bounded conversation and matching actions", async 
     exact: true,
   });
   await expect(composer).toBeVisible();
+  // A fresh chat uses the same separate context row as a saved chat.
+  for (const width of [1440, 700]) {
+    await page.setViewportSize({ width, height: 950 });
+    const send = page.getByRole("button", {
+      name: "Send message",
+      exact: true,
+    });
+    const assistant = page.getByRole("button", {
+      name: "Choose follow-up assistant",
+      exact: true,
+    });
+    const project = page.getByRole("button", {
+      name: "Project: No project",
+      exact: true,
+    });
+    await expect
+      .poll(async () => {
+        const [sendBox, assistantBox, projectBox] = await Promise.all([
+          send.boundingBox(),
+          assistant.boundingBox(),
+          project.boundingBox(),
+        ]);
+        return (
+          !!sendBox &&
+          !!assistantBox &&
+          !!projectBox &&
+          assistantBox.y >= sendBox.y + sendBox.height &&
+          projectBox.y >= sendBox.y + sendBox.height &&
+          sendBox.x > assistantBox.x
+        );
+      })
+      .toBe(true);
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
   for (const scale of [1, 2]) {
     await page.evaluate(
       (value) =>

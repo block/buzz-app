@@ -590,19 +590,22 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
 }
-.composer[data-chat-presentation] .composerActions {
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerActions {
   flex-direction: column;
   flex-wrap: nowrap;
   align-items: stretch;
 }
-.composer[data-chat-presentation] .composerToolRow {
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerToolRow {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   min-width: 0;
   gap: var(--space-2);
 }
-.composer[data-chat-presentation] .composerConversationControls {
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerConversationControls {
   width: 100%;
 }
 .backgroundUpload {

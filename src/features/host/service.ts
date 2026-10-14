@@ -260,16 +260,24 @@ export class HostService extends Service implements Host {
     });
     let handle: number | undefined;
     const answer = async (request: number, body: string) => {
+      const send = (reply: string | null) =>
+        invoke<void>("plugin_host_mcp_reply", {
+          id: owner.id,
+          handle,
+          request,
+          body: reply,
+        });
       const reply = await answerMcp(handler, body);
-      await invoke<void>("plugin_host_mcp_reply", {
-        id: owner.id,
-        handle,
-        request,
-        body: reply === undefined ? null : JSON.stringify(reply),
-      }).catch(
-        // The agent stopped waiting for it.
-        () => undefined,
-      );
+      try {
+        await send(reply === undefined ? null : JSON.stringify(reply));
+      } catch (error) {
+        // A reply that will not encode or is too large still answers the
+        // request, so the agent is not left waiting. When the agent has
+        // stopped waiting, this fails too.
+        await send(JSON.stringify(mcpError(requestId(body), error))).catch(
+          () => undefined,
+        );
+      }
     };
     const onEvent = new Channel<McpEvent>((event) => {
       if (event.type === "closed") stopped();
@@ -343,14 +351,26 @@ export async function answerMcp(
     return await handler(message);
   } catch (error) {
     const id = (message as { id?: unknown } | null)?.id;
-    if (id === undefined || id === null) return undefined;
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: {
-        code: -32603,
-        message: error instanceof Error ? error.message : String(error),
-      },
-    };
+    return id === undefined || id === null ? undefined : mcpError(id, error);
   }
+}
+
+/** The id of the request in `body`, or `null` when it has none. */
+function requestId(body: string): unknown {
+  try {
+    return (JSON.parse(body) as { id?: unknown } | null)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function mcpError(id: unknown, error: unknown) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32603,
+      message: error instanceof Error ? error.message : String(error),
+    },
+  };
 }

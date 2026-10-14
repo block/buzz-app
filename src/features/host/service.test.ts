@@ -484,6 +484,42 @@ it("answers a failed MCP request with a JSON-RPC error", async () => {
   );
 });
 
+it("answers with an error when a reply cannot be delivered", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce({ handle: 4, url: "u", token: "t" });
+  await plugin.host.serveMcp?.(async (message) => ({
+    jsonrpc: "2.0",
+    id: (message as { id: unknown }).id,
+    result: { count: 1n },
+  }));
+  const [, serve] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  // A reply the native side refuses as too large takes the same path.
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  serve.onEvent.onmessage({
+    type: "message",
+    request: 1,
+    body: '{"jsonrpc":"2.0","id":7,"method":"tools/call"}',
+  });
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+      id: "example.plugin",
+      handle: 4,
+      request: 1,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        error: {
+          code: -32603,
+          message: "Do not know how to serialize a BigInt",
+        },
+      }),
+    }),
+  );
+});
+
 it("closes a plugin's MCP servers when the plugin unloads", async () => {
   const root = new Context();
   new HostService(root);

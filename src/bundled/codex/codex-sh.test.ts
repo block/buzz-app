@@ -12,6 +12,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -229,6 +230,15 @@ it("makes the shared skills and rules folders a fresh home lacks", async () => {
   // Codex fails to set up its skills through a link to nothing.
   for (const name of ["skills", "rules"])
     expect((await stat(join(f.own, name))).isDirectory()).toBe(true);
+});
+
+it("still runs Codex when the shared skills or rules can't be folders", async () => {
+  const f = await echoing();
+  await mkdir(f.codex, { recursive: true });
+  await writeFile(join(f.codex, "skills"), "");
+  await symlink(join(f.home, "gone"), join(f.codex, "rules"));
+  const { stdout } = await f.step("run", "--version");
+  expect(stdout.trim().split("\n").at(-1)).toBe("--version");
 });
 
 it("stops rather than replace a file in the way of a link", async () => {

@@ -41,8 +41,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // up to date; that is also when a first copy is downloaded.
     const was = needed;
     needed = running.length > 0;
-    if (spawn && (was === undefined || (needed && !was)))
-      void setup.update(needed);
+    if (spawn && (was === undefined || (needed && !was))) {
+      const updated = setup.update(needed);
+      // Then a usable copy's server starts, so the first mention skips its
+      // startup; one being installed meanwhile is left to the mention.
+      if (needed)
+        void updated.then(
+          () => {
+            const { running, status } = setup.snapshot();
+            if (needed && !running && status?.state === "ready") runtime.warm();
+          },
+          () => undefined,
+        );
+    }
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
@@ -50,6 +61,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const timer =
     spawn && setInterval(() => void setup.update(needed ?? false), UPDATE_MS);
   ctx.effect(() => () => {
+    needed = false;
     clearInterval(timer);
     offAgents();
     offProvider();

@@ -135,8 +135,14 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 
 ## Limits and boundaries
 
-- Only the owner's events start work. Event watches support those events; timers
-  are unsupported and report an error.
+- Only the owner's mentions start conversation work. The agent always has the
+  attention tools and guidance. Each turn ends with the attention review, or,
+  when attention is off, a note that those tools refuse. Its watches and timers run
+  as one-off turns on an ephemeral Codex thread of their own, queued per
+  Interest by the Agents runner; a watch's event can come from
+  anyone and is framed as observed data. These turns save no binding, have no
+  default `send` destination, stop after 5 minutes, and do not run when their
+  watch or timer, or attention, changed while they waited.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
   and the agent's `core` memory are supplied as developer instructions, preserving

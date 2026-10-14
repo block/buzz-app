@@ -1,4 +1,5 @@
-import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import type { AgentHandle } from "../../features/agents/service";
@@ -24,7 +25,7 @@ The buzz namespace provides the shared Buzz tools, including messages, reactions
 
 ${BASE_PROMPT}
 
-${BUZZ_PROMPT}`;
+${BUZZ_SESSION.prompt}`;
 }
 
 /** Codex truncates the middle of any additional-context value over 1,000
@@ -73,8 +74,9 @@ export function turnInput(
   event: EventData,
   conversation: Conversation,
   text: string,
-  interest = "",
   steering = false,
+  /** The Buzz tools' note for the end of the turn, if any. */
+  note?: string,
 ) {
   const section = steering
     ? "new-message-arrived-while-you-were-working"
@@ -82,7 +84,7 @@ export function turnInput(
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
+  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

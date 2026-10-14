@@ -14,6 +14,8 @@ import type {
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
 import type { RelayEvent } from "../relay/events";
+import { Lanes } from "../agent-harness/lanes";
+import { wake } from "../agent-harness/wakes";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import {
@@ -137,6 +139,8 @@ type Runner = {
   activityClaimed?: boolean;
   /** Advances each time attention is seen off, which voids queued watch work. */
   epoch: number;
+  /** Watch and timer turns for a type with `runOnce`, one lane per Interest. */
+  lanes: Lanes;
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
@@ -229,12 +233,15 @@ export class AgentRunners {
         runner.queue = runner.queue.filter(
           (job) => job.trigger.type !== "watch",
         );
+        runner.lanes.clear();
       }
       if (!runner)
         this.runners.set(identity.pubkey, this.runner(identity, type));
       else if (runner.type !== type) {
         runner.controller.abort();
         runner.controller = new AbortController();
+        runner.lanes.stop();
+        runner.lanes = new Lanes();
         runner.type = type;
         void this.drain(runner);
       }
@@ -323,12 +330,14 @@ export class AgentRunners {
       transitioning: false,
       mayHold: true,
       epoch: 0,
+      lanes: new Lanes(),
     };
   }
   private retire(runner: Runner) {
     this.host.activity.clear(undefined, runner.pubkey);
     runner.queue.length = 0;
     runner.controller.abort();
+    runner.lanes.stop();
   }
   /** The runner's event watches for the agent's current attention. */
   private watches(runner: Runner, agent: Agent) {
@@ -625,23 +634,36 @@ export class AgentRunners {
         const pick = await pickFor(job.trigger, agent, type);
         const team = this.host.team(agent.pubkey);
         signal.throwIfAborted();
-        return run(
-          Object.freeze({
-            trigger: job.trigger,
-            ...(job.channelId ? { channelId: job.channelId } : {}),
-            agent: handle,
-            config: agent.config,
-            ...pick,
-            ...(team ? { team } : {}),
-            signal,
-            workingUntil: working.hold,
-            ignored: () => job.work?.remove(),
-            acknowledged: () => job.work?.started(),
-            superseded: () => job.work?.supersede(),
-            step: (tool: string, target?: string) =>
-              job.work?.step(tool, target),
-            current: () => !lifetime.aborted && this.stillCurrent(runner, job),
-          }),
+        const delivery = Object.freeze({
+          trigger: job.trigger,
+          ...(job.channelId ? { channelId: job.channelId } : {}),
+          agent: handle,
+          config: agent.config,
+          ...pick,
+          ...(team ? { team } : {}),
+          signal,
+          workingUntil: working.hold,
+          ignored: () => job.work?.remove(),
+          acknowledged: () => job.work?.started(),
+          superseded: () => job.work?.supersede(),
+          step: (tool: string, target?: string) => job.work?.step(tool, target),
+          current: () => !lifetime.aborted && this.stillCurrent(runner, job),
+        });
+        const { trigger } = job;
+        const runOnce = type.runOnce?.bind(type);
+        if (trigger.type === "mention" || !runOnce) return run(delivery);
+        // A watch or timer is a standalone turn in its Interest's lane.
+        const { lanes } = runner;
+        delivery.workingUntil(
+          wake(
+            lanes,
+            handle,
+            trigger,
+            () => lanes === runner.lanes && delivery.current(),
+            (key, prompt) =>
+              runOnce({ delivery, key, signal: lifetime, prompt }),
+            type.title,
+          ),
         );
       });
       // Handover expiry releases the queue, never the actual work's outcome.

@@ -326,6 +326,7 @@ export class ClaudeSetup {
     this.set({ modelsChecking: true, modelsError: "" });
     try {
       const models = await queryModels(this.spawn, request.signal);
+      if (!models.length) throw new Error("Claude did not list its models");
       if (this.modelRequest === request) this.set({ models });
     } catch (error) {
       if (this.modelRequest === request && !request.signal.aborted)

@@ -24,6 +24,7 @@ import {
   developerInstructions,
   rootOf,
   sessionName,
+  turnContext,
   turnInput,
   type Conversation,
 } from "./prompt";
@@ -982,12 +983,7 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: {
-          "buzz.instructions": {
-            kind: "application",
-            value: developerInstructions(agent, settings, request.team, memory),
-          },
-        },
+        additionalContext: turnContext(settings, request.team, memory),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

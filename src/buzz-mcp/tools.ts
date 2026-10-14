@@ -76,7 +76,7 @@ export const TOOLS: readonly Tool[] = [
   }),
   tool(
     "channel",
-    "A channel's details (default: current), or an action on it. create can start from your owner's template, by name. delete is permanent.",
+    "Channel details (default: current), or an action on it. create may use your owner's template, by name. delete is permanent.",
     {
       channel: str,
       action: {
@@ -106,7 +106,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "members",
-    "A channel's members; add or remove some, giving those added a role.",
+    "A channel's members; add or remove pubkeys or npubs, giving those added a role.",
     {
       channel: str,
       add: strs,

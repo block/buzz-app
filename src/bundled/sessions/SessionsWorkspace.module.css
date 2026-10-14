@@ -357,7 +357,7 @@
 .sectionHeader {
   position: relative;
 }
-.sectionHeader > [data-session-row-action]:last-child,
+.sectionHeader > [data-session-overflow-action],
 .sectionHeader .sectionActions {
   position: absolute;
   top: 50%;
@@ -370,7 +370,7 @@
     var(--session-action-size)
   );
 }
-.sectionHeader > [data-session-row-action]:last-child {
+.sectionHeader > [data-session-overflow-action] {
   inset-inline-end: calc(
     var(--session-trailing-offset) +
     2 *

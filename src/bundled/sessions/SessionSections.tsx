@@ -254,6 +254,20 @@ export function SessionSections({
               title={section.name}
               className={styles.sectionHeader}
               enabled={!!section.id}
+              trailing={
+                <div className={styles.sectionActions}>
+                  {onNew && (
+                    <IconButton
+                      data-session-row-action=""
+                      size="compact"
+                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      title={personal ? "New chat" : "New session"}
+                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                      onClick={() => onNew(section.id || undefined)}
+                    />
+                  )}
+                </div>
+              }
               content={
                 <>
                   <MenuItem onClick={() => setSettingsFor(section)}>
@@ -297,18 +311,6 @@ export function SessionSections({
                   <CaretDownIcon size={15} strokeWidth={2.5} />
                 </span>
               </Collapsible.Trigger>
-              <div className={styles.sectionActions}>
-                {onNew && (
-                  <IconButton
-                    data-session-row-action=""
-                    size="compact"
-                    aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                    title={personal ? "New chat" : "New session"}
-                    icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                    onClick={() => onNew(section.id || undefined)}
-                  />
-                )}
-              </div>
             </SessionActionsMenu>
             <Collapsible.Panel className={styles.sectionPanel}>
               {section.rows.map((item) => (
@@ -663,6 +665,7 @@ function SessionActionsMenu({
   children,
   content,
   enabled = true,
+  trailing,
 }: {
   id: string;
   title: string;
@@ -670,6 +673,8 @@ function SessionActionsMenu({
   children: ReactNode;
   content: ReactNode;
   enabled?: boolean;
+  /** Follows the overflow action, preserving header action keyboard order. */
+  trailing?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -677,7 +682,13 @@ function SessionActionsMenu({
     document.querySelector<HTMLElement>(
       `[data-session-menu-id="${id}"] button`,
     ) ?? false;
-  if (!enabled) return <div className={className}>{children}</div>;
+  if (!enabled)
+    return (
+      <div className={className}>
+        {children}
+        {trailing}
+      </div>
+    );
   return (
     <ContextMenuRoot
       open={open}
@@ -708,6 +719,7 @@ function SessionActionsMenu({
                 {...props}
                 data-session-row-action=""
                 size="compact"
+                data-session-overflow-action=""
                 aria-label={`Actions for ${title}`}
                 icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
               />
@@ -721,6 +733,7 @@ function SessionActionsMenu({
             {content}
           </MenuPopup>
         </MenuRoot>
+        {trailing}
       </ContextMenuTrigger>
       <MenuPopup
         aria-label={`Actions for ${title}`}

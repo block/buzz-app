@@ -69,7 +69,10 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await expect(panel).toBeVisible();
   await expect(composer).toHaveText("Keep my Me draft");
   await closeProfile(page).click();
-  // Restored panels no longer retain the original trigger element.
+  // Restored panels have no retained launcher; closing uses the stable chat region.
+  await expect(
+    page.getByRole("region", { name: "Chat Alpha", exact: true }),
+  ).toBeFocused();
   await trigger.focus();
   await page.mouse.move(0, 0);
   await page.keyboard.press("ArrowDown");

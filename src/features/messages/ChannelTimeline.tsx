@@ -814,12 +814,7 @@ function Timeline({
       <div
         ref={edge}
         className={styles.edge}
-        data-history-space={
-          (!chatPresentation && reserveHistorySpace) ||
-          !!window.error ||
-          window.loadingOlder ||
-          undefined
-        }
+        data-history-space={reserveHistorySpace || undefined}
       >
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (

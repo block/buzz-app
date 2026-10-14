@@ -364,7 +364,9 @@ function SessionWork({
       mounted.current = false;
     };
   }, []);
+  const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
+    fallbackFocus: focusFallback,
     state: tabState,
     relay,
     session,
@@ -446,8 +448,10 @@ function SessionWork({
   const workspace = (
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker. */}
-        <div
+        <section
+          ref={focusFallback}
+          aria-label={`Chat ${channel.name}`}
+          tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
@@ -655,7 +659,7 @@ function SessionWork({
             />
           </SessionColumn>
           {drawer.content}
-        </div>
+        </section>
         <PanelDock
           open={!!companion || !!showingPanel}
           keepMounted={hasLocalPanel && !tabState.paneOpen}

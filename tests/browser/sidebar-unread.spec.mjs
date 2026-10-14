@@ -458,6 +458,18 @@ test("session changes discard the previous sidebar targets and manual unread sti
   await holdReadingFocus(page);
   try {
     await page.clock.install();
+    // Native timeout signals are outside Playwright's clock. Keep this test's
+    // request deadlines on the same controlled timer without changing durations.
+    await page.addInitScript(() => {
+      AbortSignal.timeout = (delay) => {
+        const controller = new AbortController();
+        setTimeout(
+          () => controller.abort(new DOMException("Timed out", "TimeoutError")),
+          delay,
+        );
+        return controller.signal;
+      };
+    });
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
     await page

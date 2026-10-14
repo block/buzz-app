@@ -19,7 +19,7 @@ import type {
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Settled, Spawn, ToolServer } from "./claude";
+import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
 import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
 import { Lanes } from "./lanes";
@@ -36,14 +36,19 @@ import {
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { readTranscript, type Conversation } from "./transcript";
 
-/** What a session can switch to between turns. Claude runs `max` as
- * `xhigh` in a stream-json session, so it is not offered. */
-const EFFORTS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra high" },
-];
+/** The effort levels Claude lists, which a session can switch to between
+ * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
+ * offered. */
+const effortChoices = (levels: readonly string[]): Effort[] =>
+  [...new Set(levels)]
+    .filter((id) => id !== "max")
+    .map((id) => ({
+      id,
+      label:
+        id === "xhigh"
+          ? "Extra high"
+          : `${id.charAt(0).toUpperCase()}${id.slice(1)}`,
+    }));
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude's own default. */
@@ -193,41 +198,38 @@ export class ClaudeRuntime {
       effort && efforts.some((level) => level.id === effort) ? { effort } : {};
     const own = configured || reported || "";
     const offered = listed.filter((model) => model.value !== "default");
+    const levels = (model: ClaudeModel) =>
+      model.supportsEffort === false ? [] : (model.supportedEffortLevels ?? []);
     const models = offered.map((model) => {
-      const efforts =
-        model.supportsEffort === false
-          ? []
-          : EFFORTS.filter(
-              (level) =>
-                !model.supportedEffortLevels ||
-                model.supportedEffortLevels.includes(level.id),
-            );
+      const offeredEfforts = effortChoices(levels(model));
       return {
         id: model.value,
         label: modelName(model.resolvedModel ?? model.value),
-        efforts,
-        ...resting(efforts),
+        efforts: offeredEfforts,
+        ...resting(offeredEfforts),
       };
     });
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
-    // An own model Claude does not list is still the one it runs.
-    return models.some((model) => model.id === current)
-      ? { current, models }
-      : {
-          current,
-          models: [
-            {
-              id: current,
-              label: current ? modelName(current) : "Claude",
-              efforts: EFFORTS,
-              ...resting(EFFORTS),
-            },
-            ...models,
-          ],
-        };
+    if (models.some((model) => model.id === current))
+      return { current, models };
+    // An own model Claude does not list is still the one it runs, at any
+    // effort a listed model has.
+    const ownEfforts = effortChoices(offered.flatMap(levels));
+    return {
+      current,
+      models: [
+        {
+          id: current,
+          label: current ? modelName(current) : "Claude",
+          efforts: ownEfforts,
+          ...resting(ownEfforts),
+        },
+        ...models,
+      ],
+    };
   }
 
   /** Conversations each agent has running, for its status view. */

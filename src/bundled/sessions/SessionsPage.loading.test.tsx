@@ -25,6 +25,7 @@ import {
   beginSessionShare,
   finishSessionShare,
 } from "../../features/sessions/share-attempt";
+import { MeSidebar } from "../me/MeSidebar";
 import { SessionsPage } from "./SessionsPage";
 
 composerDOMFixture();
@@ -93,6 +94,7 @@ function fixture(
     rows: [],
   };
   const set = vi.fn(async () => {});
+  const refresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
     channels: {
@@ -120,6 +122,7 @@ function fixture(
       available: true,
       snapshot: () => state,
       ensure() {},
+      refresh,
       set,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -147,20 +150,34 @@ function fixture(
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const mount = () =>
+  const navigator = {
+    open,
+    snapshot: () => ({ attempt: { signal: abort.signal } }),
+  } as unknown as Navigation;
+  const mount = (withSidebar = false) =>
     render(
-      <SessionsPage
-        relay={relay}
-        panels={{ ...contribution, register() {}, resolve: () => undefined }}
-        extensions={extensions}
-        navigation={navigation}
-        navigator={{ open } as unknown as Navigation}
-      />,
+      <>
+        {withSidebar && (
+          <MeSidebar
+            relay={relay}
+            navigator={navigator}
+            target={navigation.target}
+          />
+        )}
+        <SessionsPage
+          relay={relay}
+          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          extensions={extensions}
+          navigation={navigation}
+          navigator={navigator}
+        />
+      </>,
     );
   return {
     mount,
     abort,
     set,
+    refresh,
     open,
     scope,
     session,
@@ -189,12 +206,15 @@ it.each([false, true])(
 it("keeps failed placement read-only and restores sending after confirmed preferences", async () => {
   const f = fixture("loading");
   writeView(f.scope, `draft:${id}`, "Saved thought");
-  f.mount();
+  f.mount(true);
   act(() =>
     f.update({ ...f.state, status: "error", error: "Preferences offline" }),
   );
-  expect(screen.getByText("Preferences offline")).toBeVisible();
+  for (const notice of screen.getAllByText("Preferences offline"))
+    expect(notice).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
+  expect(f.refresh).toHaveBeenCalledOnce();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
@@ -251,9 +271,7 @@ it("opens a pending Me start through its original receipt after its section was 
     setup: { sectionId: "deleted", canvas: "Frozen instructions", agents: [] },
   });
   f.mount();
-  expect(
-    screen.getByRole("region", { name: "New conversation" }),
-  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "New chat" })).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 
@@ -336,15 +354,47 @@ it("updates the header conversion guard when a share starts and finishes elsewhe
   ).toBeVisible();
 });
 
-it("a stale Me route renders ordinary channel recipient controls after conversion", () => {
-  const f = fixture("ready", true, "stream");
-  f.mount();
-  expect(
-    screen.queryByRole("textbox", { name: "Message your agents" }),
-  ).toBeNull();
-  expect(
-    screen.getByRole("textbox", { name: "Message #Planning" }),
-  ).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Choose agents" })).toBeNull();
-  expect(screen.getByText("This conversation is in Messages.")).toBeVisible();
-});
+it.each([false, true])(
+  "a stale Me route uses ordinary controls after conversion despite retained placement=%s",
+  (retained) => {
+    const f = fixture("ready", true, "stream");
+    if (retained)
+      f.update({
+        ...f.state,
+        entries: [
+          {
+            eventId: "e".repeat(64),
+            createdAt: 1,
+            record: {
+              version: 1,
+              community: "https://test.example",
+              deleted: false,
+              value: {
+                type: "groups",
+                id: "me",
+                groups: [],
+                assignments: {},
+                channels: [id],
+              },
+            },
+          },
+        ],
+      });
+    writeView(f.scope, `me:assistant:${id}`, "a".repeat(64));
+    f.mount();
+    expect(
+      screen.queryByRole("textbox", { name: "Message your agents" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("textbox", { name: "Message #Planning" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Choose follow-up assistant" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Project:/ })).toBeNull();
+    if (!retained)
+      expect(
+        screen.getByText("This conversation is in Messages."),
+      ).toBeVisible();
+  },
+);

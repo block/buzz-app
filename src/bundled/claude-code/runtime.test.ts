@@ -273,7 +273,7 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   // Before then nothing says which model it runs, nor what else it could.
   expect(await runtime.models(self)).toEqual({
     current: "",
-    models: [{ id: "", label: "Claude", efforts: EFFORTS }],
+    models: [{ id: "", label: "Claude", efforts: [] }],
   });
   await deliver({ type: "mention", event: mention });
   await flush(10);
@@ -317,6 +317,8 @@ it("still offers a configured model Claude does not list", async () => {
       "Haiku 5.5",
       "Legacy 1",
     ]);
+    // It runs at any effort a listed model has.
+    expect(models[0]?.efforts).toEqual(EFFORTS);
   } finally {
     runtime.dispose();
   }

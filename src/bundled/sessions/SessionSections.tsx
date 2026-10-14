@@ -163,7 +163,7 @@ export function SessionSections({
     })),
     {
       id: "",
-      name: personal ? "Conversations" : "Sessions",
+      name: personal ? "Chats" : "Sessions",
       rows: sessions.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
@@ -204,7 +204,7 @@ export function SessionSections({
             <span className={styles.sectionIcon} aria-hidden="true">
               <PlusIcon size={15} strokeWidth={2.5} />
             </span>
-            <span>{personal ? "New conversation" : "New session"}</span>
+            <span>{personal ? "New chat" : "New session"}</span>
           </button>
         </div>
       )}
@@ -226,12 +226,16 @@ export function SessionSections({
           {deleteError}
         </p>
       )}
+      {personal && groups.length > 0 && (
+        <p className={styles.collectionHeading}>Projects</p>
+      )}
       {sections
         .filter((section) => !personal || section.id || section.rows.length)
         .map((section) => (
           <Collapsible.Root
             key={section.id}
             className={styles.section}
+            data-project={personal && section.id ? "" : undefined}
             open={!collapsed.includes(section.id)}
             onOpenChange={(open) => toggle(section.id, open)}
             data-animate={animate || undefined}
@@ -244,7 +248,7 @@ export function SessionSections({
               content={
                 <>
                   <MenuItem onClick={() => setSettingsFor(section)}>
-                    Session settings…
+                    {personal ? "Project settings…" : "Session settings…"}
                   </MenuItem>
                   <MenuItem
                     tone="danger"
@@ -265,7 +269,7 @@ export function SessionSections({
                         .finally(() => setDeleting(undefined));
                     }}
                   >
-                    Delete section
+                    {personal ? "Delete project" : "Delete section"}
                   </MenuItem>
                 </>
               }
@@ -302,8 +306,8 @@ export function SessionSections({
                   <IconButton
                     data-session-row-action=""
                     size="compact"
-                    aria-label={`New session in ${section.name}`}
-                    title="New session"
+                    aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                    title={personal ? "New chat" : "New session"}
                     icon={<PlusIcon size={15} strokeWidth={2.5} />}
                     onClick={() => onNew(section.id || undefined)}
                   />
@@ -378,7 +382,7 @@ export function SessionSections({
                         <MenuSubmenuPopup aria-label="Session section">
                           {section.id && (
                             <MenuItem onClick={() => move(item.id)}>
-                              {personal ? "Conversations" : "Sessions"}
+                              {personal ? "Chats" : "Sessions"}
                             </MenuItem>
                           )}
                           {groups.map((group) => (
@@ -390,7 +394,7 @@ export function SessionSections({
                             </MenuItem>
                           ))}
                           <MenuItem onClick={() => setCreatingFor(item)}>
-                            {personal ? "New group…" : "New section…"}
+                            {personal ? "New project…" : "New section…"}
                           </MenuItem>
                         </MenuSubmenuPopup>
                       </MenuSubmenu>
@@ -401,18 +405,28 @@ export function SessionSections({
                           </MenuIcon>
                           Copy
                         </MenuSubmenuTrigger>
-                        <MenuSubmenuPopup aria-label="Copy session">
+                        <MenuSubmenuPopup
+                          aria-label={personal ? "Copy chat" : "Copy session"}
+                        >
                           <MenuItem
                             onClick={() =>
-                              void copy(item.title, "Session name")
+                              void copy(
+                                item.title,
+                                personal ? "Chat name" : "Session name",
+                              )
                             }
                           >
-                            Copy session name
+                            Copy {personal ? "chat" : "session"} name
                           </MenuItem>
                           <MenuItem
-                            onClick={() => void copy(item.id, "Session ID")}
+                            onClick={() =>
+                              void copy(
+                                item.id,
+                                personal ? "Chat ID" : "Session ID",
+                              )
+                            }
                           >
-                            Copy session ID
+                            Copy {personal ? "chat" : "session"} ID
                           </MenuItem>
                           <MenuItem
                             onClick={() =>
@@ -440,7 +454,7 @@ export function SessionSections({
                           <MenuIcon>
                             <GearIcon size={16} />
                           </MenuIcon>
-                          Session settings…
+                          Chat settings…
                         </MenuItem>
                       )}
                     </>
@@ -451,7 +465,9 @@ export function SessionSections({
               ))}
               {!section.rows.length && section.id && (
                 <p className={styles.listMessage}>
-                  No sessions in this section.
+                  {personal
+                    ? "No chats in this project."
+                    : "No sessions in this section."}
                 </p>
               )}
             </Collapsible.Panel>
@@ -503,7 +519,7 @@ export function SessionSections({
       )}
       {moves.some((move) => move.pending) && (
         <p role="status" className={styles.listMessage}>
-          Saving section…
+          Saving {personal ? "project" : "section"}…
         </p>
       )}
       {moves
@@ -556,6 +572,7 @@ export function SessionSections({
         <NewSection
           key={creatingFor.id}
           name={creatingFor.title}
+          personal={personal}
           close={() => setCreatingFor(undefined)}
           create={(name) => {
             if (!preferences.writable) return false;
@@ -575,10 +592,12 @@ export function SessionSections({
 
 function NewSection({
   name,
+  personal,
   create,
   close,
 }: {
   name: string;
+  personal: boolean;
   create: (name: string) => boolean;
   close: () => void;
 }) {
@@ -592,8 +611,8 @@ function NewSection({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title="Create new section"
-      description={`Move ${name} into a personal section that syncs across Buzz.`}
+      title={personal ? "Create new project" : "Create new section"}
+      description={`Move ${name} into a personal ${personal ? "project" : "section"} that syncs across Buzz.`}
       initialFocus={input}
       actions={
         <>
@@ -618,8 +637,8 @@ function NewSection({
       >
         <Input
           ref={input}
-          aria-label="Section name"
-          placeholder="Section name"
+          aria-label={personal ? "Project name" : "Section name"}
+          placeholder={personal ? "Project name" : "Section name"}
           required
           maxLength={80}
           value={value}
@@ -628,7 +647,8 @@ function NewSection({
       </form>
       {blocked && (
         <p role="alert">
-          Sections are unavailable. Close this dialog and retry sections.
+          {personal ? "Projects" : "Sections"} are unavailable. Close this
+          dialog and retry.
         </p>
       )}
     </Dialog>

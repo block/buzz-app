@@ -37,6 +37,7 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { RecoveryNotice, useRecoveryShown } from "../relay/RecoveryNotice";
 import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
@@ -205,6 +206,7 @@ function ReadySidebar({
   viewer?: string | undefined;
 }) {
   const list = useChannelList(queries.channels);
+  const recoveryShown = useRecoveryShown(queries.recovery);
   const placement = useMePlacement(queries);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
@@ -990,19 +992,16 @@ function ReadySidebar({
             preferences.status === "loading" || startup.updating || undefined
           }
         >
-          {kitState.status === "error" && (
+          {/* Network and relay outages for templates, Me placement, saved
+              preferences, hidden conversations and live updates recover
+              through one automatic owner. Other failures need the user and
+              keep their own message and Retry. */}
+          {!cached && <RecoveryNotice recovery={queries.recovery} />}
+          {kitState.status === "error" && !kitState.transient && (
             <p role="alert">
               {kitState.error}{" "}
               <Button onClick={() => void queries.channelKit.refresh()}>
                 Retry templates
-              </Button>
-            </p>
-          )}
-          {meEnabled && placement.status !== "ready" && (
-            <p role="status">
-              {placement.error ?? "Loading Me placement…"}{" "}
-              <Button onClick={() => void queries.mePlacement.refresh()}>
-                Retry Me
               </Button>
             </p>
           )}
@@ -1021,14 +1020,16 @@ function ReadySidebar({
               </Button>
             </ToastNotice>
           ))}
-          {!cached && dmVisibility.status === "error" && (
-            <div role="alert">
-              Hidden conversations could not be refreshed.{" "}
-              <Button onClick={() => void lifecycle.refreshVisibility()}>
-                Retry hidden conversations
-              </Button>
-            </div>
-          )}
+          {!cached &&
+            dmVisibility.status === "error" &&
+            !dmVisibility.transient && (
+              <div role="alert">
+                Hidden conversations could not be refreshed.{" "}
+                <Button onClick={() => void lifecycle.refreshVisibility()}>
+                  Retry hidden conversations
+                </Button>
+              </div>
+            )}
           <SidebarUnread listRef={sidebar.list} dmPreviews={unreadDmPreviews}>
             <SidebarNavigation>{children}</SidebarNavigation>
             <ChannelSidebarDnd
@@ -1207,7 +1208,7 @@ function ReadySidebar({
                 Loading your sidebar…
               </p>
             )}
-            {list.status === "error" && (
+            {list.status === "error" && !recoveryShown && (
               <p role="alert" className={styles.empty}>
                 {list.error}
               </p>
@@ -1321,7 +1322,10 @@ function ReadySidebar({
                 </button>
               </div>
             ))}
-          {!cached && startup.ready && preferences.status === "error" ? (
+          {!cached &&
+          startup.ready &&
+          preferences.status === "error" &&
+          !preferences.transient ? (
             <ToastNotice
               title="Saved sidebar preferences couldn’t refresh"
               description="Your conversations are still available."

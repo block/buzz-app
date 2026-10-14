@@ -65,6 +65,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
     id: TYPE_ID,
@@ -123,6 +124,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     // A mention during the first download waits for it, within its deadline.

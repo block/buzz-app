@@ -52,6 +52,38 @@ then clicks. Preparation cost is outside that window. Each target has 120 mixed
 height text messages; the existing app chooses how many it initially loads.
 The corpus content and timestamps are fixed; signing identities are ephemeral.
 
+## Scrolling
+
+```sh
+bin/pnpm perf --scenario scroll-short --repeat 5 --cpu 4
+bin/pnpm perf --scenario scroll-long --repeat 5 --cpu 4
+```
+
+Both scenarios use the same observer, counters, fresh contexts and result format:
+
+| Scenario | Workload |
+| --- | --- |
+| `scroll-short` | 800px upward at 1600px/s within the loaded head of a 120-message channel |
+| `scroll-long` | 12,000px upward at 4000px/s across a 360-message channel, fully loaded before measuring |
+
+The long case loads older pages without traversing them first, so the gesture
+encounters rows the virtualizer has not yet mounted/measured. Setup waits for
+page processing to finish, rejects the history-limit notice, then settles geometry.
+Neither window permits older-page reads. This isolates rendering from pagination;
+network-bound scrolling should be a separate future scenario.
+
+Real Chromium wheel gestures must produce wheel events, scroll-offset movement
+of at least 80% of the request, multiple visible messages and changed visible IDs.
+Raw frames and work receipts record the requested distance/speed, history size,
+released pages, wheel count and observed rows. `scrollTopRangePx` is the observed
+offset range, including virtualizer corrections; it is not physical input distance.
+
+`rafMaxGapMs`, `rafP95GapMs` and `rafGapsOver50` describe animation-frame callback
+cadence over the entire operation, including the start-to-first-frame interval
+and the settling tail. They expose main-thread stalls, not compositor FPS or a
+measured dropped-frame count. These metrics accompany the browser cost counters;
+no generic blank-time, overlap or visual-shift verdict is inferred from them.
+
 ## Results and iteration
 
 JSON contains raw per-frame geometry, work evidence, all samples and per-metric

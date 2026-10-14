@@ -339,9 +339,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async channel(tools, args) {
     const { client } = tools;
-    const action = typeof args.action === "string" ? args.action : "details";
-    const fields = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
-    if (!fields)
+    const action = args.action ?? "details";
+    const fields =
+      typeof action === "string" && Object.hasOwn(ACTIONS, action)
+        ? ACTIONS[action]
+        : undefined;
+    if (typeof action !== "string" || !fields)
       throw new Error(
         `action must be one of ${Object.keys(ACTIONS).join(", ")}.`,
       );
@@ -355,8 +358,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         throw new Error("create makes a new channel; leave out channel.");
       return tools.create(args);
     }
-    const channel = text(args.channel) ?? tools.context.channel;
-    if (!channel) throw new Error("channel is required here.");
+    const channel = target(tools, args);
     if (action === "details") return tools.details(channel);
     if (action === "update") return tools.update(channel, args);
     const { kind, content, tags } = lifecycleTemplate(
@@ -385,16 +387,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       unarchive: "unarchived",
       delete: "deleted",
     };
-    return (await until(shown, Boolean))
-      ? `${done[action]} ${channel}`
-      : `The community accepted ${action} but does not show it yet.`;
+    const now = await until(shown, Boolean).catch(unread);
+    if (now === true) return `${done[action]} ${channel}`;
+    return `The community accepted ${action} but ${now ? now.message : "does not show it yet"}.`;
   },
 
   async members(tools, args) {
-    const channel = text(args.channel) ?? tools.context.channel;
-    if (!channel) throw new Error("channel is required here.");
-    const add = list(args.add).map(pubkey);
-    const remove = list(args.remove).map(pubkey);
+    const channel = target(tools, args);
+    const add = keys(args, "add");
+    const remove = keys(args, "remove");
     const role = args.role;
     if (role !== undefined && !ROLES.includes(role as string))
       throw new Error(`role must be one of ${ROLES.join(", ")}.`);
@@ -641,7 +642,7 @@ class Tools {
 
   async create(args: Args) {
     const name = canonicalDetailsName(required(args, "name"));
-    const about = text(args.about);
+    const about = optional(args, "about") || undefined;
     const ttl = seconds(args.ttl);
     checkDetails(name, about, ttl);
     if (args.visibility !== "open" && args.visibility !== "private")
@@ -667,8 +668,9 @@ class Tools {
         ...(ttl ? [["ttl", String(ttl)]] : []),
       ],
     });
-    if (!(await until(() => this.metadata(id), Boolean)))
-      return `The community accepted channel ${id} but does not show it yet${template ? "; the template was not applied" : ""}.`;
+    const shown = await until(() => this.metadata(id), Boolean).catch(unread);
+    if (!shown || shown instanceof Error)
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}.`;
     const lines = [`created ${id}`];
     if (!template) return lines.join("\n");
     if (template.canvas.trim())
@@ -719,10 +721,8 @@ class Tools {
     if (args.name !== undefined)
       wanted.push(["name", canonicalDetailsName(required(args, "name"))]);
     for (const key of ["about", "topic", "purpose"]) {
-      const value = args[key];
-      if (value === undefined) continue;
-      if (typeof value !== "string") throw new Error(`${key} must be text.`);
-      wanted.push([key, value.trim()]);
+      const value = optional(args, key);
+      if (value !== undefined) wanted.push([key, value]);
     }
     if (args.visibility !== undefined) {
       if (args.visibility !== "open" && args.visibility !== "private")
@@ -756,7 +756,10 @@ class Tools {
           ? has(now, "private") === (value === "private")
           : (tag(now, key) ?? "") === value,
       );
-    return shows(await until(() => this.metadata(channel), shows))
+    const now = await until(() => this.metadata(channel), shows).catch(unread);
+    if (now instanceof Error)
+      return `The community accepted the update but ${now.message}.`;
+    return shows(now)
       ? `updated ${channel}`
       : "The community accepted the update but does not show it yet.";
   }
@@ -797,21 +800,25 @@ class Tools {
       (now) =>
         add.every((key) => refused.has(key) || added(now, key)) &&
         remove.every((key) => refused.has(key) || removed(now, key)),
+    ).catch(unread);
+    const names = await this.names([...add, ...remove]).catch(
+      () => new Map<string, string>(),
     );
-    const names = await this.names([...add, ...remove]);
     const who = (key: string) =>
       names.has(key) ? `${key} ${names.get(key)}` : key;
-    const report = (key: string, done: boolean, verb: string) =>
+    const report = (key: string, verb: string, done?: typeof added) =>
       refused.has(key)
         ? `not ${verb} ${who(key)}: ${refused.get(key)}`
-        : done
-          ? `${verb} ${who(key)}${verb === "added" && role ? ` as ${role}` : ""}`
-          : `${who(key)}: the community accepted it but does not show it yet`;
+        : roster instanceof Error
+          ? `${who(key)}: the community accepted it but ${roster.message}`
+          : done?.(roster, key)
+            ? `${verb} ${who(key)}${verb === "added" && role ? ` as ${role}` : ""}`
+            : `${who(key)}: the community accepted it but does not show it yet`;
     return {
       changed: refused.size < add.length + remove.length,
       lines: [
-        ...add.map((key) => report(key, added(roster, key), "added")),
-        ...remove.map((key) => report(key, removed(roster, key), "removed")),
+        ...add.map((key) => report(key, "added", added)),
+        ...remove.map((key) => report(key, "removed", removed)),
       ],
     };
   }
@@ -1023,6 +1030,38 @@ async function until<T>(load: () => Promise<T>, done: (value: T) => boolean) {
     value = await load();
   }
   return value;
+}
+
+/** A failed read after a write, as the reason the write is not confirmed. */
+const unread = (error: unknown) =>
+  new Error(`its state could not be read back: ${reason(error)}`);
+
+/** The `channel` argument, or the current channel only when it is left out. */
+function target(tools: Tools, args: Args) {
+  if (args.channel === undefined) {
+    if (!tools.context.channel) throw new Error("channel is required here.");
+    return tools.context.channel;
+  }
+  const channel = text(args.channel);
+  if (!channel) throw new Error("channel must be a channel ID.");
+  return channel;
+}
+
+/** A list of pubkeys or npubs; any other entry is refused, not dropped. */
+function keys(args: Args, name: string) {
+  const value = args[name];
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+    throw new Error(`${name} must be a list of pubkeys.`);
+  return value.map(pubkey);
+}
+
+/** An optional text argument, trimmed; refused when it is not text. */
+function optional(args: Args, key: string) {
+  const value = args[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${key} must be text.`);
+  return value.trim();
 }
 
 /** A `ttl` argument: undefined when absent or 0, which means never. */

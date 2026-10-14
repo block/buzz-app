@@ -736,3 +736,105 @@ it("refuses member changes that do not fit, before publishing", async () => {
   );
   expect(published).toEqual([]);
 });
+
+it("defaults to the current channel only when channel is left out", async () => {
+  const { client, published } = relay();
+  const call = (name: string, args: Record<string, unknown>) =>
+    respond(
+      client,
+      { channel: room },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      },
+    );
+  for (const [name, args, message] of [
+    [
+      "channel",
+      { action: "delete", channel: 123 },
+      "channel must be a channel ID.",
+    ],
+    [
+      "channel",
+      { action: "delete", channel: "   " },
+      "channel must be a channel ID.",
+    ],
+    ["channel", { action: 5 }, "action must be one of"],
+    [
+      "members",
+      { channel: null, remove: [alice] },
+      "channel must be a channel ID.",
+    ],
+    ["members", { remove: [alice, 123] }, "remove must be a list of pubkeys."],
+    ["members", { add: alice }, "add must be a list of pubkeys."],
+    [
+      "channel",
+      { action: "create", name: "x", visibility: "open", about: 5 },
+      "about must be text.",
+    ],
+  ] as const)
+    await expect(call(name, args)).resolves.toMatchObject({
+      result: {
+        isError: true,
+        content: [{ text: expect.stringContaining(message) }],
+      },
+    });
+  expect(published).toEqual([]);
+});
+
+it("keeps what it changed when a read after the change fails", async () => {
+  const { client, published } = relay();
+  const query = client.query;
+  let failing = [0];
+  client.query = vi.fn(async (filters: readonly Filter[]) => {
+    if (
+      filters.some((f) =>
+        (f.kinds as number[]).some((kind) => failing.includes(kind)),
+      )
+    )
+      throw new Error(`kind ${failing} unavailable`);
+    return query(filters);
+  });
+  client.templates = vi.fn(async () => [
+    { name: "Launch", canvas: "", agents: [bob] },
+  ]);
+  const create = () =>
+    callTool(client, {}, "channel", {
+      action: "create",
+      name: "launch",
+      visibility: "open",
+      template: "Launch",
+    });
+  // A display name that cannot be read leaves the pubkey.
+  let answer = await create();
+  let id = published.at(-2)?.tags[0]?.[1] as string;
+  expect(answer).toBe(`created ${id}\nadded ${bob}`);
+  // A roster that cannot be read leaves each accepted change unconfirmed.
+  failing = [39002];
+  answer = await create();
+  id = published.at(-2)?.tags[0]?.[1] as string;
+  expect(answer).toBe(
+    `created ${id}\n${bob}: the community accepted it but its state could not be read back: kind 39002 unavailable`,
+  );
+  // A channel that cannot be read back still names the channel created.
+  failing = [39000];
+  answer = await create();
+  id = published.at(-1)?.tags[0]?.[1] as string;
+  expect(published.at(-1)?.kind).toBe(9007);
+  expect(answer).toBe(
+    `The community accepted channel ${id} but its state could not be read back: kind 39000 unavailable; the template was not applied.`,
+  );
+  await expect(
+    callTool(client, { channel: room }, "channel", { action: "archive" }),
+  ).resolves.toBe(
+    "The community accepted archive but its state could not be read back: kind 39000 unavailable.",
+  );
+  await expect(
+    callTool(client, { channel: room }, "channel", {
+      action: "update",
+      topic: "x",
+    }),
+  ).rejects.toThrow("kind 39000 unavailable");
+});

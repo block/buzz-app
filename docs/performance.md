@@ -1,0 +1,82 @@
+# Local browser performance runs
+
+Run one checkout with a few parameters:
+
+```sh
+source bin/activate-hermit
+bin/pnpm test:browser:install # once per pinned browser version
+bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
+```
+
+`--scenario all` is the default. `--cpu` sets Chromium's CPU slowdown factor
+(1 means unthrottled); it does not throttle network or the fixture server.
+`--repeat` defaults to 5. Every sample gets fresh browser storage, signed
+histories and server state; a production frontend build is shared by the worker.
+One worker runs serially with no retries. These opt-in cases are separate from
+the normal browser correctness gate and do not add CI journeys.
+
+The existing browser fixture owns the production React/services/IndexedDB/Virtua
+app and modeled local HTTP broker. The runner owns settings and measurement
+windows; scenarios own setup, actions and proof that the intended work occurred.
+There is no comparison engine, second checkout or prescribed optimization target.
+
+## Measurements
+
+Each sample reports Chromium `Performance.getMetrics` deltas, in milliseconds,
+from immediately before the action until the timeline has visible rows and
+unchanged visible geometry for at least 200ms across at least three samples:
+
+| Metric | Meaning |
+| --- | --- |
+| `scriptMs` | `ScriptDuration`: JavaScript execution |
+| `layoutMs` | `LayoutDuration`: layout work |
+| `styleMs` | `RecalcStyleDuration`: style recalculation |
+| `taskMs` | `TaskDuration`: main-thread task time |
+| `durationMs` | Browser wall time through the settling barrier |
+| `firstRowsMs` | Captured browser click event to visible target rows across two rendering updates |
+
+The first-rows endpoint gives the browser a paint opportunity; it is not a
+compositor screenshot or proof that every pixel finished painting. The settle
+barrier observes row IDs/positions/heights and scroll geometry, not arbitrary
+future async work. A ten-second deadline fails the sample instead of reporting
+an unfinished operation as a win. Counter windows also include measurement
+overhead and protocol dispatch around the action. Measured actions use browser
+input: JavaScript invoked directly through the automation protocol can be absent
+from `ScriptDuration`, even when included in `TaskDuration`. Categories overlap: do not
+sum them or interpret them as CPU percentages. No forced GC is performed.
+
+`channel-open` measures two independent cases. Cold opening clicks a never-opened,
+never-hovered channel and requires a head read during opening. Prepared opening
+hovers that channel, waits for its head response and a browser idle opportunity,
+then clicks. Preparation cost is outside that window. Each target has 120 mixed
+height text messages; the existing app chooses how many it initially loads.
+The corpus content and timestamps are fixed; signing identities are ephemeral.
+
+## Results and iteration
+
+JSON contains raw per-frame geometry, work evidence, all samples and per-metric
+median/min/max/sample count. Only wholly passing samples enter summaries. Inspect
+the top-level status and each run's errors before using a number; a failed command
+is never a successful optimization. Runtime/source identity, dirty status, CPU
+setting, viewport, host load and setup timing accompany the samples. A dirty
+listing is not a content hash: tie claims to a clean commit.
+
+Every invocation creates a fresh ignored `test-results/perf/run-*` evidence
+directory. Existing fixture evidence and failure screenshots are retained there;
+the summary defaults to that directory or writes the exact `--out` path. Reusing
+an explicit output path replaces that summary. Traces/video are off to reduce
+measurement overhead; use the existing functional browser runner for diagnostics.
+
+Choose any relevant metric (including scripting) as the objective, keep the
+scenario and settings fixed, and inspect all other metrics plus actual work.
+Keep baseline JSON, make one change, rerun, and confirm promising changes with
+repeated samples and the existing correctness tests. Use an idle machine and
+alternate baseline/candidate runs when making a performance claim. Comparing
+different CPU settings, browsers, fixtures or concurrent host loads is not a
+controlled comparison. The runner does not decide which tradeoffs are acceptable.
+
+This is Chromium-local evidence with modeled immediate backend responses,
+HTTP interception (which disables HTTP cache), preloaded fonts and text content.
+It does not measure production network latency, media, native hosting, WebKit,
+long-session memory growth or application startup. Add those as explicit workloads
+when needed rather than changing the meaning of existing samples.

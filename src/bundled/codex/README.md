@@ -86,11 +86,11 @@ follow-up before its final reply.
 
 ## Conversation storage
 
-New conversations use `~/Library/Application Support/Buzz/codex` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex` on Linux. The launcher links only `config.toml`, `auth.json`, `AGENTS.md`, `rules`, and `skills` from the existing `CODEX_HOME` (default `~/.codex`); credentials are not copied. An explicit private `sqlite_home` override prevents shared configuration or `CODEX_SQLITE_HOME` from routing new database state back to desktop. Rollouts, paginated history and other runtime state remain private. File-based sign-in and refresh retain the existing shared file. Keyring credentials are scoped to the home and may require a separate Buzz sign-in through the provider’s **Sign in** action. The same managed launcher handles provider checks, login and app-server; legacy sessions use Buzz’s managed binary with their original home.
+New conversations use `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. The launcher links only `config.toml`, `auth.json`, `AGENTS.md`, `rules`, and `skills` from the existing `CODEX_HOME` (default `~/.codex`); credentials are not copied. An explicit private `sqlite_home` override prevents shared configuration or `CODEX_SQLITE_HOME` from routing new database state back to desktop. Rollouts, paginated history and other runtime state remain private. File-based sign-in and refresh retain the existing shared file. Keyring credentials are scoped to the home and may require a separate Buzz sign-in through the provider’s **Sign in** action. The same managed launcher handles provider checks, login and app-server; legacy sessions use Buzz’s managed binary with their original home.
 
 Existing v4 bindings without a store marker keep their original home, native context, tool history and transcript. Those conversations remain visible in Codex desktop and continue updating there. Bindings retain their history because Codex has no complete supported migration for paginated history. New bindings persist their store marker; workspace changes and recovery from a genuinely deleted thread create an isolated session. Conversation scope follows the configured thread/channel/DM policy. Legacy and isolated servers start lazily and retain background terminals until the existing agent/plugin shutdown boundary.
 
-Conflicting private configuration files or links to a different shared home stop setup with a diagnostic instead of overwriting either setup. The private home lives outside the default agent workspace.
+Conflicting private configuration files or links to a different shared home stop setup with a diagnostic instead of overwriting either setup. The private home lives outside both the default agent workspace and the managed release directory. Release cleanup only prunes validated version folders.
 
 ## Checks
 
@@ -125,7 +125,7 @@ and cleanup.
 
 The plugin never runs the `codex` on PATH. It runs Buzz's own copy from
 `~/Library/Application Support/Buzz/codex/<version>/bin/codex`, or
-`${XDG_DATA_HOME:-~/.local/share}/buzz/codex` on Linux; a `current` file names
+`${XDG_DATA_HOME:-~/.local/share}/buzz/codex-home` on Linux; a `current` file names
 the version in use. `~/.codex` is shared, so the sign-in and settings are the
 same as in the terminal. [`codex.sh`](codex.sh) is the launcher and installer;
 the plugin runs each step through the one declared `bash -c` process.

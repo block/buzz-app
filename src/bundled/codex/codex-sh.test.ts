@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readlink,
   readFile,
   rm,
   writeFile,
@@ -172,4 +173,29 @@ it("starts the release in use when switches prune the one it read", async () => 
   expect(await folders()).not.toContain("0.1.0");
   await writeFile(join(bin, "go"), "");
   expect((await launching).stdout.trim()).toBe("codex-cli 0.3.0");
+});
+
+it("retains runtime history and links when switching managed releases", async () => {
+  const f = await disk(["0.1.0", "0.2.0"], "0.1.0");
+  await mkdir(join(f.home, ".codex/skills"), { recursive: true });
+  await writeFile(
+    join(f.dir, "0.1.0/bin/codex"),
+    '#!/bin/sh\nprintf "%s\\n" "$CODEX_HOME"\n',
+  );
+  const home = (await f.step("server", "isolated")).stdout.trim();
+  await mkdir(join(home, "sessions"), { recursive: true });
+  await writeFile(join(home, "sessions/rollout.jsonl"), "history");
+  await mkdir(join(f.dir, "sessions"), { recursive: true });
+  await writeFile(join(f.dir, "sessions/keep"), "unrelated");
+  await f.step("use", "0.2.0");
+  expect(await readFile(join(home, "sessions/rollout.jsonl"), "utf8")).toBe(
+    "history",
+  );
+  expect(await readlink(join(home, "skills"))).toBe(
+    join(f.home, ".codex/skills"),
+  );
+  expect(await readFile(join(f.dir, "sessions/keep"), "utf8")).toBe(
+    "unrelated",
+  );
+  expect(home).toBe(`${f.dir}-home`);
 });

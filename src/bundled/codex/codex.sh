@@ -44,8 +44,8 @@ if [ "$command" = run ] && [ "$store" = isolated ]; then
   mkdir -p "$sharedHome"
   sharedHome=$(cd "$sharedHome" && pwd -P)
   umask 077
-  mkdir -p "$dir"
-  privateHome=$(cd "$dir" && pwd -P)
+  mkdir -p "${dir}-home"
+  privateHome=$(cd "${dir}-home" && pwd -P)
   if [ "$privateHome" = "$sharedHome" ]; then
     echo "Buzz's Codex store must differ from the shared Codex home" >&2
     exit 1
@@ -133,6 +133,7 @@ use)
   # one, which another build may be testing; remove the rest.
   for folder in "$dir"/*/; do
     folder=$(basename "$folder")
+    valid "$folder" || continue
     [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] ||
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done

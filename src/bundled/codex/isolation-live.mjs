@@ -23,8 +23,8 @@ const root = await realpath(
 const shared = join(root, "desktop");
 const isolated =
   process.platform === "darwin"
-    ? join(root, "Library/Application Support/Buzz/codex")
-    : join(root, "data/buzz/codex");
+    ? join(root, "Library/Application Support/Buzz/codex-home")
+    : join(root, "data/buzz/codex-home");
 const servers = [];
 const model = createServer((request, response) => {
   request.resume();
@@ -101,12 +101,12 @@ requires_openai_auth = false
     output: { dir: root, entryFileNames: "rpc.mjs", format: "esm" },
   });
   const { AppServer } = await import(join(root, "rpc.mjs"));
-  await mkdir(join(isolated, "0.1.0/bin"), { recursive: true });
+  await mkdir(join(isolated.slice(0, -5), "0.1.0/bin"), { recursive: true });
   await symlink(
     execFileSync("which", ["codex"], { encoding: "utf8" }).trim(),
-    join(isolated, "0.1.0/bin/codex"),
+    join(isolated.slice(0, -5), "0.1.0/bin/codex"),
   );
-  await writeFile(join(isolated, "current"), "0.1.0");
+  await writeFile(join(isolated.slice(0, -5), "current"), "0.1.0");
   const nativeSpawn = async (id, options = {}) => {
     assert.equal(id, "app-server");
     const child = spawn(
@@ -202,6 +202,20 @@ requires_openai_auth = false
     "Isolated fixture persists after restart",
   );
   await current.close();
+  const releases = isolated.slice(0, -5);
+  await mkdir(join(releases, "0.2.0/bin"), { recursive: true });
+  await symlink(
+    execFileSync("which", ["codex"], { encoding: "utf8" }).trim(),
+    join(releases, "0.2.0/bin/codex"),
+  );
+  execFileSync("bash", ["-c", script, "codex.sh", "use", "0.2.0"], {
+    env: {
+      ...process.env,
+      HOME: root,
+      XDG_DATA_HOME: join(root, "data"),
+      CODEX_HOME: shared,
+    },
+  });
   const restarted = await open("isolated");
   assert.equal(
     (await restarted.request("thread/resume", { threadId: newId })).thread.id,
@@ -229,7 +243,7 @@ requires_openai_auth = false
     ),
   );
   console.log(
-    "PASS: shared synthetic sign-in/config, private SQLite/history, restart resume, and preserved legacy sessions; local fixture model only; no external model or relay calls",
+    "PASS: shared synthetic sign-in/config, private SQLite/history, restart/update resume, and preserved legacy sessions; local fixture model only; no external model or relay calls",
   );
 } finally {
   await Promise.all(servers.map((rpc) => rpc.close()));

@@ -29,8 +29,8 @@ async function fixture() {
   const shared = join(root, "shared");
   const isolated =
     process.platform === "darwin"
-      ? join(root, "Library/Application Support/Buzz/codex")
-      : join(root, "data/buzz/codex");
+      ? join(root, "Library/Application Support/Buzz/codex-home")
+      : join(root, "data/buzz/codex-home");
   const bin = join(root, "bin");
   await mkdir(shared);
   await mkdir(bin);
@@ -42,7 +42,7 @@ async function fixture() {
     { mode: 0o755 },
   );
   for (const home of [
-    isolated,
+    isolated.slice(0, -5),
     join(root, "Library/Application Support/Buzz/codex"),
   ]) {
     await mkdir(join(home, "0.1.0/bin"), { recursive: true });
@@ -151,7 +151,7 @@ it("uses the macOS application data directory without exposing the runtime store
   });
   const { stdout } = await f.run();
   expect(stdout.trim().split("\n")[0]).toBe(
-    join(f.root, "Library/Application Support/Buzz/codex"),
+    join(f.root, "Library/Application Support/Buzz/codex-home"),
   );
 });
 

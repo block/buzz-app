@@ -259,7 +259,6 @@ export class HostService extends Service implements Host {
       stopped = resolve;
     });
     let handle: number | undefined;
-    const early: { request: number; body: string }[] = [];
     const answer = async (request: number, body: string) => {
       const reply = await answerMcp(handler, body);
       await invoke<void>("plugin_host_mcp_reply", {
@@ -273,8 +272,8 @@ export class HostService extends Service implements Host {
       );
     };
     const onEvent = new Channel<McpEvent>((event) => {
-      if (event.type === "closed") return stopped();
-      if (handle === undefined) early.push(event);
+      if (event.type === "closed") stopped();
+      // Only an agent given the token, which `serve` returns, can send one.
       else void answer(event.request, event.body);
     });
     const server = await invoke<{ handle: number; url: string; token: string }>(
@@ -282,7 +281,6 @@ export class HostService extends Service implements Host {
       { id: owner.id, revision: owner.revision, onEvent },
     );
     handle = server.handle;
-    for (const event of early.splice(0)) void answer(event.request, event.body);
     const close = () =>
       invoke<void>("plugin_host_mcp_close", {
         id: owner.id,
@@ -324,14 +322,16 @@ export class HostService extends Service implements Host {
   }
 }
 
-/** The reply to one HTTP body: a message, or a batch of them. */
+/** The reply to one HTTP body, which carries one message: MCP has no batches
+ * since its 2025-06-18 revision. A handler that throws answers a request with
+ * an internal error. */
 export async function answerMcp(
   handler: McpHandler,
   body: string,
 ): Promise<unknown> {
-  let parsed: unknown;
+  let message: unknown;
   try {
-    parsed = JSON.parse(body);
+    message = JSON.parse(body);
   } catch {
     return {
       jsonrpc: "2.0",
@@ -339,25 +339,18 @@ export async function answerMcp(
       error: { code: -32700, message: "Parse error" },
     };
   }
-  const one = async (message: unknown) => {
+  try {
+    return await handler(message);
+  } catch (error) {
     const id = (message as { id?: unknown } | null)?.id;
-    try {
-      return await handler(message);
-    } catch (error) {
-      if (id === undefined || id === null) return undefined;
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  };
-  if (!Array.isArray(parsed)) return one(parsed);
-  const replies = (await Promise.all(parsed.map(one))).filter(
-    (reply) => reply !== undefined,
-  );
-  return replies.length ? replies : undefined;
+    if (id === undefined || id === null) return undefined;
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32603,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }

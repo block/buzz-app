@@ -1,9 +1,10 @@
 // A stand-in for `goose-acp`'s ACP over stdio, for tests.
-import type {
-  HostMcpServer,
-  HostProcess,
-  HostProcessOptions,
-  McpHandler,
+import {
+  answerMcp,
+  type HostMcpServer,
+  type HostProcess,
+  type HostProcessOptions,
+  type McpHandler,
 } from "../../features/host/service";
 
 type Message = {
@@ -184,12 +185,11 @@ export function fakeSpawn(
         );
         if (!server || server.closed)
           throw new Error(`No Buzz MCP server for ${sessionId}`);
-        return (await server.handler({
-          jsonrpc: "2.0",
-          id: ++mcpRequests,
-          method,
-          params,
-        })) as Message;
+        const body = { jsonrpc: "2.0", id: ++mcpRequests, method, params };
+        return (await answerMcp(
+          server.handler,
+          JSON.stringify(body),
+        )) as Message;
       },
       update: (sessionId, update) =>
         send({

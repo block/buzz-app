@@ -576,6 +576,14 @@ function ReadySidebar({
     );
   const placementWritable =
     preferences.writable && preferences.starWritable && !!preferences.data;
+  // Group drags land on the placement drop targets, so they need both writers.
+  const orderWritable = placementWritable && preferences.sectionOrderWritable;
+  const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  const moveGroup = (sectionId: string, to: number) => {
+    const ids = groupIds.filter((id) => id !== sectionId);
+    ids.splice(to, 0, sectionId);
+    void preferences.reorderSections(sectionId, ids).catch(() => {});
+  };
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
     void preferences
       .setSort(
@@ -1042,9 +1050,29 @@ function ReadySidebar({
                         : undefined,
                     )
               }
-              overlay={(channelId) => {
+              onReorder={(sectionKey, overKey) =>
+                moveGroup(
+                  sectionKey.slice("group:".length),
+                  groupIds.indexOf(overKey.slice("group:".length)),
+                )
+              }
+              overlay={(id, group) => {
+                if (group) {
+                  const section = sections.find(({ key }) => key === id);
+                  return section ? (
+                    <div className={styles.channelDragOverlay}>
+                      {section.icon && (
+                        <SidebarGroupIcon
+                          icon={section.icon}
+                          session={queries}
+                        />
+                      )}
+                      <span>{section.title}</span>
+                    </div>
+                  ) : null;
+                }
                 const channel = sidebarChannels.find(
-                  ({ id }) => id === channelId,
+                  (channel) => channel.id === id,
                 );
                 if (!channel) return null;
                 const Icon = channelIcon(channel);
@@ -1061,6 +1089,27 @@ function ReadySidebar({
                   key={section.key}
                   disabled={
                     !placementWritable || !isChannelDropSectionKey(section.key)
+                  }
+                  reorderable={
+                    orderWritable && section.key.startsWith("group:")
+                  }
+                  move={
+                    orderWritable && section.key.startsWith("group:")
+                      ? (() => {
+                          const id = section.key.slice("group:".length);
+                          const index = groupIds.indexOf(id);
+                          return {
+                            up:
+                              index > 0
+                                ? () => moveGroup(id, index - 1)
+                                : undefined,
+                            down:
+                              index < groupIds.length - 1
+                                ? () => moveGroup(id, index + 1)
+                                : undefined,
+                          };
+                        })()
+                      : undefined
                   }
                   sectionKey={section.key}
                   title={section.title}
@@ -1275,6 +1324,38 @@ function ReadySidebar({
                 </Button>
               </ToastNotice>
             ))}
+          {preferences.orderError && (
+            <div className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the move for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key === `group:${preferences.orderError?.sectionId}`,
+                )?.title ?? "this section"}
+                . {preferences.orderError.error}
+              </p>
+              <p>
+                The previous placement is shown. A partial save may already
+                exist on the relay.
+              </p>
+              <button
+                type="button"
+                disabled={!preferences.sectionOrderWritable}
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  if (failed)
+                    void preferences
+                      .reorderSections(failed.sectionId, failed.sectionIds)
+                      .catch(() => {});
+                }}
+              >
+                Retry move
+              </button>
+              <button type="button" onClick={preferences.dismissOrderError}>
+                Dismiss
+              </button>
+            </div>
+          )}
           {preferences.moves
             ?.filter((move) => !move.pending)
             .map((move) => (

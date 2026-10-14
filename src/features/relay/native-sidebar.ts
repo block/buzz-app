@@ -1,7 +1,9 @@
 import { projectSidebarRecord } from "./sidebar-registers";
 import {
   editSidebarAssignment,
+  editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  validSidebarSectionOrder,
   validSidebarSectionRemoval,
   editSidebarSort,
   editSidebarToggle,
@@ -167,6 +169,33 @@ export function nativeSidebar(transport: ReadTransport) {
           return (
             !sections.some(({ id }) => id === sectionId) &&
             !Object.values(assignments).includes(sectionId)
+          );
+        },
+        "Sidebar groups changed on another device; reload and try again",
+      );
+    },
+    async writeSidebarSectionOrder(
+      sectionIds: readonly string[],
+      signal: AbortSignal,
+    ): Promise<SidebarGroups> {
+      if (!validSidebarSectionOrder(sectionIds))
+        throw new Error("Invalid sidebar section order intent");
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
+        const next = editSidebarSectionOrder(current, createdAt, sectionIds);
+        const { sections, assignments } = project("channel-sections", next);
+        return { next, result: { sections, assignments } };
+      };
+      return mutate(
+        "channel-sections",
+        signal,
+        prepare,
+        (value) => {
+          const live = project("channel-sections", value)
+            .sections.map(({ id }) => id)
+            .filter((id) => sectionIds.includes(id));
+          return same(
+            live,
+            sectionIds.filter((id) => live.includes(id)),
           );
         },
         "Sidebar groups changed on another device; reload and try again",

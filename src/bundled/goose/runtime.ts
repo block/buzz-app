@@ -9,28 +9,27 @@
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
+import { turnNote } from "../../buzz-mcp/session-tools";
 import {
   fromOwner,
   type Agent,
   type AgentHandle,
   type Delivery,
+  type StandaloneTurn,
+  type TurnResult,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import { Lanes } from "../claude-code/lanes";
 import {
-  ATTENTION_REVIEW,
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
   systemPrompt,
-  timerPrompt,
   turnPrompt,
-  watchPrompt,
 } from "../claude-code/prompt";
-import type { ServeMcp, Settled, Spawn, ToolServer } from "./goose";
+import type { ServeMcp, Spawn, ToolServer } from "./goose";
 import { AgentSessions } from "./sessions";
 
 export type Config = Readonly<{
@@ -85,11 +84,6 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
-  /** Whether the owner has attention on: new sessions get its tools, its
-   * guidance and the end-of-turn review. */
-  attention: boolean;
-  /** Watch and timer turns, one lane per Interest. */
-  lanes: Lanes;
   memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
@@ -136,25 +130,19 @@ export class GooseRuntime {
     const current = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
-        entry.lanes.stop();
         entry.sessions.dispose();
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry)
-        this.entry(agent.pubkey, next, agent.attentionEnabled).name =
-          agent.name;
+      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
       else if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name ||
-        entry.attention !== agent.attentionEnabled
+        entry.name !== agent.name
       ) {
-        if (!agent.attentionEnabled) entry.lanes.clear();
         entry.config = next;
         entry.name = agent.name;
-        entry.attention = agent.attentionEnabled;
         entry.sessions.reconfigure();
       }
     }
@@ -182,10 +170,7 @@ export class GooseRuntime {
   }
 
   dispose() {
-    for (const entry of this.agents.values()) {
-      entry.lanes.stop();
-      entry.sessions.dispose();
-    }
+    for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
   }
 
@@ -201,13 +186,12 @@ export class GooseRuntime {
     step,
     acknowledged,
     superseded,
-    current,
   }: Delivery) {
     const settings = config(raw);
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return ignored?.();
     // goose runs commands as you; mentions need owner or delegated authority.
-    // A watch is the agent's own attention: its event is observed data,
-    // framed as such, from anyone.
-    if (trigger.type === "mention") {
+    {
       const snapshot = this.relay(agent.pubkey)?.snapshot();
       if (
         !(await fromOwner(trigger.event, agent.owner, {
@@ -227,14 +211,10 @@ export class GooseRuntime {
       }
       signal.throwIfAborted();
     }
-    const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
+    const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     void this.memory(agent.pubkey, entry);
-    if (trigger.type !== "mention") {
-      workingUntil(this.wake(entry, agent, trigger, current));
-      return;
-    }
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -286,103 +266,29 @@ export class GooseRuntime {
       .finally(() => this.notify());
   }
 
-  /** A watch or timer wake: a one-off turn in its Interest's lane. It joins
-   * no conversation. The host says whether it is still `current`, asked when
-   * its lane starts it and again once its session is open. */
-  private wake(
-    entry: Entry,
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    current: () => boolean,
-  ): Promise<Settled> {
-    const { slug } = trigger;
-    const id = slug.replace(/^watch\//, "");
-    const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
-      .interest_id;
-    let settle!: (result: Settled) => void;
-    const settled = new Promise<Settled>((resolve) => {
-      settle = resolve;
+  /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
+   * session that joins no conversation. */
+  async runOnce({
+    delivery,
+    key,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent, team } = delivery;
+    const entry = this.entry(agent.pubkey, config(delivery.config));
+    entry.handle = agent;
+    entry.team = team ?? "";
+    void this.memory(agent.pubkey, entry);
+    const done = entry.sessions.runOnce(key, prompt, {
+      title: sessionTitle(entry.name, key),
     });
-    const dropped = (why: string) => {
-      console.warn(`goose dropped a ${trigger.type} turn: ${why}`);
-      settle({ ok: true });
-    };
-    const queued = entry.lanes.add(
-      lane,
-      async () => {
-        try {
-          if (!current()) return settle({ ok: true });
-          const label = `${trigger.type}/${id}`;
-          const done = entry.sessions.runOnce(
-            label,
-            () => this.wakePrompt(agent, trigger, id, current),
-            { title: sessionTitle(entry.name, label) },
-          );
-          this.notify();
-          const result = await done;
-          this.notify();
-          if (!result.ok)
-            console.warn(
-              `goose ${trigger.type} turn failed: ${id}`,
-              result.error,
-            );
-          settle(result);
-        } finally {
-          settle({ ok: false, error: "The turn failed" });
-        }
-      },
-      () => dropped("attention was turned off or the agent stopped"),
-    );
-    if (queued !== "queued")
-      dropped(
-        queued === "full"
-          ? `too many are waiting (Interest ${lane})`
-          : "the agent stopped",
-      );
-    return settled;
+    this.notify();
+    return done.finally(() => this.notify());
   }
 
-  /** The prompt for a wake as its watch now is, or undefined when it should
-   * no longer run. */
-  private async wakePrompt(
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    id: string,
-    stillCurrent: () => boolean,
-  ) {
-    const { attention } = agent;
-    if (!stillCurrent()) return undefined;
-    const current = (await attention.show(trigger.slug)).object;
-    const type = trigger.type === "watch" ? "event" : "timer";
-    if (!current || current.type !== type) return undefined;
-    const interest = (await attention.show(`interest/${current.interest_id}`))
-      .object;
-    const instructions =
-      interest?.type === "interest"
-        ? { instructions: interest.instructions }
-        : {};
-    const text =
-      trigger.type === "watch"
-        ? watchPrompt({
-            id,
-            interest: current.interest_id,
-            ...instructions,
-            event: trigger.event,
-            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
-          })
-        : timerPrompt({
-            id,
-            interest: current.interest_id,
-            prompt: current.type === "timer" ? current.prompt : "",
-            ...instructions,
-            spent: trigger.spent,
-          });
-    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
-  }
-
-  /** `text` with the end-of-turn attention review, when attention is on. */
+  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
   private review(entry: Entry, text: string) {
-    return entry.attention ? `${text}\n\n${ATTENTION_REVIEW}` : text;
+    const note = turnNote(entry.handle);
+    return note ? `${text}\n\n${note}` : text;
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. */
@@ -503,14 +409,12 @@ export class GooseRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config, attention: boolean): Entry {
+  private entry(pubkey: string, initial: Config): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
-      attention,
-      lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -530,10 +434,7 @@ export class GooseRuntime {
         },
       };
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message, {
-        offered: entry.attention,
-        ...(handle ? { api: handle.attention } : {}),
-      });
+      return respond(client, context, message);
     };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -553,7 +454,6 @@ export class GooseRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
-          entry.attention,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -567,7 +467,6 @@ export class GooseRuntime {
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
-            attention: entry.attention,
             ...(memory === undefined ? {} : { memory }),
           }),
         };

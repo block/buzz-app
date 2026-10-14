@@ -1,6 +1,6 @@
 // Real Codex transport and persistence, synthetic account and loopback model, no external model or relay.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import {
   mkdtemp,
   mkdir,
@@ -9,13 +9,13 @@ import {
   realpath,
   rm,
   writeFile,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { build } from "rolldown";
-import manifest from "./manifest.json" with { type: "json" };
-const declaration = manifest.host.processes[1];
+const script = await readFile(new URL("./codex.sh", import.meta.url), "utf8");
 
 const root = await realpath(
   await mkdtemp(join(tmpdir(), "buzz-codex-isolation-")),
@@ -101,18 +101,28 @@ requires_openai_auth = false
     output: { dir: root, entryFileNames: "rpc.mjs", format: "esm" },
   });
   const { AppServer } = await import(join(root, "rpc.mjs"));
+  await mkdir(join(isolated, "0.1.0/bin"), { recursive: true });
+  await symlink(
+    execFileSync("which", ["codex"], { encoding: "utf8" }).trim(),
+    join(isolated, "0.1.0/bin/codex"),
+  );
+  await writeFile(join(isolated, "current"), "0.1.0");
   const nativeSpawn = async (id, options = {}) => {
     assert.equal(id, "app-server");
-    const child = spawn("sh", [...declaration.args, ...options.args], {
-      env: {
-        ...process.env,
-        HOME: root,
-        XDG_DATA_HOME: join(root, "data"),
-        CODEX_HOME: shared,
-        CODEX_SQLITE_HOME: shared,
+    const child = spawn(
+      "bash",
+      ["-c", script, "codex.sh", "server", ...options.args],
+      {
+        env: {
+          ...process.env,
+          HOME: root,
+          XDG_DATA_HOME: join(root, "data"),
+          CODEX_HOME: shared,
+          CODEX_SQLITE_HOME: shared,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    );
     child.stdout.on("data", (data) => options.onStdout?.(String(data)));
     child.stderr.on("data", (data) => options.onStderr?.(String(data)));
     const exited = new Promise((resolve, reject) => {

@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
-/// (9), an edit of its own message (40003), a
+/// (9), typing (20002), an edit of its own message (40003), a
 /// channel canvas (40100) or a request to open a DM (41010). Its profile (0)
 /// is the app's, and its memory (30174) is written by `memory`.
-const KINDS: [u16; 6] = [5, 7, 9, 40003, 40100, 41010];
+const KINDS: [u16; 7] = [5, 7, 9, 20002, 40003, 40100, 41010];
 
 /// One saved identity. The key itself stays in the OS credential store.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,8 +25,9 @@ pub struct AppAgent {
     pub owner: String,
     /// The owner's NIP-OA `auth` tag as a JSON array string.
     pub auth: String,
-    /// The agent type's key, `pluginId/typeId`, fixed at create. Rows saved
-    /// before it was recorded read as an unavailable type with no name.
+    /// The agent type's key, `pluginId/typeId`, set at create and changed by
+    /// `set_type`. Rows saved before it was recorded read as an unavailable
+    /// type with no name.
     #[serde(rename = "type", default)]
     pub agent_type: String,
     #[serde(default)]
@@ -381,9 +382,7 @@ impl AppAgents {
         if !canonical_key(owner) {
             return Err("Choose a signed-in owner".into());
         }
-        if agent_type.is_empty() || agent_type.len() > 256 {
-            return Err("Choose an agent type".into());
-        }
+        valid_type(agent_type)?;
         Ok(NewAppAgent {
             relay: canonical_relay(destination)?,
             key,
@@ -472,6 +471,11 @@ impl AppAgents {
         let name = valid_name(name)?;
         self.edit(pubkey, |agent| agent.name = name)
     }
+    /// Makes it an agent of another type; its identity and profile stay.
+    pub fn set_type(&self, pubkey: &str, agent_type: &str) -> Result<()> {
+        valid_type(agent_type)?;
+        self.edit(pubkey, |agent| agent.agent_type = agent_type.into())
+    }
     /// Sets or, with `None`, clears the profile picture: an `https` URL without
     /// credentials.
     pub fn set_picture(&self, pubkey: &str, picture: Option<String>) -> Result<()> {
@@ -531,6 +535,12 @@ fn valid_name(name: &str) -> Result<String> {
         return Err("Name the agent in one line".into());
     }
     Ok(name.into())
+}
+fn valid_type(agent_type: &str) -> Result<()> {
+    if agent_type.is_empty() || agent_type.len() > 256 {
+        return Err("Choose an agent type".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

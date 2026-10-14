@@ -12,11 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
-import manifest from "./manifest.json";
+import script from "./codex.sh?raw";
 import type { Store } from "./rpc";
-const declaration = manifest.host.processes[1];
-const command = declaration?.args ?? [];
-if (!command.length) throw new Error("Missing Codex process declaration");
+const command = ["-c", script, "codex.sh"];
 
 const execute = promisify(execFile);
 const roots: string[] = [];
@@ -43,8 +41,24 @@ async function fixture() {
     '#!/bin/sh\nprintf "%s\\n" "$CODEX_HOME" "$@"\n',
     { mode: 0o755 },
   );
-  const run = (store: Store = "isolated", source = shared) =>
-    execute("sh", [...command, store], {
+  for (const home of [
+    isolated,
+    join(root, "Library/Application Support/Buzz/codex"),
+  ]) {
+    await mkdir(join(home, "0.1.0/bin"), { recursive: true });
+    await writeFile(
+      join(home, "0.1.0/bin/codex"),
+      await readFile(join(bin, "codex")),
+      { mode: 0o755 },
+    );
+    await writeFile(join(home, "current"), "0.1.0");
+  }
+  const run = (
+    store: Store = "isolated",
+    source = shared,
+    args = ["server", store],
+  ) =>
+    execute("bash", [...command, ...args], {
       env: {
         ...process.env,
         HOME: root,
@@ -61,9 +75,9 @@ it("isolates all runtime state while sharing only configuration, instructions, s
   const { stdout } = await f.run();
   expect(stdout.trim().split("\n")).toEqual([
     f.isolated,
-    "app-server",
     "-c",
     `sqlite_home=${f.isolated}`,
+    "app-server",
   ]);
   for (const name of [
     "config.toml",
@@ -139,4 +153,20 @@ it("uses the macOS application data directory without exposing the runtime store
   expect(stdout.trim().split("\n")[0]).toBe(
     join(f.root, "Library/Application Support/Buzz/codex"),
   );
+});
+
+it("uses the same isolated home for provider sign-in and account checks", async () => {
+  const f = await fixture();
+  const { stdout } = await f.run("isolated", f.shared, [
+    "run",
+    "login",
+    "status",
+  ]);
+  expect(stdout.trim().split("\n")).toEqual([
+    f.isolated,
+    "-c",
+    `sqlite_home=${f.isolated}`,
+    "login",
+    "status",
+  ]);
 });

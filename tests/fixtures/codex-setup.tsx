@@ -3,7 +3,8 @@ import type { RelayData } from "../../src/features/relay/service";
 import { createRoot } from "react-dom/client";
 import type { AgentViewProps } from "../../src/features/agents/service";
 import type { Config } from "../../src/bundled/codex/config";
-import { createTabs } from "../../src/bundled/codex/tabs";
+import { CodexSetup } from "../../src/bundled/codex/setup";
+import { CodexProvider, createTabs } from "../../src/bundled/codex/tabs";
 import { CodexRuntime } from "../../src/bundled/codex/runtime";
 import type { Spawn, Wire } from "../../src/bundled/codex/rpc";
 import "../../src/shared/styles/globals.css";
@@ -18,6 +19,12 @@ const spawn: Spawn = async (_id, options) => {
   const exited = new Promise<number>((resolve) => {
     exit = resolve;
   });
+  if (_id === "codex") {
+    queueMicrotask(() => {
+      options?.onStdout?.("codex-cli 0.162.1\n");
+      exit(options?.args?.join(" ") === "login status" && signedOut ? 1 : 0);
+    });
+  }
   return {
     exited,
     write: async (text) => {
@@ -88,7 +95,18 @@ const runtime = new CodexRuntime(
       } as unknown as Storage)
     : undefined,
 );
-const { CodexTab } = createTabs(spawn, runtime);
+const setup = new CodexSetup(spawn);
+const provider = new CodexProvider(
+  spawn,
+  { getItem: () => null, setItem: () => undefined } as unknown as Storage,
+  setup,
+);
+const { SettingsTab, ProviderDialogBody } = createTabs(
+  provider,
+  runtime,
+  spawn,
+  setup,
+);
 const agent = {
   pubkey: "fixture",
   name: "Demo agent",
@@ -99,7 +117,11 @@ if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <main data-buzz-ui="" className="mx-auto max-w-3xl p-8">
     <PanelSubviewHost close={() => undefined}>
-      <CodexTab agent={agent} />
+      {partial ? (
+        <SettingsTab agent={agent} save={async () => undefined} />
+      ) : (
+        <ProviderDialogBody onClose={() => undefined} />
+      )}
     </PanelSubviewHost>
   </main>,
 );

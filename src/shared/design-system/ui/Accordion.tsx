@@ -20,7 +20,7 @@ export function Accordion({
   defaultValue?: string[];
   value?: string[];
   onValueChange?: (value: string[]) => void;
-  variant?: "default" | "form" | "navigation" | "activity";
+  variant?: "default" | "form" | "navigation" | "activity" | "section";
   headingLevel?: 2 | 3;
   /** Preserve local form state while its panel is collapsed. */
   keepMounted?: boolean;
@@ -48,7 +48,9 @@ export function Accordion({
               )
             }
           >
-            <BaseAccordion.Trigger className="buzz-accordion-trigger text-body">
+            <BaseAccordion.Trigger
+              className={`buzz-accordion-trigger ${variant === "section" ? "text-label-sm" : "text-body"}`}
+            >
               <span>{item.title}</span>
               <CaretDownIcon size={14} aria-hidden="true" />
             </BaseAccordion.Trigger>

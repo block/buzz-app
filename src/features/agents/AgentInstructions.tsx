@@ -1,5 +1,4 @@
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import styles from "./AgentInstructions.module.css";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
@@ -10,7 +9,6 @@ export function AgentInstructions({
   disabled,
   onChange,
   description,
-  creation = false,
 }: {
   value: string;
   disabled: boolean;
@@ -20,19 +18,17 @@ export function AgentInstructions({
 }) {
   return (
     <Field label="Instructions" description={description}>
-      <div className={creation ? styles.creation : styles.reading}>
-        <SettingsGroup>
-          <Textarea
-            appearance="content"
-            surface="inset"
-            rows={8}
-            value={value}
-            disabled={disabled}
-            placeholder={EXAMPLE}
-            onChange={(event) => onChange(event.target.value)}
-          />
-        </SettingsGroup>
-      </div>
+      <SettingsGroup>
+        <Textarea
+          appearance="content"
+          surface="inset"
+          rows={8}
+          value={value}
+          disabled={disabled}
+          placeholder={EXAMPLE}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </SettingsGroup>
     </Field>
   );
 }

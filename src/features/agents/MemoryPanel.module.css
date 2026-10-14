@@ -38,7 +38,3 @@
 .sectionHeader [class~="buzz-content-header"] {
   margin-bottom: 0;
 }
-
-.empty [class~="buzz-settings-group"] {
-  background: var(--surface-panel);
-}

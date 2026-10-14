@@ -87,8 +87,10 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
-        key={`${connection.scope}:${connection.generation}:${pubkey}`}
+        key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
         agents={agents}
+        panels={panels}
+        initialActivity={!!activityKey}
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
@@ -116,6 +118,8 @@ export function ProfilePanel({
 }
 function OwnedAgentProfile({
   agents,
+  panels,
+  initialActivity,
   pubkey,
   relay,
   session,
@@ -124,6 +128,8 @@ function OwnedAgentProfile({
   close,
 }: {
   agents: Agents;
+  panels: Panels | undefined;
+  initialActivity: boolean;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -134,6 +140,17 @@ function OwnedAgentProfile({
   const { types } = useAgents(agents);
   const owned = useAgent(agents, pubkey);
   const channels = useChannelChoices(session.channels);
+  const available = useSyncExternalStore(
+    panels?.subscribe ?? noSubscribe,
+    panels?.snapshot ?? noPanels,
+    noPanels,
+  );
+  const activity = activityTarget(pubkey, context?.channelId);
+  const resolved = panels?.resolve(activity);
+  const activityPanel =
+    resolved && available.includes(resolved) && context?.canOpen(activity)
+      ? resolved
+      : undefined;
   if (!owned) return null;
   return (
     <AgentDetails
@@ -144,6 +161,18 @@ function OwnedAgentProfile({
       channels={channels}
       memories={session.agentMemories}
       onRemoved={close}
+      initialActivity={initialActivity}
+      activity={
+        activityPanel && (
+          <PanelView
+            key={contributionKey(activityPanel)}
+            panel={activityPanel}
+            target={activity}
+            context={context}
+            close={close}
+          />
+        )
+      }
       conversation={
         context && {
           channelId: context.channelId,

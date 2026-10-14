@@ -51,6 +51,8 @@ export function AgentDetails({
   onRemoved,
   messageAction,
   conversation,
+  activity,
+  initialActivity,
 }: {
   agents: Agents;
   agent: Agent;
@@ -61,6 +63,8 @@ export function AgentDetails({
   onRemoved(): void;
   messageAction: ReactNode;
   conversation?: AgentConversation | undefined;
+  activity?: ReactNode;
+  initialActivity?: boolean;
 }) {
   const tabbed = !!usePanelTabHost();
   const reducedMotion = useReducedMotion();
@@ -304,6 +308,8 @@ export function AgentDetails({
               type={settings.type}
               channels={channels}
               conversation={conversation}
+              activity={activity}
+              initialActivity={initialActivity}
               settingsHost={settings.settingsHost}
               memories={memories}
               settingsContent={

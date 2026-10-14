@@ -249,8 +249,8 @@ export function AgentCreateHeader({
                   disabled={disabled}
                   onBusyChange={onBusyChange}
                   onChange={(value) => {
-                    // Done with no image keeps the avatar it had.
-                    if (value) onChange({ picture: value });
+                    if (value || initialAvatarPicker)
+                      onChange({ picture: value });
                     setView(initialAvatarPicker ? "collections" : "selected");
                   }}
                 />

@@ -24,7 +24,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
   const dialog = page.getByRole("dialog");
   const name = dialog.getByPlaceholder("Agent name");
   for (const theme of ["light", "dark"]) {
-    for (const width of [390, 1280]) {
+    for (const width of [390, 768, 1280]) {
       await page.setViewportSize({ width, height: 950 });
       await page.evaluate((theme) => {
         document.documentElement.classList.toggle("dark", theme === "dark");
@@ -108,6 +108,9 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   const agents = page.getByRole("region", { name: "Agents", exact: true });
   expect((await profile.boundingBox()).y).toBe((await agents.boundingBox()).y);
   await page.getByRole("tab", { name: "Attention", exact: true }).click();
+  await expect(
+    profile.getByRole("button", { name: "Add interest" }),
+  ).toBeVisible();
   const before = await profile.boundingBox();
   await page.screenshot({ path: info.outputPath("agent-profile.png") });
   await profile.getByRole("button", { name: "Agent profile actions" }).click();

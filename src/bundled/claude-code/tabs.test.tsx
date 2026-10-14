@@ -1,3 +1,8 @@
+import { AgentTabs } from "../agents/AgentTabs";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -932,3 +937,66 @@ it("keeps the shared Claude catalog across repeated provider checks", async () =
   ).toHaveLength(1);
   expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2);
 });
+
+it.each(["Identity", "Settings"])(
+  "preserves both settings drafts and retries a failed save from %s",
+  async (saveFrom) => {
+    const f = installed();
+    const Settings = tab(f.type, 0);
+    const source = agent();
+    const user = userEvent.setup();
+    const savedAgent = { ...source, place: "here" as const };
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Save failed"))
+      .mockResolvedValue(undefined);
+    const agents = { save } as unknown as Agents;
+    const type = {
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: Settings,
+        },
+      ],
+    } as unknown as RegisteredAgentType;
+    render(
+      <AgentTabs
+        agents={agents}
+        agent={savedAgent}
+        type={type}
+        settingsHost={{}}
+        channels={[]}
+        memories={undefined}
+        settingsContent={<p>Agent details</p>}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Instructions"));
+    await user.type(
+      screen.getByLabelText("Instructions"),
+      "Keep this identity draft.",
+    );
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.clear(screen.getByLabelText("Workspace"));
+    await user.type(screen.getByLabelText("Workspace"), "/tmp/combined-draft");
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    expect(screen.getByLabelText("Instructions")).toHaveValue(
+      "Keep this identity draft.",
+    );
+    if (saveFrom === "Settings")
+      await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
+      config: expect.objectContaining({
+        instructions: "Keep this identity draft.",
+        workspace: "/tmp/combined-draft",
+      }),
+    });
+  },
+);

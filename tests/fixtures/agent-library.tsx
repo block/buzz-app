@@ -73,4 +73,8 @@ const relay = {
 } as unknown as RelayData;
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
-createRoot(root).render(<AgentsPage agents={agents} relay={relay} />);
+createRoot(root).render(
+  <div className="h-screen">
+    <AgentsPage agents={agents} relay={relay} />
+  </div>,
+);

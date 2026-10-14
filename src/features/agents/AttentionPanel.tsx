@@ -3,7 +3,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 // woken through them, so the app edits them once instead of each plugin. Watches
 // and timers sit under the Interest they serve; raw JSON covers what the forms
 // leave out (tags, classifiers). Validation is the spec's, at save.
-import { useId, useState } from "react";
+import { useId, useRef, useState, type RefObject } from "react";
 import { formatItemTimestamp } from "../../shared/datetime";
 import {
   AtIcon,
@@ -139,6 +139,7 @@ export function AttentionPanel({
 }) {
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const [adding, setAdding] = useState(false);
+  const addInterest = useRef<HTMLButtonElement>(null);
   const switched = useAction();
   const skipped = Object.values(agent.skipped);
   const row = (object: WatchObject) => (
@@ -236,19 +237,23 @@ export function AttentionPanel({
           </SettingsGroup>
         </section>
       )}
-      {adding ? (
+      {adding && (
         <NewInterest
           agent={agent}
           save={save}
+          finalFocus={addInterest}
           onDone={() => setAdding(false)}
         />
-      ) : (
-        <div>
-          <Button size="compact" onClick={() => setAdding(true)}>
-            <PlusIcon size={14} aria-hidden="true" /> Add interest
-          </Button>
-        </div>
       )}
+      <div>
+        <Button
+          ref={addInterest}
+          size="compact"
+          onClick={() => setAdding(true)}
+        >
+          <PlusIcon size={14} aria-hidden="true" /> Add interest
+        </Button>
+      </div>
     </div>
   );
 }
@@ -687,10 +692,12 @@ const straightQuotes = (text: string) =>
 
 function NewInterest({
   agent,
+  finalFocus,
   save,
   onDone,
 }: {
   agent: Agent;
+  finalFocus: RefObject<HTMLButtonElement | null>;
   save: Save;
   onDone(): void;
 }) {
@@ -715,6 +722,7 @@ function NewInterest({
     <Dialog
       open
       title="Add interest"
+      finalFocus={finalFocus}
       preventClose={action.pending}
       onOpenChange={(open) => {
         if (!open) onDone();

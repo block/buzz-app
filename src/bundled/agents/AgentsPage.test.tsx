@@ -1,6 +1,15 @@
+import type {
+  Panels,
+  PanelProps,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import { activityTarget } from "../../features/agents/activity-target";
 import { ProfilePanel } from "../profiles/ProfilePanel";
 import { createRelaySession } from "../../features/relay/session";
-import { profileTarget } from "../../features/profiles/target";
+import {
+  profileActivityViewTarget,
+  profileTarget,
+} from "../../features/profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -1351,19 +1360,15 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
   expect(
     within(dialog).queryByRole("textbox", { name: "Agent name" }),
   ).not.toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: "Back" }),
-  ).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Back" })).toBeVisible();
   expect(agents.save).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   expect(
-    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
+    within(dialog).getByRole("button", { name: /^Gloopies$/ }),
   ).toBeVisible();
   await user.keyboard("{Escape}");
   expect(dialog).toBeVisible();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: /^Gloopies$/ }));
   expect(
     within(dialog).getByRole("button", { name: "Gloopies 1" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -1381,4 +1386,126 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
   expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
     picture: expect.any(String),
   });
+});
+
+it("opens owned-agent activity for the originating conversation and honors admission", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    viewer: ada.owner,
+    session: owner.session,
+  };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  const activity = activityTarget(ada.pubkey, "channel-a");
+  const renderActivity = vi.fn(({ target, context }: PanelProps) => (
+    <p>
+      Transcript: {target} / {context?.channelId}
+    </p>
+  ));
+  const panel = {
+    key: "test/activity",
+    revision: "1",
+    pluginId: "test",
+    id: "activity",
+    title: "Activity",
+    matches: (target: string) => target === activity,
+    component: renderActivity,
+  } as RegisteredPanel;
+  const available = [panel];
+  const panels: Panels = {
+    register: vi.fn(),
+    resolve: (target) => (target === activity ? panel : undefined),
+    snapshot: () => available,
+    subscribe: () => () => {},
+  };
+  const context = {
+    channelId: "channel-a",
+    canOpen: vi.fn(() => true),
+    open: vi.fn(() => true),
+  };
+  const close = vi.fn();
+  try {
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        panels={panels}
+        target={profileTarget(ada.pubkey) ?? ""}
+        context={context}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        panels={panels}
+        target={profileActivityViewTarget(ada.pubkey) ?? ""}
+        context={context}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText(`Transcript: ${activity} / channel-a`),
+    ).toBeVisible();
+    expect(context.canOpen).toHaveBeenCalledWith(activity);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: "Identity" }));
+    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        panels={panels}
+        target={profileActivityViewTarget(ada.pubkey) ?? ""}
+        context={{ ...context, canOpen: () => false }}
+        close={close}
+      />,
+    );
+    expect(
+      screen.queryByRole("tab", { name: "Activity" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("removes an existing avatar through the image editor and explicit Save", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([
+    { ...agent("Ada", 1), picture: "https://example.com/avatar.png" },
+  ]);
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await user.click(within(dialog).getByRole("button", { name: "Use image" }));
+  const url = within(dialog).getByRole("textbox", { name: /url/i });
+  await user.clear(url);
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
 });

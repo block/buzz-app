@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { describeWatch } from "./attention";
@@ -274,3 +280,34 @@ it("adds an interest in a modal and retains the draft after a save error", async
     },
   });
 });
+
+it.each(["cancel", "escape", "save"])(
+  "restores Add interest focus after %s",
+  async (way) => {
+    const user = userEvent.setup();
+    render(<AttentionPanel agent={agent} save={vi.fn(async () => {})} />);
+    await user.click(screen.getByRole("button", { name: "Add interest" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add interest" });
+    if (way === "cancel")
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    else if (way === "escape") await user.keyboard("{Escape}");
+    else {
+      await user.type(
+        within(dialog).getByLabelText("Interest name"),
+        "New topic",
+      );
+      await user.type(
+        within(dialog).getByLabelText("Instructions"),
+        "Watch updates.",
+      );
+      await user.click(
+        within(dialog).getByRole("button", { name: "Add interest" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add interest" }),
+      ).toHaveFocus(),
+    );
+  },
+);

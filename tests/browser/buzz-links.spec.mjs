@@ -163,10 +163,12 @@ test("activating a panel from a linked thread retires the navigation-owned threa
     name: "Thread",
     exact: true,
   });
+  // Settle the controller before looking for the panel so a failure records
+  // the navigation status (opening/failed) rather than a missing element.
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
   await expect(
     thread.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await expect.poll(async () => (await state(page)).status).toBe("opened");
   // Open a panel while the linked thread is showing. Navigation still owns the
   // thread target, so it must be retired rather than share the rail slot with
   // the newly activated panel. (The fixture registers a catch-all panel.)

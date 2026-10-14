@@ -173,7 +173,8 @@ function LiveSessions(props: LiveProps) {
           }}
           completed={() => {
             setLifecycle(undefined);
-            void navigator?.open(meTarget(scope));
+            if (!lifecycle.origin?.aborted)
+              void navigator?.open(meTarget(scope));
           }}
         />
       )}

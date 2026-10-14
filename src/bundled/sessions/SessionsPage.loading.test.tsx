@@ -352,6 +352,33 @@ it("drops a pending Delete confirmation when its visit ends", async () => {
   expect(f.open).not.toHaveBeenCalled();
 });
 
+it("stays put when a confirmation lands after its visit ends but before rerender", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const settled = f.run.getMockImplementation();
+  f.run.mockImplementation(async (action) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await settled?.(action);
+  });
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Archive channel",
+    }),
+  );
+  await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  f.abort.abort();
+  await act(async () => finish());
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("returns focus to Session actions when the confirmation is cancelled", async () => {
   const f = fixture();
   f.mount();

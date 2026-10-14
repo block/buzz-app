@@ -1443,6 +1443,11 @@ button.mediaPreview {
     var(--border-standard)
   );
 }
+@media (forced-colors: active) {
+  .text blockquote::before {
+    background: CanvasText;
+  }
+}
 .text blockquote > :first-child {
   margin-top: 0;
 }

@@ -123,5 +123,25 @@ test("sent quotes fit their content and retain internal paragraph spacing", asyn
   await expect(preview.locator("p").first()).toHaveText("Before");
   await expect(preview.locator("p").last()).toHaveText("After");
   await checkGeometry();
+  // Chromium models Windows/WebView2 High Contrast; WebKit has no emulation.
+  if (page.context().browser().browserType().name() === "chromium") {
+    await page.emulateMedia({ forcedColors: "active" });
+    expect(
+      await page.evaluate(() => matchMedia("(forced-colors: active)").matches),
+    ).toBe(true);
+    for (const quote of await preview.locator("blockquote").all()) {
+      const textColor = await quote.evaluate(
+        (element) => getComputedStyle(element).color,
+      );
+      await expect
+        .poll(() =>
+          quote.evaluate(
+            (element) => getComputedStyle(element, "::before").backgroundColor,
+          ),
+        )
+        .toBe(textColor);
+    }
+    await page.emulateMedia({ forcedColors: "none" });
+  }
   expect(errors.unexplained()).toEqual([]);
 });

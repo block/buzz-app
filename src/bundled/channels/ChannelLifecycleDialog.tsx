@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
@@ -53,6 +53,7 @@ export function ChannelLifecycleDialog({
   close,
   completed,
   onSubmit,
+  failed,
 }: {
   channelId: string;
   channelName: string;
@@ -61,7 +62,12 @@ export function ChannelLifecycleDialog({
   close(): void;
   completed(): void;
   onSubmit?(): void;
+  failed?(title: string, message: string): void;
 }) {
+  const callbacks = useRef({ completed, failed });
+  useLayoutEffect(() => {
+    callbacks.current = { completed, failed };
+  });
   const cancel = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -83,11 +89,14 @@ export function ChannelLifecycleDialog({
       await lifecycle.run(action, channelId, controller.signal);
       if (!controller.signal.aborted) {
         notify(`${copy[action].done}: ${channelName}`, "success");
-        completed();
+        callbacks.current.completed();
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        setError(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        if (callbacks.current.failed)
+          callbacks.current.failed(`${copy[action].title} failed`, message);
+        else setError(message);
       }
     } finally {
       operation.current = undefined;

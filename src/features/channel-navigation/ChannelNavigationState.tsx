@@ -1,3 +1,5 @@
+import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   createContext,
   useCallback,
@@ -87,6 +89,9 @@ type ActivityAgent = {
 };
 type Handoff = State & {
   menuActions: ReturnType<typeof createMenuActions>;
+  lifecycleCallbacks: RefObject<
+    { close(): void; completed(): void } | undefined
+  >;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   updateDraftParents(update: (previous: string[]) => string[]): void;
@@ -117,6 +122,14 @@ export function ChannelNavigationProvider({
   const scope = connection.scope ?? "disconnected";
   // biome-ignore lint/correctness/useExhaustiveDependencies: retire all sidebar callbacks when the relay session or scope changes.
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
+  const lifecycleCallbacks = useRef<
+    { close(): void; completed(): void } | undefined
+  >(undefined);
+  const [failure, setFailure] = useState<{
+    session: RelaySession;
+    title: string;
+    message: string;
+  }>();
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
   const [state, setState] = useState<State>(() =>
@@ -159,6 +172,7 @@ export function ChannelNavigationProvider({
     () => ({
       ...state,
       menuActions,
+      lifecycleCallbacks,
       activityThread,
       activityAgent,
       updateDraftParents(change) {
@@ -241,6 +255,37 @@ export function ChannelNavigationProvider({
   return (
     <ChannelNavigationContext value={value}>
       {children}
+      {state.session === connection.session &&
+        state.lifecycleDialog &&
+        !state.lifecycleDialog.origin?.aborted && (
+          <ChannelLifecycleDialog
+            key={`${scope}:${connection.generation}`}
+            channelId={state.lifecycleDialog.channel.id}
+            channelName={state.lifecycleDialog.channel.name}
+            action={state.lifecycleDialog.action}
+            lifecycle={connection.session.channelLifecycle}
+            onSubmit={value.beginLifecycle}
+            close={() => {
+              lifecycleCallbacks.current?.close();
+              value.closeLifecycle();
+            }}
+            completed={() => {
+              lifecycleCallbacks.current?.completed();
+              value.closeLifecycle();
+            }}
+            failed={(title, message) => {
+              setFailure({ session: connection.session, title, message });
+              value.closeLifecycle();
+            }}
+          />
+        )}
+      {failure?.session === connection.session && (
+        <ToastNotice
+          title={failure.title}
+          description={failure.message}
+          onDismiss={() => setFailure(undefined)}
+        />
+      )}
     </ChannelNavigationContext>
   );
 }

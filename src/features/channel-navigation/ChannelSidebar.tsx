@@ -9,7 +9,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { useMePlacement } from "../sessions/personal";
@@ -892,26 +891,20 @@ function ReadySidebar({
     });
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
-  return (
-    <>
-      {lifecycleDialog && !lifecycleDialog.origin?.aborted && (
-        <ChannelLifecycleDialog
-          channelId={lifecycleDialog.channel.id}
-          channelName={lifecycleDialog.channel.name}
-          action={lifecycleDialog.action}
-          lifecycle={lifecycle}
-          onSubmit={handoff?.beginLifecycle}
-          close={() => {
+  const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  useLayoutEffect(() => {
+    if (!lifecycleCallbacks) return;
+    lifecycleCallbacks.current = lifecycleDialog
+      ? {
+          close: () => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
             lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
               ? lifecycleDialog.trigger
               : lifecycleDialog.focusFallback;
-            handoff?.closeLifecycle();
-          }}
-          completed={() => {
+          },
+          completed: () => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
-            handoff?.closeLifecycle();
             // Archive changes visibility, not access or the current destination.
             if (
               lifecycleDialog.action === "archive" ||
@@ -943,9 +936,18 @@ function ReadySidebar({
                 });
               }
             }
-          }}
-        />
-      )}
+          },
+        }
+      : undefined;
+  });
+  useLayoutEffect(
+    () => () => {
+      if (lifecycleCallbacks) lifecycleCallbacks.current = undefined;
+    },
+    [lifecycleCallbacks],
+  );
+  return (
+    <>
       {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
           channelName={creatingFor.channel.name}

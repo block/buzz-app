@@ -166,22 +166,28 @@ function fixture(
         <button type="button">Projects</button>
       </nav>
     ),
+    sidebarVisible = true,
   ) => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
-        <ChannelSidebar
-          relay={relay}
-          navigator={navigator}
-          target={{
-            version: 1,
-            kind: "conversation",
-            channelId: id,
-            scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-          }}
-          sessionsEnabled={sessionsEnabled}
-        >
-          {pages}
-        </ChannelSidebar>
+        {sidebarVisible && (
+          <ChannelSidebar
+            relay={relay}
+            navigator={navigator}
+            target={{
+              version: 1,
+              kind: "conversation",
+              channelId: id,
+              scope: {
+                viewer: "viewer",
+                communityOrigin: "https://relay.test",
+              },
+            }}
+            sessionsEnabled={sessionsEnabled}
+          >
+            {pages}
+          </ChannelSidebar>
+        )}
       </ChannelNavigationProvider>
     </ToastProvider>
   );
@@ -826,3 +832,164 @@ it.each(["archive", "delete"] as const)(
     else expect(h.navigator.open).not.toHaveBeenCalled();
   },
 );
+
+function pendingLifecycle(action: "archive" | "delete" | "leave" | "hide") {
+  const h = fixture();
+  const channel = h.list.channels[1];
+  assert(channel);
+  let finish!: () => void;
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((resolve, fail) => {
+    finish = resolve;
+    reject = fail;
+  });
+  const run = vi.fn(
+    (_action: unknown, _id: string, _signal?: AbortSignal) => pending,
+  );
+  h.session.channelLifecycle = {
+    ...h.session.channelLifecycle,
+    available: true,
+    run,
+  };
+  function Start() {
+    const navigation = useChannelNavigation();
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          assert(channel);
+          navigation?.openLifecycle(channel, action);
+        }}
+      >
+        Start action
+      </button>
+    );
+  }
+  const view = (target = "beta", visible = true) =>
+    h.view(target, true, <Start />, visible);
+  const mounted = render(view());
+  return {
+    ...h,
+    run,
+    finish,
+    reject,
+    mounted,
+    view,
+    async start() {
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Start action" }));
+      await user.click(
+        screen.getByRole("button", {
+          name: {
+            archive: "Archive channel",
+            delete: "Delete channel",
+            leave: "Leave channel",
+            hide: "Hide conversation",
+          }[action],
+        }),
+      );
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    },
+  };
+}
+
+it.each(["archive", "delete"] as const)(
+  "submitted %s survives sidebar swaps without reopening confirmation",
+  async (action) => {
+    const h = pendingLifecycle(action);
+    await h.start();
+    try {
+      h.mounted.rerender(h.view("beta", false));
+      expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(false);
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(
+        screen.getByRole("dialog", {
+          name:
+            action === "archive" ? "Archiving channel…" : "Deleting channel…",
+        }),
+      ).toBeVisible();
+    } finally {
+      await act(async () => h.finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: beta"
+          : "Channel deleted: beta",
+    });
+    h.mounted.rerender(h.view("alpha"));
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["delete", "leave", "hide"] as const)(
+  "pending %s does not redirect a newer conversation",
+  async (action) => {
+    const h = pendingLifecycle(action);
+    await h.start();
+    try {
+      h.mounted.rerender(h.view("gamma"));
+    } finally {
+      await act(async () => h.finish());
+    }
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull(),
+    );
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it("a failed lifecycle action releases its gate while keeping recovery visible", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  await act(async () =>
+    h.reject(new Error("Refresh channels before trying again.")),
+  );
+  await screen.findByRole("dialog", { name: "Delete channel failed" });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Start action" }));
+  expect(screen.getByRole("dialog", { name: "Delete beta?" })).toBeVisible();
+  expect(
+    screen.getByText("Refresh channels before trying again."),
+  ).toBeVisible();
+  expect(h.run).toHaveBeenCalledOnce();
+});
+
+it("session teardown still aborts submitted lifecycle work", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  h.mounted.unmount();
+  expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(true);
+  await act(async () => h.finish());
+  expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
+it("a replacement relay session cancels the previous submitted action", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  const replacement = fixture();
+  h.mounted.rerender(replacement.view("alpha"));
+  expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(true);
+  await act(async () => h.finish());
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  expect(replacement.navigator.open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("a sidebar remount does not resubmit or redirect pending work", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  try {
+    h.mounted.rerender(h.view("beta", false));
+    h.mounted.rerender(h.view("gamma"));
+    expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(false);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  } finally {
+    await act(async () => h.finish());
+  }
+  await screen.findByRole("dialog", { name: "Channel deleted: beta" });
+  expect(h.run).toHaveBeenCalledOnce();
+  expect(h.navigator.open).not.toHaveBeenCalled();
+});

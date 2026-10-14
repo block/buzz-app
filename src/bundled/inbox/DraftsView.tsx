@@ -43,6 +43,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function DraftsView({
   session,
@@ -268,7 +269,7 @@ export function DraftsView({
                         size="default"
                         alt=""
                         fallback={label}
-                        src={artwork ? session.media(artwork) : undefined}
+                        src={avatarMedia(artwork, session.media)}
                         shape={
                           profiles.get(first)?.isAgent ? "squircle" : "circle"
                         }

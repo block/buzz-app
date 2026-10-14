@@ -24,7 +24,6 @@ import {
   MessageTimestamp,
   MessageTimestampHint,
 } from "./MessageTimestamp";
-import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -268,16 +267,11 @@ function MessageRowContent({
       profile?.isAgent
     ) &&
     activityView &&
-    canOpenLink?.(activityView) &&
-    canOpenLink(activityTarget(row.authorId, row.channelId));
+    canOpenLink?.(activityView);
   const activityItem = canViewActivity && (
     <MenuItem
       onClick={() => {
-        if (
-          canOpenLink?.(activityView) &&
-          canOpenLink(activityTarget(row.authorId, row.channelId))
-        )
-          onOpenLink(activityView);
+        if (canOpenLink?.(activityView)) onOpenLink(activityView);
       }}
     >
       <MenuIcon>

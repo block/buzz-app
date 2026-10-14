@@ -739,6 +739,8 @@ export function relayBrokerPlugin({
   agentLibrary = readAgentLibrary,
   builderlab: builderlabOptions = {},
   archiveFile,
+  // Tests that hold EOSE on purpose lengthen this real-time deadline.
+  liveSetupTimeoutMs,
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -1738,6 +1740,8 @@ export function relayBrokerPlugin({
               },
               socketFactory,
               principal.live,
+              undefined,
+              liveSetupTimeoutMs,
             );
             principal.streams++;
             traffic.observe(observer);

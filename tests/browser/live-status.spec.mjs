@@ -5,77 +5,84 @@ test.use({
   productionBroker: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
-test("clean pending setup stays in diagnostics and never flashes a warning during channel switches", async ({
-  page,
-  app,
-}) => {
-  app.relay.holdEose("beta");
-  await page.goto(app.origin);
-  await page.evaluate(() => {
-    window.__bannerSeen = [];
-    window.__bannerObserver = new MutationObserver(() => {
-      for (const status of document.querySelectorAll(
-        '[role="status"][aria-label="Reconnecting to relay…"], [role="status"][aria-label="Live updates limited"]',
-      )) {
-        window.__bannerSeen.push(status.textContent);
-      }
+test.describe("held setup", () => {
+  // Beta's EOSE stays held through the channel switch and diagnostics. On a
+  // slow runner that can pass the broker's real-time 10 s setup deadline,
+  // which fails the route and rightly shows recovery. This test is about
+  // pending setup, not that deadline.
+  test.use({ liveSetupTimeoutMs: 120_000 });
+  test("clean pending setup stays in diagnostics and never flashes a warning during channel switches", async ({
+    page,
+    app,
+  }) => {
+    app.relay.holdEose("beta");
+    await page.goto(app.origin);
+    await page.evaluate(() => {
+      window.__bannerSeen = [];
+      window.__bannerObserver = new MutationObserver(() => {
+        for (const status of document.querySelectorAll(
+          '[role="status"][aria-label="Reconnecting to relay…"], [role="status"][aria-label="Live updates limited"]',
+        )) {
+          window.__bannerSeen.push(status.textContent);
+        }
+      });
+      window.__bannerObserver.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
     });
-    window.__bannerObserver.observe(document.body, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-    });
-  });
 
-  await openPage(page, "Messages");
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
-  const warning = page.getByRole("status", {
-    name: /^(Reconnecting to relay…|Live updates limited)$/,
-  });
-  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
-  await expect(warning).toHaveCount(0);
-  const streams = () =>
-    app.report.brokerRequests.filter((r) => r.url.endsWith("/stream")).length;
-  const before = streams();
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-  ).toBeVisible();
-  await expect(warning).toHaveCount(0);
-  await openChannelDetails(page);
-  await openDiagnostics(page);
-  await expect(
-    page.getByText("Live updates: connecting", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Close Channel settings tab", exact: true })
-    .click();
-  expect(app.relay.rejected).toHaveLength(0);
-  expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
-    0,
-  );
-  expect(streams()).toBe(before);
-  app.relay.releaseEose("beta");
-  await expect(warning).toHaveCount(0);
-  for (const channel of ["Alpha", "Beta", "Alpha", "Beta"]) {
-    await page.getByRole("button", { name: channel, exact: true }).click();
+    await openPage(page, "Messages");
     await expect(
-      page.getByRole("textbox", { name: `Message #${channel}`, exact: true }),
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
-  }
-  const warm = await page.evaluate(() => {
-    window.__bannerObserver.disconnect();
-    return window.__bannerSeen;
-  });
-  expect(warm).toEqual([]);
-  expect(streams()).toBe(before);
-  app.report.measurements.push({
-    rejected: app.relay.rejected,
-    warmSwitchWarnings: warm,
-    streamsBefore: before,
-    streamsAfter: streams(),
+    const warning = page.getByRole("status", {
+      name: /^(Reconnecting to relay…|Live updates limited)$/,
+    });
+    await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+    await expect(warning).toHaveCount(0);
+    const streams = () =>
+      app.report.brokerRequests.filter((r) => r.url.endsWith("/stream")).length;
+    const before = streams();
+    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await expect(warning).toHaveCount(0);
+    await openChannelDetails(page);
+    await openDiagnostics(page);
+    await expect(
+      page.getByText("Live updates: connecting", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
+      .click();
+    expect(app.relay.rejected).toHaveLength(0);
+    expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
+      0,
+    );
+    expect(streams()).toBe(before);
+    app.relay.releaseEose("beta");
+    await expect(warning).toHaveCount(0);
+    for (const channel of ["Alpha", "Beta", "Alpha", "Beta"]) {
+      await page.getByRole("button", { name: channel, exact: true }).click();
+      await expect(
+        page.getByRole("textbox", { name: `Message #${channel}`, exact: true }),
+      ).toBeVisible();
+    }
+    const warm = await page.evaluate(() => {
+      window.__bannerObserver.disconnect();
+      return window.__bannerSeen;
+    });
+    expect(warm).toEqual([]);
+    expect(streams()).toBe(before);
+    app.report.measurements.push({
+      rejected: app.relay.rejected,
+      warmSwitchWarnings: warm,
+      streamsBefore: before,
+      streamsAfter: streams(),
+    });
   });
 });
 

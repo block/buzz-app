@@ -176,6 +176,7 @@ export function useChannelTabState(
     sessions.set(session, store);
   }
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
+  const snapshot = store.snapshot;
   const setChannels = store.update;
   const key = JSON.stringify([page, channelId ?? ""]);
   const state = channels[key] ?? empty;
@@ -445,6 +446,8 @@ export function useChannelTabState(
   return useMemo(
     () => ({
       ...state,
+      // Synchronous actions need the selection before React rerenders.
+      getSelected: () => snapshot()[key]?.selected ?? empty.selected,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -462,6 +465,8 @@ export function useChannelTabState(
     }),
     [
       state,
+      snapshot,
+      key,
       setEntries,
       retireMenuEntries,
       setTabs,

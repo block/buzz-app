@@ -340,7 +340,7 @@ it("a tab-placed channel launcher opens one tab beside the threads and toggles i
   expect(launcher).toHaveAttribute("aria-pressed", "false");
 });
 
-function launcherHarness() {
+function launcherHarness(mainPane = false) {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {
     viewer: "viewer",
@@ -386,6 +386,7 @@ function launcherHarness() {
       continuingVisit: true,
       isLive: () => true,
       openLink: () => false,
+      mainPane,
     });
     return <>{workspace.drawer.launchers}</>;
   }
@@ -695,3 +696,63 @@ it("opens a linked thread from a readable channel through one stable opener", ()
     setThreadPlacementPreference("side");
   }
 });
+
+it.each(["linked", "conversation"] as const)(
+  "%s thread opening preserves only the selected side panel's context",
+  (opener) => {
+    setThreadPlacementPreference("main");
+    const h = launcherHarness(true);
+    const openThread = (root: string) =>
+      opener === "linked"
+        ? h.workspace().openLinkedThread("alpha", root, root)
+        : h.workspace().openConversationThread("alpha", root, root);
+    const context = () => {
+      const item = h
+        .workspace()
+        .items.find((item) => item.id === "fixture:work:work:a");
+      if (!item) throw new Error("no Work tab");
+      return (item.content as { props: { context: PanelContext } }).props
+        .context;
+    };
+    try {
+      h.toggle("work:a");
+      const panelContext = context();
+      act(() => {
+        openThread("main-root");
+        // The original panel remains active even before React rerenders.
+        expect(panelContext.open("work:a")).toBe(true);
+      });
+      expect(h.workspace().selectedTab).toBe("fixture:work:work:a");
+      expect(h.workspace().selectedMain).toBe("thread:alpha:main-root");
+      act(() => expect(context().open("work:a")).toBe(true));
+
+      setThreadPlacementPreference("side");
+      act(() => openThread("main-root"));
+      // Reopening an existing main tab keeps its pane despite the preference.
+      expect(h.workspace().selectedMain).toBe("thread:alpha:main-root");
+      act(() => expect(context().push?.("work:b")).toBe(true));
+
+      h.toggle("work:a");
+      const inactiveContext = context();
+      act(() => {
+        openThread("side-root");
+        expect(inactiveContext.open("work:c")).toBe(false);
+      });
+      expect(h.workspace().selectedTab).toBe("thread:alpha:side-root");
+      h.toggle("work:a");
+      setThreadPlacementPreference("main");
+      const reselectedContext = context();
+      act(() => {
+        openThread("side-root");
+        // An existing side tab still takes the side selection.
+        expect(reselectedContext.push?.("work:c")).toBe(false);
+      });
+      expect(h.workspace().selectedTab).toBe("thread:alpha:side-root");
+      expect(h.workspace().items.map((item) => item.id)).not.toContain(
+        "fixture:work:work:c",
+      );
+    } finally {
+      setThreadPlacementPreference("side");
+    }
+  },
+);

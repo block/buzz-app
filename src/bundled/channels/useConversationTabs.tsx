@@ -468,7 +468,6 @@ export function useConversationTabs({
     intent?: "reply",
   ) => {
     if (!currentVisit()) return;
-    opening.current = undefined;
     // Flat sessions keep their side-only host; channels support both panes.
     tabState.openThreadTab(
       channelId,
@@ -477,6 +476,11 @@ export function useConversationTabs({
       intent,
       mainPane ? undefined : "side",
     );
+    if (
+      opening.current &&
+      panelTabId(opening.current) !== tabState.getSelected()
+    )
+      opening.current = undefined;
   };
   const openConversationLink = (
     channelId: string,
@@ -551,7 +555,6 @@ export function useConversationTabs({
     linkedThread.current = (channelId, messageId, rootId) => {
       if (!currentVisit() || !tabChannel({ kind: "thread", channelId }))
         return false;
-      opening.current = undefined;
       tabState.openThreadTab(
         channelId,
         messageId,
@@ -559,6 +562,11 @@ export function useConversationTabs({
         undefined,
         mainPane && channelId === currentId ? undefined : "side",
       );
+      if (
+        opening.current &&
+        panelTabId(opening.current) !== tabState.getSelected()
+      )
+        opening.current = undefined;
       return true;
     };
   });

@@ -536,6 +536,29 @@ it("creates a channel from its owner's template, reporting each agent it could n
   );
 });
 
+it("adds no template agents when it cannot start the Canvas", async () => {
+  const { client, published } = relay();
+  const publish = client.publish;
+  client.publish = vi.fn(async (template: Template) => {
+    if (template.kind === 40100) throw new Error("canvas refused");
+    return publish(template);
+  });
+  client.templates = vi.fn(async () => [
+    { name: "Launch", canvas: "# Plan", agents: [alice] },
+  ]);
+  const answer = await callTool(client, {}, "channel", {
+    action: "create",
+    name: "launch",
+    visibility: "private",
+    template: "Launch",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(published.map((template) => template.kind)).toEqual([9007]);
+  expect(answer).toBe(
+    `created ${id}\nCanvas not started, so no agents were added: canvas refused`,
+  );
+});
+
 it("creates nothing from a template it cannot name exactly", async () => {
   const { client, published } = relay();
   const create = (template: string) =>
@@ -715,6 +738,16 @@ it("adds members with a role and removes others, reporting each", async () => {
   await expect(
     callTool(client, { channel: room }, "members", { add: [nested] }),
   ).rejects.toThrow(`not added ${nested}: restricted: not an admin`);
+});
+
+it("changes each member once, however their key is written", async () => {
+  const { client, published } = relay();
+  const answer = await callTool(client, { channel: room }, "members", {
+    add: [bob, bob.toUpperCase()],
+    remove: [alice, alice.toUpperCase()],
+  });
+  expect(published.map((template) => template.kind)).toEqual([9000, 9001]);
+  expect(answer).toBe(`added ${bob}\nremoved ${alice} Alice Smith`);
 });
 
 it("refuses member changes that do not fit, before publishing", async () => {

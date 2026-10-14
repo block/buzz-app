@@ -673,6 +673,8 @@ class Tools {
       return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}.`;
     const lines = [`created ${id}`];
     if (!template) return lines.join("\n");
+    // The template's own agents, as Buzz adds them; each is tried.
+    const agents = template.agents.filter((key) => key !== this.client.pubkey);
     if (template.canvas.trim())
       try {
         await this.client.publish({
@@ -685,10 +687,12 @@ class Tools {
         });
         lines.push("started the Canvas");
       } catch (error) {
-        lines.push(`Canvas not started: ${reason(error)}`);
+        // As in Buzz, agents join only once the template's Canvas is started.
+        lines.push(
+          `Canvas not started${agents.length ? ", so no agents were added" : ""}: ${reason(error)}`,
+        );
+        return lines.join("\n");
       }
-    // The template's own agents, as Buzz adds them; each is tried.
-    const agents = template.agents.filter((key) => key !== this.client.pubkey);
     if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
     return lines.join("\n");
   }
@@ -1047,13 +1051,13 @@ function target(tools: Tools, args: Args) {
   return channel;
 }
 
-/** A list of pubkeys or npubs; any other entry is refused, not dropped. */
+/** A list of pubkeys or npubs, each once; any other entry is refused, not dropped. */
 function keys(args: Args, name: string) {
   const value = args[name];
   if (value === undefined) return [];
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
     throw new Error(`${name} must be a list of pubkeys.`);
-  return value.map(pubkey);
+  return [...new Set(value.map(pubkey))];
 }
 
 /** An optional text argument, trimmed; refused when it is not text. */

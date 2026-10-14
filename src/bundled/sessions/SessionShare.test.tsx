@@ -69,7 +69,11 @@ function fixture(direct = false) {
       metadata(relay, source, "Work", clock, [
         ["t", "stream"],
         ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
+        // Me chats carry the personal line; only explicit conversion clears it.
+        [
+          "about",
+          `Buzz session (buzz.sessions/v1)${direct ? "\npersonal" : ""}`,
+        ],
       ]),
     ],
     [

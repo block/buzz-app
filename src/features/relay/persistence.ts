@@ -81,7 +81,11 @@ export function createHeadPersistence(
     return opening;
   }
   /** Runs `handler` with a request's result unless its transaction ended first.
-   * Work callbacks issue follow-up requests only through this. */
+   * Work callbacks issue follow-up requests only through this, and only
+   * synchronously inside `handler`: after an await or microtask the
+   * transaction has auto-committed, so a follow-up request would throw
+   * TransactionInactiveError on a healthy transaction and the catch below
+   * would mistake that for an abort and resolve with a partial result. */
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
   async function transact<T>(
     mode: IDBTransactionMode,

@@ -584,6 +584,7 @@ async function launch(options: Launch) {
       served++;
     },
     roster: () => owner.session.live.snapshot().roster.state,
+    list: () => owner.session.channels.list(),
     reminder,
     history,
     reminders: () => owner.session.reminders?.snapshot(),
@@ -728,6 +729,13 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
       await vi.waitFor(() => expect(app.show).toHaveBeenCalledTimes(banners));
       await vi.waitFor(() => expect(app.saved()).toBe("5000"));
       if (rest.revoke) expect(app.roster()).toBe("verified");
+      // Only an overflowing third page leaves the list capped; a short page
+      // would complete it and clear coverage.
+      if (rest.roster === "capped")
+        expect(app.list()).toMatchObject({
+          status: "ready",
+          coverage: "partial",
+        });
       await app.refresh();
       expect(app.show).toHaveBeenCalledTimes(banners);
     } finally {

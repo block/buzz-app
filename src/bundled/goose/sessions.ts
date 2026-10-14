@@ -92,7 +92,13 @@ export type SessionsOptions = Readonly<{
   onChange?(): void;
 }>;
 
-type Process = { goose: GooseProcess; cwd: string; fingerprint: string };
+type Process = {
+  goose: GooseProcess;
+  cwd: string;
+  fingerprint: string;
+  /** Sessions opening in it, not yet recorded as anything's. */
+  opening: number;
+};
 type Live = {
   session: GooseSession;
   process: Process;
@@ -104,7 +110,9 @@ type Live = {
 export class AgentSessions {
   /** The process new sessions open in. One started with older settings keeps
    * running while a session in it works. */
-  private current: { fingerprint: string; ready: Promise<Process> } | undefined;
+  private current:
+    | { fingerprint: string; ready: Promise<Process>; process?: Process }
+    | undefined;
   private readonly live = new Map<string, Live>();
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
@@ -184,12 +192,15 @@ export class AgentSessions {
     const starting = (async () => {
       // Perhaps built for a session closed since, which had been shown the rest.
       if (this.had.has(key) && fresh) text = await fresh();
-      const live = await this.open(key, title);
+      const live = await this.open(
+        key,
+        title,
+        (live) => this.disposed || this.adopt(key, live),
+      );
       if (this.disposed) {
         void this.close(live);
         throw new Error("goose was stopped");
       }
-      this.adopt(key, live);
       if (signal?.aborted) return {};
       this.touch(key, live, seen);
       return { settled: this.answer(key, live, text, activity) };
@@ -229,12 +240,15 @@ export class AgentSessions {
     const key = `${label} #${++this.onceCount}`;
     this.once.set(key, undefined);
     this.options.onChange?.();
-    const opening = this.open(key, title);
+    const opening = this.open(
+      key,
+      title,
+      (live) => this.once.has(key) && this.once.set(key, live),
+    );
     let live: Live | undefined;
     try {
       live = await abortable(opening, signal);
       if (this.disposed) return STOPPED;
-      this.once.set(key, live);
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
       return await abortable(live.session.send(text), signal);
@@ -285,11 +299,34 @@ export class AgentSessions {
     );
   }
 
-  private async open(key: string, title?: string): Promise<Live> {
+  /** Opens a session for `key`, which `use` records as its user's before the
+   * process stops counting it as opening. */
+  private async open(
+    key: string,
+    title: string | undefined,
+    use: (live: Live) => unknown,
+  ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
     const process = await this.process(launch);
+    // A settings save meanwhile must not stop the process under it.
+    process.opening++;
+    try {
+      return await this.openIn(process, key, title, fingerprint, launch, use);
+    } finally {
+      process.opening--;
+      this.retire(process);
+    }
+  }
+  private async openIn(
+    process: Process,
+    key: string,
+    title: string | undefined,
+    fingerprint: string,
+    launch: Launch,
+    use: (live: Live) => unknown,
+  ): Promise<Live> {
     const { pool } = this.options;
     // Busy until it is adopted as a conversation's.
     const slot: Slot = { idle: () => false, evict: async () => undefined };
@@ -319,11 +356,13 @@ export class AgentSessions {
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
     const live = { session, process, fingerprint, slot };
-    if (fingerprint === this.options.fingerprint() || this.disposed)
-      return live;
-    // Settings saved while it opened: it would work with the old ones.
-    void this.close(live);
-    return this.open(key, title);
+    if (fingerprint !== this.options.fingerprint() && !this.disposed) {
+      // Settings saved while it opened: it would work with the old ones.
+      void this.close(live);
+      return this.open(key, title, use);
+    }
+    use(live);
+    return live;
   }
 
   /** The process for the current settings, started when there is none. */
@@ -331,7 +370,7 @@ export class AgentSessions {
     const fingerprint = this.options.processFingerprint();
     if (this.current?.fingerprint === fingerprint) return this.current.ready;
     const old = this.current;
-    const current = {
+    const current: NonNullable<typeof this.current> = {
       fingerprint,
       ready: (async (): Promise<Process> => {
         const cwd = await absolute(this.options.spawn, launch.workspace);
@@ -341,7 +380,7 @@ export class AgentSessions {
           tools: this.options.tools,
           serve: this.options.serve,
         });
-        const process = { goose, cwd, fingerprint };
+        const process: Process = { goose, cwd, fingerprint, opening: 0 };
         void goose.exited.then(() => {
           if (this.current === current) this.current = undefined;
           for (const [key, live] of this.live)
@@ -351,9 +390,14 @@ export class AgentSessions {
       })(),
     };
     // A process that failed to start is started again on the next message.
-    current.ready.catch(() => {
-      if (this.current === current) this.current = undefined;
-    });
+    current.ready.then(
+      (process) => {
+        current.process = process;
+      },
+      () => {
+        if (this.current === current) this.current = undefined;
+      },
+    );
     this.current = current;
     void old?.ready
       .then((process) => this.retire(process))
@@ -361,17 +405,20 @@ export class AgentSessions {
     return current.ready;
   }
 
-  /** Stops `process` when it has old settings and nothing runs in it. */
+  /** Stops `process` unless it is the current process for the current
+   * settings, or a session runs or opens in it. */
   private retire(process: Process) {
+    const current = this.current?.process === process;
     if (
+      current &&
       !this.disposed &&
       process.fingerprint === this.options.processFingerprint()
     )
       return;
     const users = [...this.live.values(), ...this.once.values()];
-    if (users.some((live) => live?.process === process)) return;
-    if (this.current?.fingerprint === process.fingerprint)
-      this.current = undefined;
+    if (process.opening || users.some((live) => live?.process === process))
+      return;
+    if (current) this.current = undefined;
     void process.goose.kill();
   }
 

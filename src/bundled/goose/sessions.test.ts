@@ -137,6 +137,54 @@ describe("AgentSessions", () => {
     expect(first?.killed).toBe(true);
   });
 
+  it("keeps a process whose settings change while a session opens in it", async () => {
+    let gate: Promise<void> | undefined;
+    const { fake, sessions, change } = setup({}, false, {
+      serve: (serve) => async (handler) => {
+        await gate;
+        return serve(handler);
+      },
+    });
+    await sessions.deliver("a", "one", 1);
+    let release!: () => void;
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const opening = sessions.deliver("b", "two", 2);
+    await flush(30);
+    change({ env: { GOOSE_MODEL: "other" } });
+    await flush(30);
+    const [first] = fake.geese;
+    expect(first?.killed).toBe(false);
+    release();
+    await expect(opening).resolves.toEqual({ ok: true });
+    expect(first?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+    // Nothing runs in it any more, so it stops.
+    await flush(30);
+    expect(first?.killed).toBe(true);
+  });
+
+  it("stops an old process once idle after its settings come back", async () => {
+    vi.useFakeTimers();
+    const { fake, sessions, change } = setup();
+    await sessions.deliver("a", "one", 1);
+    const [a1] = fake.geese;
+    if (a1) a1.hold = true;
+    const working = sessions.deliver("a", "two", 2);
+    await flush(30);
+    change({ env: { GOOSE_MODEL: "other" } });
+    await sessions.deliver("b", "three", 3);
+    change({ env: {} });
+    await sessions.deliver("c", "four", 4);
+    const [, b, a2] = fake.geese;
+    expect(b?.killed).toBe(true);
+    a1?.turns.at(-1)?.finish();
+    await working;
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(a1?.killed).toBe(true);
+    expect(a2?.killed).toBe(false);
+  });
+
   it("closes a quiet conversation's session", async () => {
     vi.useFakeTimers();
     const { fake, sessions } = setup();

@@ -236,6 +236,42 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
   );
 });
 
+it("keeps the providers shown when reading them again fails", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    saved: new Map(),
+  });
+  const setup = new GooseSetup(fake.spawn);
+  const { SettingsTab } = createTabs({ setup, ...unused });
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+      save={async () => undefined}
+    />,
+  );
+  await choose("Provider", "Anthropic");
+  const key = await screen.findByLabelText("API key");
+  // Saving reads the providers again, which fails.
+  vi.spyOn(setup, "providers").mockRejectedValue(new Error("goose went away"));
+  await userEvent.setup().type(key, "sk-test{Enter}");
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(screen.getByText("goose went away")).toBeVisible();
+  const provider = screen.getByRole("combobox", { name: "Provider" });
+  expect(provider).toBeEnabled();
+  expect(provider).toHaveTextContent("Anthropic");
+});
+
 it("shows what the provider said when the test fails", async () => {
   created({ reply: "Authentication failed: invalid x-api-key" });
   const dialog = await openChoices();

@@ -187,18 +187,29 @@ describe("GooseHistory", () => {
     );
   const signal = new AbortController().signal;
 
-  it("lists the agent's sessions in its workspace by their Buzz titles", async () => {
+  it("lists the sessions in its workspace that its first prompt names it in", async () => {
     const rows = await history([
       session("s1", "Gander · #general · 11111111", conversation()),
-      session("s2", "Goosey · #general · 11111111", conversation()),
-      session("s3", "Gander · DM", conversation(), "/elsewhere"),
-    ]).recent("Gander", "~/.buzz", signal);
-    expect(rows).toEqual([
-      {
-        sessionId: "s1",
-        title: "Gander · #general · 11111111",
-        at: Date.parse("2027-01-15T08:00:00Z"),
-      },
+      // Since renamed, it is still the agent's.
+      session("s2", "Old name · #general · 11111111", conversation()),
+      // Another agent of the same name, which mentions this one.
+      session("s3", "Gander · #general · 11111111", [
+        user([text(ask(other))]),
+        user([text(`Ask ${agent}`)]),
+      ]),
+      session("s4", "Gander · DM", conversation(), "/elsewhere"),
+    ]).recent(agent, "~/.buzz", signal);
+    expect(rows.map((row) => [row.sessionId, row.title, row.at])).toEqual([
+      [
+        "s1",
+        "Gander · #general · 11111111",
+        Date.parse("2027-01-15T08:00:00Z"),
+      ],
+      [
+        "s2",
+        "Old name · #general · 11111111",
+        Date.parse("2027-01-15T08:00:00Z"),
+      ],
     ]);
   });
 

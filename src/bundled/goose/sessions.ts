@@ -2,8 +2,10 @@
 // it one ACP session per conversation (a thread, a whole DM, or a channel).
 // A quiet conversation's session is closed; its next message opens a new one,
 // shown the conversation again. A one-off turn (a watch or timer wake) gets a
-// session of its own, closed when it ends. Nothing is saved: sessions live as
-// long as the app does.
+// session of its own, closed when it ends. Every session holds one of the
+// host's MCP servers, so all goose agents share one pool of them, and the least
+// recently used idle session closes to make room. Nothing is saved: sessions
+// live as long as the app does.
 import {
   GooseProcess,
   type ActivityReceipt,
@@ -16,9 +18,53 @@ import {
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
-/** How long a one-off turn can run before it is given up; Janet's turn
- * deadline. */
-export const ONCE_DEADLINE_MS = 5 * 60_000;
+/** The most MCP servers goose sessions hold at once, below the host's 64 for
+ * every plugin, so other plugins keep room. */
+export const POOL_LIMIT = 48;
+const STOPPED: Settled = { ok: false, error: "goose was stopped" };
+const LATE: Settled = { ok: false, error: "goose did not start in time" };
+
+/** A session's hold on one MCP server in the pool. */
+type Slot = {
+  /** Whether it can be closed to make room: no turn runs in it. */
+  idle(): boolean;
+  /** Closes the session, and resolves once its server has stopped. */
+  evict(): Promise<unknown>;
+};
+
+/** The MCP servers every goose agent's sessions hold, least recently used
+ * first. One runtime shares one. */
+export class ServerPool {
+  private readonly slots = new Set<Slot>();
+  constructor(private readonly limit = POOL_LIMIT) {}
+
+  get size() {
+    return this.slots.size;
+  }
+  /** Holds a server for `slot`, first closing idle sessions to keep below the
+   * limit. Busy ones are never closed, so it can go over. */
+  take(slot: Slot) {
+    while (this.slots.size >= this.limit) if (!this.evict()) break;
+    this.slots.add(slot);
+  }
+  /** Marks `slot` as used now. */
+  touch(slot: Slot) {
+    if (this.slots.delete(slot)) this.slots.add(slot);
+  }
+  release(slot: Slot) {
+    this.slots.delete(slot);
+  }
+  /** Closes the least recently used idle session, and resolves once its
+   * server has stopped; undefined when every session is busy. */
+  evict() {
+    for (const slot of this.slots)
+      if (slot.idle()) {
+        this.slots.delete(slot);
+        return slot.evict();
+      }
+    return undefined;
+  }
+}
 
 /** What a session is opened with. */
 export type Launch = Readonly<{
@@ -34,6 +80,8 @@ export type SessionsOptions = Readonly<{
   tools: ToolServer;
   /** Starts a session's MCP server for `tools`. */
   serve: ServeMcp;
+  /** The servers all goose agents' sessions hold. */
+  pool: ServerPool;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
   /** Changes when a setting the process was started with has changed. */
@@ -49,6 +97,7 @@ type Live = {
   session: GooseSession;
   process: Process;
   fingerprint: string;
+  slot: Slot;
   timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -60,7 +109,11 @@ export class AgentSessions {
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
-  private readonly opening = new Map<string, Promise<Live>>();
+  /** Conversations whose session is opening, and the turn it opened for. */
+  private readonly opening = new Map<
+    string,
+    Promise<{ settled?: Promise<Settled> }>
+  >();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
   /** Conversations that have had a session, whose next new one may have been
@@ -89,7 +142,8 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
-   * `title` names a session opened for it. */
+   * `title` names a session opened for it. Once `signal` aborts, it stops
+   * waiting for a session to open, which is then kept for the next message. */
   async deliver(
     key: string,
     text: string,
@@ -98,100 +152,101 @@ export class AgentSessions {
       steer = text,
       fresh,
       title,
+      signal,
       ...activity
     }: Readonly<{
       steer?: string;
       fresh?: () => Promise<string>;
       title?: string;
+      signal?: AbortSignal;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "goose was stopped" };
-    // A message that arrives while its conversation's session opens uses it.
-    const opening = this.opening.get(key);
-    if (opening) await opening.catch(() => undefined);
-    let live = this.live.get(key);
-    if (
-      live &&
-      (!live.session.open || (!live.session.busy && this.stale(live)))
-    ) {
-      this.drop(key, live);
-      live = undefined;
-    }
-    if (live) {
+    for (;;) {
+      if (this.disposed) return STOPPED;
+      // A message that arrives while its conversation's session opens uses it.
+      const opening = this.opening.get(key);
+      if (opening) {
+        await opening.catch(() => undefined);
+        continue;
+      }
+      const live = this.live.get(key);
+      if (!live) break;
+      if (!live.session.open || (!live.session.busy && this.stale(live))) {
+        this.drop(key, live);
+        break;
+      }
       this.touch(key, live, seen);
       return this.answer(key, live, live.session.busy ? steer : text, activity);
     }
-    // Perhaps built for a session closed since, which had been shown the rest.
-    if (this.had.has(key) && fresh) text = await fresh();
-    const starting = this.open(key, title);
+    // Reserved before anything is awaited, so a message that comes meanwhile
+    // waits for this session instead of opening another.
+    const starting = (async () => {
+      // Perhaps built for a session closed since, which had been shown the rest.
+      if (this.had.has(key) && fresh) text = await fresh();
+      const live = await this.open(key, title);
+      if (this.disposed) {
+        void this.close(live);
+        throw new Error("goose was stopped");
+      }
+      this.adopt(key, live);
+      if (signal?.aborted) return {};
+      this.touch(key, live, seen);
+      return { settled: this.answer(key, live, text, activity) };
+    })();
     this.opening.set(key, starting);
+    const opened = () => {
+      if (this.opening.get(key) === starting) this.opening.delete(key);
+    };
+    starting.then(opened, opened);
     try {
-      live = await starting;
+      const { settled } = await abortable(starting, signal);
+      return settled ? await settled : LATE;
     } catch (error) {
+      if (this.disposed) return STOPPED;
+      if (signal?.aborted) return LATE;
       console.warn("goose could not start", error);
       return { ok: false, error: `goose could not start: ${message(error)}` };
-    } finally {
-      if (this.opening.get(key) === starting) this.opening.delete(key);
     }
-    if (this.disposed) {
-      void live.process.goose.close(live.session);
-      return { ok: false, error: "goose was stopped" };
-    }
-    this.adopt(key, live, seen);
-    return this.answer(key, live, text, activity);
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the
-   * snapshot. It gives up, and stops the turn, after `deadline` ms. `prompt`
-   * is asked for the turn's text once the session is open, so a turn that
-   * should no longer run by then returns undefined and sends nothing. */
+   * snapshot. It gives up, and stops the turn, once `signal` aborts.
+   * `prompt` is asked for the turn's text once the session is open, so a turn
+   * that should no longer run by then returns undefined and sends nothing. */
   async runOnce(
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
     {
-      deadline = ONCE_DEADLINE_MS,
+      signal,
       title,
     }: Readonly<{
-      deadline?: number;
+      signal?: AbortSignal;
       title?: string;
     }> = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "goose was stopped" };
+    if (this.disposed) return STOPPED;
     const key = `${label} #${++this.onceCount}`;
     this.once.set(key, undefined);
     this.options.onChange?.();
+    const opening = this.open(key, title);
     let live: Live | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      live = await this.open(key, title);
-      if (this.disposed) return { ok: false, error: "goose was stopped" };
+      live = await abortable(opening, signal);
+      if (this.disposed) return STOPPED;
       this.once.set(key, live);
-      const text = await prompt();
+      const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await Promise.race([
-        live.session.send(text),
-        new Promise<Settled>((resolve) => {
-          timer = setTimeout(
-            () =>
-              resolve({
-                ok: false,
-                error: `The turn ran past its ${Math.round(deadline / 1000)}s deadline and was stopped`,
-              }),
-            deadline,
-          );
-        }),
-      ]);
+      return await abortable(live.session.send(text), signal);
     } catch (error) {
+      if (signal?.aborted) return { ok: false, error: message(signal.reason) };
       console.warn("goose could not start a one-off session", error);
       return { ok: false, error: `goose could not start: ${message(error)}` };
     } finally {
-      clearTimeout(timer);
       this.once.delete(key);
-      if (live) {
-        await live.process.goose.close(live.session);
-        this.retire(live.process);
-      }
+      // One that opens after the turn was given up is closed once it has.
+      if (live) await this.close(live);
+      else void opening.then((late) => this.close(late)).catch(() => undefined);
       this.options.onChange?.();
     }
   }
@@ -235,16 +290,39 @@ export class AgentSessions {
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
     const process = await this.process(launch);
-    const session = await process.goose.open({
-      cwd: process.cwd,
-      systemPrompt: launch.systemPrompt,
-      ...(title ? { title } : {}),
-    });
+    const { pool } = this.options;
+    // Busy until it is adopted as a conversation's.
+    const slot: Slot = { idle: () => false, evict: async () => undefined };
+    pool.take(slot);
+    const start = () =>
+      process.goose.open({
+        cwd: process.cwd,
+        systemPrompt: launch.systemPrompt,
+        ...(title ? { title } : {}),
+      });
+    let session: GooseSession;
+    try {
+      session = await start().catch(async (error: unknown) => {
+        // Other plugins hold servers too: make room once, and try again.
+        const room = /too many mcp servers/i.test(message(error))
+          ? pool.evict()
+          : undefined;
+        if (!room) throw error;
+        await room;
+        return start();
+      });
+    } catch (error) {
+      pool.release(slot);
+      throw error;
+    }
+    const released = () => pool.release(slot);
+    void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
+    const live = { session, process, fingerprint, slot };
     if (fingerprint === this.options.fingerprint() || this.disposed)
-      return { session, process, fingerprint };
+      return live;
     // Settings saved while it opened: it would work with the old ones.
-    void process.goose.close(session);
+    void this.close(live);
     return this.open(key, title);
   }
 
@@ -297,10 +375,15 @@ export class AgentSessions {
     void process.goose.kill();
   }
 
-  private adopt(key: string, live: Live, seen: number) {
+  private adopt(key: string, live: Live) {
     this.had.add(key);
     this.live.set(key, live);
-    this.touch(key, live, seen);
+    live.slot.idle = () => !live.session.busy && this.live.get(key) === live;
+    live.slot.evict = async () => {
+      this.drop(key, live);
+      await live.session.server?.closed;
+    };
+    this.touch(key, live);
     this.options.onChange?.();
   }
   private async answer(
@@ -318,6 +401,7 @@ export class AgentSessions {
   }
   /** Notes what the session has been shown and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
+    this.options.pool.touch(live.slot);
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
       if (live.session.busy) this.touch(key, live);
@@ -333,9 +417,12 @@ export class AgentSessions {
       this.shown.delete(key);
       this.options.onChange?.();
     }
-    void live.process.goose.close(live.session).then(() => {
-      this.retire(live.process);
-    });
+    void this.close(live);
+  }
+  /** Ends `live`'s session, and then its process if that has old settings. */
+  private async close(live: Live) {
+    await live.process.goose.close(live.session);
+    this.retire(live.process);
   }
 }
 
@@ -353,6 +440,19 @@ export async function absolute(spawn: Spawn, workspace: string) {
   if ((await process.exited) !== 0 || !directory.trim())
     throw new Error(`Could not find the workspace ${workspace}`);
   return directory.trim();
+}
+
+/** `work`, or a rejection with `signal`'s reason once it aborts. */
+function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    signal.addEventListener("abort", abort, { once: true });
+    work
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function message(error: unknown) {

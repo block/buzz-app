@@ -1,5 +1,6 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -102,6 +103,7 @@ import type {
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
+import { TargetOpenerProvider } from "../conversation/opener";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -246,11 +248,13 @@ export function MessageComposer(props: MessageComposerProps) {
   )}`;
   return (
     <TypingPresentation active key={key}>
-      {props.personalConversation ? (
-        <PersonalComposer {...props} />
-      ) : (
-        <Composer {...props} />
-      )}
+      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
+        {props.personalConversation ? (
+          <PersonalComposer {...props} />
+        ) : (
+          <Composer {...props} />
+        )}
+      </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
@@ -1730,6 +1734,7 @@ function Composer({
               }
               size="toolbar"
               type="submit"
+              style={messageButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={editing.target ? "Save changes" : "Send message"}
               disabled={

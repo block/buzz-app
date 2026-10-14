@@ -27,10 +27,19 @@ vi.mock("../relay/react", () => {
   return { useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row, onReply, layout, compactAvatar }: MessageRowProps) => (
+  MessageRow: ({
+    row,
+    onReply,
+    layout,
+    compactAvatar,
+    stackPrevious,
+    stackNext,
+  }: MessageRowProps) => (
     <article
       data-message-id={row.id}
       data-layout={layout}
+      data-stack-previous={stackPrevious || undefined}
+      data-stack-next={stackNext || undefined}
       data-compact-avatar={compactAvatar}
     >
       <span>{row.content}</span>
@@ -254,6 +263,14 @@ it("groups the first same-author reply with the root but respects the time windo
     "data-layout",
     "continuation",
   );
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-stack-previous",
+    "true",
+  );
+  expect(document.querySelector('[data-message-id="root"]')).toHaveAttribute(
+    "data-stack-next",
+    "true",
+  );
   h.update([{ ...row("parent", "root"), createdAt: 301 }]);
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
     "data-layout",
@@ -264,6 +281,12 @@ it("groups the first same-author reply with the root but respects the time windo
     "data-layout",
     "thread",
   );
+  expect(screen.getByText("parent").closest("article")).not.toHaveAttribute(
+    "data-stack-previous",
+  );
+  expect(
+    document.querySelector('[data-message-id="root"]'),
+  ).not.toHaveAttribute("data-stack-next");
   h.update([{ ...row("parent", "root"), authorId: "b".repeat(64) }]);
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
     "data-layout",

@@ -853,6 +853,7 @@ function Timeline({
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {rows.map((row, index) => {
+            const nextRow = rows[index + 1];
             const day =
               index === 0
                 ? true
@@ -877,12 +878,9 @@ function Timeline({
                   />
                 ) : (
                   <MessageRow
+                    stackPrevious={continuesMessageGroup(rows[index - 1], row)}
+                    stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
                     alignViewer={chatPresentation}
-                    layout={
-                      continuesMessageGroup(rows[index - 1], row)
-                        ? "continuation"
-                        : "timeline"
-                    }
                     session={queries}
                     scope={scope}
                     row={row}

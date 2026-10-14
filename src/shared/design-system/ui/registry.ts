@@ -340,7 +340,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "theme-picker",
     name: "ThemePicker",
     purpose:
-      "Choose System, Light, or Dark using miniature interface previews.",
+      "Choose System, Light, or Dark using miniature interface previews with the selected message color.",
     behavior: "Shared radio keyboard navigation and accessible choice labels.",
     variants: ["default"],
     status: "proposed",

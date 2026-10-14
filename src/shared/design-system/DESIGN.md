@@ -1163,6 +1163,14 @@ need their own values in each mode.
 - Check text with its actual fill and backdrop, including interactive states.
 - The original design exploration was light-only. Buzz’s dark values are authored choices and should be revised when rendered evidence shows a problem.
 
+Default own message bubbles use the received fill mixed with 5% black in light
+mode or 5% white in dark mode, with standard text and link colors. The five accent
+choices—blue, green, orange, pink and lilac—pair with white ink. They retain the
+reference hue and as much chroma as sRGB permits; lightness is lowered only to
+reach the 4.5:1 WCAG floor (also meeting the Lc 60 target). Reactions and
+ThemePicker previews follow the selected bubble pair. Default send controls use
+the neutral prominent pair; accent choices use their message pair.
+
 ## Density and rhythm
 
 Choose the content structure first: a list, reading column, gallery, settings

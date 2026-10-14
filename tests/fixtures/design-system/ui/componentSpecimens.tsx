@@ -62,7 +62,9 @@ import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/Keyboa
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
-  return <ThemePicker value={value} onValueChange={setValue} />;
+  return (
+    <ThemePicker value={value} onValueChange={setValue} messageColor="blue" />
+  );
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";

@@ -91,13 +91,19 @@
   @apply text-caption;
   margin: calc(var(--space-6) - var(--space-5) / 2 - var(--space-half)) 0
     calc(
-      var(--space-6) - var(--space-5) / 2 - var(--space-3) - var(--space-half)
+      var(--space-6) -
+      var(--space-5) /
+      2 -
+      var(--space-3) -
+      var(--space-half)
     );
 }
-.day::before,
-.day::after {
+/* Date dividers are label-only; the reply divider keeps its rule so the
+   original reads as separate from the replies. */
+.replyDivider::before,
+.replyDivider::after {
   content: "";
-  height: 0.5px;
+  height: 1px;
   min-width: 0;
   flex: 1;
   background: var(--border-standard);

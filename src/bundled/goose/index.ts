@@ -23,13 +23,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(host, agents.relay);
   const spawn = host.spawn?.bind(host);
-  const {
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    SettingsTab,
-    ActivityTab,
-  } = createTabs({
+  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
     setup: new GooseSetup(spawn),
     runtime,
     history: new GooseHistory(spawn),
@@ -56,8 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
-    CreateModelMenu,
-    createModelLabel,
+    CreateModel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

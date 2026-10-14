@@ -12,6 +12,12 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { sessionShareAttempt, useSessionShareAttempts } from "./share-attempt";
+import {
+  sessionConversion,
+  updateSessionConversion,
+  useSessionConversions,
+  type SessionConversion,
+} from "./conversion";
 import { sessionMetadata } from "./metadata";
 import { applySharedChannelDetails } from "./share";
 
@@ -23,7 +29,10 @@ export function canConvertSession(
   return !!(
     session.channelDetails?.available &&
     channel &&
-    channel.channelType === "session" &&
+    (channel.channelType === "session" ||
+      !!sessionConversion(session, channel.id) ||
+      (channel.channelType === "stream" &&
+        session.mePlacement.has(channel.id))) &&
     !channel.parentChannelId &&
     !channel.cached &&
     !channel.readOnly &&
@@ -31,22 +40,30 @@ export function canConvertSession(
   );
 }
 
-/** Conversion changes the marker and chosen visibility, not membership, TTL or Me. */
+/** Confirm metadata, remove this viewer’s Me placement, then hand off navigation. */
 export function ConvertSession({
   session,
   id,
   signal,
   close,
   finalFocus,
+  onConverted,
 }: {
   session: RelaySession;
   id: string;
   signal?: AbortSignal | undefined;
   close(): void;
+  onConverted?: (() => void) | undefined;
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const details = session.channelDetails;
   const sharing = useSessionShareAttempts(session).has(id);
+  const receipt = useSessionConversions(session).get(id);
+  const placement = useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
+  const converted = !!receipt?.converted;
   const notify = useToastNotification();
   const attempt = useSyncExternalStore(details.subscribe, () =>
     details.snapshot(id),
@@ -70,8 +87,30 @@ export function ConvertSession({
     (base.description === "" || (metadata && !metadata.parentId))
   );
   const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
+  const removalOnly =
+    !!receipt?.removalOnly ||
+    (!receipt &&
+      !!base &&
+      !metadata &&
+      placement.status === "ready" &&
+      session.mePlacement.has(id));
+  // Another details surface may have confirmed the same publication and retired
+  // its receipt. Require fresh exact intent evidence, not absence of an attempt.
+  const confirmedElsewhere = !!(
+    base &&
+    receipt &&
+    !attempt &&
+    base.description === receipt.draft.description &&
+    base.name === receipt.draft.name &&
+    base.visibility === receipt.draft.visibility &&
+    base.ttlSeconds === receipt.draft.ttlSeconds
+  );
+  const canFinish = converted || confirmedElsewhere || removalOnly;
   // Uncertain intent belongs to the details owner, including the chosen privacy.
-  const selectedVisibility = conversionAttempt?.draft.visibility ?? visibility;
+  const selectedVisibility =
+    receipt?.draft.visibility ??
+    conversionAttempt?.draft.visibility ??
+    visibility;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,7 +136,7 @@ export function ConvertSession({
     return () => controller.abort();
   }, [details, id, signal]);
 
-  const run = async (action: "convert" | "reload" | "check") => {
+  const run = async (action: "convert" | "reload" | "check" | "finish") => {
     const controller = lifetime.current;
     if (
       !controller ||
@@ -113,45 +152,108 @@ export function ConvertSession({
     pending.current = true;
     setBusy(true);
     setError("");
+    let exact: SessionConversion | undefined;
     try {
       if (action === "reload") {
         const next = await details.load(id, active);
         if (!active.aborted) setBase(next);
       } else {
+        if (sessionConversion(session, id)?.running)
+          throw new Error("Conversion is already in progress in another view.");
         if (
-          !base ||
-          (action === "check"
-            ? !matchingAttempt || attempt?.status !== "unconfirmed"
-            : !eligible || !!attempt)
+          action !== "finish" &&
+          (!base ||
+            (action === "check"
+              ? !matchingAttempt || attempt?.status !== "unconfirmed"
+              : !eligible || !!attempt))
         )
           return;
+        if (action === "finish" && !canFinish) return;
         if (action === "convert" && sessionShareAttempt(session, id))
           throw new Error(
             "Finish sharing or choose Start over before converting.",
           );
-        if (action === "check") await details.check(id, active);
-        else
-          await applySharedChannelDetails(
-            session,
-            id,
-            {
-              name: base.name,
-              description: "",
-              visibility,
-              ttlSeconds: base.ttlSeconds,
-            },
-            base,
-            active,
+        if (!session.mePlacement.available)
+          throw new Error(
+            "Me placement is unavailable on this connection. Try conversion on a supported connection.",
           );
+        if (!base && !receipt) return;
+        exact = sessionConversion(session, id) ?? {
+          draft: {
+            name: base?.name ?? "",
+            description: "",
+            visibility: selectedVisibility,
+            ttlSeconds: base?.ttlSeconds,
+          },
+          ...(removalOnly ? { removalOnly: true } : {}),
+        };
+        exact.running = true;
+        updateSessionConversion(session, id, exact);
+        if (!exact.converted) {
+          // Establish that Me can be read before changing the channel. The
+          // preference owner refreshes again when removing, never overwrites blind.
+          await session.mePlacement.refresh();
+          active.throwIfAborted();
+          if (session.mePlacement.snapshot().status !== "ready")
+            throw new Error(
+              "Me placement could not be read. Retry before converting.",
+            );
+          if (action === "check") await details.check(id, active);
+          else if (action === "finish") {
+            const fresh = await details.load(id, active);
+            if (
+              exact.removalOnly
+                ? !!sessionMetadata(fresh.description)
+                : fresh.description !== exact.draft.description ||
+                  fresh.name !== exact.draft.name ||
+                  fresh.visibility !== exact.draft.visibility ||
+                  fresh.ttlSeconds !== exact.draft.ttlSeconds
+            )
+              throw new Error(
+                "Channel settings changed. Reload details before continuing.",
+              );
+          } else if (base)
+            await applySharedChannelDetails(
+              session,
+              id,
+              exact.draft,
+              base,
+              active,
+            );
+          exact.converted = true;
+          updateSessionConversion(session, id, exact);
+        }
+        active.throwIfAborted();
+        await session.mePlacement.set(id, false, { signal: active });
+        active.throwIfAborted();
+        if (
+          session.mePlacement.snapshot().status !== "ready" ||
+          session.mePlacement.has(id)
+        )
+          throw new Error("Removal from Me could not be confirmed.");
+        updateSessionConversion(session, id, undefined);
         if (!active.aborted) {
-          notify("Now a channel. Find it in Messages.", "success");
+          notify(
+            exact.removalOnly ? "Moved to Messages." : "Converted to channel.",
+            "success",
+          );
           close();
+          onConverted?.();
         }
       }
     } catch (reason) {
       if (!active.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      if (exact) {
+        delete exact.running;
+        if (sessionConversion(session, id) === exact)
+          updateSessionConversion(
+            session,
+            id,
+            exact.converted || details.snapshot(id) ? exact : undefined,
+          );
+      }
       if (!controller.signal.aborted) {
         pending.current = false;
         setBusy(false);
@@ -161,8 +263,12 @@ export function ConvertSession({
   return (
     <Dialog
       open
-      title="Convert to channel"
-      description="The same conversation appears in Messages and stays in Me. History, Canvas and members stay the same."
+      title={removalOnly ? "Move to Messages" : "Convert to channel"}
+      description={
+        removalOnly
+          ? "Remove this conversation from your Me workspace and open it in Messages. Channel settings, history and members stay the same."
+          : "Move this conversation from Me to Messages. History, Canvas, members and lifetime stay the same."
+      }
       onOpenChange={(open) => {
         if (!open) close();
       }}
@@ -171,11 +277,19 @@ export function ConvertSession({
       actions={
         <>
           <Button onClick={close} disabled={busy}>
-            Cancel
+            {converted ? "Close" : "Cancel"}
           </Button>
-          {attempt?.status === "unconfirmed" && matchingAttempt ? (
+          {canFinish ? (
             <Button
-              disabled={busy || !!signal?.aborted}
+              variant="prominent"
+              disabled={busy || !!receipt?.running || !!signal?.aborted}
+              onClick={() => void run("finish")}
+            >
+              {removalOnly ? "Move to Messages" : "Finish conversion"}
+            </Button>
+          ) : attempt?.status === "unconfirmed" && matchingAttempt ? (
+            <Button
+              disabled={busy || !!receipt?.running || !!signal?.aborted}
               onClick={() => void run("check")}
             >
               Check status
@@ -184,7 +298,12 @@ export function ConvertSession({
             <Button
               variant="prominent"
               disabled={
-                busy || sharing || !!attempt || !eligible || !!signal?.aborted
+                busy ||
+                !!receipt?.running ||
+                sharing ||
+                !!attempt ||
+                !eligible ||
+                !!signal?.aborted
               }
               onClick={() => void run("convert")}
             >
@@ -194,48 +313,60 @@ export function ConvertSession({
         </>
       }
     >
-      <Field label="Visibility" nativeLabel={false}>
-        <RadioGroup
-          aria-label="Visibility"
-          value={selectedVisibility}
-          disabled={
-            busy || sharing || !!attempt || !eligible || !!signal?.aborted
-          }
-          onValueChange={(value) => {
-            if (value === "private" || value === "public") setVisibility(value);
-          }}
-        >
-          <Radio
-            value="private"
-            label="Private"
-            description="Only channel members will have access."
-          />
-          <Radio
-            value="public"
-            label="Public"
-            description="Everyone in this community will be able to view this channel’s full history."
-          />
-        </RadioGroup>
-      </Field>
-      {sharing && (
+      {!removalOnly && (
+        <Field label="Visibility" nativeLabel={false}>
+          <RadioGroup
+            aria-label="Visibility"
+            value={selectedVisibility}
+            disabled={
+              busy ||
+              converted ||
+              !!receipt?.running ||
+              sharing ||
+              !!attempt ||
+              !eligible ||
+              !!signal?.aborted
+            }
+            onValueChange={(value) => {
+              if (value === "private" || value === "public")
+                setVisibility(value);
+            }}
+          >
+            <Radio
+              value="private"
+              label="Private"
+              description="Only channel members will have access."
+            />
+            <Radio
+              value="public"
+              label="Public"
+              description="Everyone in this community will be able to view this channel’s full history."
+            />
+          </RadioGroup>
+        </Field>
+      )}
+      {converted && !removalOnly && (
+        <p role="status">Channel converted. Finish removing it from Me.</p>
+      )}
+      {sharing && !converted && (
         <p role="status">
           Finish sharing or choose Start over before converting.
         </p>
       )}
       {!base && !error && <p role="status">Loading session details…</p>}
-      {base && !base.canEdit && (
+      {base && !base.canEdit && !canFinish && (
         <p role="status">You don’t have permission to convert this session.</p>
       )}
-      {base?.canEdit && !eligible && !matchingAttempt && (
+      {base?.canEdit && !eligible && !matchingAttempt && !canFinish && (
         <p role="status">Only a standalone session can be converted.</p>
       )}
-      {attempt && !matchingAttempt && (
+      {attempt && !matchingAttempt && !converted && (
         <p role="status">
           Finish the existing channel details change before converting.
         </p>
       )}
       {error && <p role="alert">{error}</p>}
-      {error && (
+      {error && !converted && (
         <Button
           disabled={busy || !!signal?.aborted}
           onClick={() => void run("reload")}

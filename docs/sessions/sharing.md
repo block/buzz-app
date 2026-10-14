@@ -106,61 +106,86 @@ queued operations; a deliberately new attempt may post another link.
 
 ## Explicit conversion, separate from Share
 
-Share’s bottom-left footer, the Me header overflow and the personal-row menu offer
-**Convert to channel** for a verified standalone session on a connection supporting
-details edits. `ConvertSession.tsx` owns the shared Dialog form with a labelled
-**Private / Public** radio group. Private is the safe default; Public explicitly
-states “Everyone in this community will be able to view this channel’s full
-history.” Changing the choice writes nothing until **Convert to channel** confirms.
-Share closes behind the confirmation, and completion or Cancel restores the
-original Share/row/menu trigger when retained. Messages owns its conversion form
-outside the session heading, so signed session-to-channel metadata cannot unmount
-the in-flight form. On completion its removed Share trigger falls back to the
-replacement **Channel actions** trigger; actual navigation retires the form.
-Draft recipient choices are not grants and are never applied by conversion.
-Conversion is disabled during a pending share in the footer, header menu, row
-menu and already-open conversion form. Begin/finish notifications come from the
-existing in-process share-attempt owner, with no new read or polling. Use the
-share's existing recovery or Start over first.
+The product owner approved this distinction on 2026-10-14: **Share** keeps session
+behavior and Me placement; **Convert to channel** removes the initiating viewer's
+Me placement and opens the same conversation in Messages, for either Private or
+Public. It changes organization and conversation behavior, never creates a new
+conversation or copies history.
 
-The same conversation appears in Messages and stays in Me. History, Canvas and
-members remain; no new channel, copy or thread is created. Confirmed completion
-announces “Now a channel. Find it in Messages.” without automatic navigation.
-Cancel writes nothing; loading, pending, failure and explicit recovery remain inside
-the form. The action is not offered once the conversation is already a channel.
+Share’s bottom-left footer, the Me header overflow and personal-row menu offer
+**Convert to channel** for a verified standalone session. `ConvertSession.tsx`
+reuses the shared Dialog, Field, Private/Public RadioGroup and Button. Private is
+the default; Public warns that the community can view the full existing history.
+Draft recipient selections are never granted by conversion. Conversion is disabled
+while a share is pending; recover or Start over that share first. Cancel writes
+nothing and returns focus to the retained initiating control.
 
-`applySharedChannelDetails` and the existing channel-details service read fresh
-signed metadata and owner/admin authority before saving, reject conflicting
-settings, and check authority again after signing. Conversion emits one kind-9002
-command clearing the session description marker and applying the explicitly
-selected visibility. Name and TTL are preserved; unchanged visibility/TTL tags
-are omitted so conversion does not reset a cleanup deadline. Conversion never
-submits label edits: its explicit draft omits `labels`, preserving independently
-updated labels and keeping them outside uncertain conversion confirmation. Public uses the
-existing `visibility=open` wire tag. Parent-linked sessions
-remain ineligible. No grants, Me writes, creation or automatic navigation occur.
-Messages' sidebar now admits verified ordinary streams even when retained in Me;
-sessions remain hidden there while Me is enabled. This is a narrow type-based
-exception, not inferred conversion provenance.
+The sequence is explicit, not atomic:
 
-An uncertain publication offers **Check status**, not another save. Only a pending
-attempt matching the exact intended settings can be reconciled here. A failed
-initial or remount details read offers **Reload session details**, even with a
-pending attempt; reload preserves it, then **Check status** reconciles without
-another signature or publication. The pending attempt owns its selected visibility;
-the disabled choices show that exact intent on reopen, including Public even
-while details are loading or failed. Row Share captures the initiating visit, not
-a later sidebar visit. View/unmount signals fence new writes and completion
-callbacks; the existing details owner
-continues to own uncertain delivery. This is finite signed evidence, not a
-metadata transaction or proof against changes after dispatch.
+1. Read current Me preferences before admitting conversion. Confirm one signed
+   kind-9002 command through the existing `channelDetails` owner. Fresh metadata,
+   owner/admin authority, conflict checks, altered-signature rejection and exact
+   readback remain unchanged. Clear the session marker and apply the chosen
+   visibility; preserve name, lifetime and labels. Omit unchanged TTL/visibility
+   and all label intent, so unrelated relabeling cannot overwrite or strand recovery.
+2. Use `mePlacement.set(id, false, {signal})` to remove only this viewer's placement
+   and assignment. Its existing encrypted account/community record, serialization,
+   fresh revision checks, selected-head confirmation and Outbox own persistence.
+   Other groups, conversations, defaults, memberships and other people's placement
+   are untouched. A false `has()` during loading/error is not proof of removal.
+3. After confirmed removal, announce **Converted to channel.** and open the same
+   channel ID in Messages from Me. If already in Messages, retain the current
+   conversation and restore focus to Channel actions. No new grant, notification,
+   agent wake or transcript write occurs.
+
+The form lives outside type-dependent Messages chrome and outside the disappearing
+Me row. Replacement-composer autofocus does not steal its focus. Actual navigation,
+connection replacement and unmount fence subsequent steps and late completion;
+already-enqueued writes still belong to their existing durable owners. No completion
+navigation is sent to a superseded visit. Navigation itself uses the host's existing
+opening/error recovery, not a new relay operation.
+
+### Partial success and removal recovery
+
+An uncertain metadata publication offers **Check status**, never automatic resend.
+The pending details owner retains exact selected visibility; **Reload session
+details** recovers failed reads without losing that intent. If another details
+surface confirmed the publication, fresh matching metadata can advance the retained
+conversion receipt without another kind-9002 command.
+
+`conversion.ts` retains only session-local orchestration intent and the confirmed
+metadata phase, with a shared running guard. It is not permission evidence or a
+new persistent transaction. After metadata success but failed/unconfirmed placement
+removal, the dialog says **Channel converted. Finish removing it from Me.**
+**Finish conversion** retries only the existing preference operation. Closing and
+reopening from the Me menu/Share or Messages header retains that recovery. A fresh
+record already omitting the ID confirms removal without another publication; an
+unresolved older write stays under the existing Outbox guard and recovery.
+
+Restart/session replacement loses the orchestration receipt, not access or the
+channel. A verified ordinary channel still in the viewer's Me offers explicit
+**Move to Messages** in Me's menu/Share. This removal-only action reads current
+metadata and uses the same preference writer, with no metadata rewrite or inferred
+conversion provenance. It also provides a deliberate way to clear older ordinary
+channels retained in Me. No automatic cleanup of someone else's private filing.
+
+### Ordinary behavior after conversion
+
+Verified ordinary stream/forum type overrides retained Me placement in the shared
+`meChat` decision. Subsequent Claude/Codex/native-runner turns use ordinary channel
+reply/typing policy, even if another agent owner still has this ID in Me. Already
+admitted turns retain their frozen policy; conversion does not cancel running work.
+Unknown/cached type evidence does not masquerade as verified ordinary metadata.
+No runtime rewrite or new agent authority is added. Old Me routes use type-correct
+composer flags and ordinary recipient controls for an ordinary channel.
+
+The same ID, history, Canvas, members, labels and lifetime remain. Messages' sidebar
+continues to show verified ordinary streams during partial removal; this is channel
+type evidence, not conversion provenance. Public uses the existing `visibility=open`
+wire tag and does not introduce an enforceable View-only role.
 
 ## Explicitly deferred or blocked
 
-- **Public conversion and Me reply policy** still needs product confirmation.
-  Current retained Me placement keeps personal composer recipient rules and the
-  owner's top-level agent replies, while ordinary member mentions use threaded
-  replies. This repair preserves that behavior, not an approval of that policy.
 - **Create new channel** was removed from the Share dialog for this slice.
 - **Optional session naming and named newly posted links** are explicitly deferred
   to a separate PR by the human on 2026-10-13. This change adds no name field or

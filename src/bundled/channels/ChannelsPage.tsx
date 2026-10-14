@@ -30,6 +30,7 @@ import {
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { useSessionConversions } from "../../features/sessions/conversion";
 import { ConvertSession } from "../../features/sessions/ConvertSession";
 import { SessionShare } from "../sessions/SessionShare";
 import {
@@ -533,6 +534,7 @@ function ChannelWorkspace({
     };
   }, [currentId, composingMessage, draftParent]);
 
+  const conversions = useSessionConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [conversion, setConversion] = useState<{
     channelId: string;
@@ -1445,6 +1447,16 @@ function ChannelWorkspace({
                           session={queries}
                           origin={navigation?.signal}
                           trigger={settingsTrigger}
+                          finishConversion={
+                            current && conversions.has(current.id)
+                              ? () =>
+                                  setConversion({
+                                    channelId: current.id,
+                                    navigation,
+                                    trigger: settingsTrigger.current,
+                                  })
+                              : undefined
+                          }
                           openDetails={() => {
                             drawer.close();
                             requestSettingsFocus((value) => value + 1);

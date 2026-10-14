@@ -39,7 +39,11 @@ const id = "11111111-1111-4111-8111-111111111111";
 const empty: readonly never[] = [];
 const contribution = { snapshot: () => empty, subscribe: () => () => {} };
 const extensions = { tools: contribution, inline: contribution };
-function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
+function fixture(
+  status: KitSnapshot["status"] = "ready",
+  retained = true,
+  type: "session" | "stream" = "session",
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -75,7 +79,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
   const channel = {
     id,
     name: "Planning",
-    channelType: "session" as const,
+    channelType: type,
     private: true as const,
     members: [viewer.pubkey],
   };
@@ -330,4 +334,17 @@ it("updates the header conversion guard when a share starts and finishes elsewhe
   expect(
     await screen.findByRole("dialog", { name: "Convert to channel" }),
   ).toBeVisible();
+});
+
+it("a stale Me route renders ordinary channel recipient controls after conversion", () => {
+  const f = fixture("ready", true, "stream");
+  f.mount();
+  expect(
+    screen.queryByRole("textbox", { name: "Message your agents" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("textbox", { name: "Message #Planning" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Choose agents" })).toBeNull();
+  expect(screen.getByText("This conversation is in Messages.")).toBeVisible();
 });

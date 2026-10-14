@@ -515,7 +515,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
 
 // App composition boundary: signed metadata switches Messages discoverability
 // without a route handoff, a new conversation, or a Me preference write.
-test("explicit conversion exposes the same conversation in Messages and keeps Me and history", async ({
+test("explicit conversion moves the same conversation from Me to Messages and keeps history", async ({
   page,
   app,
 }) => {
@@ -656,13 +656,15 @@ test("explicit conversion exposes the same conversation in Messages and keeps Me
   await convert.click();
   await expect(dialog).not.toBeVisible();
   await expect(
-    page.getByText("Now a channel. Find it in Messages.", { exact: true }),
+    page.getByText("Converted to channel.", { exact: true }),
   ).toBeVisible();
-  await expect(row).toBeVisible();
-  await expect(row).toBeFocused();
   await expect(
-    page.getByRole("heading", { name: "Alpha", exact: true }),
+    page.getByRole("button", { name: "Channel actions" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeFocused();
+  await expect(sidebar).toHaveCount(0);
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
@@ -676,11 +678,12 @@ test("explicit conversion exposes the same conversation in Messages and keeps Me
     ["about", ""],
     ["visibility", "open"],
   ]);
-  expect(
-    (app.report.sidebarPublications ?? []).filter((entry) =>
-      entry.coordinate.startsWith("buzz-me-kit"),
-    ),
-  ).toHaveLength(0);
+  const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
+    entry.coordinate.startsWith("buzz-me-kit"),
+  );
+  expect(placements).toHaveLength(1);
+  expect(placements[0].blob.value.channels).toEqual([other]);
+  expect(placements[0].blob.value.assignments[id]).toBeUndefined();
   expect(
     app.report.publications.filter(({ event }) =>
       [9, 9000, 9007, 30315].includes(event.kind),
@@ -694,10 +697,9 @@ test("explicit conversion exposes the same conversation in Messages and keeps Me
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   await openPage(page, "Me");
-  await expect(row).toBeVisible();
-  await row.click();
+  await expect(row).toHaveCount(0);
   await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
   ).toBeVisible();
 });
 
@@ -739,7 +741,7 @@ test("Messages conversion restores focus after its session header is replaced", 
   await confirm.press("Enter");
   await expect(dialog).not.toBeVisible();
   await expect(
-    page.getByText("Now a channel. Find it in Messages.", { exact: true }),
+    page.getByText("Converted to channel.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Channel actions" }),
@@ -754,9 +756,9 @@ test("Messages conversion restores focus after its session header is replaced", 
     ["name", "Alpha"],
     ["about", ""],
   ]);
-  expect(
-    (app.report.sidebarPublications ?? []).filter((entry) =>
-      entry.coordinate.startsWith("buzz-me-kit"),
-    ),
-  ).toHaveLength(0);
+  const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
+    entry.coordinate.startsWith("buzz-me-kit"),
+  );
+  expect(placements).toHaveLength(1);
+  expect(placements[0].blob.value.channels).toEqual([other]);
 });

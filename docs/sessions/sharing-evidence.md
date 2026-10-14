@@ -4,6 +4,65 @@ Behavior and limitations live in [Sharing a live session](sharing.md) and
 [Me and sessions](README.md). This record separates checked snapshots from
 outstanding acceptance; earlier feedback-round counts are not aggregate results.
 
+## Conversion moves to Messages (2026-10-14, product decision)
+
+The author approved a distinct conversion contract after discussing Wes's Me
+reply-policy question: Share stays in Me; explicit Private/Public conversion
+removes the initiating viewer's Me placement and opens the same ID in Messages.
+This supersedes the older retained-Me/no-navigation conversion behavior below.
+
+Checked tree: `8f24a062d` plus this conversion update (final commit in PR).
+
+- The actual signed-details owner confirms metadata before the existing Me
+  preference/recipe/Outbox owner removes the placement and assignment. Real-owner
+  tests preserve other groups/placements and name/labels/lifetime; no membership,
+  transcript, Canvas or key changes. A false loading/error placement is not success.
+- A bounded in-process conversion receipt retains the metadata-confirmed phase.
+  Failed/unconfirmed removal can finish without another kind-9002 command. Fresh
+  selected-head reconciliation after a lost acknowledgment publishes neither
+  operation twice. Existing Outbox uncertainty guards remain intact.
+- Review caught two recovery gaps: lost receipt after restart, and another details
+  consumer confirming an uncertain metadata command. Explicit removal-only **Move
+  to Messages** from a retained ordinary Me row handles the first; fresh exact-draft
+  reconciliation handles the second. Both have regressions with real owners.
+- Verified ordinary type overrides retained private filing in `meChat`, including
+  another agent owner's filing. Claude/Codex tests exercise ordinary threaded
+  replies; existing admitted-turn policy retention remains. Stale Me routes now
+  use ordinary composer flags. No runtime, FOUNDATION or host changes.
+
+| Check | Result | Local time |
+| --- | --- | --- |
+| Thirteen complete Vitest owner files | 299 tests | 15.83s wall; 37.05s summed execution |
+| Complete Me/sharing files, Chromium + WebKit | 18 cases | 30.9s wall; 50.9s summed case time; two workers, no retries |
+
+Vitest owners: ConvertSession and its real-placement integration, share, SessionShare,
+SessionSections, SessionsPage.loading, ChannelsPage.conversion, ChannelHeaderMenu,
+me-preferences, channel-details, me-chat, Claude runtime and Codex runtime. Slowest:
+SessionShare, 13.89s. Slowest browser case: WebKit Share reachability/recovery, 5.6s.
+Separate before/after checks show the new metadata→removal completion and ordinary
+reply-policy assertions fail on the previous production implementation. Browser
+assertions now prove automatic Messages navigation/composer focus, disappearance
+from Me and exact placement write while preserving all retained-history and sharing
+checks. **No browser cases added or removed** in this product-change pass. Partial
+failure, concurrency and restart-style removal matrices live in mounted/service
+tests; UI end-to-end behavior remains in the two existing conversion journeys.
+
+The first integration fixture failed because it attempted details before channel
+admission was ready; it now waits for real list discovery. A row-menu fixture waited
+for Me preferences to settle and scoped its trigger to the exact row rather than
+a same-named group. Concurrent-dialog assertions include the inert underlying form.
+These fixes add lifecycle barriers/selectors, not retries, delays or relaxed behavior.
+Both themes, 390/950/1280px, enlarged-text and pointer/keyboard geometry remain
+covered; dark/narrow and light/intermediate conversion screenshots inspected.
+
+Independent first-slice review found the two concrete recovery gaps above; the
+follow-up closed both, rated necessity/minimalness 9/10 and independently ran all
+30 tests in the two conversion files. No other concrete blocker was reported.
+Normal hooks, hosted status and final head are recorded in the PR. The running
+checkout is not switched or restarted. Human testing of this behavior, packaged
+native, live relay and live-agent reply acceptance remain separate from synthetic
+browser/host-seam checks. No `buzz-review-completed` attestation or PR merge.
+
 ## Review repairs (2026-10-14)
 
 The author requested repair of Wes's review comments on PR #1070. The independent

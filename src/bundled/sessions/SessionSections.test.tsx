@@ -11,16 +11,23 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
-import type { RelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SessionSections } from "./SessionSections";
 
+const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
   cleanup();
   localStorage.clear();
 });
 
 function fixture() {
+  const owner = createRelaySession(null);
+  owners.push(owner);
   let saved: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: {},
@@ -81,6 +88,7 @@ function fixture() {
       onNew={onNew}
       session={
         {
+          ...owner.session,
           sidebarPreferences: preferences,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },

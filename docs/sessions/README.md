@@ -38,8 +38,8 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 - Lifetime/settings improvements are separate work. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
   blocked in this checkpoint. Sharing does not expose owner-private detailed agent
-  activity or start an agent. Earlier promotion/removal behavior is superseded;
-  proposal documents remain design history, not implemented behavior.
+  activity or start an agent. Proposal documents remain design history, not
+  implemented behavior.
 - Me conversations and drafts use the full conversation pane. Right-click,
   Shift+F10 and overflow share one sidebar action list: Share, Convert to channel, Rename, Move to a Me
   group, Copy and Session settings (where eligible). Opening a row menu does not select the row.
@@ -60,8 +60,9 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   access to its conversation actions. Secondary conversations placed in Me keep
   owner-scoped explicit recipients and wait for placement readiness before sending.
 - Canonical channel links still use the ordinary channel reader, and Me routes can
-  refer to an accessible ordinary channel UUID. Routes and plugin views do not
-  grant access. Disabling the Me view does not delete its channels or memberships.
+  refer to an accessible ordinary channel UUID. Such a channel uses ordinary
+  composer and agent reply behavior even if a private Me filing remains. Routes
+  and plugin views do not grant access. Disabling the Me view does not delete its channels or memberships.
 
 ## Organization, settings and recovery
 
@@ -77,9 +78,13 @@ saving placement. A full record keeps the draft. **Convert to channel** is a
 separate, owner/admin-confirmed action for standalone sessions, available from
 Share and the existing menus. Its Private/Public choice defaults to Private and
 warns that Public exposes the full existing history to the community. It appears
-in Messages while retaining the same ID, Me, history, Canvas, membership and
-lifetime, with no automatic navigation. Neither
-conversion nor Share reclaims placement or assignment bytes; removal remains deferred.
+in Messages with the same ID, history, Canvas, membership, labels and lifetime.
+After confirming metadata, conversion removes the initiating viewer's Me placement
+and assignment, then opens the channel in Messages. Share alone never does this.
+A partial failure offers removal-only Finish conversion; after restart, an ordinary
+channel still filed in Me offers explicit Move to Messages without another metadata
+edit. The existing preference owner preserves other groups and placements. Conversion
+therefore reclaims this placement/assignment's bytes; it does not compact other records.
 Admission is not a reservation: another device can fill the record between those
 steps. Deleted/archived placements can still consume capacity. No cross-device
 atomicity, automatic compaction or new multi-record storage protocol is claimed.

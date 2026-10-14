@@ -15,7 +15,8 @@ import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
 import { sessionDescription } from "./metadata";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
-import { ConvertSession } from "./ConvertSession";
+import { sessionConversion } from "./conversion";
+import { ConvertSession, canConvertSession } from "./ConvertSession";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const key = new Uint8Array(32).fill(2),
@@ -72,8 +73,35 @@ function setup(description = sessionDescription()) {
   });
   const owner = createRelaySession(null);
   dispose.push(details.dispose, owner.dispose);
-  const session = { ...owner.session, channelDetails: details.capability };
+  let placed = true;
+  const placementState = {
+    ...owner.session.mePlacement.snapshot(),
+    status: "ready" as const,
+  };
+  const placementSet = vi.fn(
+    async (
+      _id: string,
+      _personal: boolean,
+      _options?: { signal?: AbortSignal },
+    ) => {
+      placed = false;
+    },
+  );
+  const placementRefresh = vi.fn(async () => {});
+  const session = {
+    ...owner.session,
+    channelDetails: details.capability,
+    mePlacement: {
+      ...owner.session.mePlacement,
+      available: true,
+      snapshot: () => placementState,
+      refresh: placementRefresh,
+      has: () => placed,
+      set: placementSet,
+    },
+  };
   const close = vi.fn();
+  const converted = vi.fn();
   const visit = new AbortController();
   const mounted = render(
     <ConvertSession
@@ -81,11 +109,18 @@ function setup(description = sessionDescription()) {
       id={id}
       signal={visit.signal}
       close={close}
+      onConverted={converted}
     />,
   );
   return {
     session,
     close,
+    convertedCallback: converted,
+    placementSet,
+    placementRefresh,
+    removePlacement: () => {
+      placed = false;
+    },
     read,
     sign,
     publish,
@@ -140,6 +175,14 @@ it.each(["private", "public"])(
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.placementSet).toHaveBeenCalledExactlyOnceWith(id, false, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(h.convertedCallback).toHaveBeenCalledOnce();
+    expect(h.publish.mock.invocationCallOrder[0]).toBeLessThan(
+      h.placementSet.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(sessionConversion(h.session, id)).toBeUndefined();
     const event = h.sign.mock.calls[0]?.[0];
     expect(event?.kind).toBe(9002);
     expect(event?.tags).toEqual([
@@ -408,4 +451,163 @@ it("blocks an already open conversion while a share remains pending and recovers
   fireEvent.click(confirm());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])(
+  "retries only Me removal after confirmed conversion, remount=%s",
+  async (remount) => {
+    const h = setup();
+    h.placementSet.mockRejectedValueOnce(new Error("Me save unavailable"));
+    await ready();
+    fireEvent.click(screen.getByRole("radio", { name: "Public" }));
+    fireEvent.click(confirm());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Me save unavailable",
+    );
+    expect(sessionConversion(h.session, id)?.converted).toBe(true);
+    expect(h.convertedCallback).not.toHaveBeenCalled();
+    expect(h.close).not.toHaveBeenCalled();
+    expect(
+      canConvertSession(h.session, {
+        id,
+        name: "Original",
+        channelType: "stream",
+      }),
+    ).toBe(true);
+    if (remount) {
+      h.mounted.unmount();
+      render(
+        <ConvertSession
+          session={h.session}
+          id={id}
+          close={h.close}
+          onConverted={h.convertedCallback}
+        />,
+      );
+    }
+    expect(
+      screen.getByText("Channel converted. Finish removing it from Me."),
+    ).toBeVisible();
+    expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
+    await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.placementSet).toHaveBeenCalledTimes(2);
+    expect(sessionConversion(h.session, id)).toBeUndefined();
+  },
+);
+it("blocks conversion before metadata when Me cannot be read", async () => {
+  const h = setup();
+  h.placementRefresh.mockRejectedValueOnce(new Error("Me read failed"));
+  await ready();
+  fireEvent.click(confirm());
+  expect(await screen.findByRole("alert")).toHaveTextContent("Me read failed");
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.placementSet).not.toHaveBeenCalled();
+  expect(sessionConversion(h.session, id)).toBeUndefined();
+});
+it.each(["visit", "unmount"])(
+  "retains converted recovery but suppresses completion after %s during Me removal",
+  async (retire) => {
+    const h = setup();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.placementSet.mockImplementationOnce(async () => {
+      await held;
+      h.removePlacement();
+    });
+    await ready();
+    fireEvent.click(confirm());
+    try {
+      await waitFor(() => expect(h.placementSet).toHaveBeenCalledOnce());
+      expect(h.publish).toHaveBeenCalledOnce();
+      if (retire === "visit") h.visit.abort();
+      else h.mounted.unmount();
+    } finally {
+      await act(async () => {
+        release();
+        await held;
+      });
+    }
+    expect(h.convertedCallback).not.toHaveBeenCalled();
+    expect(h.close).not.toHaveBeenCalled();
+    expect(sessionConversion(h.session, id)?.converted).toBe(true);
+  },
+);
+
+it("finishes removal when another details consumer confirmed the uncertain conversion", async () => {
+  const h = setup();
+  h.publish.mockRejectedValueOnce(new Error("lost acknowledgment"));
+  await ready();
+  fireEvent.click(confirm());
+  await screen.findByRole("alert");
+  h.mounted.unmount();
+  h.converted();
+  await h.session.channelDetails.check(id);
+  expect(h.session.channelDetails.snapshot(id)).toBeUndefined();
+  expect(sessionConversion(h.session, id)?.converted).not.toBe(true);
+  render(
+    <ConvertSession
+      session={h.session}
+      id={id}
+      close={h.close}
+      onConverted={h.convertedCallback}
+    />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Finish conversion" }),
+  );
+  await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.placementSet).toHaveBeenCalledOnce();
+});
+it("offers explicit removal-only recovery for a retained ordinary channel without an in-process receipt", async () => {
+  const h = setup("");
+  expect(sessionConversion(h.session, id)).toBeUndefined();
+  const move = await screen.findByRole("button", { name: "Move to Messages" });
+  expect(screen.queryByRole("radio")).toBeNull();
+  fireEvent.click(move);
+  await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.placementSet).toHaveBeenCalledExactlyOnceWith(id, false, {
+    signal: expect.any(AbortSignal),
+  });
+});
+it("serializes conversion completion across two mounted forms", async () => {
+  const h = setup();
+  await ready();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.placementSet.mockImplementationOnce(async () => {
+    await held;
+    h.removePlacement();
+  });
+  fireEvent.click(confirm());
+  try {
+    await waitFor(() => expect(h.placementSet).toHaveBeenCalledOnce());
+    render(<ConvertSession session={h.session} id={id} close={vi.fn()} />);
+    const finish = screen.getAllByRole("button", {
+      name: "Finish conversion",
+      hidden: true,
+    });
+    expect(finish).toHaveLength(2);
+    for (const button of finish) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.placementSet).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => {
+      release();
+      await held;
+    });
+  }
+  await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
 });

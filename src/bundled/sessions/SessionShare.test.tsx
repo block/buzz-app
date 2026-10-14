@@ -89,7 +89,10 @@ function fixture(direct = false) {
   let failRoster = false;
   let holdRoster: Promise<void> | undefined;
   let loseDetailsResponse = false;
-  const placement = vi.fn(async () => {});
+  let placed = direct;
+  const placement = vi.fn(async () => {
+    placed = false;
+  });
   let records: readonly import("../../features/relay/outbox").OutgoingEvent[] =
     [];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -264,7 +267,8 @@ function fixture(direct = false) {
           snapshot: () => placementState,
           ensure() {},
           set: placement,
-          has: () => true,
+          refresh: async () => {},
+          has: () => placed,
         },
       }
     : owner.session;
@@ -1074,7 +1078,9 @@ it("Me offers explicit conversion from Share while Done never promotes or remove
     ["visibility", "open"],
   ]);
   expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
-  expect(t.placement).not.toHaveBeenCalled();
+  expect(t.placement).toHaveBeenCalledExactlyOnceWith(source, false, {
+    signal: expect.any(AbortSignal),
+  });
   expect(t.channel()?.channelType).toBe("stream");
   await user.click(screen.getByRole("button", { name: "Share" }));
   expect(

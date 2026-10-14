@@ -47,6 +47,7 @@ function setup(
     signal?: AbortSignal;
     /** Channels filed in the owner's Me; the owner is the viewer. */
     me?: Set<string>;
+    channelType?: "stream" | "session";
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -70,7 +71,13 @@ function setup(
     channels: {
       list: () => ({
         channels: [
-          { id: channel, name: "general", channelType: "stream", members: [] },
+          {
+            id: channel,
+            name: "general",
+            channelType:
+              options.channelType ?? (options.me ? "session" : "stream"),
+            members: [],
+          },
         ],
       }),
     },
@@ -1238,7 +1245,7 @@ async function send(claude: FakeClaude | undefined, id: string, args: object) {
   )?.response?.mcp_response?.result;
 }
 
-it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+it("fails a session mention it cannot place until the placement can be read", async () => {
   const mention = (id: string) =>
     message(id, `@Claude ${id}`, {
       created_at: 100 + Number(id),
@@ -1247,7 +1254,9 @@ it("fails a mention it cannot place, even in Messages, until the placement can b
         ["p", self],
       ],
     });
-  const { deliver, placement, published, claudes, workingUntil } = setup([]);
+  const { deliver, placement, published, claudes, workingUntil } = setup([], {
+    channelType: "session",
+  });
   placement.state = { status: "error", error: "Recipe read failed" };
   await expect(
     deliver({ type: "mention", event: mention("1") }),
@@ -1388,4 +1397,32 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
     ],
   ]);
   runtime.dispose();
+});
+
+it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
+  const event = message("7", "@Claude converted", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, published, claudes, runtime } = setup([], {
+    hold: true,
+    me: new Set([channel]),
+    channelType: "stream",
+  });
+  try {
+    await deliver({ type: "mention", event });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(process?.prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
+    expect(process?.prompts[0]).toContain(event.id);
+    await send(process, "converted-reply", {
+      text: "Threaded",
+      reply: event.id,
+    });
+    expect(published[0]?.tags).toContainEqual(["e", event.id, "", "reply"]);
+  } finally {
+    runtime.dispose();
+  }
 });

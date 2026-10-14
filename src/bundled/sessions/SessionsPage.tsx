@@ -1,4 +1,8 @@
 import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
   sessionShareAttempt,
   useSessionShareAttempts,
 } from "../../features/sessions/share-attempt";
@@ -288,6 +292,7 @@ function SessionWork({
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 }) {
+  useSessionConversions(session);
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -404,6 +409,7 @@ function SessionWork({
               session={session}
               channel={channel}
               signal={navigation?.signal}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
             <MenuRoot>
               <MenuTrigger
@@ -426,7 +432,7 @@ function SessionWork({
                         setConvertOpen(true);
                     }}
                   >
-                    Convert to channel
+                    {conversionLabel(session, channel.id)}
                   </MenuItem>
                 )}
                 <MenuItem
@@ -474,6 +480,7 @@ function SessionWork({
               session={session}
               id={channel.id}
               signal={navigation?.signal}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
               close={() => setConvertOpen(false)}
               finalFocus={actionsTrigger}
             />
@@ -549,16 +556,23 @@ function SessionWork({
               )}
             </div>
             <MessageComposer
-              sessionConversation
+              sessionConversation={channel.channelType === "session"}
               activityClickOpensPanel
-              personalConversation={placement.status !== "ready" || inMe}
+              personalConversation={
+                channel.channelType === "session" &&
+                (placement.status !== "ready" || inMe)
+              }
               onSend={setSent}
               extensions={extensions}
               session={session}
               scope={scope}
               channelId={channel.id}
               channelName={channel.name}
-              label="Message your agents"
+              label={
+                channel.channelType === "session"
+                  ? "Message your agents"
+                  : undefined
+              }
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||

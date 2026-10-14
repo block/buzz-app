@@ -108,6 +108,7 @@ function PersonalHistory({
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
+        onConverted={openMessage}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,

@@ -1,4 +1,8 @@
 import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
   sessionShareAttempt,
   useSessionShareAttempts,
 } from "../../features/sessions/share-attempt";
@@ -60,8 +64,10 @@ export function SessionSections({
   onNew,
   personal = false,
   visit,
+  onConverted,
 }: {
   personal?: boolean;
+  onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -69,6 +75,11 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
   const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
@@ -340,7 +351,7 @@ export function SessionSections({
                                 setConverting({ id: item.id, visit });
                             }}
                           >
-                            Convert to channel
+                            {conversionLabel(session, item.id)}
                           </MenuItem>
                         )}
                       <MenuItem
@@ -452,6 +463,7 @@ export function SessionSections({
           session={session}
           id={converting.id}
           signal={converting.visit}
+          onConverted={() => onConverted?.(converting.id)}
           close={() => setConverting(undefined)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
@@ -466,6 +478,7 @@ export function SessionSections({
           session={session}
           channel={sharingChannel}
           signal={sharing.visit}
+          onConverted={() => onConverted?.(sharing.id)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
               `[data-session-menu-id="${sharing.id}"] button`,

@@ -17,6 +17,10 @@ import {
   useSessionShareAttempts,
   type ShareAttempt,
 } from "../../features/sessions/share-attempt";
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
 import { subscribeView, viewRevision } from "../../shared/view-state";
 import {
   readShareHistory,
@@ -118,10 +122,12 @@ export function SessionShare({
   onClose,
   finalFocus,
   onConvert,
+  onConverted,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
   initialOpen?: boolean;
+  onConverted?: (() => void) | undefined;
   /** A host whose header changes type owns conversion outside that header. */
   onConvert?: (trigger: HTMLElement | null) => void;
   onClose?: () => void;
@@ -129,6 +135,11 @@ export function SessionShare({
   renderTrigger?: (open: () => void, disabled: boolean) => ReactNode;
   signal?: AbortSignal | undefined;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -775,7 +786,7 @@ export function SessionShare({
                 else setConverting(true);
               }}
             >
-              Convert to channel
+              {conversionLabel(session, channel.id)}
             </Button>
           )
         }
@@ -1092,6 +1103,7 @@ export function SessionShare({
           session={session}
           id={channel.id}
           signal={signal}
+          onConverted={onConverted}
           close={() => {
             setConverting(false);
             close();

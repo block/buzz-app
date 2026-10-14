@@ -108,9 +108,22 @@ function fixture() {
       await held;
     },
   );
+  const placementSet = vi.fn(async () => {});
+  const placementState = {
+    ...owner.session.mePlacement.snapshot(),
+    status: "ready" as const,
+  };
   const session = {
     ...owner.session,
     channelDetails: { ...owner.session.channelDetails, save },
+    mePlacement: {
+      ...owner.session.mePlacement,
+      available: true,
+      snapshot: () => placementState,
+      refresh: async () => {},
+      set: placementSet,
+      has: () => false,
+    },
   };
   const snapshot = {
     status: "ready" as const,
@@ -155,7 +168,17 @@ function fixture() {
       </ToastProvider>
     </StrictMode>,
   );
-  return { session, save, sign, publish, view, visit, release, confirmed };
+  return {
+    session,
+    save,
+    sign,
+    publish,
+    view,
+    visit,
+    release,
+    confirmed,
+    placementSet,
+  };
 }
 async function openConversion() {
   const user = userEvent.setup();
@@ -191,18 +214,14 @@ it("Messages conversion survives signed type replacement, announces completion a
     ).toBe("stream");
     expect(dialog).toBeVisible();
     expect(confirm).toBeDisabled();
-    expect(
-      screen.queryByText("Now a channel. Find it in Messages."),
-    ).toBeNull();
+    expect(screen.queryByText("Converted to channel.")).toBeNull();
   } finally {
     await act(async () => {
       t.release();
     });
   }
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(
-    await screen.findByText("Now a channel. Find it in Messages."),
-  ).toBeVisible();
+  expect(await screen.findByText("Converted to channel.")).toBeVisible();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Channel actions" }),
@@ -238,6 +257,48 @@ it("a retired Messages visit receives no late conversion completion", async () =
       await t.save.mock.results[0]?.value;
     });
   }
-  expect(screen.queryByText("Now a channel. Find it in Messages.")).toBeNull();
+  expect(screen.queryByText("Converted to channel.")).toBeNull();
   expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("Messages header reopens removal recovery after confirmed metadata and a failed Me save", async () => {
+  const t = fixture();
+  t.placementSet.mockRejectedValueOnce(new Error("Me save failed"));
+  const { user, confirm, dialog } = await openConversion();
+  try {
+    await user.click(confirm);
+    await act(async () => {
+      await t.confirmed;
+    });
+  } finally {
+    await act(async () => {
+      t.release();
+    });
+  }
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Me save failed",
+  );
+  const closeButton = within(dialog)
+    .getAllByRole("button", { name: "Close" })
+    .at(-1);
+  if (!closeButton) throw new Error("Close missing");
+  await user.click(closeButton);
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Finish conversion" }),
+  );
+  const reopened = await screen.findByRole("dialog", {
+    name: "Convert to channel",
+  });
+  await user.click(
+    within(reopened).getByRole("button", { name: "Finish conversion" }),
+  );
+  await waitFor(() => expect(reopened).not.toBeInTheDocument());
+  expect(t.placementSet).toHaveBeenCalledTimes(2);
+  expect(t.publish).toHaveBeenCalledOnce();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Channel actions" }),
+    ).toHaveFocus(),
+  );
 });

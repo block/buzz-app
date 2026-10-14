@@ -1,5 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
-import { settle } from "./timeline.mjs";
+import { settle, wheel } from "./timeline.mjs";
 
 // Real paint order and clipping cannot be established by DOM component tests.
 test("reaction previews paint above floating message actions", async ({
@@ -77,17 +77,21 @@ test("video speed options escape the thread and restore focus after selection an
   // the menu's scroll baseline; their correction would otherwise overwrite it.
   await page.evaluate(() => document.fonts.ready);
   await settle(page, scroller);
-  await trigger.evaluate((button) => {
+  // Scroll with real input. A programmatic scroll carries no reading intent:
+  // the thread drops it when a reflow lands in the same frame, and its
+  // bottom-follow correction then pulls the trigger out of view.
+  const delta = await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
     // WebKit truncates fractional scroll requests. Round the final position so
     // fractional message heights still reach the same constrained-menu setup.
-    scroller.scrollTop = Math.round(
-      scroller.scrollTop +
-        button.getBoundingClientRect().top -
+    return Math.round(
+      button.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top -
         40,
     );
   });
+  await scroller.hover();
+  await wheel(page, delta, scroller);
   await expect
     .poll(() =>
       trigger.evaluate((button) => {

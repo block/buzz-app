@@ -1271,6 +1271,50 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
 });
 
+it("closes the team editor when leaving Your teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(() =>
+    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.queryByRole("form", { name: "Edit Crew" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+});
+
+it("offers New team again when the team being edited disappears", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(async () => {
+    await agents.saveTeam({
+      id: "crew",
+      name: "Crew",
+      instructions: "",
+      members: [],
+    });
+    await agents.saveTeam({
+      id: "gone",
+      name: "Gone",
+      instructions: "",
+      members: [],
+    });
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Gone" }));
+  expect(
+    screen.queryByRole("button", { name: "New team" }),
+  ).not.toBeInTheDocument();
+  await act(() => agents.removeTeam("gone"));
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New team" })).toBeInTheDocument();
+});
+
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {
   const user = userEvent.setup();
   const far: Agent = {

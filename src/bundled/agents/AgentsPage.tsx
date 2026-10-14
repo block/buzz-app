@@ -182,9 +182,20 @@ export function AgentsPage({
   };
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
+  // Only a team still saved, or one being made, keeps its editor open.
+  const editing =
+    editingTeam === "new" ||
+    snapshot.teams.some((team) => team.id === editingTeam)
+      ? editingTeam
+      : undefined;
+  // Leaving Teams drops the editor, whose unsaved draft goes with it.
+  const changeTab = (next: Tab) => {
+    if (next !== "teams") setEditingTeam(undefined);
+    setTab(next);
+  };
   const returnTo = (next: Tab) => () => {
     setFlow(undefined);
-    setTab(next);
+    changeTab(next);
   };
   const returnToAgents = returnTo("yours");
 
@@ -347,11 +358,11 @@ export function AgentsPage({
                 variant="panel"
                 label="Agent tabs"
                 value={tab}
-                onValueChange={setTab}
+                onValueChange={changeTab}
                 items={TABS}
               />
               {toolbarAction &&
-                !(tab === "teams" && editingTeam) &&
+                !(tab === "teams" && editing) &&
                 (tab === "teams" ? newTeamMenu : newAgentMenu)}
             </div>
             <section
@@ -368,7 +379,7 @@ export function AgentsPage({
                     (agent) => agent.place === "here",
                   )}
                   teams={snapshot.teams}
-                  editing={editingTeam}
+                  editing={editing}
                   onEdit={setEditingTeam}
                   newTeam={!toolbarAction && newTeamMenu}
                 />
@@ -491,7 +502,7 @@ export function AgentsPage({
           onClose={() => setCreating(false)}
           onCreated={(agent) => {
             setCreating(false);
-            setTab("yours");
+            changeTab("yours");
             build(agent.pubkey);
           }}
         />

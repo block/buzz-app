@@ -17,6 +17,12 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   draft, channel ID, Canvas and group defaults in the existing pending-start
   receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
+- New Me conversations add a `personal` line to the session description
+  (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
+  `personal`). It is a routing hint for agents that cannot read the owner's
+  encrypted placement: answer as one channel-scoped, top-level conversation. It is
+  not access authority, and Share clears it with the rest of the session marker.
+  Conversations created before the hint are not backfilled.
 - **Share** is the single Me-to-Messages flow, available in the heading and sidebar
   menus. It defaults to the current name, visibility and duration (new conversations
   are Private/Ongoing), with optional additional people. It preserves the channel

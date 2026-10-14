@@ -17,8 +17,11 @@ export function NewAgentTile({
   fullWidth = false,
   variant = "tile",
   labelRef,
+  label = "New agent",
   ...props
 }: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
+  /** What the tile makes, such as New team. */
+  label?: string;
   fullWidth?: boolean;
   variant?: "tile" | "button";
   labelRef?: Ref<HTMLSpanElement>;
@@ -30,7 +33,7 @@ export function NewAgentTile({
         type="button"
         className={`${styles.newLabel} text-label-sm`}
       >
-        New agent
+        {label}
       </SurfaceButton>
     );
   return (
@@ -59,7 +62,7 @@ export function NewAgentTile({
         })}
       </span>
       <span ref={labelRef} className={`${styles.newLabel} text-label-sm`}>
-        New agent
+        {label}
       </span>
     </SurfaceButton>
   );

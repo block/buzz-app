@@ -71,6 +71,7 @@ import {
 } from "./model";
 import { scopeOf, useReminders } from "./react";
 import styles from "./Reminders.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type Clock = { subscribe(listener: () => void): () => void; read(): number };
 
@@ -322,9 +323,7 @@ function ReminderSections({
               size="small"
               alt=""
               fallback={sender}
-              src={
-                profile?.picture ? session.media(profile.picture) : undefined
-              }
+              src={avatarMedia(profile?.picture, session.media)}
               shape={profile?.isAgent ? "squircle" : "circle"}
             />
           ) : (
@@ -493,6 +492,11 @@ function ReminderRow({
   const [busy, setBusy] = useState(false);
   const [completing, setCompleting] = useState(false);
   const present = useIsPresent();
+  useLayoutEffect(() => {
+    // A newer relay event can win a successful write. Reset surviving rows,
+    // but keep the completion check visible throughout an accepted exit.
+    if (!busy && present) setCompleting(false);
+  }, [busy, present]);
   const update = (action: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
@@ -585,12 +589,7 @@ function ReminderRow({
               disabled={busy}
               onCheckedChange={() => {
                 setCompleting(true);
-                update(() =>
-                  reminders.complete(reminder.id).catch((error) => {
-                    setCompleting(false);
-                    throw error;
-                  }),
-                );
+                update(() => reminders.complete(reminder.id));
               }}
             />
           ) : (

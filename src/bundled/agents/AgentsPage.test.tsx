@@ -22,8 +22,10 @@ import type {
   AgentsSnapshot,
   RegisteredAgentType,
   TeamChange,
+  FoundAgents,
+  TeamPort,
 } from "../../features/agents/service";
-import type { PortableAgent } from "../../features/agents/native";
+import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -261,8 +263,23 @@ function setup(
       return created;
     }),
     finish: vi.fn(async (_: string) => created),
-    portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
+    portable: vi.fn(
+      async (): Promise<FoundAgents> => ({
+        agents: portable,
+        teams: [],
+        warnings: [],
+        here: [],
+      }),
+    ),
     port: vi.fn(async () => created),
+    portTeam: vi.fn(
+      async (): Promise<TeamPort> => ({
+        imported: [],
+        failed: [],
+        elsewhere: [],
+        foreign: [],
+      }),
+    ),
     save: vi.fn(async () => {}),
     previewRetype: vi.fn(
       () =>
@@ -879,7 +896,9 @@ it("tells same-named agents to import apart by their keys", async () => {
       ...portable,
       { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
     ],
+    teams: [],
     warnings: [],
+    here: [],
   });
   await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
@@ -927,13 +946,304 @@ it("shows why importing an agent failed and keeps it listed", async () => {
   expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
 });
 
+const nightShift: OldTeam = {
+  id: "old-night-shift",
+  name: "Night Shift",
+  instructions: "Ship small.",
+  members: [
+    { pubkey: "b".repeat(64), name: "Bea", source: "installed" },
+    { pubkey: "c".repeat(64), name: "Cy", source: "installed" },
+  ],
+};
+const onImport = () =>
+  expect(
+    screen.getByRole("dialog", { name: "Import a team" }),
+  ).toBeInTheDocument();
+async function openImport(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import a team" }),
+  );
+}
+
+it("offers New team on Your teams with create and import, but no marketplace", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.queryByRole("button", { name: "New agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Import a team" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Browse the marketplace" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("menuitem", { name: "Create a new team" }));
+  expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+});
+
+it("shows only teams in Import a team and only agents in Import an agent", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  await openImport(user);
+  const teamDialog = screen.getByRole("dialog", { name: "Import a team" });
+  expect(
+    await within(teamDialog).findByRole("region", { name: "Teams to import" }),
+  ).toBeInTheDocument();
+  expect(
+    within(teamDialog).queryByRole("region", { name: "Agents to import" }),
+  ).not.toBeInTheDocument();
+  await user.click(within(teamDialog).getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const agentDialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(
+    await within(agentDialog).findByRole("region", {
+      name: "Agents to import",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    within(agentDialog).queryByRole("region", { name: "Teams to import" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps Import a team from closing while a team import is pending", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  let finish!: (value: Awaited<ReturnType<typeof agents.portTeam>>) => void;
+  agents.portTeam.mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  await openImport(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Import team Night Shift" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import a team" });
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeInTheDocument();
+  await act(async () =>
+    finish({
+      imported: [],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+      teamError: { name: "Night Shift" },
+    }),
+  );
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled();
+  await user.keyboard("{Escape}");
+  expect(
+    screen.queryByRole("dialog", { name: "Import a team" }),
+  ).not.toBeInTheDocument();
+});
+
+it("lists old teams with how many members are here, and imports one as a team", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: ["c".repeat(64)],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(
+    within(teams).getByRole("heading", { name: "Teams" }),
+  ).toBeInTheDocument();
+  expect(within(teams).getByText("Night Shift")).toBeInTheDocument();
+  // Cy is here already; Bea is still listed as an agent.
+  expect(
+    within(teams).getByText("2 members · 1 already here"),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Import team Night Shift" }),
+  );
+  expect(agents.portTeam).toHaveBeenCalledWith({
+    id: "old-night-shift",
+    type: "test/echo",
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Import a team" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("counts no member of a team as here when they were imported into another community", async () => {
+  const user = userEvent.setup();
+  // Bea and Cy were imported into another community; Import there lists none.
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  expect(within(teams).queryByText(/already here/)).not.toBeInTheDocument();
+  expect(
+    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+  ).toBeEnabled();
+});
+
+it("keeps a team whose members are all here importable with no agents to list", async () => {
+  const user = userEvent.setup();
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  const cy = { ...agent("Cy", 3), pubkey: "c".repeat(64) };
+  const { agents } = setup([bea, cy]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  agents.portTeam.mockImplementationOnce(async () => ({
+    team: await agents.saveTeam({
+      name: "Night Shift",
+      instructions: "Ship small.",
+      members: [bea.pubkey, cy.pubkey],
+    }),
+    imported: [],
+    failed: [],
+    elsewhere: [],
+    foreign: [],
+  }));
+  await openImport(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Import team Night Shift" }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Agents to import" }),
+  ).not.toBeInTheDocument();
+  expect(agents.portTeam).toHaveBeenCalled();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.getByRole("button", { name: /Night Shift/ }),
+  ).toBeInTheDocument();
+});
+
+it("keeps Import open and names each part of a team import that did not come", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  // Renamed in old Buzz since it was listed: messages name what was saved.
+  const team = { id: "t", name: "Late Shift", instructions: "", members: [] };
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  agents.portTeam
+    .mockResolvedValueOnce({
+      team,
+      imported: [bea],
+      failed: [{ name: "Cy", error: "Keychain access was denied" }],
+      elsewhere: [],
+      foreign: [],
+    })
+    .mockResolvedValueOnce({
+      imported: [bea],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+      teamError: { name: "Late Shift" },
+    })
+    .mockResolvedValueOnce({
+      team,
+      imported: [],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+    });
+  await openImport(user);
+  const importTeam = await screen.findByRole("button", {
+    name: "Import team Night Shift",
+  });
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Late Shift with Bea. Couldn't import Cy: Keychain access was denied.",
+  );
+  expect(screen.getByText("2 members · 1 already here")).toBeInTheDocument();
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Kept out: Cy, in another community.",
+  );
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Late Shift. Kept out: Cy, in another community.",
+  );
+});
+
+it("neither counts nor adds a member another account on this device has", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  agents.portTeam.mockResolvedValueOnce({
+    team: { id: "t", name: "Night Shift", instructions: "", members: [] },
+    imported: [bea],
+    failed: [],
+    elsewhere: [],
+    foreign: ["Cy"],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  await user.click(
+    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+  );
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Night Shift with Bea. Kept out: Cy, which another account on this device has.",
+  );
+});
+
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+  expect(screen.queryByRole("grid", { name: "Teams" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
   await user.type(
     screen.getByRole("textbox", { name: "Instructions" }),
@@ -948,14 +1258,61 @@ it("makes a team of chosen agents and lists it with its members", async () => {
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
   });
-  const list = screen.getByRole("list", { name: "Teams" });
-  expect(within(list).getByText("Crew")).toBeInTheDocument();
-  expect(within(list).getByText("Ada, Cy")).toBeInTheDocument();
+  const card = within(screen.getByRole("list", { name: "Teams" })).getByRole(
+    "button",
+    { name: "Crew" },
+  );
+  expect(card).toHaveTextContent("Ada, Cy");
 
-  await user.click(screen.getByRole("button", { name: "Edit Crew" }));
+  await user.click(card);
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
-  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+});
+
+it("closes the team editor when leaving Your teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(() =>
+    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.queryByRole("form", { name: "Edit Crew" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+});
+
+it("offers New team again when the team being edited disappears", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(async () => {
+    await agents.saveTeam({
+      id: "crew",
+      name: "Crew",
+      instructions: "",
+      members: [],
+    });
+    await agents.saveTeam({
+      id: "gone",
+      name: "Gone",
+      instructions: "",
+      members: [],
+    });
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Gone" }));
+  expect(
+    screen.queryByRole("button", { name: "New team" }),
+  ).not.toBeInTheDocument();
+  await act(() => agents.removeTeam("gone"));
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New team" })).toBeInTheDocument();
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

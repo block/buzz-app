@@ -249,9 +249,13 @@ test("pointer completion animates surviving rows in a scrolled list", async ({
       "pointerdown",
       () => {
         const samples = [survivor.getBoundingClientRect().y];
-        window.completionFrames = { samples, finished: false };
+        const exitChecks = [];
+        window.completionFrames = { samples, exitChecks, finished: false };
         const sample = () => {
           samples.push(survivor.getBoundingClientRect().y);
+          if (el.isConnected && el.closest("[inert]")) {
+            exitChecks.push(el.getAttribute("aria-checked"));
+          }
           if (
             section.querySelectorAll("li").length === 2 &&
             getComputedStyle(survivor).transform === "none"
@@ -269,6 +273,11 @@ test("pointer completion animates surviving rows in a scrolled list", async ({
     .poll(() => page.evaluate(() => window.completionFrames?.finished))
     .toBe(true);
   const samples = await page.evaluate(() => window.completionFrames.samples);
+  const exitChecks = await page.evaluate(
+    () => window.completionFrames.exitChecks,
+  );
+  expect(exitChecks.length).toBeGreaterThan(0);
+  expect(exitChecks.every((checked) => checked === "true")).toBe(true);
   const start = samples[0];
   const end = samples.at(-1);
   expect(start - end).toBeGreaterThan(20);

@@ -21,6 +21,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import userEvent from "@testing-library/user-event";
 import { RemindersPage } from "./RemindersPage";
 import { apply } from "./index";
+import { mediaUrl } from "../../features/relay/transport";
 
 afterEach(cleanup);
 
@@ -50,7 +51,8 @@ const channelList = {
   status: "ready",
   channels: [{ id: "c", name: "general", channelType: "stream" }],
 };
-const authors = new Map([["a", { name: "Ada" }]]);
+const authorPicture = `https://community/media/${"a".repeat(64)}.png`;
+const authors = new Map([["a", { name: "Ada", picture: authorPicture }]]);
 const sessionParts = {
   channels: {
     ensureList: () => () => {},
@@ -62,7 +64,8 @@ const sessionParts = {
     subscribe: () => () => {},
     ensure: () => Promise.resolve(),
   },
-  media: (url: string) => url,
+  media: (url: string, size?: "small") =>
+    mediaUrl(url, (target) => target, "https://community", size),
 };
 
 it("lists finished reminders newest first in a collapsed Done group", () => {
@@ -110,6 +113,10 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
       { selector: "time" },
     ),
   ).toBeVisible();
+  expect(overdue.querySelector("img")).toHaveAttribute(
+    "src",
+    authorPicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   // The row's open action still conveys what the reminder is and when.
   expect(
     within(overdue).getByRole("button", { name: "Open message from Ada" }),
@@ -862,4 +869,38 @@ it("blocks competing row updates while saving and recovers after failure", async
   await user.click(checkbox);
   expect(complete).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("resets completion feedback when the settled write leaves the reminder pending", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const complete = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const state = {
+    status: "ready",
+    reminders: [reminder("follow up", "pending", 1, now + 600)],
+  };
+  page({
+    snapshot: () => state,
+    subscribe: () => () => {},
+    complete,
+  } as unknown as Reminders);
+  const checkbox = screen.getByRole("checkbox", { name: "Mark done: Ada" });
+  await user.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toHaveAttribute("aria-disabled", "true");
+  // A newer relay event can win without the completion promise rejecting.
+  await act(async () => finish());
+  expect(checkbox).not.toHaveAttribute("aria-disabled", "true");
+  expect(checkbox).not.toBeChecked();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.click(checkbox);
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(checkbox).toBeChecked();
+  await act(async () => finish());
+  expect(checkbox).not.toBeChecked();
 });

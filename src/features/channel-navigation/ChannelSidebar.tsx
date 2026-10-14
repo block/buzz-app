@@ -86,6 +86,7 @@ import {
 import { splitPartition } from "../relay/partition";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type Props = {
   relay: RelayData;
@@ -266,9 +267,7 @@ function ReadySidebar({
       const profile = dmProfiles.get(channel.participants[0] ?? "");
       previews.set(channel.id, {
         name: channel.name,
-        src: profile?.picture
-          ? queries.media(profile.picture, "small")
-          : undefined,
+        src: avatarMedia(profile?.picture, queries.media),
         isAgent: profile?.isAgent,
       });
     }

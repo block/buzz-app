@@ -82,6 +82,7 @@ import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -1642,7 +1643,7 @@ export function ConversationIcon({
         alt=""
         fallback={item.name}
         size="fill"
-        src={picture ? media(picture, "small") : null}
+        src={avatarMedia(picture, media)}
       />
     </span>
   ) : (

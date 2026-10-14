@@ -45,6 +45,7 @@ import {
   createCommunityMembership,
   type CommunityMembership,
 } from "./membership";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const DAY = 24 * 60 * 60;
 const EXPIRY = [1, 3, 7, 30].map((days) => ({
@@ -295,7 +296,7 @@ function Members({
             return (
               <li key={member.pubkey} className="flex items-center gap-3 py-2">
                 <Avatar
-                  src={picture ? session.media(picture, "small") : undefined}
+                  src={avatarMedia(picture, session.media)}
                   alt=""
                   fallback={label}
                 />

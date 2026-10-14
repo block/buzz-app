@@ -1563,7 +1563,7 @@ it("bounds reply participants and projects artwork with fallback initials", () =
     expect(trigger.querySelector('[title="p3"]')).toHaveTextContent("P");
     expect(trigger).toHaveTextContent("+2");
     expect(media).toHaveBeenCalledWith("https://safe/avatar", "small");
-    expect(media).toHaveBeenCalledWith("http://unsafe", "small");
+    expect(media).not.toHaveBeenCalledWith("http://unsafe", "small");
   } finally {
     view.unmount();
   }

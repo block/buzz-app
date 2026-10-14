@@ -91,7 +91,7 @@ export const MembershipRow = memo(function MembershipRow({
               <button
                 key={key}
                 type="button"
-                className={referenceStyles.link}
+                className={`${referenceStyles.link} ${styles.membershipName}`}
                 data-mention-kind={agent ? "agent" : "person"}
                 aria-label={
                   part.id === viewer

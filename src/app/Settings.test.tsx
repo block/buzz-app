@@ -111,6 +111,117 @@ const host = {
   },
 } as unknown as Parameters<typeof Settings>[0];
 
+it("groups plugins by known categories and describes unknown ones under Other", () => {
+  const ready = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            manifest: {
+              id: "buzz.channels",
+              name: "Channels",
+              apiVersion: 1,
+              description: "Navigate channels and hold conversations in Buzz.",
+              discovery: { category: "communication" },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "buzz.codex",
+              name: "Codex",
+              apiVersion: 1,
+              description: "Run local Codex coding agents in Buzz.",
+              discovery: { category: "agents" },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "example.invoices",
+              name: "Invoices",
+              apiVersion: 1,
+              description: "Reconcile invoices without leaving Buzz.",
+              discovery: { category: "finance" },
+            },
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: true,
+            error: null,
+          },
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const { cards } = registry([]);
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={
+        {
+          subscribe: () => () => {},
+          snapshot: () => ready,
+          change: vi.fn(async () => true),
+          reload: vi.fn(async () => true),
+          dismissError: vi.fn(),
+        } as unknown as Parameters<typeof Settings>[0]["plugins"]
+      }
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  const content = screen.getByRole("region", { name: "Plugins" });
+  expect(
+    within(content)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent),
+  ).toEqual(["Communication", "Agents", "Other"]);
+  expect(content).toHaveTextContent(
+    "Navigate channels and hold conversations in Buzz.",
+  );
+  expect(content).toHaveTextContent("Run local Codex coding agents in Buzz.");
+
+  const other = within(content)
+    .getByRole("heading", { name: "Other" })
+    .closest("section");
+  expect(other).not.toBeNull();
+  expect(within(other as HTMLElement).getByText("Invoices")).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByText(
+      "Reconcile invoices without leaving Buzz.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByRole("switch", {
+      name: "Enable Invoices",
+    }),
+  ).toBeVisible();
+  expect(
+    within(content).queryByRole("heading", { name: "Finance" }),
+  ).toBeNull();
+});
+
 it("uses contributed icons in community and account navigation", () => {
   const { cards } = registry([
     { ...card("groups", "Personal groups"), icon: FolderSimpleIcon },

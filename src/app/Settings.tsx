@@ -1,6 +1,6 @@
 import type { Agents } from "../features/agents/service";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { Header } from "../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
@@ -13,6 +13,7 @@ import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
+import type { PluginInfo } from "../plugins/types";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import type { Identity } from "../features/identity/service";
@@ -33,6 +34,35 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { developerMode, settingsSections } from "./settings-sections";
+
+const pluginCategoryDefinitions = [
+  { id: "communication", label: "Communication" },
+  { id: "productivity", label: "Productivity" },
+  { id: "agents", label: "Agents" },
+  {
+    id: "developer-tools-and-integrations",
+    label: "Developer tools & integrations",
+  },
+  { id: "people-and-communities", label: "People & communities" },
+] as const;
+
+function groupPlugins(plugins: readonly PluginInfo[]) {
+  const known = new Map<string, PluginInfo[]>(
+    pluginCategoryDefinitions.map(({ id }) => [id, []]),
+  );
+  const other: PluginInfo[] = [];
+  for (const plugin of plugins) {
+    const group = known.get(plugin.manifest.discovery?.category ?? "");
+    (group ?? other).push(plugin);
+  }
+  return [
+    ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
+      const entries = known.get(id) ?? [];
+      return entries.length ? [{ id, label, plugins: entries }] : [];
+    }),
+    ...(other.length ? [{ id: "other", label: "Other", plugins: other }] : []),
+  ];
+}
 
 export function Settings({
   agents,
@@ -103,6 +133,10 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
+  const pluginGroups = useMemo(
+    () => groupPlugins(catalog?.plugins ?? []),
+    [catalog?.plugins],
+  );
   return (
     <div
       className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
@@ -273,92 +307,121 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <SettingsGroup>
-                    {catalog?.plugins.map((plugin) => {
-                      const id = plugin.manifest.id;
-                      const running = activation[id];
-                      const failure =
-                        plugin.error ??
-                        (running?.revision === plugin.revision
-                          ? running.error
-                          : null);
-                      return (
-                        <article className="py-1" key={id}>
-                          {/* Channels is required and has no enable/disable control. */}
-                          {id === "buzz.channels" ? (
-                            <PreferenceRow
-                              icon={<SquaresFourIcon size={20} />}
-                              title={plugin.manifest.name}
-                              trailing={
-                                <span className="text-body-sm text-subtle">
-                                  Required
-                                </span>
-                              }
-                            />
-                          ) : (
-                            <SwitchPreferenceRow
-                              icon={<SquaresFourIcon size={20} />}
-                              label={plugin.manifest.name}
-                              aria-label={`Enable ${plugin.manifest.name}`}
-                              checked={plugin.enabled}
-                              readOnly={busy}
-                              aria-disabled={busy}
-                              onClick={(event) => event.currentTarget.focus()}
-                              onCheckedChange={() => {
-                                if (busy) return;
-                                void plugins.change(
-                                  plugin.enabled ? "disable" : "enable",
-                                  id,
-                                );
-                              }}
-                            />
-                          )}
-                          {failure && (
-                            <p role="alert" className="error text-body-sm">
-                              {failure}
-                            </p>
-                          )}
-                          <div className="actions items-center">
-                            {plugin.previous && (
-                              <Button
-                                type="button"
-                                disabled={
-                                  busy || !!plugin.rollbackBlockedReason
-                                }
-                                onClick={() => plugins.change("rollback", id)}
-                              >
-                                Roll back
-                              </Button>
-                            )}
-                            {plugin.rollbackBlockedReason && (
-                              <span className="text-body-sm text-muted">
-                                {plugin.rollbackBlockedReason}
-                              </span>
-                            )}
-                            {plugin.reloadable && !plugin.enabled && (
-                              <Button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => plugins.reload(id)}
-                              >
-                                Reload
-                              </Button>
-                            )}
-                            {plugin.source === "external" && (
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                disabled={busy}
-                                onClick={() => plugins.change("remove", id)}
-                              >
-                                Delete
-                              </Button>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </SettingsGroup>
+                  <div className="grid grid-cols-1 gap-section-gap">
+                    {pluginGroups.map((group) => (
+                      <section
+                        aria-labelledby={`plugin-category-${group.id}`}
+                        key={group.id}
+                      >
+                        <InlineHeader
+                          id={`plugin-category-${group.id}`}
+                          title={group.label}
+                        />
+                        <SettingsGroup>
+                          {group.plugins.map((plugin) => {
+                            const id = plugin.manifest.id;
+                            const running = activation[id];
+                            const failure =
+                              plugin.error ??
+                              (running?.revision === plugin.revision
+                                ? running.error
+                                : null);
+                            return (
+                              <article className="py-1" key={id}>
+                                {/* Channels is required and has no enable/disable control. */}
+                                {id === "buzz.channels" ? (
+                                  <PreferenceRow
+                                    icon={<SquaresFourIcon size={20} />}
+                                    title={plugin.manifest.name}
+                                    subtitle={plugin.manifest.description}
+                                    trailing={
+                                      <span className="text-body-sm text-subtle">
+                                        Required
+                                      </span>
+                                    }
+                                  />
+                                ) : (
+                                  <SwitchPreferenceRow
+                                    icon={<SquaresFourIcon size={20} />}
+                                    label={plugin.manifest.name}
+                                    {...(plugin.manifest.description
+                                      ? {
+                                          description:
+                                            plugin.manifest.description,
+                                        }
+                                      : {})}
+                                    aria-label={`Enable ${plugin.manifest.name}`}
+                                    checked={plugin.enabled}
+                                    readOnly={busy}
+                                    aria-disabled={busy}
+                                    onClick={(event) =>
+                                      event.currentTarget.focus()
+                                    }
+                                    onCheckedChange={() => {
+                                      if (busy) return;
+                                      void plugins.change(
+                                        plugin.enabled ? "disable" : "enable",
+                                        id,
+                                      );
+                                    }}
+                                  />
+                                )}
+                                {failure && (
+                                  <p
+                                    role="alert"
+                                    className="error text-body-sm"
+                                  >
+                                    {failure}
+                                  </p>
+                                )}
+                                <div className="actions items-center">
+                                  {plugin.previous && (
+                                    <Button
+                                      type="button"
+                                      disabled={
+                                        busy || !!plugin.rollbackBlockedReason
+                                      }
+                                      onClick={() =>
+                                        plugins.change("rollback", id)
+                                      }
+                                    >
+                                      Roll back
+                                    </Button>
+                                  )}
+                                  {plugin.rollbackBlockedReason && (
+                                    <span className="text-body-sm text-muted">
+                                      {plugin.rollbackBlockedReason}
+                                    </span>
+                                  )}
+                                  {plugin.reloadable && !plugin.enabled && (
+                                    <Button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => plugins.reload(id)}
+                                    >
+                                      Reload
+                                    </Button>
+                                  )}
+                                  {plugin.source === "external" && (
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        plugins.change("remove", id)
+                                      }
+                                    >
+                                      Delete
+                                    </Button>
+                                  )}
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </SettingsGroup>
+                      </section>
+                    ))}
+                  </div>
                 </div>
               </section>
             </div>

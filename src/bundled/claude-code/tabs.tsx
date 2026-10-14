@@ -24,6 +24,9 @@ import {
   type ClaudeRuntime,
   type Config,
   config as readConfig,
+  effortChoices,
+  effortLabel,
+  effortLevels,
   type SavedConversation,
   modelName as resolvedModelName,
 } from "./runtime";
@@ -74,6 +77,17 @@ const providerDefaultLabel = (
   return native?.resolvedModel
     ? `Claude default (${resolvedModelName(native.resolvedModel)})`
     : "Claude default";
+};
+/** The effort levels of the model a run uses, `""` being Claude's default;
+ * a model Claude does not list may run at any level a listed one has. */
+const effortsFor = (model: string, models: readonly ClaudeModel[]) => {
+  const id = model || "default";
+  const listed = models.find(
+    (candidate) => candidate.value === id || candidate.resolvedModel === id,
+  );
+  return effortChoices(
+    listed ? effortLevels(listed) : models.flatMap(effortLevels),
+  );
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -586,22 +600,66 @@ export function createTabs({
         setSaving(false);
       }
     };
+    const efforts = effortsFor(
+      draft.model || providerDefaults.model,
+      setupState.models,
+    );
+    const effortOptions = [
+      { value: "", label: "Claude default" },
+      // A saved level the model does not list; without Claude's list, it may.
+      ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
+        ? [
+            {
+              value: draft.effort,
+              label: setupState.models.length
+                ? `${effortLabel(draft.effort)} (unavailable)`
+                : effortLabel(draft.effort),
+            },
+          ]
+        : []),
+      ...efforts.map(({ id, label }) => ({ value: id, label })),
+    ];
     const modelControl = (
-      <ModelPicker
-        allowCustomModel
-        models={modelChoices(setupState.models)}
-        value={draft.model}
-        defaultLabel={providerDefaultLabel(
-          providerDefaults.model,
-          setupState.models,
-        )}
-        defaultDescription="Following the provider's model default"
-        onChange={(model) => setDraft({ ...draft, model })}
-      />
+      <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+        <ModelPicker
+          allowCustomModel
+          models={modelChoices(setupState.models)}
+          value={draft.model}
+          defaultLabel={providerDefaultLabel(
+            providerDefaults.model,
+            setupState.models,
+          )}
+          defaultDescription="Following the provider's model default"
+          onChange={(model) => {
+            // An effort the new model does not list goes back to the default;
+            // without Claude's list, the effort is kept.
+            const next = effortsFor(
+              model || providerDefaults.model,
+              setupState.models,
+            );
+            setDraft({
+              ...draft,
+              model,
+              effort:
+                setupState.models.length === 0 ||
+                next.some((level) => level.id === draft.effort)
+                  ? draft.effort
+                  : "",
+            });
+          }}
+        />
+        <Select
+          label="Thinking"
+          variant="field"
+          value={draft.effort}
+          groups={[{ label: "", options: effortOptions }]}
+          onValueChange={(effort) => setDraft({ ...draft, effort })}
+        />
+      </div>
     );
     return (
       <form
-        className="grid gap-4"
+        className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();

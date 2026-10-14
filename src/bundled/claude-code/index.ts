@@ -95,9 +95,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     describeMigration: (saved) => {
-      const { model, scope } = config(saved);
+      const { model, effort, scope } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+        { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
         {
           id: "sessions",
           label: "Sessions",

@@ -82,6 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     run: (delivery) => runtime.run(delivery),
+    runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,
   });
 };

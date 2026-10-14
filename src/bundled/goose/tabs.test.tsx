@@ -168,7 +168,7 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
     GOOSE_MODEL: "claude-opus-5-5",
   });
   // Nothing reaches the agent until the choice is used.
-  expect(changes.at(-1)).toMatchObject({ provider: "", model: "" });
+  expect(changes).toEqual([]);
   await user.click(within(dialog).getByRole("button", { name: "Use" }));
   expect(changes.at(-1)).toMatchObject({
     provider: "anthropic",

@@ -1117,9 +1117,10 @@ reply beyond the traversal range; it does not extend that range or promise compl
 
 A labelled divider separates the original message from replies. It shows the
 relay's thread summary total, the same count as the channel's reply link,
-including collapsed descendants. Without a summary it says “No replies yet” once
-the thread has loaded none, otherwise “Replies” (while loading, for a just-sent
-reply the summary has not counted yet, or a root opened without its summary).
+including collapsed descendants. Without a summary it says “No replies yet” only
+after reading the thread found none, otherwise “Replies” (while loading, for a
+just-sent reply the summary has not counted yet, a root opened without its
+summary, or a linked reply that is unavailable).
 The first reply always shows its author, even when it matches the original.
 The original has no day divider above it; its byline already names the day.
 Agent-addressed messages retain their date when expanded.

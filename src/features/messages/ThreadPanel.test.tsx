@@ -569,6 +569,17 @@ it("separates the original from replies with the relay's reply total", () => {
   h.render();
   expect(screen.getByText("Replies", { exact: true })).toBeVisible();
   h.snapshot.status = "ready";
+  // An unavailable exact target stops the read before any replies are read.
+  for (const targetStatus of ["unavailable", "loading", "error"] as const) {
+    h.snapshot.targetStatus = targetStatus;
+    h.render();
+    expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  expect(screen.getByText("No replies yet")).toBeVisible();
+  h.snapshot.targetStatus = undefined;
   h.render();
   expect(screen.getByText("No replies yet")).toBeVisible();
 

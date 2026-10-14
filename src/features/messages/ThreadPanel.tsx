@@ -1121,12 +1121,16 @@ function ThreadMessages({
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   // The relay's thread summary, the same total the channel's reply link shows.
-  // Without one, never call a thread empty while it loads or shows replies
-  // (a just-sent reply, or a root opened without its channel summary).
+  // Without one, call a thread empty only after reading it: never while it
+  // loads, shows replies (a just-sent reply, or a root opened without its
+  // summary), or after an exact-target read that stopped before the replies.
   const replyCount = snapshot.root?.replyCount ?? 0;
   const replyLabel = replyCount
     ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
-    : snapshot.status === "ready" && !snapshot.replies.length
+    : snapshot.status === "ready" &&
+        !snapshot.replies.length &&
+        (snapshot.targetStatus === undefined ||
+          snapshot.targetStatus === "ready")
       ? "No replies yet"
       : "Replies";
   const showOlderPageStatus =

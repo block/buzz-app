@@ -455,33 +455,39 @@ test("session changes discard the previous sidebar targets and manual unread sti
     pendingRoutes.push(pending);
     return pending;
   });
+  await holdReadingFocus(page);
   try {
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
     await page
       .getByRole("button", { name: "Switch to Secondary", exact: true })
       .click();
+    await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
+    const panel = page.getByRole("complementary", { name: "Channel sidebar" });
+    await expect(panel).toHaveAttribute("aria-busy", "true");
     await expect(
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
     await expectCueHidden(page, "below");
-    await openChannelDetails(page);
-    await page.getByText("Diagnostics", { exact: true }).press("Enter");
-    await page
-      .getByRole("button", { name: "Mark unread on this device", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "Close Channel settings tab", exact: true })
-      .click();
-    await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
-    const panel = page.getByRole("complementary", { name: "Channel sidebar" });
-    await expect(panel).toHaveAttribute("aria-busy", "true");
     // A new session reveals its roster after the bounded startup wait even if
     // preferences are still blocked. Scrolling the empty loading view is a no-op.
     await expect(row(page, "alpha")).toBeVisible();
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toHaveCount(0);
+    await row(page, "alpha").click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .click();
+    await expect(page.getByRole("menu", { name: /Actions for / })).toBeHidden();
+    await row(page, "alpha").click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Mark as Unread", exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(
+      row(page, "alpha").locator("[data-channel-unread]"),
+    ).toHaveAttribute("aria-label", "Marked unread on this device only");
     await scroll(page, 1800);
     await expect(cue(page, "above")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
@@ -502,7 +508,8 @@ test("session changes discard the previous sidebar targets and manual unread sti
       row(page, "alpha").locator(
         '[data-channel-unread][data-priority="false"]',
       ),
-    ).toBeAttached();
+    ).toHaveAttribute("aria-label", "Marked unread on this device only");
+    await releaseReadingFocus(page);
   } finally {
     release();
     await Promise.all(pendingRoutes);

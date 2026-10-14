@@ -101,9 +101,9 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-  /* Every label row matches the calendar artwork's height, so the line sits
-     space-6 from adjacent message content: subtract half that row and the
-     neighbouring .message row padding. */
+  /* Reserve a fixed label row. Ordinary message clearance accounts for half
+     its height and the neighbouring .message padding; compact agent-addressed
+     rows keep their own tighter spacing. */
   min-block-size: var(--space-5);
   color: var(--text-subtle);
   @apply text-caption;

@@ -598,10 +598,24 @@ it("separates the original from replies with the relay's reply total", () => {
   }
   h.snapshot.targetStatus = "ready";
   h.render();
-  expect(screen.getByText("No replies yet")).toBeVisible();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
   h.snapshot.targetStatus = undefined;
   h.render();
-  expect(screen.getByText("No replies yet")).toBeVisible();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+
+  // Empty presentation never proves empty history, including after a repair
+  // or selection reset leaves ready with no continuation or error evidence.
+  for (const [canLoadMore, limited] of [
+    [true, false],
+    [false, true],
+    [false, false],
+  ]) {
+    h.snapshot.canLoadMore = canLoadMore;
+    h.snapshot.limited = limited;
+    h.render();
+    expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
 
   // A just-sent reply can arrive before the relay's summary counts it.
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];

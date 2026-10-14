@@ -258,10 +258,16 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  // Set when the timeline itself positions a following reader, until the next
+  // reader input. Its own end alignment and Virtua's offset corrections can
+  // scroll upward before rows re-measure; only reader input may cancel follow.
+  const layoutCorrection = useRef(false);
+  // A held pointer can drag the scrollbar without directional input events.
+  const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
-    (element: HTMLElement) => {
+    (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
       // Keep the restored event anchored through that change until reader input.
       const anchor = restoredAnchor.current;
@@ -308,12 +314,16 @@ function Timeline({
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
+      // A measured list-height mutation or the timeline's own end alignment can
+      // likewise move the offset upward; until reader input, only explicit
+      // upward input may cancel follow.
       // Explicit upward input wins even when shrink and reader movement share
       // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
         (upwardGesture.current ||
-          (element.clientWidth === previous.width &&
+          (!layoutOwned &&
+            element.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -353,6 +363,7 @@ function Timeline({
     scroller.current?.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
+    layoutCorrection.current = true;
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
     });
@@ -364,19 +375,39 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  // The reveal keeps its row in place through late measurement until any newer
+  // intent: reader input, a send or Jump to latest.
+  const targetIntent = useRef<number | undefined>(undefined);
+  const holdTarget = useCallback(
+    () => intent.current === targetIntent.current,
+    [],
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
-    intent.current++;
+    targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
+  const targetSignal = inlineSignal ?? navigation?.signal;
+  // Positioning waits for the exact reveal, then must run again: a reveal that
+  // leaves the reader at the bottom keeps following late row measurement.
+  const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   const completeTarget = useCallback(() => {
+    const element = scroller.current;
+    // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
+    // keeps its row where it placed it instead of re-aligning to the end.
+    if (
+      element &&
+      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+    )
+      follow.current = false;
     navigation?.complete({ status: "opened" });
-  }, [navigation]);
-  const exactRevealed = useMessageReveal({
+    setRevealedSignal(targetSignal);
+  }, [navigation, targetSignal]);
+  useMessageReveal({
     scroller,
     focus: !(
       navigation?.target.kind === "conversation" &&
@@ -384,10 +415,11 @@ function Timeline({
     ),
     settled,
     messageId: targetId,
-    signal: inlineSignal ?? navigation?.signal,
+    signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
+    hold: holdTarget,
   });
   useReading({
     session: queries,
@@ -500,15 +532,12 @@ function Timeline({
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
-      (!targetId ||
-        exactRevealed.current === (inlineSignal ?? navigation?.signal))
+      (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (
-      (targetId &&
-        (inlineSignal || navigation) &&
-        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
+      (targetId && targetSignal && revealedSignal !== targetSignal) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -556,6 +585,7 @@ function Timeline({
         } else handle.current.scrollTo(restore.offset);
         follow.current = false;
       } else if (follow.current) {
+        layoutCorrection.current = true;
         handle.current.scrollToIndex(
           revealIndex >= 0 ? revealIndex : rows.length - 1,
           { align: "end" },
@@ -596,8 +626,10 @@ function Timeline({
               measuredPosition.current &&
               intent.current === scheduledIntent &&
               scroller.current
-            )
-              recordPosition(scroller.current);
+            ) {
+              recordPosition(scroller.current, true);
+              layoutCorrection.current = true;
+            }
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(restorePosition);
           });
@@ -634,9 +666,8 @@ function Timeline({
     prepend,
     recordPosition,
     targetId,
-    navigation,
-    inlineSignal,
-    exactRevealed,
+    targetSignal,
+    revealedSignal,
     updateJumpToLatest,
     revealMessageId,
   ]);
@@ -679,6 +710,7 @@ function Timeline({
   }, [loadNearTop]);
   const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
+    layoutCorrection.current = false;
     intent.current++;
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
@@ -723,7 +755,16 @@ function Timeline({
         touchY.current = next;
       }}
       onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
-      onPointerDown={() => gesture()}
+      onPointerDown={() => {
+        pointerHeld.current = true;
+        gesture();
+      }}
+      onPointerUp={() => {
+        pointerHeld.current = false;
+      }}
+      onPointerCancel={() => {
+        pointerHeld.current = false;
+      }}
       onScrollEnd={() => {
         upwardGesture.current = false;
       }}
@@ -749,7 +790,10 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          recordPosition(element);
+          recordPosition(
+            element,
+            layoutCorrection.current && !pointerHeld.current,
+          );
           updateJumpToLatest(element);
         }
         loadNearTop(element);

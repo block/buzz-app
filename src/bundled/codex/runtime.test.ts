@@ -3,6 +3,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
+import { ownerReads } from "../../features/agents/reads";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -265,7 +266,11 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, () => relay, store);
+  const runtime = new CodexRuntime(
+    spawn,
+    (pubkey) => ownerReads(relay, pubkey),
+    store,
+  );
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -1244,13 +1249,52 @@ it.each([false, true])(
     gate.resolve();
     await done;
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
-      creator.pubkey,
-    ]);
+    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith(
+      [creator.pubkey],
+      "foreground",
+    );
     await f.complete();
     expect(f.publish).toHaveBeenCalled();
   },
 );
+it("starts no work when the agent stops while its channel is read", async () => {
+  const f = fixture();
+  const relay = { snapshot: () => f.snapshot } as unknown as RelayData;
+  const gate = deferred<void>();
+  const channel = vi.fn();
+  const runtime = new CodexRuntime(
+    f.spawn,
+    (key) => {
+      const reads = ownerReads(relay, key);
+      return (
+        reads && {
+          ...reads,
+          channel: async (id: string) => {
+            channel(id);
+            await gate.promise;
+            return reads.channel(id);
+          },
+        }
+      );
+    },
+    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+  );
+  runtimes.push(runtime);
+  runtime.sync([{ pubkey } as Agent]);
+  const controller = new AbortController();
+  const done = runtime.run({
+    ...f.delivery("work"),
+    signal: controller.signal,
+  });
+  await vi.waitFor(() => expect(channel).toHaveBeenCalledWith("channel"));
+  runtime.sync([]);
+  controller.abort();
+  gate.resolve();
+  await expect(done).rejects.toMatchObject({ name: "AbortError" });
+  expect(f.spawn).not.toHaveBeenCalled();
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(runtime.sessions(pubkey)).toEqual([]);
+});
 it("ignores a relay workflow mention without explicit community authority", async () => {
   const f = fixture();
   const relay = keypair();
@@ -1834,6 +1878,48 @@ it("gives each turn the agent's current core memory, and goes on without it when
   warn.mockRestore();
 });
 
+it("gives a turn no memory read through a connection that was replaced", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  type Listing = Awaited<ReturnType<typeof f.memoryRead>>;
+  let release!: (listing: Listing) => void;
+  f.memoryRead.mockImplementationOnce(
+    () =>
+      new Promise<Listing>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const instructions = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext?: Record<string, { value: string }> }
+        | undefined
+    )?.additionalContext?.["buzz.instructions"]?.value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.memoryRead).toHaveBeenCalledTimes(1));
+  const freshRead = vi.fn(async () => ({
+    entries: [{ slug: "core", body: "I am the new owner's.", createdAt: 1 }],
+    partial: false,
+  }));
+  f.snapshot.session = {
+    ...f.snapshot.session,
+    agentMemories: { ...f.snapshot.session.agentMemories, read: freshRead },
+  };
+  release({
+    entries: [{ slug: "core", body: "I am the old owner's.", createdAt: 1 }],
+    partial: false,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(instructions(0)).not.toContain("old owner");
+  expect(instructions(0)).not.toContain("<core-memory>");
+  f.complete(0, "FIRST");
+  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(freshRead).toHaveBeenCalledTimes(1);
+  expect(instructions(1)).toContain("I am the new owner's.");
+  warn.mockRestore();
+});
+
 it("does not declare core missing when the owner listing is partial", async () => {
   const f = fixture();
   f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
@@ -2304,7 +2390,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v5:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2341,7 +2427,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v4:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v5:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);

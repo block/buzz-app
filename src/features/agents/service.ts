@@ -22,7 +22,8 @@ import type { ProfileQueries } from "../relay/profile-directory";
 import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
+import type { DefinedIcon } from "../../shared/design-system/icons";
 import {
   createContributions,
   type Contribution,
@@ -105,8 +106,8 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-// STOPGAP(agent-local-typing): delete with local-typing.ts.
-import { typeLocally } from "./local-typing";
+import { meChat } from "./me-chat";
+import { type Pulses, pulseTyping } from "./typing";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -148,6 +149,12 @@ export type AgentChange<Config = unknown> = Readonly<{
 }>;
 /** What a type's read-only peek receives. */
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
+export type AgentSettingsHost = Readonly<{
+  /** A labelled Type control supplied only by the Agents build view. */
+  typeControl?: (dirty: boolean) => ReactNode;
+  /** Host-owned type change committed with the target type's settings draft. */
+  pendingSave?: (config?: unknown) => Promise<void>;
+}>;
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */
 /** The message's conversation a profile was opened from: its channel, and its
@@ -165,6 +172,8 @@ export type AgentViewProps<Config = unknown> = {
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects. */
   save(config: Config): Promise<void>;
+  /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
+  settingsHost?: AgentSettingsHost;
 };
 /** What a type's part of the New agent dialog receives: the new agent's
  * starting config, from `defaults`, to fill in. The app owns its key, name and
@@ -174,9 +183,21 @@ export type AgentCreateProps<Config = unknown> = {
   onChange(config: Config): void;
   disabled: boolean;
 };
+export type AgentCreateModelMenuProps<Config = unknown> =
+  AgentCreateProps<Config> & {
+    /** Whether this provider is the create form's current selection. */
+    active?: boolean;
+    /** Opens Create's host-owned model-ID dialog after its menu closes. */
+    requestCustomModel(
+      initialValue: string,
+      onChange: (model: string) => void,
+    ): void;
+  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
+  /** Lets the Agents build view place host-owned Type controls in this tab. */
+  role?: "settings";
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
@@ -290,6 +311,13 @@ export type Delivery<Config = unknown> = Readonly<{
   current(): boolean;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
+export type AgentMigrationSetting = Readonly<{
+  id: string;
+  label: string;
+  isOverride: boolean;
+  /** Matching keys mean this override has the same effect after migration. */
+  unchangedKey?: string;
+}>;
 /** A model with its effort levels, lowest first. */
 export type Model = Readonly<{
   id: string;
@@ -300,10 +328,29 @@ export type Model = Readonly<{
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
 export type Models = Readonly<{ current: string; models: readonly Model[] }>;
+export type AgentProviderSnapshot = Readonly<{
+  readiness: "checking" | "ready" | "attention";
+  /** Action-oriented menu copy for direct recovery or recovery guidance. */
+  attentionLabel?: string;
+  /** Installation and sign-in work must be cancelled before its dialog closes. */
+  blocking?: boolean;
+}>;
+export type AgentProvider = Readonly<{
+  snapshot(): AgentProviderSnapshot;
+  subscribe(listener: () => void): () => void;
+  /** Refreshes device-wide readiness without changing installation or auth. */
+  check(): void | Promise<void>;
+  /** Handles the current attention state directly; absent opens DialogBody. */
+  attentionAction?: (() => void) | undefined;
+  /** Provider-owned recovery/progress controls and optional saved defaults. */
+  DialogBody: ComponentType<{ onClose(): void }>;
+}>;
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
   description?: string;
+  /** Decorative design-system mark shown with this type in host-owned choices. */
+  icon?: DefinedIcon;
   /** A new agent's starting config and attention objects. */
   defaults(): Readonly<{
     config: Config;
@@ -312,6 +359,14 @@ export type AgentType<Config = unknown> = {
   /** A brought-over agent's config: `config` from `defaults` with whatever of
    * `carry` the type has a place for. Without it, all of `carry` stays behind. */
   adopt?(carry: Carry, config: Config): Config;
+  /** What of `config` another type may adopt when the agent changes type.
+   * Without it, all of its settings stay behind. */
+  carry?(config: Config): Carry;
+  /** Describes harness settings for a type-change preview. Rendered labels
+   * never determine migration behavior. */
+  describeMigration?(config: Config): readonly AgentMigrationSetting[];
+  /** Brief runtime consequence of leaving this type. */
+  migrationWarning?: string;
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
@@ -319,6 +374,13 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Model rows contributed to this type's submenu in the New agent dialog. */
+  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
+  /** Non-default model detail appended to this type's New agent trigger. */
+  createModelLabel?(config: Config): string | undefined;
+  /** Device-wide readiness and management. Agents supplies the menu row,
+   * provider identity, modal framing and focus behavior. */
+  provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
   /** Models and effort levels the owner can pick for the next run while
@@ -368,6 +430,17 @@ export type RemoteAgentType = Readonly<{
   ): Promise<void>;
 }>;
 export type RegisteredAgentType = Contribution<AgentType>;
+export type RetypePreview = Readonly<{
+  /** Destination settings after applying the target type's migration policy. */
+  config: unknown;
+  moved: readonly (keyof Carry)[];
+  dropped: readonly (keyof Carry)[];
+  settings: readonly Readonly<{
+    id: string;
+    label: string;
+    outcome: "reset" | "dropped";
+  }>[];
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** The selected community's agents, while it is connected. */
@@ -428,6 +501,18 @@ export type Agents = {
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** Previews the destination config and transferable settings the same
+   * migration used by `retype` will produce, without changing the agent. */
+  previewRetype(pubkey: string, type: string): RetypePreview;
+  /** Makes it an agent of `type`, keeping its identity and attention. Its new
+   * config is the type's defaults with whatever the old type carries and the
+   * new one adopts, or the reviewed destination draft; returns what of the old
+   * config stayed behind. Refused mid-turn. */
+  retype(
+    pubkey: string,
+    type: string,
+    change?: Readonly<{ config: unknown }>,
+  ): Promise<readonly (keyof Carry)[]>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. A hosted agent is archived,
    * leaves its channels and is removed from its provider before this resolves.
@@ -457,6 +542,10 @@ const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
+/** How often agents are said to be online; the relay keeps it 180 seconds. */
+const PRESENCE_MS = 60_000;
+/** The most agents one presence event names. */
+const PRESENCE_BATCH = 256;
 const EMPTY = Object.freeze({});
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
@@ -704,12 +793,21 @@ type Runner = {
   /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
   readonly wrote: Set<string>;
+  /** Turns still counted as working, which a change of type waits out. */
+  working: number;
+  /** Its typing pulses, one per conversation it is working in. */
+  readonly typing: Pulses;
+  /** A provider/config transition owns the idle runner and pauses its queue. */
+  transitioning: boolean;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
   activityClaimed?: boolean;
   /** Advances each time attention is seen off, which voids queued watch work. */
   epoch: number;
+  /** Whether a claim has been answered, so `mayHold` is known rather than
+   * assumed. */
+  asked?: boolean;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -751,6 +849,19 @@ export class AgentsService extends Service implements Agents {
   private busy = new Set<string>();
   /** Hosted and elsewhere agents as last shown, kept while unchanged. */
   private shown = new Map<string, Agent>();
+  /** By origin: the agents last said to be online there, and when. */
+  private presence = new Map<
+    string,
+    {
+      session: RelaySession;
+      online: ReadonlySet<string>;
+      at: number;
+      /** The session cannot send presence, so it is not tried again. */
+      unable?: boolean;
+    }
+  >();
+  /** Origins whose presence is being sent. */
+  private announcing = new Set<string>();
 
   constructor(
     ctx: Context,
@@ -792,6 +903,7 @@ export class AgentsService extends Service implements Agents {
       const tick = setInterval(() => {
         for (const runner of this.runners.values()) void this.drain(runner);
         this.reconnect();
+        this.announce();
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -801,6 +913,7 @@ export class AgentsService extends Service implements Agents {
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
         for (const runner of this.runners.values()) this.retire(runner);
         this.runners.clear();
+        this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({
           ...this.state,
@@ -1105,6 +1218,8 @@ export class AgentsService extends Service implements Agents {
     if (!identity)
       return this.exclusive(pubkey, () => this.saveHosted(pubkey, change));
     if (!this.native) throw new Error("No such agent on this device");
+    if (change.config !== undefined && this.runners.get(pubkey)?.transitioning)
+      throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     let record = this.recordOf(identity);
@@ -1203,6 +1318,93 @@ export class AgentsService extends Service implements Agents {
     if (!agent || !remote || !origin || !binding)
       throw new Error("No such agent on this device");
     return { agent, remote, origin, binding };
+  }
+
+  async retype(
+    pubkey: string,
+    type: string,
+    change?: Readonly<{ config: unknown }>,
+  ) {
+    const identity = this.live(pubkey);
+    if (!this.native || !identity)
+      throw new Error("No such agent on this device");
+    const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
+    const kind = kinds.get(type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted provider cannot take over a local agent key");
+    if (type === identity.type) return [];
+    const runner = this.runners.get(pubkey);
+    if (runner?.working)
+      throw new Error(
+        `${identity.name} is answering; change its type when it finishes`,
+      );
+    if (!runner) throw new Error("Change its type on the device that runs it");
+    if (runner.transitioning)
+      throw new Error(`${identity.name}'s provider is already changing`);
+    runner.transitioning = true;
+    try {
+      if (!(await this.claimForRetype(runner)))
+        throw new Error("Change its type on the device that runs it");
+      if (runner.working)
+        throw new Error(
+          `${identity.name} is answering; change its type when it finishes`,
+        );
+      const { adopted, preview } = this.retypePlan(
+        identity,
+        kinds.get(identity.type),
+        kind,
+      );
+      await this.native.setType(pubkey, type);
+      try {
+        const nextRecord = {
+          ...this.recordOf(identity),
+          config: change ? change.config : adopted,
+        };
+        const records = { ...this.records, [pubkey]: nextRecord };
+        writeRecords(this.storage, records);
+        // Publish the in-memory pair only after its config is durable.
+        this.records = records;
+        this.identities = this.identities.map((saved) =>
+          saved.pubkey === pubkey ? { ...saved, type } : saved,
+        );
+        this.update();
+      } catch (error) {
+        try {
+          await this.native.setType(pubkey, identity.type);
+        } catch (rollback) {
+          throw new AggregateError(
+            [error, rollback],
+            `Could not save or restore ${identity.name}'s provider`,
+          );
+        }
+        throw error;
+      }
+      await this.refresh();
+      return preview.dropped;
+    } finally {
+      runner.transitioning = false;
+      void this.drain(runner);
+    }
+  }
+
+  previewRetype(pubkey: string, type: string): RetypePreview {
+    const identity = this.live(pubkey);
+    if (!this.native || !identity)
+      throw new Error("No such agent on this device");
+    const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
+    const kind = kinds.get(type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted provider cannot take over a local agent key");
+    if (type === identity.type)
+      return {
+        config: this.recordOf(identity).config,
+        moved: [],
+        dropped: [],
+        settings: [],
+      };
+    return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
   async remove(pubkey: string) {
@@ -1510,6 +1712,55 @@ export class AgentsService extends Service implements Agents {
       }
     return this.records[pubkey] ?? blank(pubkey);
   }
+  private retypePlan(
+    identity: AgentIdentity,
+    source: RegisteredAgentType | undefined,
+    kind: RegisteredAgentType,
+  ) {
+    const record = this.recordOf(identity);
+    const carry = source?.carry?.(record.config) ?? {};
+    const { config } = kind.defaults();
+    const adopted = kind.adopt ? kind.adopt(carry, config) : config;
+    const kept = kind.carry?.(adopted) ?? {};
+    const keys = (Object.keys(carry) as (keyof Carry)[]).filter(
+      (key) => carry[key] !== undefined,
+    );
+    const moved = keys.filter((key) => kept[key] === carry[key]);
+    const dropped = keys.filter((key) => kept[key] !== carry[key]);
+    const destinationSettings = new Map(
+      kind.describeMigration?.(adopted).map((setting) => [setting.id, setting]),
+    );
+    const settings =
+      source
+        ?.describeMigration?.(record.config)
+        .filter((setting) => setting.isOverride)
+        .flatMap((setting) => {
+          const next = destinationSettings.get(setting.id);
+          if (
+            next &&
+            setting.unchangedKey !== undefined &&
+            setting.unchangedKey === next.unchangedKey
+          )
+            return [];
+          return [
+            {
+              id: setting.id,
+              label: setting.label,
+              outcome: next ? ("reset" as const) : ("dropped" as const),
+            },
+          ];
+        }) ?? [];
+    return {
+      record,
+      adopted,
+      preview: {
+        config: adopted,
+        moved,
+        dropped,
+        settings,
+      },
+    };
+  }
   private view(identity: AgentIdentity, record: AgentRecord): Agent {
     return Object.freeze({
       pubkey: identity.pubkey,
@@ -1801,6 +2052,7 @@ export class AgentsService extends Service implements Agents {
         prior &&
           prior.name === identity.name &&
           prior.picture === identity.picture &&
+          prior.type === identity.type &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
@@ -1870,6 +2122,90 @@ export class AgentsService extends Service implements Agents {
       )
         void this.drain(runner);
     this.connected = ready;
+    this.announce();
+  }
+
+  /** Tells each community which agents this copy runs there: online every
+   * minute while it does, and offline once it stops, unless another copy took
+   * over. Offline is best effort; the relay lets a lapsed online expire. */
+  private announce() {
+    const online = new Map<string, Set<string>>();
+    for (const agent of this.state.running) {
+      const origin = originOf(agent.relay);
+      if (origin && this.bindingOf(agent) && this.runs(agent.pubkey))
+        online.set(origin, (online.get(origin) ?? new Set()).add(agent.pubkey));
+    }
+    for (const origin of this.presence.keys())
+      if (!this.bound.has(origin)) this.presence.delete(origin);
+    const now = Date.now();
+    for (const [origin, entry] of this.bound) {
+      const binding = entry.binding;
+      if (!binding || this.announcing.has(origin)) continue;
+      const next = online.get(origin) ?? new Set<string>();
+      const prior = this.presence.get(origin);
+      const same = prior?.session === binding.session;
+      if (same && prior.unable) continue;
+      // Another copy that took an agent over says it is online; offline from
+      // this one could arrive after that, so forget it was online here.
+      const was = new Set(
+        [...(prior?.online ?? [])].filter(
+          (pubkey) => next.has(pubkey) || !this.yielded(pubkey),
+        ),
+      );
+      if (prior && was.size < prior.online.size)
+        this.presence.set(origin, { ...prior, online: was });
+      const gone = [...was].filter((pubkey) => !next.has(pubkey));
+      const due = !same || now - prior.at >= PRESENCE_MS;
+      const changed =
+        gone.length > 0 || [...next].some((pubkey) => !was.has(pubkey));
+      if (!changed && (!due || !next.size)) continue;
+      this.announcing.add(origin);
+      const sent = { session: binding.session, online: next, at: now };
+      this.presence.set(origin, sent);
+      void (async () => {
+        for (const [status, agents] of [
+          ["offline", gone],
+          ["online", [...next]],
+        ] as const)
+          for (let at = 0; at < agents.length; at += PRESENCE_BATCH)
+            if (
+              !(await binding.session.publishAgentPresence(
+                status,
+                agents.slice(at, at + PRESENCE_BATCH),
+                binding.controller.signal,
+              ))
+            )
+              return false;
+        return true;
+      })()
+        .then((ok) => {
+          if (ok || this.presence.get(origin) !== sent) return;
+          console.warn("Agent presence cannot be sent on this connection");
+          this.presence.set(origin, { ...sent, unable: true });
+        })
+        .catch((error) => {
+          if (binding.controller.signal.aborted) return;
+          console.warn("Agent presence was not sent", error);
+          // Try again sooner than the minute, but not every tick.
+          if (this.presence.get(origin) === sent)
+            this.presence.set(origin, {
+              ...sent,
+              at: Date.now() - PRESENCE_MS + RETRY_MS,
+            });
+        })
+        .finally(() => this.announcing.delete(origin));
+    }
+  }
+  /** Whether this copy runs the agent: its type can run it, and no other
+   * copy of the app holds it. */
+  private runs(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    return !!runner?.type?.run && !!runner.asked && runner.mayHold;
+  }
+  /** Whether another copy of the app runs an agent this one could. */
+  private yielded(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    return !!runner?.type?.run && !runner.mayHold && !!this.ready(pubkey);
   }
   private notify() {
     for (const listener of this.listeners) listener();
@@ -1889,6 +2225,9 @@ export class AgentsService extends Service implements Agents {
       admitted: 0,
       seen: new Set(),
       wrote: new Set(),
+      working: 0,
+      typing: new Map(),
+      transitioning: false,
       mayHold: true,
       epoch: 0,
     };
@@ -2140,7 +2479,7 @@ export class AgentsService extends Service implements Agents {
   // its deadline stops holding the queue when the deadline passes; it is not
   // otherwise fenced.
   private async drain(runner: Runner) {
-    if (runner.running) return;
+    if (runner.running || runner.transitioning) return;
     runner.running = true;
     while (this.runners.get(runner.pubkey) === runner) {
       const agent = this.ready(runner.pubkey);
@@ -2167,6 +2506,8 @@ export class AgentsService extends Service implements Agents {
         runner.queue.length = 0;
         break;
       }
+      // Retype may have reserved this idle runner while claim was pending.
+      if (runner.transitioning) break;
       // The agent or its type may have changed meanwhile.
       if (this.ready(runner.pubkey) !== agent || runner.type !== type) continue;
       runner.activityClaimed = true;
@@ -2196,7 +2537,7 @@ export class AgentsService extends Service implements Agents {
           this.require().remember(agent.pubkey, slug, body, after),
         attention: this.attention(agent.pubkey),
       });
-      const working = this.working(runner, job);
+      const working = this.working(runner, job, agent.owner);
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
         const team = teamPrompt(
@@ -2249,36 +2590,46 @@ export class AgentsService extends Service implements Agents {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
-   * mention run is shown typing on this device meanwhile; no public
-   * activity is published. */
-  private working(runner: Runner, { trigger, channelId, work }: Job) {
+   * mention run is shown typing in its thread meanwhile, from its first
+   * `workingUntil`: a runtime that ignores the mention never shows it. Its
+   * activity stays on this device. */
+  private working(
+    runner: Runner,
+    { trigger, channelId, work }: Job,
+    owner: string,
+  ) {
     work?.started();
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
-    const done =
-      event && channel
-        ? [
-            // STOPGAP(agent-local-typing): delete with local-typing.ts.
-            typeLocally(
-              () => {
-                const relay = this.relay(runner.pubkey)?.snapshot();
-                return relay?.status === "ready" ? relay.session : undefined;
-              },
-              runner.pubkey,
-              event,
-              channel,
-            ),
-          ]
-        : [];
+    let typing: (() => void) | undefined;
+    const beginTyping = () => {
+      if (typing || !event || !channel) return;
+      typing = pulseTyping(
+        // Straight to native, so pulses stay out of what it wrote.
+        async (pulse) => this.require().publish(runner.pubkey, pulse),
+        // Where its turn answers, read the same way.
+        meChat(
+          () => this.relay(runner.pubkey),
+          owner,
+          channel,
+          runner.controller.signal,
+        ),
+        event,
+        channel,
+        runner.typing,
+      );
+    };
     let holds = 1;
     let outcome: WorkOutcome = { ok: true };
     const lifetime = runner.controller.signal;
+    runner.working++;
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       lifetime.removeEventListener("abort", abort);
-      for (const end of done) end();
+      runner.working--;
+      typing?.();
     };
     const abort = () => {
       work?.remove();
@@ -2310,6 +2661,7 @@ export class AgentsService extends Service implements Agents {
       hold(pending: PromiseLike<unknown>) {
         if (holds <= 0) return;
         holds++;
+        beginTyping();
         Promise.resolve(pending).then(release, (error) =>
           release({ ok: false, error: message(error) }),
         );
@@ -2321,9 +2673,11 @@ export class AgentsService extends Service implements Agents {
   private async claim(runner: Runner) {
     try {
       runner.mayHold = (await this.native?.claim(runner.pubkey)) ?? false;
+      runner.asked = true;
       return runner.mayHold;
     } catch (error) {
       runner.mayHold = true;
+      runner.asked = true;
       // Answering twice beats not answering at all.
       console.warn(
         `Agent ${this.agent(runner.pubkey)?.name} was not claimed`,
@@ -2331,6 +2685,12 @@ export class AgentsService extends Service implements Agents {
       );
       return true;
     }
+  }
+  /** Claims exclusively for a provider migration. Unlike turn execution,
+   * uncertainty is unsafe here because changing native type is destructive. */
+  private async claimForRetype(runner: Runner) {
+    runner.mayHold = (await this.native?.claim(runner.pubkey)) ?? false;
+    return runner.mayHold;
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;

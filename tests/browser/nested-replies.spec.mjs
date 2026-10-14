@@ -121,6 +121,21 @@ test("nested replies send, stay open, and reveal through links at readable panel
   ]);
   const nestedRow = panel.locator(`[data-message-id="${nested.id}"]`);
   await expect(nestedRow).toBeInViewport();
+  // The parent avatar is bottom aligned: its branch spine must begin below it.
+  const spine = await parent.evaluate((node) => {
+    const wrapper = node.parentElement;
+    const line = getComputedStyle(wrapper, "::after");
+    const avatar = node.querySelector(
+      'button[aria-label^="View "][aria-label$=" profile"]',
+    );
+    return {
+      content: line.content,
+      top: wrapper.getBoundingClientRect().top + parseFloat(line.top),
+      avatarBottom: avatar.getBoundingClientRect().bottom,
+    };
+  });
+  expect(spine.content).toBe('""');
+  expect(spine.top).toBeGreaterThanOrEqual(spine.avatarBottom);
   // Nested ancestry has a quiet elbow even when the author continues.
   const connector = await nestedRow.evaluate(
     (node) => getComputedStyle(node.closest("li"), "::before").content,

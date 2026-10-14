@@ -60,6 +60,7 @@ for (const direction of ["forward", "backward"]) {
         exact: true,
       }),
     ).toBeFocused();
+    await expect(actions.locator("[data-message-keyboard-time]")).toBeVisible();
     await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
     await expect(
       actions.getByRole("button", {

@@ -2,6 +2,7 @@
 
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
+  position: relative;
   container-type: inline-size;
   container-name: messages;
   min-width: 0;
@@ -55,7 +56,7 @@
 /* Keep the final message clear of floating typing/activity indicators.
    The spacer scrolls away with history instead of shortening its viewport. */
 .timelineEnd {
-  height: var(--space-8);
+  height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
 .feed ol {
   list-style: none;
@@ -64,7 +65,7 @@
 }
 .edge {
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
-  height: 3.5rem;
+  min-height: var(--space-4);
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -75,22 +76,32 @@
   color: var(--text-subtle);
   gap: var(--space-2);
 }
+.edge[data-history-space] {
+  min-height: calc(var(--size-control) + var(--space-4));
+}
 .day {
   display: flex;
   align-items: center;
-  gap: 0;
-  color: var(--text-standard);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  margin: var(--space-3) 0;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: var(--space-5) 0;
 }
 .day::before,
 .day::after {
   content: "";
-  height: 1px;
-  background: var(--border-standard);
+  height: 0.5px;
+  min-width: 0;
   flex: 1;
+  background: var(--border-standard);
+}
+.dayLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .message {
   position: relative;
@@ -153,7 +164,7 @@
   min-height: var(--size-emoji-line);
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
-  line-height: var(--size-emoji-display);
+  line-height: var(--size-emoji-line);
 }
 .reactions {
   min-inline-size: 0;
@@ -359,8 +370,11 @@
   display: block;
   width: 360px;
   max-width: 100%;
+  min-width: 1px;
+  min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  scroll-margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);
 }
 /* Clip the pixels, not the focusable link's outside keyboard outline. */
@@ -378,6 +392,9 @@
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+.attachmentImage[data-image-ready] .attachmentImagePixels {
+  background: transparent;
+}
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
@@ -391,48 +408,33 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: cover;
+  object-fit: contain;
 }
-/* Thumbnails share a compact height while retaining the original proportions. */
+.attachmentImageUnavailable {
+  @apply text-caption;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  cursor: auto;
+  color: var(--text-subtle);
+}
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
 }
-.imageStrip {
+.imageList {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
-  overflow-x: auto;
   padding: var(--space-1);
-  scroll-padding-inline: var(--space-1);
-  scrollbar-width: thin;
 }
-.attachmentImage[data-thumbnail],
-.imageUnavailable {
-  flex: 0 0 auto;
-  width: calc((var(--space-16) + var(--space-2)) * var(--image-ratio, 1));
-  max-width: 100%;
-  aspect-ratio: var(--image-ratio, 1);
-  margin: 0;
-}
-.attachmentImage:where([data-thumbnail]) img {
-  object-fit: contain;
-}
+
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
-.imageUnavailable {
-  @apply text-caption;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: var(--space-half);
-  padding: var(--space-1);
-  border-radius: var(--radius-row);
-  background: var(--affordance-subtle-hover);
-  color: var(--text-subtle);
-}
+
 /* Optional plugin accessories use only the space they actually render. */
 .composerContext {
   position: relative;
@@ -461,7 +463,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: relative;
   border: 1px solid var(--border-standard);
   background: var(--surface-panel);
-  border-radius: var(--radius-panel);
+  /* Match the send control plus its inset, measured from the outer border. */
+  border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
   margin: 0 var(--space-4) var(--space-4);
@@ -496,7 +499,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) var(--space-1);
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-inset);
   color: var(--text-secondary);
@@ -592,8 +595,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   margin-top: var(--space-1h);
 }
-.day span {
-  padding: var(--space-1h) var(--space-3);
+.dayCalendar {
+  display: block;
+  flex: none;
+  width: var(--space-5);
+  height: var(--space-5);
+  user-select: none;
 }
 .threadUnread {
   width: 0.5rem;
@@ -649,22 +656,58 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-panel-inset);
-  /* Match the channel's end spacer so typing clears the last reply too. */
-  --history-bottom-inset: var(--space-8);
+  /* Include the join preview lane while keeping the approved message inset. */
+  --history-bottom-inset: calc(
+    var(--space-8) +
+    var(--channel-preview-inset, 0px)
+  );
   padding-bottom: var(--history-bottom-inset);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace. */
+/* Measure loaded rows without painting a scroll position we will replace,
+   then fade them in once positioned. */
+.threadHistory > [data-thread-rows] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-.threadHistory[data-positioning] > [role="status"] {
+/* Fills whichever thread area is waiting. The mark waits one state change
+   before appearing, so a thread that loads at once never flashes it. */
+.threadLoading {
+  container-type: size;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  animation: thread-loading-in var(--duration-state) var(--easing-enter)
+    var(--duration-state) both;
+}
+.threadHistory > .threadLoading {
   position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
-  color: var(--text-subtle);
+  inset: 0;
+}
+/* The mark scales with the waiting area: a side pane and a full main pane
+   both read it as the thread's placeholder, not a stray icon. */
+.threadLoading picture {
+  display: block;
+  width: clamp(5rem, 24cqmin, 10rem);
+  line-height: 0;
+}
+.threadLoading img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+:root[data-color-mode="dark"] .threadLoading picture {
+  filter: invert(1);
+}
+@keyframes thread-loading-in {
+  from {
+    opacity: 0;
+  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);
@@ -1439,12 +1482,10 @@ button.mediaPreview {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: var(--space-2) 0 var(--space-4);
   color: var(--text-subtle);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  @apply text-caption;
 }
 .membership p {
   margin: 0;
@@ -1475,6 +1516,12 @@ button.mediaPreview {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
+.membershipAvatar {
+  width: var(--space-5);
+  height: var(--space-5);
+  min-height: var(--space-5);
+}
+
 /* Overflow counts are group metadata, not profile artwork. */
 .membershipAvatarCount {
   display: inline-grid;
@@ -1492,6 +1539,8 @@ button.mediaPreview {
 }
 
 .membershipAvatarCount {
+  width: var(--space-5);
+  height: var(--space-5);
   margin-right: calc(-1 * var(--space-1h));
 }
 
@@ -1644,7 +1693,7 @@ html[data-keyboard-input] .quickReactionGlyph {
 
 .replyBranch {
   position: relative;
-  --reply-spine-start: calc(var(--size-control-sm) + var(--space-2));
+  --reply-spine-start: 100%;
   --reply-indent: var(--size-control);
   --reply-spine-offset: calc(var(--size-control-sm) / 2);
 }
@@ -1720,11 +1769,7 @@ html[data-keyboard-input] .quickReactionGlyph {
 }
 
 .replyBranch[data-layout="continuation"] {
-  --reply-spine-start: calc(
-    var(--space-1) +
-    var(--text-caption) *
-    var(--text-caption--line-height)
-  );
+  --reply-spine-start: 100%;
 }
 .replyBranchMessage {
   position: relative;
@@ -1733,7 +1778,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: var(--reply-spine-offset);
-  inset-block: var(--reply-spine-start) 0;
+  inset-block: var(--reply-spine-start) calc(-1 * var(--space-2));
   border-inline-start: 1px solid var(--border-standard);
   pointer-events: none;
 }
@@ -1915,6 +1960,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-height: 16rem;
 }
 .mediaPreview[data-video-preview] .mediaExpand {
+  z-index: 4;
   top: 0.5rem;
   right: 0.5rem;
 }
@@ -2202,6 +2248,44 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   text-wrap-style: auto;
 }
 
+.channelJoinSurface {
+  @apply glass-secondary interaction-floating;
+  border-radius: var(--radius-capsule);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-state) var(--easing-enter),
+    transform var(--duration-settle) var(--easing-enter),
+    visibility 0s;
+  transition-delay: var(--duration-fast);
+
+  @starting-style {
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(50%);
+  }
+}
+.channelJoinSurface[data-ready="false"] {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(50%);
+  transition: none;
+}
+html[data-keyboard-navigation] .channelJoinSurface {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .channelJoinSurface {
+    transition-delay: 0s;
+    transition-property: opacity;
+    transform: none;
+
+    @starting-style {
+      transform: none;
+    }
+  }
+}
+
 .jumpToLatest {
   align-items: flex-end;
   position: sticky;
@@ -2213,9 +2297,20 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   justify-content: center;
   pointer-events: none;
 }
+:is(.feed, .threadHistory) .jumpToLatest {
+  top: calc(
+    100% +
+    var(--history-bottom-inset) -
+    var(--space-3) -
+    var(--channel-preview-inset, 0px)
+  );
+}
 /* Leave a separate floating lane when the composer has an activity pill. */
 :is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
-.jumpToLatest {
+.jumpToLatest,
+[data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
+  > .feed
+  .jumpToLatest {
   top: calc(
     100% +
     var(--history-bottom-inset) -
@@ -2455,12 +2550,12 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
 }
 
-.messageAttachments :is(.imageStrip, .fileGroup) {
+.messageAttachments :is(.imageList, .fileGroup) {
   gap: var(--space-half);
 }
 
 /* Keep focus-ring clearance inside the scrollport without insetting the tiles. */
-.messageAttachments .imageStrip {
+.messageAttachments .imageList {
   margin: calc(-1 * var(--space-1));
 }
 
@@ -2633,4 +2728,19 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+/* Keyboard users can read a grouped message's time without opening a popup. */
+.keyboardMessageTime {
+  display: none;
+  user-select: none;
+}
+html[data-keyboard-navigation]
+  .messageActions:focus-within
+  .keyboardMessageTime {
+  @apply text-caption;
+  display: inline-block;
+  color: var(--text-subtle);
+  padding-inline: var(--space-2);
+  white-space: nowrap;
 }

@@ -108,6 +108,25 @@ fn forgets_only_deleted_rows() {
 }
 
 #[test]
+fn changes_only_a_live_agents_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents.set_type(&agent.pubkey, "q/u").unwrap();
+    assert!(agents.set_type(&agent.pubkey, "").is_err());
+    let changed = agents.get(&agent.pubkey).unwrap();
+    assert_eq!(
+        changed,
+        AppAgent {
+            agent_type: "q/u".into(),
+            ..agent.clone()
+        }
+    );
+    agents.remove(&agent.pubkey, &credentials).unwrap();
+    assert!(agents.set_type(&agent.pubkey, "p/t").is_err());
+}
+
+#[test]
 fn renames_and_profiles_replace_the_last_accepted_profile() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -241,7 +260,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
-    for kind in [5, 7, 9, 40003, 40100, 41010] {
+    for kind in [5, 7, 9, 20002, 40003, 40100, 41010] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
             vec!["h".to_owned(), "channel".to_owned()],

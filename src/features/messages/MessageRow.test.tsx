@@ -609,12 +609,14 @@ it.each([9, 40002])(
 );
 
 it.each([
-  { width: 1600, height: 900 },
-  { width: 400, height: 600 },
-  { width: 600, height: 600 },
+  { dimensions: { width: 1600, height: 900 }, width: "360px" },
+  { dimensions: { width: 200, height: 800 }, width: "80px" },
+  { dimensions: { width: 40, height: 20 }, width: "40px" },
+  { dimensions: { width: 999999, height: 1 }, width: "" },
+  { dimensions: { width: 1, height: 999999 }, width: "" },
 ])(
-  "preserves the original image proportions in thumbnails: %j",
-  (dimensions) => {
+  "reserves a bounded preview from image dimensions: %j",
+  ({ dimensions, width }) => {
     const html = renderToStaticMarkup(
       <MessageRow
         row={{
@@ -630,16 +632,19 @@ it.each([
         retry={undefined}
       />,
     );
-    expect(html).toContain('data-thumbnail="true"');
-    expect(html).toContain(
-      `--image-ratio:${dimensions.width / dimensions.height}`,
+    const preview = new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector<HTMLAnchorElement>("a[data-media-preview]");
+    expect(preview?.style.width).toBe(width);
+    expect(preview?.style.aspectRatio).toBe(
+      width ? `${dimensions.width} / ${dimensions.height}` : "",
     );
     expect(html).toContain('aria-label="Open image attachment"');
     expect(html).toContain('loading="lazy"');
   },
 );
 
-it("uses loaded image proportions without metadata and resets them when the source changes", () => {
+it("uses loaded image proportions without metadata and resets them when the source changes", async () => {
   const show = (url: string) => (
     <MessageRow
       row={{ ...row, attachments: [{ url, kind: "image" }] }}
@@ -660,15 +665,16 @@ it("uses loaded image proportions without metadata and resets them when the sour
       Object.defineProperties(image, {
         naturalWidth: { value: width },
         naturalHeight: { value: height },
+        decode: { value: () => Promise.resolve() },
       });
       fireEvent.load(image);
     };
     loaded(900, 600);
-    expect(link().style.getPropertyValue("--image-ratio")).toBe("1.5");
+    await waitFor(() => expect(link().style.aspectRatio).toBe("360 / 240"));
     view.rerender(show("https://image.test/portrait.png"));
-    expect(link().style.getPropertyValue("--image-ratio")).toBe("");
+    expect(link().style.aspectRatio).toBe("");
     loaded(300, 600);
-    expect(link().style.getPropertyValue("--image-ratio")).toBe("0.5");
+    await waitFor(() => expect(link().style.aspectRatio).toBe("160 / 320"));
   } finally {
     view.unmount();
   }
@@ -716,19 +722,23 @@ it.each([undefined, { width: 640, height: 400 }])(
       );
       expect(placeholder).not.toBeNull();
       expect(placeholder).toBeEmptyDOMElement();
-      expect(placeholder).toHaveAttribute("data-thumbnail", "true");
       if (dimensions)
         expect(placeholder).toHaveStyle({
-          "--image-ratio": String(dimensions.width / dimensions.height),
+          width: "360px",
+          aspectRatio: "640 / 400",
         });
       else expect(placeholder).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
-      expect(
-        view.container.querySelector('[class*="attachmentImage"]'),
-      ).toBeNull();
+      const unavailable = screen.getByRole("status");
+      expect(unavailable).toHaveTextContent("Image unavailable");
+      if (dimensions)
+        expect(unavailable).toHaveStyle({
+          width: "360px",
+          aspectRatio: "640 / 400",
+        });
+      else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
     } finally {
@@ -1561,7 +1571,7 @@ it("bounds reply participants and projects artwork with fallback initials", () =
 });
 
 it.each([1, 2, 10])(
-  "keeps all %i images reachable in a labelled strip",
+  "keeps all %i images reachable in a labelled list",
   (count) => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -1582,7 +1592,10 @@ it.each([1, 2, 10])(
     expect(html).toContain(
       `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
     );
-    expect(html.match(/data-thumbnail="true"/g)).toHaveLength(count);
+    const document = new DOMParser().parseFromString(html, "text/html");
+    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
+      count,
+    );
     expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
     const text = new DOMParser().parseFromString(html, "text/html").body
       .textContent;
@@ -2233,6 +2246,9 @@ it.each(["timeline", "thread", "continuation"] as const)(
       });
       const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
       act(() => avatar.focus());
+      // Window blur retains activeElement even though the control gets blur.
+      fireEvent.blur(avatar, { relatedTarget: null });
+      expect(avatar).toHaveFocus();
       view.rerender(render(true));
       expect(avatar).toHaveFocus();
       act(() => elsewhere.focus());

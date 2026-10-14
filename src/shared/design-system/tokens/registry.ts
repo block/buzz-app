@@ -311,6 +311,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-message-action-hover",
+        variable: "--surface-message-action-hover",
+        pointsAt:
+          "neutral-11 by default; selected accent darkened 10% otherwise",
+        use: "Hover state for message-colored prominent actions.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action-pressed",
+        variable: "--surface-message-action-pressed",
+        pointsAt:
+          "neutral-action-pressed by default; selected accent darkened 20% otherwise",
+        use: "Pressed state for message-colored prominent actions.",
+        status: "core",
+      },
+      {
         token: "bg-surface-inset",
         variable: "--surface-inset",
         pointsAt: "neutral-2 light / neutral-2 dark",
@@ -1465,6 +1481,11 @@ export const MOTION = [
 ];
 
 export const ELEVATION = [
+  {
+    token: "shadow-panel",
+    variable: "--shadow-panel",
+    use: "Workspace panels: translucent contour and subtle lift; a quiet light rim in dark mode.",
+  },
   {
     token: "shadow-xs",
     variable: "--shadow-xs",

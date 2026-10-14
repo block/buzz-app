@@ -457,7 +457,11 @@ export class ClaudeRuntime {
     const once = `${pubkey}:${key}`;
     if (this.titled.has(once)) return;
     this.titled.add(once);
-    if (!(await done).ok) return;
+    if (!(await done).ok) {
+      // A failed turn has offered no title; a successful retry may still name it.
+      this.titled.delete(once);
+      return;
+    }
     const signal = AbortSignal.timeout(30_000);
     // Claude Code writes the title alongside the first reply; give it a moment.
     for (const wait of [0, 3_000, 10_000]) {

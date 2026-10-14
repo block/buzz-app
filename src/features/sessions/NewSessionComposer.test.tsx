@@ -904,6 +904,40 @@ it("a new Me chat needs a tagged agent to send", async () => {
   expect(f.workSessions.create).not.toHaveBeenCalled();
 });
 
+it.each(["draft", "created", "placed"])(
+  "legacy unsigned Me start can acquire a tag without losing progress (%s)",
+  async (stage) => {
+    const f = setup();
+    const scope = `legacy-untagged-${stage}`;
+    const id = "22222222-2222-4222-8222-222222222222";
+    writeView(scope, "me:pending", {
+      id,
+      text: "Keep progress",
+      ...(stage !== "draft" ? { creationId: "c".repeat(64) } : {}),
+      ...(stage === "placed" ? { placementDone: true } : {}),
+    });
+    render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope={scope}
+        onStarted={vi.fn()}
+      />,
+    );
+    const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(editor.readOnly).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    // Actual typing can edit the retained unsigned draft; existing signed receipt
+    // recovery tests remain the owner of immutable dispatched recipients.
+    editor.value = "Keep progress revised";
+    fireEvent.input(editor);
+    expect(editor).toHaveTextContent("Keep progress revised");
+    expect(f.workSessions.create).not.toHaveBeenCalled();
+  },
+);
+
 it("an interrupted Me start keeps its admitted assistant and can still send", () => {
   const f = setup();
   const id = "22222222-2222-4222-8222-222222222222";

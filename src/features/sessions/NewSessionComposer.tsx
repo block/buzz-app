@@ -159,7 +159,18 @@ export function NewSessionComposer({
       ? session.workSessions.available && session.mePlacement.available
       : session.workSessions.available;
   const [channelId] = useState(() => pending?.id ?? crypto.randomUUID());
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(
+    // Older builds admitted untagged drafts. Preserve their creation/placement
+    // progress, but let their author add a tag before any unsigned send.
+    () =>
+      !!(
+        personal &&
+        pending &&
+        !pending.messageId &&
+        !pending.agent &&
+        !mentionDraft(pending.draft).recipients.length
+      ),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);

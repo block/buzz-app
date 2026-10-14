@@ -1057,6 +1057,7 @@ function Composer({
     if (
       !defaultMention ||
       !active ||
+      sendPending ||
       editing.target ||
       autoTagged.current === draftKey
     )

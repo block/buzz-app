@@ -1053,6 +1053,8 @@ async function mountUploadComposer(
     agents?: Agents;
     /** Channel members besides the viewer; only members can be mentioned. */
     members?: readonly string[];
+    defaultMention?: MessageComposerProps["defaultMention"];
+    requireMention?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1143,6 +1145,8 @@ async function mountUploadComposer(
         scope={scope}
         channelId="channel"
         channelName="General"
+        defaultMention={options.defaultMention}
+        requireMention={options.requireMention}
         {...(options.extensions ? { extensions: options.extensions } : {})}
         {...(options.threadRootId
           ? { threadRootId: options.threadRootId }
@@ -1264,42 +1268,55 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
 
-it("restores a failed background upload into the composer with Desktop's toast", async () => {
-  const h = await mountUploadComposer();
-  attachByPaste(h.input(), attachmentFile("metadata.txt"));
-  await waitFor(() =>
-    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
-  );
-  await userEvent.type(h.input(), "caption");
+it.each([false, true])(
+  "restores failed background upload before inserting any next-draft default (default=%s)",
+  async (tagged) => {
+    const agent = { pubkey: "b".repeat(64), name: "Honey" };
+    const h = await mountUploadComposer(
+      tagged
+        ? {
+            members: [agent.pubkey],
+            defaultMention: agent,
+            requireMention: true,
+          }
+        : {},
+    );
+    if (tagged) await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    attachByPaste(h.input(), attachmentFile("metadata.txt"));
+    await waitFor(() =>
+      expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+    );
+    await userEvent.type(h.input(), "caption");
 
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  await act(async () => {
-    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
-  });
-  await waitFor(() =>
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+    });
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").map((node) => node.textContent),
+      ).toEqual([UPLOAD_FAILURES.metadata]),
+    );
     expect(
-      screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([UPLOAD_FAILURES.metadata]),
-  );
-  expect(
-    screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
-  ).toBeVisible();
-  expect(h.input()).toHaveValue("caption");
-  expect(h.publish).not.toHaveBeenCalled();
+      screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue(tagged ? "@Honey caption" : "caption");
+    expect(h.publish).not.toHaveBeenCalled();
 
-  fireEvent.keyDown(
-    screen.getByRole("button", { name: "Retry metadata.txt" }),
-    { key: "Delete" },
-  );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Retry metadata.txt" }),
+      { key: "Delete" },
+    );
 
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(
-      within(h.form()).queryByText("metadata.txt"),
-    ).not.toBeInTheDocument(),
-  );
-});
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(h.form()).queryByText("metadata.txt"),
+      ).not.toBeInTheDocument(),
+    );
+  },
+);
 
 // Remounting after the failure covers the usual leave-and-return case: the
 // recovery lands with no mounted listener and must wait for the composer.

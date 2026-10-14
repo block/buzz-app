@@ -1269,3 +1269,55 @@ it("keeps what it changed when a read after the change fails", async () => {
     }),
   ).rejects.toThrow("kind 39000 unavailable");
 });
+
+it("lists, opens and closes the owner's thread tabs by thread root", async () => {
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client } = fake([event({ id: root }), reply]);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {}),
+  ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
+  const tabs = {
+    list: vi.fn(() => [
+      { channel: "chan", root, pane: "side", shown: true },
+      { channel: "other", root: bob, pane: "main", shown: false },
+    ]),
+    open: vi.fn(() => true),
+    close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
+  };
+  client.tabs = tabs;
+  expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
+    `${root} side (shown)\n${bob} main (channel other)`,
+  );
+  expect(tabs.list).toHaveBeenCalledWith("chan");
+  // A reply opens its thread's root, in the workspace the agent works in.
+  expect(
+    await callTool(client, { channel: "elsewhere" }, "tabs", {
+      action: "open",
+      thread: nested,
+    }),
+  ).toBe(`opened ${root}`);
+  expect(tabs.open).toHaveBeenCalledWith("elsewhere", root, "chan");
+  // Without a current channel, the thread's own workspace.
+  await expect(
+    callTool(client, {}, "tabs", { action: "close", thread: root }),
+  ).rejects.toThrow("Your owner is looking at that tab, so it stays open.");
+  expect(tabs.close).toHaveBeenLastCalledWith("chan", root);
+  tabs.close.mockReturnValue("missing");
+  expect(
+    await callTool(client, {}, "tabs", {
+      channel: "elsewhere",
+      action: "close",
+      thread: root,
+    }),
+  ).toBe("not open");
+  expect(tabs.close).toHaveBeenLastCalledWith("elsewhere", root);
+  await expect(
+    callTool(client, {}, "tabs", { action: "move", thread: root }),
+  ).rejects.toThrow("action must be open or close.");
+});

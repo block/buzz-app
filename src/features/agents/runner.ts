@@ -327,6 +327,8 @@ export type RunnerHost = {
   team(pubkey: string): string;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
+  /** The owner's thread tabs as the agent's handle offers them. */
+  tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The classifier, where one can run. */
@@ -1610,6 +1612,7 @@ export class AgentRunners {
         remember: (slug: string, body: string, after: number) =>
           this.require().remember(agent.pubkey, slug, body, after),
         templates: () => this.host.templates(agent),
+        tabs: () => this.host.tabs(agent),
         attention: this.attention(agent.pubkey),
       });
       const working = this.working(runner, job, agent);

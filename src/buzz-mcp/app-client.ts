@@ -29,6 +29,12 @@ export function appClient(
     options.signal?.throwIfAborted();
     options.check?.();
   };
+  const tabs = () => {
+    check();
+    const found = agent.tabs();
+    if (!found) throw new Error("Your community is not connected.");
+    return found;
+  };
   return {
     pubkey: agent.pubkey,
     attention: agent.attention,
@@ -65,6 +71,12 @@ export function appClient(
     templates: async () => {
       check();
       return agent.templates();
+    },
+    tabs: {
+      list: (channel) => tabs().list(channel),
+      open: (channel, root, threadChannel) =>
+        tabs().open(channel, root, threadChannel),
+      close: (channel, root) => tabs().close(channel, root),
     },
   };
 }

@@ -43,6 +43,20 @@ export type Memories = Readonly<{
   partial: boolean;
 }>;
 
+/** The owner's thread tabs on this device, in each channel's workspace. A
+ * workspace may hold another channel's thread. `shown` is a tab the viewer
+ * sees, which `close` leaves open. */
+export type ThreadTabs = Readonly<{
+  list(channel: string): readonly Readonly<{
+    channel: string;
+    root: string;
+    pane: string;
+    shown: boolean;
+  }>[];
+  /** False when the thread already has a tab there. */
+  open(channel: string, root: string, threadChannel: string): boolean;
+  close(channel: string, root: string): "closed" | "missing" | "shown";
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -70,6 +84,8 @@ export interface BuzzClient {
   /** The agent's attention, where its host keeps one. Without it the
    * attention tools have nothing to act on. */
   readonly attention?: AgentAttention;
+  /** The owner's thread tabs, where the host shows them. */
+  tabs?: ThreadTabs;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

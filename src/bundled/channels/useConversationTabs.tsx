@@ -362,6 +362,14 @@ export function useConversationTabs({
         openConversationLink(drawerContext.channelId, target),
     },
   );
+  // The pane's page-local side panel, so a tab opened from outside the page
+  // knows the pane is in use; it ends with this mount.
+  const sidePanel = !!drawer.side;
+  const { setSidePanel } = tabState;
+  useLayoutEffect(() => {
+    setSidePanel(sidePanel);
+    return () => setSidePanel(false);
+  }, [setSidePanel, sidePanel]);
   const selectPanelTab = (id: string) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
     tabState.select(id);

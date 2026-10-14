@@ -128,6 +128,15 @@ export const TOOLS: readonly Tool[] = [
   tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
     "url",
   ]),
+  tool(
+    "tabs",
+    "Your owner's open thread tabs in a channel (default: current), or open or close a thread's tab there. Opening never takes their focus.",
+    {
+      channel: str,
+      action: { type: "string", enum: ["open", "close"] },
+      thread: str,
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -577,6 +586,43 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!type?.startsWith("image/"))
       throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
     return { data, type };
+  },
+
+  async tabs(tools, args) {
+    const { client, context } = tools;
+    const tabs = client.tabs;
+    if (!tabs)
+      throw new Error(
+        "Tabs are kept in Buzz Desktop and are unavailable here.",
+      );
+    if (args.action === undefined) {
+      const channel = text(args.channel) ?? context.channel;
+      if (!channel) throw new Error("channel is required here.");
+      const open = tabs.list(channel);
+      return open.length
+        ? open
+            .map(
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.channel === channel ? "" : ` (channel ${tab.channel})`}${tab.shown ? " (shown)" : ""}`,
+            )
+            .join("\n")
+        : "No thread tabs open.";
+    }
+    if (args.action !== "open" && args.action !== "close")
+      throw new Error("action must be open or close.");
+    const event = await tools.event(required(args, "thread"));
+    const own = tag(event, "h");
+    if (!own) throw new Error(`${event.id} is not a channel message.`);
+    // A tab is under its thread's root, in the workspace of the channel the
+    // owner views it from.
+    const channel = text(args.channel) ?? context.channel ?? own;
+    const root = rootOf(event);
+    if (args.action === "open")
+      return tabs.open(channel, root, own) ? `opened ${root}` : "already open";
+    const closed = tabs.close(channel, root);
+    if (closed === "shown")
+      throw new Error("Your owner is looking at that tab, so it stays open.");
+    return closed === "closed" ? "closed" : "not open";
   },
 };
 

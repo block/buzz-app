@@ -41,6 +41,8 @@ type State = {
   paneOpen: boolean;
   thread: { channelId: string; messageId: string } | undefined;
   settings: { id: string; channelId: string | undefined } | undefined;
+  /** A launcher's side panel shows in the pane; the page owns that panel. */
+  sidePanel?: boolean;
 };
 // Apply one history visit once. Leaving a visit remembers its selection, so
 // Back/Forward restore which tabs were selected and never close any.
@@ -144,11 +146,109 @@ function createTabStore() {
         listeners.delete(listener);
       };
     },
-    update(change: (previous: Record<string, State>) => Record<string, State>) {
-      const next = change(channels);
-      if (next === channels) return;
-      channels = next;
+    /** Changes one page's channel workspace. */
+    update(key: string, change: (previous: State) => State) {
+      const previous = channels[key] ?? empty;
+      const next = change(previous);
+      if (next === previous) return;
+      channels = { ...channels, [key]: next };
       for (const listener of listeners) listener();
+    },
+  };
+}
+const keyOf = (page: string, channelId: string) =>
+  JSON.stringify([page, channelId]);
+function storeOf(session: RelaySession) {
+  let store = sessions.get(session);
+  if (!store) {
+    store = createTabStore();
+    sessions.set(session, store);
+  }
+  return store;
+}
+
+// Until its reader verifies the root, a tab's id holds the root it was opened
+// with, before any disambiguating suffix.
+const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
+  tab.rootId ??
+  (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
+/** The thread tabs of a channel's workspace, changed from outside the page.
+ * Opening never moves the viewer's selection or focus, and closing refuses
+ * the tab the viewer sees, so no selection needs repair. */
+export function channelTabs(session: RelaySession) {
+  const store = storeOf(session);
+  const stateOf = (channelId: string) =>
+    store.snapshot()[keyOf("messages", channelId)] ?? empty;
+  const threads = (state: State) => {
+    const side = state.tabs.filter((tab) => tabPane(tab) === "side");
+    // The pane shows its first tab when its selection names none of them.
+    const sideShown = !state.paneOpen
+      ? undefined
+      : (side.find((tab) => tab.id === state.selected) ??
+        (state.settings ||
+        state.entries.some((entry) => panelTabId(entry) === state.selected)
+          ? undefined
+          : side[0]));
+    return state.tabs.flatMap((tab) =>
+      tab.kind === "thread"
+        ? [
+            {
+              tab,
+              channel: tab.channelId,
+              root: rootOfTab(tab),
+              pane: tabPane(tab),
+              shown:
+                tab === sideShown ||
+                (tabPane(tab) === "main" && state.mainSelected === tab.id),
+            },
+          ]
+        : [],
+    );
+  };
+  return {
+    list: (channelId: string) =>
+      threads(stateOf(channelId)).map(({ tab: _, ...thread }) => thread),
+    /** Opens thread `rootId` of `threadChannel` in `channelId`'s workspace;
+     * false when it already has a tab there. */
+    open(channelId: string, rootId: string, threadChannel = channelId) {
+      if (threads(stateOf(channelId)).some((thread) => thread.root === rootId))
+        return false;
+      store.update(keyOf("messages", channelId), (state) => {
+        const pane = threadPlacementPreference();
+        const opened = withThread(
+          state,
+          threadChannel,
+          rootId,
+          rootId,
+          undefined,
+          pane,
+        );
+        // An empty side pane stays closed; its toggle offers the new tab.
+        const sideEmpty =
+          !state.sidePanel &&
+          !state.settings &&
+          !state.entries.length &&
+          !state.tabs.some((tab) => tabPane(tab) === "side");
+        return {
+          ...opened,
+          selected: state.selected,
+          mainSelected: state.mainSelected,
+          paneOpen: pane === "side" && sideEmpty ? false : state.paneOpen,
+        };
+      });
+      return true;
+    },
+    close(channelId: string, rootId: string): "closed" | "missing" | "shown" {
+      const thread = threads(stateOf(channelId)).find(
+        (item) => item.root === rootId,
+      );
+      if (!thread) return "missing";
+      if (thread.shown) return "shown";
+      store.update(keyOf("messages", channelId), (state) => ({
+        ...state,
+        tabs: state.tabs.filter((tab) => tab !== thread.tab),
+      }));
+      return "closed";
     },
   };
 }
@@ -159,25 +259,14 @@ export function useChannelTabState(
   channelId: string | undefined,
   page = "messages",
 ) {
-  let store = sessions.get(session);
-  if (!store) {
-    store = createTabStore();
-    sessions.set(session, store);
-  }
+  const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
-  const setChannels = store.update;
-  const key = JSON.stringify([page, channelId ?? ""]);
+  const key = keyOf(page, channelId ?? "");
   const state = channels[key] ?? empty;
   const update = useCallback(
-    (change: (previous: State) => State) => {
-      setChannels((all) => {
-        const previous = all[key] ?? empty;
-        const next = change(previous);
-        return next === previous ? all : { ...all, [key]: next };
-      });
-    },
-    [key, setChannels],
+    (change: (previous: State) => State) => store.update(key, change),
+    [key, store],
   );
   const setEntries = useCallback(
     (entries: PanelOpening[]) => update((s) => ({ ...s, entries })),
@@ -434,6 +523,11 @@ export function useChannelTabState(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
   );
+  const setSidePanel = useCallback(
+    (sidePanel: boolean) =>
+      update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
+    [update],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -455,6 +549,7 @@ export function useChannelTabState(
       setThread,
       setSettings,
       setPaneOpen,
+      setSidePanel,
     }),
     [
       state,
@@ -474,6 +569,7 @@ export function useChannelTabState(
       setThread,
       setSettings,
       setPaneOpen,
+      setSidePanel,
     ],
   );
 }

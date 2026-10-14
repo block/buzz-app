@@ -7,7 +7,11 @@ import type {
   PanelOpening,
   RegisteredPanel,
 } from "../../features/panels/service";
-import { panelTabId, useChannelTabState } from "./useChannelTabState";
+import {
+  channelTabs,
+  panelTabId,
+  useChannelTabState,
+} from "./useChannelTabState";
 
 import {
   setThreadPlacementPreference,
@@ -496,4 +500,84 @@ test("the returned state keeps its identity across unrelated re-renders", () => 
   expect(selected.select).toBe(initial.select);
   mounted.rerender({ channel: "beta" });
   expect(mounted.result.current).not.toBe(selected);
+});
+
+test("agents open thread tabs in the background and never close a shown one", () => {
+  const session = {} as RelaySession;
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  // An empty side pane stays closed; nothing is selected for the viewer.
+  act(() => {
+    expect(tabs.open("alpha", "r1")).toBe(true);
+  });
+  expect(page.result.current).toMatchObject({
+    paneOpen: false,
+    selected: "thread",
+    tabs: [{ id: "thread:alpha:r1", channelId: "alpha", messageId: "r1" }],
+  });
+  expect(tabs.open("alpha", "r1")).toBe(false);
+  // Behind the closed pane it is not shown, so the agent can close it again.
+  expect(tabs.list("alpha")).toEqual([
+    { channel: "alpha", root: "r1", pane: "side", shown: false },
+  ]);
+  // The viewer opens another thread; an agent's later tab, from another
+  // channel, leaves it selected.
+  act(() => page.result.current.openThreadTab("alpha", "r2", "r2"));
+  act(() => {
+    tabs.open("alpha", "r3", "beta");
+  });
+  expect(page.result.current).toMatchObject({
+    paneOpen: true,
+    selected: "thread:alpha:r2",
+  });
+  expect(tabs.list("alpha")).toEqual([
+    { channel: "alpha", root: "r1", pane: "side", shown: false },
+    { channel: "alpha", root: "r2", pane: "side", shown: true },
+    { channel: "beta", root: "r3", pane: "side", shown: false },
+  ]);
+  expect(tabs.close("alpha", "r2")).toBe("shown");
+  expect(tabs.close("alpha", "r9")).toBe("missing");
+  act(() => {
+    expect(tabs.close("alpha", "r1")).toBe("closed");
+  });
+  expect(page.result.current.tabs.map((tab) => tab.id)).toEqual([
+    "thread:alpha:r2",
+    "thread:beta:r3",
+  ]);
+  expect(page.result.current.selected).toBe("thread:alpha:r2");
+  // Other channels and the Me page keep their own tabs.
+  expect(tabs.list("beta")).toEqual([]);
+  const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  expect(me.result.current.tabs).toEqual([]);
+});
+
+test("an agent's tab leaves a page's side panel showing", () => {
+  const session = {} as RelaySession;
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.setSidePanel(true));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  expect(page.result.current.paneOpen).toBe(true);
+});
+
+test("an agent's main-pane tab leaves the conversation showing", () => {
+  setThreadPlacementPreference("main");
+  const session = {} as RelaySession;
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  expect(page.result.current).toMatchObject({
+    mainSelected: undefined,
+    paneOpen: true,
+    tabs: [{ id: "thread:alpha:r1", pane: "main" }],
+  });
+  act(() => page.result.current.selectMain("thread:alpha:r1"));
+  expect(tabs.list("alpha")).toEqual([
+    { channel: "alpha", root: "r1", pane: "main", shown: true },
+  ]);
+  expect(tabs.close("alpha", "r1")).toBe("shown");
 });

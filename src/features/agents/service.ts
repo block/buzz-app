@@ -43,6 +43,7 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
+import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import {
@@ -216,6 +217,9 @@ export type AgentHandle = Readonly<{
     canvas: string;
     agents: readonly string[];
   }>[];
+  /** The owner's thread tabs on this device in the agent's community;
+   * undefined while it is not connected. */
+  tabs(): ReturnType<typeof channelTabs> | undefined;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -912,6 +916,10 @@ export class AgentsService extends Service implements Agents {
           canvas: template.canvas,
           agents: templateAgents(template, this.teamList, here),
         }));
+      },
+      tabs: (agent) => {
+        const session = this.bindingOf(agent)?.session;
+        return session && channelTabs(session);
       },
       classifier: () => this.classifier(),
       jev: () => this.jev,

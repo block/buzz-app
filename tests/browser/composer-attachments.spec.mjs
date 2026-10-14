@@ -1030,8 +1030,17 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "0");
     await clipRemove.focus();
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "1");
+    const firstSlot = await photoRemove.evaluate(
+      (el) => el.getBoundingClientRect().left,
+    );
     await photoRemove.click();
     await expect(photoRemove).toHaveCount(0);
+    // The removed tile leaves the accessibility tree when its exit starts but
+    // keeps its slot until the exit finishes; only then does the clip slide
+    // left. Press the clip only once it has settled into the first slot.
+    await expect
+      .poll(() => clipRemove.evaluate((el) => el.getBoundingClientRect().left))
+      .toBe(firstSlot);
     await clipRemove.click();
     await expect(clipRemove).toHaveCount(0);
     await expect(form.getByRole("region", { name: "Attachments" })).toHaveCount(

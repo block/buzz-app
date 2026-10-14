@@ -1,17 +1,20 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useState,
-  type RefObject,
-  type DragEvent as ReactDragEvent,
-} from "react";
+import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 
-/** A pane must reject unclaimed files even while its composer is absent. */
-export function rejectUnhandledFileDrop(event: ReactDragEvent<HTMLElement>) {
-  if (!event.dataTransfer.types.includes("Files")) return;
-  if (!event.defaultPrevented) event.dataTransfer.dropEffect = "none";
-  event.preventDefault();
-  event.stopPropagation();
+/** An unclaimed file drop would navigate the webview to the file, so the app rejects it. */
+export function useRejectUnclaimedFileDrops() {
+  useEffect(() => {
+    const reject = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      if (!event.defaultPrevented) event.dataTransfer.dropEffect = "none";
+      event.preventDefault();
+    };
+    window.addEventListener("dragover", reject);
+    window.addEventListener("drop", reject);
+    return () => {
+      window.removeEventListener("dragover", reject);
+      window.removeEventListener("drop", reject);
+    };
+  }, []);
 }
 
 /** Route a file drop to this pane's composer, never another open conversation. */

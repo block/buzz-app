@@ -11,7 +11,7 @@ import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { ThreadPanel } from "./ThreadPanel";
-import { rejectUnhandledFileDrop, useFileDrop } from "./use-file-drop";
+import { useFileDrop, useRejectUnclaimedFileDrops } from "./use-file-drop";
 
 afterEach(cleanup);
 
@@ -26,13 +26,9 @@ function Composer({
 }) {
   const ref = useRef<HTMLFormElement>(null);
   const dragging = useFileDrop(ref, enabled, attach);
+  useRejectUnclaimedFileDrops();
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: fixture matches pane file-drop fallback with a keyboard-accessible composer.
-    <div
-      data-attachment-drop-zone=""
-      onDragOver={rejectUnhandledFileDrop}
-      onDrop={rejectUnhandledFileDrop}
-    >
+    <div data-attachment-drop-zone="">
       <form ref={ref} aria-label="Main composer">
         <input aria-label="Draft" defaultValue="Keep my draft" />
         {dragging && <span>Drop files</span>}
@@ -94,6 +90,21 @@ it("unavailable real thread pane rejects files without attaching to the main com
     "Keep my draft",
   );
   expect(drag(pane, "drop", false).event.defaultPrevented).toBe(false);
+});
+
+it("the app rejects file drops outside every drop zone, leaving other drags alone", () => {
+  render(
+    <StrictMode>
+      <Composer enabled={false} attach={vi.fn()} />
+      <nav aria-label="Sidebar" />
+    </StrictMode>,
+  );
+  const sidebar = screen.getByRole("navigation", { name: "Sidebar" });
+  const over = drag(sidebar, "dragOver");
+  expect(over.event.defaultPrevented).toBe(true);
+  expect(over.transfer.dropEffect).toBe("none");
+  expect(drag(sidebar, "drop").event.defaultPrevented).toBe(true);
+  expect(drag(sidebar, "drop", false).event.defaultPrevented).toBe(false);
 });
 
 it("an available composer claims the drop once and preserves the copy cursor", () => {

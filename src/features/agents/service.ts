@@ -468,7 +468,7 @@ export type AgentType<Config = unknown> = {
   provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
-  /** Each agent's sessions, for views across agents such as Switchboard. */
+  /** Each agent's sessions, for views across agents. */
   sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.

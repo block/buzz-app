@@ -289,10 +289,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
             .expect("sessions manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/switchboard/manifest.json"
-        ))
-        .expect("switchboard manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/hosted-communities/manifest.json"
         ))
         .expect("hosted communities manifest"),

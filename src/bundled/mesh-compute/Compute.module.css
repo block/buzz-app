@@ -389,3 +389,23 @@
   background: var(--bg-hover);
   border-radius: var(--radius-control);
 }
+
+.choiceLabel {
+  display: inline-flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.recommended {
+  border-radius: var(--radius-pill);
+  padding: var(--space-half) var(--space-2);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+}
+
+.recommended[data-requirement] {
+  background: var(--affordance-warning);
+  color: var(--text-warning);
+  border: 1px solid var(--border-warning);
+}

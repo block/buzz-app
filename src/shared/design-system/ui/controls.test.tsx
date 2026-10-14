@@ -172,36 +172,41 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
   expect(screen.getByRole("status")).toHaveTextContent("Draft notes");
 });
 
-test("radio and checkbox labels change the actual form values while disabled choices do not", async () => {
-  const user = userEvent.setup();
-  render(
-    <form aria-label="Preferences">
-      <Field label="Color mode">
-        <RadioGroup name="mode" defaultValue="light">
-          <Radio value="light" label="Light" />
-          <Radio value="dark" label="Dark" />
-          <Radio value="unavailable" label="Unavailable" disabled />
-        </RadioGroup>
-      </Field>
-      <Checkbox name="summary" value="yes" label="Include summary" />
-    </form>,
-  );
-  await user.click(screen.getByText("Dark"));
-  expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
-  await user.keyboard("{ArrowUp}");
-  expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
-  await user.click(screen.getByText("Unavailable"));
-  expect(screen.getByRole("radio", { name: "Unavailable" })).not.toBeChecked();
-  await user.click(screen.getByText("Include summary"));
-  expect(
-    screen.getByRole("checkbox", { name: "Include summary" }),
-  ).toBeChecked();
-  expect(
-    Object.fromEntries(
-      new FormData(screen.getByRole("form") as HTMLFormElement),
-    ),
-  ).toEqual({ mode: "light", summary: "yes" });
-});
+test.each(["default", "segmented"] as const)(
+  "%s choices change form values with pointer and keyboard while disabled choices do not",
+  async (variant) => {
+    const user = userEvent.setup();
+    render(
+      <form aria-label="Preferences">
+        <Field label="Color mode">
+          <RadioGroup name="mode" defaultValue="light" variant={variant}>
+            <Radio value="light" label="Light" />
+            <Radio value="dark" label="Dark" />
+            <Radio value="unavailable" label="Unavailable" disabled />
+          </RadioGroup>
+        </Field>
+        <Checkbox name="summary" value="yes" label="Include summary" />
+      </form>,
+    );
+    await user.click(screen.getByText("Dark"));
+    expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
+    await user.click(screen.getByText("Unavailable"));
+    expect(
+      screen.getByRole("radio", { name: "Unavailable" }),
+    ).not.toBeChecked();
+    await user.click(screen.getByText("Include summary"));
+    expect(
+      screen.getByRole("checkbox", { name: "Include summary" }),
+    ).toBeChecked();
+    expect(
+      Object.fromEntries(
+        new FormData(screen.getByRole("form") as HTMLFormElement),
+      ),
+    ).toEqual({ mode: "light", summary: "yes" });
+  },
+);
 
 test.each(["default", "capsule"] as const)(
   "%s search forwards keyboard events and ref, and clearing restores input focus",

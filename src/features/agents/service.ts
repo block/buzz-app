@@ -109,6 +109,14 @@ import {
 // STOPGAP(agent-local-typing): delete with local-typing.ts.
 import { typeLocally } from "./local-typing";
 
+/** A provider's current setup action, invoked by the host-owned Continue button. */
+export type AgentSetupAction = {
+  /** Provider-owned context shown beneath the identity after setup. */
+  summary?: string;
+  enabled: boolean;
+  run(): void;
+};
+
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
  * agent here has attention, timers and config; the others never run here. */
@@ -374,6 +382,12 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Provider setup below the identity card; creation waits for readiness. */
+  CreateSetup?: ComponentType<{
+    onActionChange(action: AgentSetupAction): void;
+    disabled: boolean;
+    onReadyChange(ready: boolean, advance?: boolean): void;
+  }>;
   /** Model rows contributed to this type's submenu in the New agent dialog. */
   CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
   /** Non-default model detail appended to this type's New agent trigger. */

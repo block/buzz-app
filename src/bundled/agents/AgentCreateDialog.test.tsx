@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -458,4 +459,69 @@ it("blocks a second create while the first is pending", async () => {
   await user.click(createButton());
   expect(agents.create).toHaveBeenCalledTimes(1);
   finish(made);
+});
+
+it("routes Continue through provider setup and gates creation on readiness", async () => {
+  const user = userEvent.setup();
+  const agents = { create: vi.fn().mockResolvedValue(made) };
+  const Setup: NonNullable<RegisteredAgentType["CreateSetup"]> = ({
+    onReadyChange,
+    onActionChange,
+  }) => {
+    const [ready, setReady] = useState(false);
+    useEffect(() => {
+      onActionChange({
+        enabled: ready,
+        run: () => onReadyChange(true, true),
+      });
+    }, [ready, onActionChange, onReadyChange]);
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setReady(true);
+            onReadyChange(true);
+          }}
+        >
+          Compute ready
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setReady(false);
+            onReadyChange(false);
+          }}
+        >
+          Compute unavailable
+        </button>
+        <button type="button" onClick={() => onReadyChange(true, true)}>
+          Download complete
+        </button>
+      </>
+    );
+  };
+  render(
+    <AgentCreateDialog
+      agents={agents as unknown as Agents}
+      types={[{ ...echo, CreateSetup: Setup }]}
+      onCreated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const next = screen.getByRole("button", { name: "Continue" });
+  await user.click(next);
+  expect(screen.getByRole("textbox", { name: "Name" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Compute ready" }));
+  await user.click(next);
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Nova");
+  expect(createButton()).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Compute unavailable" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).toBeVisible();
+  expect(agents.create).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Download complete" }));
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledOnce();
 });

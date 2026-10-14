@@ -1,7 +1,15 @@
+import type { AgentSetupAction } from "../../features/agents/service";
 // The New agent dialog: one card with the avatar and name, which the app owns,
 // and the chosen type's `Create` view for the rest. The host combines type and
 // model choice in the footer; each type contributes its model-menu rows.
-import { useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   CreateCardContext,
   type CardEditing,
@@ -94,15 +102,53 @@ export function AgentCreateDialog({
   const form = useId();
   const card = useMemo(() => ({ edit: setEditing }), []);
   const Create = type?.Create;
+  const Setup = type?.CreateSetup;
+  const setupAction = useRef<AgentSetupAction | null>(null);
+  const [setupEnabled, setSetupEnabled] = useState(false);
+  const [setupSummary, setSetupSummary] = useState<string | undefined>();
+  const onSetupAction = useCallback((action: AgentSetupAction) => {
+    setupAction.current = action;
+    setSetupEnabled(action.enabled);
+    setSetupSummary(action.summary);
+  }, []);
+  const [setupComplete, setSetupComplete] = useState(false);
+  const settingUp = !!Setup && !setupComplete;
+  useEffect(() => {
+    if (setupComplete) nameField.current?.focus();
+  }, [setupComplete]);
+  const [setup, setSetup] = useState<{ key: string; ready: boolean } | null>(
+    null,
+  );
+  const setupKey = type?.key ?? "";
+  const setupReady = !Setup || (setup?.key === setupKey && setup.ready);
+  const onSetupReady = useCallback(
+    (ready: boolean, advance = false) => {
+      setSetup({ key: setupKey, ready });
+      if (ready && advance) setSetupComplete(true);
+    },
+    [setupKey],
+  );
   const close = () => setOpen(false);
   const choose = (key: string) => {
     if (key === type?.key) return;
     setTypeKey(key);
+    setSetupSummary(undefined);
+    setupAction.current = null;
+    setSetupEnabled(false);
+    setSetup(null);
+    setSetupComplete(false);
     setConfig(startingConfig(types.find((item) => item.key === key)));
     setDirty(true);
   };
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
+    if (item.key !== type?.key) {
+      setSetupSummary(undefined);
+      setupAction.current = null;
+      setSetupEnabled(false);
+      setSetup(null);
+      setSetupComplete(false);
+    }
     setConfig(next);
     setDirty(true);
   };
@@ -187,7 +233,11 @@ export function AgentCreateDialog({
       </span>
     );
   const create = async () => {
-    if (!type || !name.trim() || pending) return;
+    if (settingUp) {
+      if (setupEnabled && !pending) setupAction.current?.run();
+      return;
+    }
+    if (!type || !name.trim() || pending || !setupReady) return;
     setPending(true);
     setError("");
     try {
@@ -215,16 +265,19 @@ export function AgentCreateDialog({
     />
   ) : (
     <p className="m-0 text-center text-body-sm text-secondary">
-      {type?.remote
-        ? "Its provider keeps its key and runs it, whether or not this app is open."
-        : "Set it up after it is made."}
+      {setupSummary ??
+        (type?.remote
+          ? "Its provider keeps its key and runs it, whether or not this app is open."
+          : "Set it up after it is made.")}
     </p>
   );
   const back = editing
     ? editing.back
     : avatarActive
       ? () => avatarNavigation.current?.back()
-      : undefined;
+      : Setup && setupComplete
+        ? () => setSetupComplete(false)
+        : undefined;
   return (
     <Dialog
       open={open}
@@ -236,7 +289,7 @@ export function AgentCreateDialog({
       }}
       title="Create agent"
       size="wide"
-      initialFocus={nameField}
+      initialFocus={settingUp ? undefined : nameField}
       bodyLayout="flex"
       // A started draft only closes from the close button.
       dismissOnOutsideClick={!dirty}
@@ -277,10 +330,19 @@ export function AgentCreateDialog({
               }
               loading={pending}
               disabled={
-                !editing && (avatarBusy || !type || !name.trim() || pending)
+                !editing &&
+                (avatarBusy ||
+                  !type ||
+                  (!settingUp && !name.trim()) ||
+                  pending ||
+                  (settingUp ? !setupEnabled : !setupReady))
               }
             >
-              {editing ? "Done editing" : "Create agent"}
+              {editing
+                ? "Done editing"
+                : settingUp
+                  ? "Continue"
+                  : "Create agent"}
             </Button>
           )}
         </>
@@ -296,26 +358,48 @@ export function AgentCreateDialog({
         }}
       >
         <CreateCardContext.Provider value={card}>
-          <AgentCreateHeader
-            name={name}
-            picture={picture}
-            disabled={pending}
-            community={community}
-            onBusyChange={setAvatarBusy}
-            onChange={(patch) => {
-              if (patch.name !== undefined) setName(patch.name);
-              if (patch.picture !== undefined) setPicture(patch.picture);
-              setDirty(true);
-              setError("");
-            }}
-            nameRef={nameField}
-            details={detailsLayout === "card" ? createView : null}
-            editing={!!editing}
-            avatarNavigationRef={avatarNavigation}
-            avatarActionTarget={avatarAction}
-            onAvatarActiveChange={setAvatarActive}
-          />
-          {detailsLayout === "form" && createView}
+          <div>
+            <AgentCreateHeader
+              name={name}
+              picture={picture}
+              disabled={pending}
+              community={community}
+              onBusyChange={setAvatarBusy}
+              onChange={(patch) => {
+                if (patch.name !== undefined) setName(patch.name);
+                if (patch.picture !== undefined) setPicture(patch.picture);
+                setDirty(true);
+                setError("");
+              }}
+              nameRef={nameField}
+              details={
+                !settingUp && detailsLayout === "card" ? createView : null
+              }
+              editing={!!editing}
+              avatarNavigationRef={avatarNavigation}
+              avatarActionTarget={avatarAction}
+              onAvatarActiveChange={setAvatarActive}
+            />
+            {!settingUp && detailsLayout === "form" && createView}
+            {Setup && !settingUp && !setupReady && (
+              <p
+                role="status"
+                className="m-0 text-center text-body-sm text-secondary"
+              >
+                This provider is not ready. Go back to finish setup.
+              </p>
+            )}
+          </div>
+          {Setup && (
+            <div hidden={!settingUp}>
+              <Setup
+                key={setupKey}
+                disabled={pending}
+                onReadyChange={onSetupReady}
+                onActionChange={onSetupAction}
+              />
+            </div>
+          )}
           {customModel && (
             <CustomModelDialog
               initialValue={customModel.initialValue}

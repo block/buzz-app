@@ -3245,6 +3245,46 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
   expect(editor).toHaveValue("Choose someone first");
 });
 
+it("Inbox keeps an open session timeline when a late reply regroups its mention", async () => {
+  const h = fixture({
+    withWriter: true,
+    sessionChannel: true,
+    memberAgents: 1,
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Message #Design",
+  });
+  fireEvent.change(editor, { target: { value: "Draft in progress" } });
+  act(() =>
+    h.emit([
+      message(h.alice, "room", "Threaded follow-up", 30, [
+        ["e", h.mention.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ]),
+    ]),
+  );
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.messageIds.includes(h.mention.id))?.thread,
+    ).toBe(true),
+  );
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
+    "Draft in progress",
+  );
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
+});
+
 it.each(["preview", "name", "history"])(
   "failed unread Retry survives harmless channel %s replacement",
   async (change) => {

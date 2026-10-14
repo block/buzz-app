@@ -1545,8 +1545,7 @@ it("uploads exact bytes natively and validates the relay descriptor", async () =
 
 it.each([
   [422, { error: "metadata forbidden" }, "metadata"],
-  [415, { error: "unsupported container" }, "container"],
-  [422, { error: "invalid video data" }, "rejected"],
+  [415, { error: "unsupported container" }, "rejected"],
   [500, "internal error", "failed"],
 ])(
   "maps relay upload status %i to a user-facing failure",

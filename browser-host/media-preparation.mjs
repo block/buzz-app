@@ -13,9 +13,10 @@ import {
 import { UploadError, UPLOAD_MAX_BYTES } from "./attachment-upload.mjs";
 
 // Fit the relay's 3840x2160 envelope in either orientation (Retina screen
-// recordings exceed it), never upscale, then pad odd edges for yuv420p.
+// recordings exceed it) at even dimensions, never upscale, then pad the odd
+// edges of unscaled input for yuv420p.
 const VIDEO_FILTER =
-  "scale=w='trunc(iw*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))':h='trunc(ih*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))',pad=ceil(iw/2)*2:ceil(ih/2)*2";
+  "scale=w='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(iw*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,iw)':h='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(ih*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,ih)',pad=ceil(iw/2)*2:ceil(ih/2)*2";
 
 // Wait for close even after abort: cleanup must not race a still-writing process.
 function run(args, signal, timeout = VIDEO_PREPARATION_MS) {

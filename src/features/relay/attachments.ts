@@ -45,9 +45,7 @@ export const UPLOAD_FAILURES = {
   duration:
     "Videos can be at most 10 minutes long. Trim this recording, then retry.",
   codec:
-    "This video’s codec isn’t supported. Export it as an H.264 MP4, then retry.",
-  container:
-    "QuickTime (.mov) and other non-MP4 videos can’t be uploaded here. Export it as an MP4, then retry.",
+    "This file’s codec isn’t supported. Use H.264 video and AAC audio, then retry.",
   rejected:
     "The server could not accept this file. Its format or metadata may not be supported.",
   denied: "You don’t have permission to upload here.",

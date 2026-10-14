@@ -62,7 +62,8 @@ test("video preparation shrinks Retina screen recordings into the relay envelope
   if (mediaToolVersion("ffprobe") === null) return;
   const directory = await mkdtemp(join(tmpdir(), "buzz-envelope-"));
   try {
-    // QuickTime's full-screen Retina capture size: short edge 2236 > 2160.
+    // A full-screen Retina capture: short edge 2234 > 2160, and a naive
+    // scale would give an odd 3341 width that padding blackens.
     const input = join(directory, "recording.mov");
     execFileSync("ffmpeg", [
       "-y",
@@ -72,7 +73,7 @@ test("video preparation shrinks Retina screen recordings into the relay envelope
       "-f",
       "lavfi",
       "-i",
-      "color=c=blue:s=3406x2236:r=1",
+      "color=c=blue:s=3456x2234:r=1",
       "-t",
       "1",
       "-c:v",
@@ -101,7 +102,7 @@ test("video preparation shrinks Retina screen recordings into the relay envelope
           ],
           { encoding: "utf8" },
         );
-        expect(dimensions.trim()).toBe("3290,2160");
+        expect(dimensions.trim()).toBe("3342,2160");
       },
     );
   } finally {

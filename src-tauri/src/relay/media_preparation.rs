@@ -14,8 +14,9 @@ const MAX_INPUT: usize = 500 * 1024 * 1024;
 const MAX_IMAGE: u64 = 50 * 1024 * 1024;
 const MAX_VIDEO: u64 = 500 * 1024 * 1024;
 // Fit the relay's 3840x2160 envelope in either orientation (Retina screen
-// recordings exceed it), never upscale, then pad odd edges for yuv420p.
-const VIDEO_FILTER: &str = "scale=w='trunc(iw*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))':h='trunc(ih*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))',pad=ceil(iw/2)*2:ceil(ih/2)*2";
+// recordings exceed it) at even dimensions, never upscale, then pad the odd
+// edges of unscaled input for yuv420p.
+const VIDEO_FILTER: &str = "scale=w='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(iw*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,iw)':h='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(ih*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,ih)',pad=ceil(iw/2)*2:ceil(ih/2)*2";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PreparationError {
@@ -501,7 +502,8 @@ mod tests {
         let input = dir.path().join("recording.mov");
         let ffmpeg =
             crate::host_command::resolve_program("ffmpeg", &crate::host_command::effective_path());
-        // QuickTime's full-screen Retina capture size: short edge 2236 > 2160.
+        // A full-screen Retina capture: short edge 2234 > 2160, and a naive
+        // scale would give an odd 3341 width that padding blackens.
         let generated = std::process::Command::new(&ffmpeg)
             .args([
                 "-y",
@@ -511,7 +513,7 @@ mod tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=blue:s=3406x2236:r=1",
+                "color=c=blue:s=3456x2234:r=1",
                 "-t",
                 "1",
                 "-c:v",
@@ -547,7 +549,7 @@ mod tests {
         assert!(dimensions.status.success());
         assert_eq!(
             String::from_utf8(dimensions.stdout).unwrap().trim(),
-            "3290,2160"
+            "3342,2160"
         );
     }
 

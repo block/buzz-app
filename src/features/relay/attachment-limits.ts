@@ -26,7 +26,6 @@ const RELAY_REJECTIONS = [
   [/resolution too high/i, "resolution"],
   [/video too long/i, "duration"],
   [/unsupported media codec/i, "codec"],
-  [/unsupported container/i, "container"],
 ] as const;
 export function relayRejection(text: string) {
   return (

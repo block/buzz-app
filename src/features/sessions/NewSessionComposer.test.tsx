@@ -221,7 +221,6 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     "Fresh start",
     undefined,
     undefined,
-    { automatic: "Fresh start", explicit: false },
   );
 });
 
@@ -1396,7 +1395,7 @@ it.each(
       "My chosen title",
       undefined,
       600,
-      { automatic: "New project chat", explicit: true },
+      { explicit: true },
     );
   },
 );
@@ -1578,10 +1577,7 @@ it.each(["", "Make contrast accessible"])(
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
     for (const call of h.workSessions.create.mock.calls) {
       expect(call[1]).toBe(name || "Original prompt");
-      expect(call[4]).toEqual({
-        automatic: "Original prompt",
-        explicit: !!name,
-      });
+      expect(call[4]).toEqual(name ? { explicit: true } : undefined);
     }
     expect(h.messages.send).toHaveBeenCalledOnce();
   },

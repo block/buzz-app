@@ -236,6 +236,8 @@
     /* Keep one complete control usable before falling back to outer scrolling. */
     min-height: calc(2 * var(--dialog-padding) + var(--size-control));
     overflow: auto;
+    /* Reveal the whole focused field, not only WebKit's text selection. */
+    scroll-padding-block: var(--dialog-padding);
     overscroll-behavior: none;
     /* Preserve inset row backgrounds and focus rings inside the scrollport. */
     margin-inline: calc(-1 * var(--dialog-padding));

@@ -170,12 +170,16 @@ export function useSessionLifetime({
               );
             const naming = metadata.naming;
             const description = nameChanged
-              ? sessionDescription(undefined, {
-                  naming: {
-                    ...(naming?.automatic ? { automatic: naming.automatic } : {}),
-                    explicit: !!normalized,
-                  },
-                })
+              ? normalized || naming?.automatic || naming?.explicit
+                ? sessionDescription(undefined, {
+                    naming: {
+                      ...(naming?.automatic
+                        ? { automatic: naming.automatic }
+                        : {}),
+                      explicit: !!normalized,
+                    },
+                  })
+                : current.description
               : current.description;
             await details.save(
               current,
@@ -228,7 +232,7 @@ export function useSessionLifetime({
     eligible,
     changed: !!base && (ttl !== confirmedTtl.current || nameChanged),
     checkOnly: matchingAttempt && attempt?.status === "unconfirmed",
-    blocked: !!attempt || !eligible || !!invalid || !!signal?.aborted,
+    blocked: !!attempt || !eligible || !!signal?.aborted,
     unrelatedAttempt: !!attempt && !matchingAttempt,
     run,
     change(next: number | undefined) {

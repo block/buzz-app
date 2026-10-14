@@ -949,20 +949,46 @@ it("one signed session naming edit preserves fallback and confirms the full meta
   ).rejects.toThrow("Only the name and lifetime");
   expect(h.publish).toHaveBeenCalledOnce();
 });
-it("a name-only writer cannot erase explicit provenance accidentally", async () => {
+it("a name-only writer can rename automatic sessions without blocking later lifetime edits", async () => {
   const h = harness();
   const description = sessionDescription(undefined, {
     naming: { automatic: "First prompt", explicit: false },
   });
-  h.set([
-    h.metadata("First prompt", description, "private"),
-    ...h.events().slice(1),
-  ]);
+  const metadata = (name: string, ttl?: number) =>
+    h.record(39000, [
+      ["name", name],
+      ["about", description],
+      ["private"],
+      ["t", "stream"],
+      ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
+    ]);
+  h.set([metadata("First prompt", 600), ...h.events().slice(1)]);
   const base = await h.owner.capability.load(id);
-  await expect(
-    h.owner.capability.save(base, { ...base, name: "Different" }),
-  ).rejects.toThrow("automatic session name");
-  expect(h.sign).not.toHaveBeenCalled();
+  h.publish.mockImplementationOnce(async () =>
+    h.set([metadata("Different", 600), ...h.events().slice(1)]),
+  );
+  await h.owner.capability.save(base, { ...base, name: "Different" });
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", id],
+    ["name", "Different"],
+  ]);
+  expect(h.publish).toHaveBeenCalledOnce();
+  const renamed = await h.owner.capability.load(id);
+  h.publish.mockImplementationOnce(async () =>
+    h.set([metadata("Different", undefined), ...h.events().slice(1)]),
+  );
+  await h.owner.capability.save(renamed, {
+    ...renamed,
+    ttlSeconds: undefined,
+  });
+  expect(h.sign.mock.calls[1]?.[0].tags).toEqual([
+    ["h", id],
+    ["name", "Different"],
+    ["ttl", ""],
+  ]);
+  const lifetimeCommand = h.sign.mock.calls[1]?.[0];
+  assert(lifetimeCommand);
+  expect(() => validateDetailsTemplate(lifetimeCommand)).not.toThrow();
 });
 
 it.each([undefined, 600])(

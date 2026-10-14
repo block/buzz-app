@@ -123,12 +123,11 @@ export function validateDetailsDraft(
       throw new Error(
         "Only the name and lifetime of a session can be changed here.",
       );
-    if (
-      next.naming &&
-      !next.naming.explicit &&
-      draft.name !== next.naming.automatic
-    )
-      throw new Error("The automatic session name could not be verified.");
+    if (next.naming && !next.naming.explicit) {
+      if (!next.naming.automatic)
+        throw new Error("The automatic session name could not be verified.");
+      draft = { ...draft, name: next.naming.automatic };
+    }
     draft = { ...draft, description: "" };
   }
   const errors = detailsDraftErrors(draft);

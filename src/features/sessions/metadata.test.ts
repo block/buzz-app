@@ -12,9 +12,9 @@ it("retains legacy markers and round-trips bounded naming evidence", () => {
   expect(sessionMetadata(sessionDescription(parent))).toEqual({
     parentId: parent,
   });
-  expect(sessionMetadata(sessionDescription(undefined, { personal: true }))).toEqual(
-    { personal: true },
-  );
+  expect(
+    sessionMetadata(sessionDescription(undefined, { personal: true })),
+  ).toEqual({ personal: true });
   expect(
     sessionMetadata(sessionDescription(parent, { personal: true })),
   ).toEqual({ parentId: parent, personal: true });
@@ -28,10 +28,14 @@ it("retains legacy markers and round-trips bounded naming evidence", () => {
   ])
     for (const explicit of [false, true])
       expect(
-        sessionMetadata(sessionDescription(undefined, { naming: { automatic, explicit } })),
+        sessionMetadata(
+          sessionDescription(undefined, { naming: { automatic, explicit } }),
+        ),
       ).toEqual({ naming: { automatic, explicit } });
   expect(
-    sessionMetadata(sessionDescription(undefined, { naming: { explicit: true } })),
+    sessionMetadata(
+      sessionDescription(undefined, { naming: { explicit: true } }),
+    ),
   ).toEqual({ naming: { explicit: true } });
   expect(
     sessionMetadata(

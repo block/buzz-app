@@ -37,8 +37,6 @@ import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
-  MenuItem,
-  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -347,6 +345,7 @@ function SessionWork({
   const [sent, setSent] = useState<string>();
   const [convertOpen, setConvertOpen] = useState(false);
   const shareAttempts = useSessionShareAttempts(session);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
@@ -479,7 +478,20 @@ function SessionWork({
               signal={navigation?.signal}
               onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
-            {!channel.readOnly && !channel.cached && !channel.archived ? (
+            <IconButton
+              ref={settingsTrigger}
+              size="toolbar"
+              aria-label="Session settings"
+              title="Session settings"
+              icon={<GearIcon size="1rem" aria-hidden="true" />}
+              disabled={
+                !!channel.readOnly ||
+                (!session.canvas.available &&
+                  !canEditSessionLifetime(session, channel))
+              }
+              onClick={() => setSettingsOpen({ visit: navigation?.signal })}
+            />
+            {!channel.readOnly && !channel.cached && !channel.archived && (
               <MenuRoot>
                 <MenuTrigger
                   render={
@@ -493,26 +505,11 @@ function SessionWork({
                   }
                 />
                 <MenuPopup aria-label="Session actions" align="end">
-                  <MenuItem
-                    disabled={
-                      !!channel.readOnly ||
-                      (!session.canvas.available &&
-                        !canEditSessionLifetime(session, channel))
-                    }
-                    onClick={() =>
-                      setSettingsOpen({ visit: navigation?.signal })
-                    }
-                  >
-                    <MenuIcon>
-                      <GearIcon size={16} />
-                    </MenuIcon>
-                    {inMe ? "Chat settings…" : "Session settings…"}
-                  </MenuItem>
                   <ChannelLifecycleMenu
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
                     disabled={false}
-                    separator
+                    separator={false}
                     choose={(action) =>
                       chooseLifecycle(
                         action,
@@ -522,20 +519,6 @@ function SessionWork({
                   />
                 </MenuPopup>
               </MenuRoot>
-            ) : (
-              <IconButton
-                ref={actionsTrigger}
-                size="toolbar"
-                aria-label="Session settings"
-                title="Session settings"
-                icon={<GearIcon size="1rem" aria-hidden="true" />}
-                disabled={
-                  !!channel.readOnly ||
-                  (!session.canvas.available &&
-                    !canEditSessionLifetime(session, channel))
-                }
-                onClick={() => setSettingsOpen({ visit: navigation?.signal })}
-              />
             )}
             {!showingPanel && (
               <span className={panelStyles.paneToggle}>
@@ -567,7 +550,7 @@ function SessionWork({
           {settingsOpen && (
             <WorkspaceSettings
               signal={settingsOpen.visit}
-              finalFocus={actionsTrigger}
+              finalFocus={settingsTrigger}
               key={channel.id}
               session={session}
               scope={scope}

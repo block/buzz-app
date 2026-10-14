@@ -15,18 +15,19 @@ export type SessionNaming = Readonly<{
 
 export function sessionDescription(
   parentId?: string,
-  options?: SessionNaming | { personal?: boolean; naming?: SessionNaming } | boolean,
+  options?:
+    | SessionNaming
+    | { personal?: boolean; naming?: SessionNaming | undefined }
+    | boolean,
 ): string {
-  const personal =
-    typeof options === "boolean"
-      ? options
-      : "personal" in (options ?? {}) && !!options?.personal;
-  const naming =
-    options && typeof options === "object" && "explicit" in options
-      ? options
-      : typeof options === "object"
-        ? options?.naming
-        : undefined;
+  let personal = false;
+  let naming: SessionNaming | undefined;
+  if (typeof options === "boolean") personal = options;
+  else if (options && "explicit" in options) naming = options;
+  else if (options) {
+    personal = !!options.personal;
+    naming = options.naming;
+  }
   return [
     SESSION_CHANNEL_DESCRIPTION,
     ...(parentId ? [`parent:${parentId}`] : []),

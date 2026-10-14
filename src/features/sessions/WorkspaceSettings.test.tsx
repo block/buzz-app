@@ -244,10 +244,19 @@ function combined(naming?: Parameters<typeof sessionDescription>[1]) {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
+  const suppliedNaming =
+    naming && typeof naming === "object" && "explicit" in naming
+      ? naming
+      : naming && typeof naming === "object"
+        ? naming.naming
+        : undefined;
   let ttl: number | undefined = 600,
     clock = 100,
     description = sessionDescription(undefined, naming),
-    name = naming?.explicit === false ? (naming.automatic ?? "Plan") : "Plan";
+    name =
+      suppliedNaming?.explicit === false
+        ? (suppliedNaming.automatic ?? "Plan")
+        : "Plan";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -343,7 +352,9 @@ async function editBoth() {
     name: "Canvas",
   });
   await waitFor(() =>
-    expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeEnabled(),
+    expect(
+      screen.getByRole("radio", { name: /^Temporary/ }),
+    ).not.toHaveAttribute("aria-disabled", "true"),
   );
   fireEvent.change(field, { target: { value: "Draft Canvas" } });
   fireEvent.click(screen.getByRole("radio", { name: /^Ongoing/ }));
@@ -602,7 +613,10 @@ it("a failed Canvas read leaves the loaded lifetime usable without publishing Ca
     "Canvas unavailable",
   );
   await waitFor(() =>
-    expect(screen.getByRole("radio", { name: /^Ongoing/ })).toBeEnabled(),
+    expect(screen.getByRole("radio", { name: /^Ongoing/ })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    ),
   );
   fireEvent.click(screen.getByRole("radio", { name: /^Ongoing/ }));
   fireEvent.click(saveChanges());
@@ -755,6 +769,10 @@ it("a conflicted name retains input across explicit reload and rechecks real sig
     screen.getByRole("button", { name: "Reload session details" }),
   );
   await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Review saved settings" }),
+  ).toBeNull();
   expect(
     screen.getByRole("textbox", { name: "Session name (optional)" }),
   ).toHaveValue("Keep my name");

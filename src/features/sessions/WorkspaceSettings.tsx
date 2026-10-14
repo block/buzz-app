@@ -29,6 +29,8 @@ import styles from "./WorkspaceSettings.module.css";
 type Target =
   | { kind: "section"; id: string; name: string; personal?: boolean }
   | { kind: "session"; id: string; name: string };
+class CanvasSettingsError extends Error {}
+
 export function WorkspaceSettings({
   session,
   scope,
@@ -54,6 +56,7 @@ export function WorkspaceSettings({
   const [busy, setBusy] = useState(false);
   const [loadingCanvas, setLoadingCanvas] = useState(false);
   const [error, setError] = useState("");
+  const [canvasError, setCanvasError] = useState(false);
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const alive = useRef(true);
@@ -83,6 +86,7 @@ export function WorkspaceSettings({
     inFlight.current = true;
     setLoadingCanvas(true);
     setError("");
+    setCanvasError(false);
     try {
       let content = "",
         revision: string | undefined;
@@ -132,10 +136,12 @@ export function WorkspaceSettings({
           setLineup(parseLineup(saved.lineup));
         adopt(saved.canvas);
         setBase(saved.base ?? undefined);
-        if ((saved.base ?? undefined) !== revision)
+        if ((saved.base ?? undefined) !== revision) {
           setError(
             "Saved settings changed while this draft was open. Your draft is kept; copy it before reloading.",
           );
+          setCanvasError(true);
+        }
       } else {
         adopt(content);
         setBase(revision);
@@ -143,12 +149,14 @@ export function WorkspaceSettings({
       setLoaded(true);
       setReloadConfirmed(false);
       if (replace && !writeView(scope, key, null))
-        throw new Error(
+        throw new CanvasSettingsError(
           "Saved settings loaded, but the old draft couldn’t be cleared on this device.",
         );
     } catch (reason) {
-      if (alive.current)
+      if (alive.current) {
         setError(reason instanceof Error ? reason.message : String(reason));
+        setCanvasError(true);
+      }
     } finally {
       inFlight.current = false;
       if (alive.current) setLoadingCanvas(false);
@@ -196,7 +204,7 @@ export function WorkspaceSettings({
           canvas !== undefined &&
           !writeView(scope, key, { canvas, base: base ?? null, lineup })
         )
-          throw new Error(
+          throw new CanvasSettingsError(
             "Your draft couldn’t be saved on this device. No new changes were sent.",
           );
         if (
@@ -217,9 +225,21 @@ export function WorkspaceSettings({
               "",
             );
           if (target.kind === "section") {
-            await session.channelKit.save(template, base);
+            try {
+              await session.channelKit.save(template, base);
+            } catch (reason) {
+              throw new CanvasSettingsError(
+                reason instanceof Error ? reason.message : String(reason),
+              );
+            }
           } else {
-            const selected = await session.canvas.save(target.id, canvas, base);
+            const selected = await session.canvas
+              .save(target.id, canvas, base)
+              .catch((reason) => {
+                throw new CanvasSettingsError(
+                  reason instanceof Error ? reason.message : String(reason),
+                );
+              });
             confirmedCanvas.current = selected.content;
             setBase(selected.id);
             canvasConfirmed = true;
@@ -230,7 +250,7 @@ export function WorkspaceSettings({
                 lineup,
               })
             )
-              throw new Error(
+              throw new CanvasSettingsError(
                 "The confirmed Canvas revision couldn’t be saved on this device. Name and lifetime were not sent; keep this dialog open to retry.",
               );
           }
@@ -241,17 +261,19 @@ export function WorkspaceSettings({
       }
       if (!active()) return;
       if (loaded && !writeView(scope, key, null))
-        throw new Error(
+        throw new CanvasSettingsError(
           target.kind === "section"
             ? "Section defaults are confirmed, but the saved draft couldn’t be cleared on this device."
             : "Changes are confirmed, but the saved draft couldn’t be cleared on this device. Retry to finish without resending confirmed changes.",
         );
       close();
     } catch (reason) {
-      if (active())
+      if (active()) {
         setError(
           `${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
         );
+        setCanvasError(reason instanceof CanvasSettingsError);
+      }
     } finally {
       inFlight.current = false;
       if (alive.current) setBusy(false);
@@ -289,7 +311,7 @@ export function WorkspaceSettings({
               (lifetime.available &&
                 !lifetime.checkOnly &&
                 (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
-                lifetime.blocked)
+                (lifetime.blocked || !!lifetime.invalid))
             }
             variant="prominent"
             onClick={() => void save()}
@@ -364,7 +386,7 @@ export function WorkspaceSettings({
                   new {personal ? "chats" : "sessions"}.
                 </p>
               )}
-            {error && (
+            {canvasError && (
               <Button
                 variant="ghost"
                 onClick={() => {
@@ -392,7 +414,7 @@ export function WorkspaceSettings({
                 label="Lifetime"
                 temporary={lifetime.ttl !== undefined}
                 ttlSeconds={lifetime.temporaryTtl}
-                disabled={busy || lifetime.busy || lifetime.blocked}
+                disabled={busy || lifetime.busy || lifetime.nameBlocked}
                 error={lifetime.lifetimeError}
                 onChange={lifetime.change}
               />
@@ -416,7 +438,14 @@ export function WorkspaceSettings({
             {lifetime.error && !lifetime.checkOnly && (
               <Button
                 disabled={busy || lifetime.busy || !!signal?.aborted}
-                onClick={() => void lifetime.run("reload").catch(() => {})}
+                onClick={() =>
+                  void lifetime
+                    .run("reload")
+                    .then(() => {
+                      if (!canvasError) setError("");
+                    })
+                    .catch(() => {})
+                }
               >
                 Reload session details
               </Button>

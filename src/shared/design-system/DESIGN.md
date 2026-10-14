@@ -936,7 +936,8 @@ body when viewport-capped, without reserving extra height; their title and
 actions stay outside that scrollport. If enlarged title/actions alone cannot fit
 the viewport, the outer dialog scrolls as a fallback so pointer access does not
 depend on focusing an offscreen control. Flow bodies retain at least one control
-height plus their padding; bounded flex/expanded bodies keep their own sizing.
+height plus their padding, with scroll padding to reveal complete focused fields
+rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.

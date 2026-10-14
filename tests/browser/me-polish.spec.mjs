@@ -1433,6 +1433,11 @@ test("unified session naming and lifetime retain host focus and save only explic
       )
       .toBe(true);
     await expect.poll(() => pointerReachable(minimumName)).toBe(true);
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`${prefix}-minimum-enlarged-name-focused.png`),
+    });
     let minimumTabs = 0;
     while (
       minimumTabs < 20 &&

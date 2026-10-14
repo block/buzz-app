@@ -206,7 +206,15 @@ test("a message link's context menu opens its thread as a tab without leaving th
   await expect(link).toBeVisible();
   await virtuaIdle(page);
   const before = (await state(page)).entry;
-  await link.click({ button: "right" });
+  // Use raw pointer input after the post-append geometry settles. Locator clicks
+  // can retry after hover has revealed the floating message toolbar and preview,
+  // which turns this into a test of Playwright's actionability timing instead
+  // of the link's context-menu owner.
+  const box = await link.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
+    button: "right",
+  });
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open link",

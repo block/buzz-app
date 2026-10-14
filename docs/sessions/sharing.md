@@ -44,8 +44,11 @@ in a default-closed disclosure. Expand it to inspect participants; Remove is a
 separate sibling action. One strong roster read on selection supplies display
 evidence, with loading/unavailable states and Retry participants instead of zero.
 Profiles load on expansion. This display read is separate from the fresh frozen
-audience used on submission, and a later count change does not change retry
-recipients. Confirmed grants record the original channel snapshot separately as
+audience used on submission. Once captured, the selected-channel disclosure shows
+the original channel snapshot, labelled **Submitted audience**, including on
+reopen. Its rows/count never switch to current destination membership during Retry;
+new arrivals are not added and departed members remain in the submitted audience.
+Direct selections stay separate. Start over is required to choose a new audience. Confirmed grants record the original channel snapshot separately as
 device-local display history, not proof of link delivery. The grant remains a
 snapshot: future joins/departures are not synchronized. **Share** grants the
 union of directly selected keys and one fresh relay-confirmed destination roster,
@@ -110,9 +113,15 @@ details edits. `ConvertSession.tsx` owns the shared Dialog form with a labelled
 states “Everyone in this community will be able to view this channel’s full
 history.” Changing the choice writes nothing until **Convert to channel** confirms.
 Share closes behind the confirmation, and completion or Cancel restores the
-original Share/row/menu trigger when retained. Draft recipient choices are not grants and
-are never applied by conversion. Conversion is disabled during a pending share;
-use its existing recovery or Start over first.
+original Share/row/menu trigger when retained. Messages owns its conversion form
+outside the session heading, so signed session-to-channel metadata cannot unmount
+the in-flight form. On completion its removed Share trigger falls back to the
+replacement **Channel actions** trigger; actual navigation retires the form.
+Draft recipient choices are not grants and are never applied by conversion.
+Conversion is disabled during a pending share in the footer, header menu, row
+menu and already-open conversion form. Begin/finish notifications come from the
+existing in-process share-attempt owner, with no new read or polling. Use the
+share's existing recovery or Start over first.
 
 The same conversation appears in Messages and stays in Me. History, Canvas and
 members remain; no new channel, copy or thread is created. Confirmed completion
@@ -148,6 +157,10 @@ metadata transaction or proof against changes after dispatch.
 
 ## Explicitly deferred or blocked
 
+- **Public conversion and Me reply policy** still needs product confirmation.
+  Current retained Me placement keeps personal composer recipient rules and the
+  owner's top-level agent replies, while ordinary member mentions use threaded
+  replies. This repair preserves that behavior, not an approval of that policy.
 - **Create new channel** was removed from the Share dialog for this slice.
 - **Optional session naming and named newly posted links** are explicitly deferred
   to a separate PR by the human on 2026-10-13. This change adds no name field or
@@ -173,8 +186,12 @@ metadata transaction or proof against changes after dispatch.
 partitioned by account, community and source session, not encrypted host or relay
 data. Records are bounded to 64 KiB per source, 100 channel segments and 1,000 keys
 per segment/direct list. Malformed, oversized or unreadable history fails visibly
-without replacing the prior record. Leaving the community purges it with other
-view state.
+without replacing the prior record. There is no eviction or automatic repair:
+a full/malformed record remains blocked for that session on this device until its
+local view state is cleared (leaving the community purges it with other view
+state). Later shares can still grant access and post their link. Unrecorded people
+appear under **Other access**; known agents retain their individual display rule.
+The warning does not promise individual direct-share provenance that was not saved.
 
 The attempt captures the original channel roster separately from its combined
 retry audience. Only confirmed grants merge into history, including partial

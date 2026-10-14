@@ -333,6 +333,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
   await expect(
     dialog.getByText(/^Retry keeps the exact submitted recipients\./),
   ).toHaveCount(0);
+  await expect(participants).toContainText("Submitted audience");
   await reachable(dialog.getByRole("button", { name: "Retry share" }));
   await dialog.getByRole("button", { name: "Retry share" }).click();
   await expect(dialog).not.toBeVisible();

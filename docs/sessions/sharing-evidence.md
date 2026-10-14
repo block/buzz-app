@@ -4,6 +4,58 @@ Behavior and limitations live in [Sharing a live session](sharing.md) and
 [Me and sessions](README.md). This record separates checked snapshots from
 outstanding acceptance; earlier feedback-round counts are not aggregate results.
 
+## Review repairs (2026-10-14)
+
+The author requested repair of Wes's review comments on PR #1070. The independent
+sharing branch merged main `71e2c229e` cleanly in `6076c3f6d`, preserving the
+published commits. This pass repairs the two reported blockers and two should-fix
+comments; the Public/Me recipient and agent-reply policy remains a product question.
+
+- Retry renders its original destination snapshot as **Submitted audience**, not
+  a changed current roster. The mounted departure/join/reopen and oversized-audience
+  assertions failed before the repair; exact recipients and link receipts stay intact.
+- Messages owns conversion outside the type-dependent heading. A StrictMode-mounted
+  actual `ChannelsPage` test holds the real details capability's return after signed
+  stream metadata is accepted. Before repair, the form disappears while held; after
+  repair it remains pending and completes once, with the success announcement.
+- A real-browser journey additionally found replacement-composer autofocus stealing
+  the modal's return focus in both engines. The workspace now suppresses that default
+  focus only on an existing conversation's session-to-channel transition. Shared
+  focus behavior is unchanged. Cancel returns to Share; completion returns to the
+  replacement Channel actions button. Retired-visit completion remains fenced.
+- Header/row/footer and already-open conversion controls observe begin/finish in the
+  existing share-attempt owner. Mounted tests begin and finish an attempt from another
+  entry point and verify disabled controls, no write, then recovery. No new reads,
+  timer, polling, durable journal or relay permission behavior.
+- History warnings now say unrecorded people appear under Other access. No eviction
+  or automatic repair was added; the existing full/malformed-state limitation is
+  documented, and the previous record is retained.
+
+Checked production: `6076c3f6d` plus the review-repair diff (final commit in PR).
+Pinned Hermit commands ran the complete affected files:
+
+| Check | Result | Local time |
+| --- | --- | --- |
+| Eleven Vitest owner files | 189 tests | 17.11s wall; 26.64s summed test execution |
+| Complete Me/sharing browser files, Chromium + WebKit | 18 cases | 32.0s wall; 51.6s summed case time; two workers, no retries |
+
+The previous eight owner files are joined by `share-attempt`, the existing shallow
+`ChannelsPage` boundary tests, and a new real-React `ChannelsPage.conversion` file.
+Slowest file: SessionShare, 14.07s. Slowest browser case: WebKit Share
+reachability/recovery, 5.4s. These are local fixture measurements, not hosted CI.
+The browser total increases from 16 to 18: one new Messages conversion focus
+journey per engine, justified by native modal-to-replacement-header focus. No case
+was removed; departure/join/retry and held completion matrices remain at the mounted
+layer. Existing screenshots cover both themes, narrow/intermediate/wide widths and
+enlarged text; pending light/intermediate and dark/narrow captures were inspected.
+
+Independent read-only repair review found no blocker and assessed the slice 9/10.
+The configured desktop and original sharing/lifetime worktrees remain untouched.
+No live-account grants, native launch/build, routine full scan or PR merge occurred.
+Renewed human confirmation, packaged/native and live-relay acceptance, current hosted
+CI and Wes/code-owner approval remain open. The old review is not self-dismissed,
+and no completed-review attestation is added.
+
 ## Independent sharing PR and pending-footer correction (2026-10-14)
 
 PR #1070 is rebased from the published sharing head `ec2a44b81` onto main

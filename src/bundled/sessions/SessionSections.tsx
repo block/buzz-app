@@ -1,4 +1,8 @@
 import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
   ConvertSession,
   canConvertSession,
 } from "../../features/sessions/ConvertSession";
@@ -65,6 +69,7 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
     error: boolean;
@@ -329,9 +334,11 @@ export function SessionSections({
                           ),
                         ) && (
                           <MenuItem
-                            onClick={() =>
-                              setConverting({ id: item.id, visit })
-                            }
+                            disabled={shareAttempts.has(item.id)}
+                            onClick={() => {
+                              if (!sessionShareAttempt(session, item.id))
+                                setConverting({ id: item.id, visit });
+                            }}
                           >
                             Convert to channel
                           </MenuItem>

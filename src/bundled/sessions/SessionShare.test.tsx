@@ -776,6 +776,52 @@ it.each(["abort", "unmount"] as const)(
   },
 );
 
+it("shows the submitted channel audience after members leave or join, including on reopen", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  t.failLink(true);
+  const user = userEvent.setup();
+  const view = t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  let dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await within(dialog).findByText(/Link posting is not confirmed/);
+  const attempt = sessionShareAttempt(t.session, source);
+  t.setDestinationMembers([t.viewer.pubkey, t.dev.pubkey]);
+  await act(async () => {
+    await t.session.channels.refreshRoster?.(destination, {
+      consistency: "strong",
+    });
+  });
+  for (const reopen of [false, true]) {
+    if (reopen) {
+      view.unmount();
+      t.mount();
+      await user.click(screen.getByRole("button", { name: "Share" }));
+      dialog = screen.getByRole("dialog", { name: "Share session" });
+    }
+    const selected = within(dialog).getByRole("region", {
+      name: "Selected channel",
+    });
+    const disclosure = within(selected).getByRole("button", {
+      name: /Planning.*2 members.*Submitted audience/,
+    });
+    await user.click(disclosure);
+    expect(await within(selected).findByText("Aria")).toBeVisible();
+    expect(within(selected).queryByText("Dev")).toBeNull();
+  }
+  t.failLink(false);
+  await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey, t.aria.pubkey]);
+  expect(t.published.filter((event) => event.kind === 9000)).toHaveLength(1);
+  expect(t.published.find((event) => event.kind === 9)?.id).toBe(
+    attempt?.messageId,
+  );
+});
+
 it("freezes an oversized channel audience across Retry until Start over chooses new intent", async () => {
   const t = fixture();
   await t.ready();
@@ -795,6 +841,11 @@ it("freezes an oversized channel audience across Retry until Start over chooses 
   expect(submitted?.audienceKeys).toHaveLength(101);
   if (!submitted?.audienceKeys) throw new Error("Submitted audience missing");
   const frozenKeys = [...submitted.audienceKeys];
+  expect(
+    within(dialog).getByRole("button", {
+      name: /Planning.*102 members.*Submitted audience/,
+    }),
+  ).toBeVisible();
   t.setDestinationMembers([t.viewer.pubkey, t.aria.pubkey]);
   await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -805,6 +856,11 @@ it("freezes an oversized channel audience across Retry until Start over chooses 
   );
   expect(t.publish).not.toHaveBeenCalled();
   expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
+  expect(
+    within(dialog).getByRole("button", {
+      name: /Planning.*102 members.*Submitted audience/,
+    }),
+  ).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Start over" }));
   expect(sessionShareAttempt(t.session, source)).toBeUndefined();
   expect(within(dialog).queryByRole("alert")).toBeNull();
@@ -1147,7 +1203,7 @@ it("unions direct people and one channel snapshot, retains confirmed partial acc
   });
   expect(
     await within(selectedChannel).findByRole("button", {
-      name: /#Planning.*4 members/,
+      name: /#Planning.*3 members.*Submitted audience/,
     }),
   ).toHaveAttribute("aria-expanded", "false");
   expect(attempt?.audienceKeys).toEqual([t.aria.pubkey, t.dev.pubkey]);
@@ -1661,4 +1717,45 @@ it("keeps completed access/link work out of Retry when device-local history cann
   } finally {
     storage.mockRestore();
   }
+});
+
+it("updates the row conversion guard for a share owned by another mounted entry point", async () => {
+  const t = fixture(true);
+  await t.ready();
+  const user = userEvent.setup();
+  render(
+    <SessionSections
+      personal
+      session={t.session}
+      scope={t.session.scope}
+      sessions={[{ id: source, title: "Work" }]}
+      renderSession={(item) => <button type="button">{item.title}</button>}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  const convert = await screen.findByRole("menuitem", {
+    name: "Convert to channel",
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  act(() => {
+    beginSessionShare(t.session, source, {
+      destination,
+      audience: "combined",
+      channelPeople: [],
+      sessionPeople: [],
+    });
+  });
+  expect(convert).toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    screen.queryByRole("dialog", { name: "Convert to channel" }),
+  ).toBeNull();
+  act(() => {
+    finishSessionShare(t.session, source);
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    await screen.findByRole("dialog", { name: "Convert to channel" }),
+  ).toBeVisible();
 });

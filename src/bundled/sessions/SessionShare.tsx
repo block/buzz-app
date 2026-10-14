@@ -14,6 +14,7 @@ import {
   beginSessionShare,
   finishSessionShare,
   sessionShareAttempt,
+  useSessionShareAttempts,
   type ShareAttempt,
 } from "../../features/sessions/share-attempt";
 import { subscribeView, viewRevision } from "../../shared/view-state";
@@ -116,10 +117,13 @@ export function SessionShare({
   initialOpen = false,
   onClose,
   finalFocus,
+  onConvert,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
   initialOpen?: boolean;
+  /** A host whose header changes type owns conversion outside that header. */
+  onConvert?: (trigger: HTMLElement | null) => void;
   onClose?: () => void;
   finalFocus?: () => HTMLElement | false;
   renderTrigger?: (open: () => void, disabled: boolean) => ReactNode;
@@ -193,15 +197,29 @@ export function SessionShare({
   const [frozen, setFrozen] = useState<ShareAttempt | undefined>(() =>
     sessionShareAttempt(session, channel.id),
   );
-  const saved = frozen ?? sessionShareAttempt(session, channel.id);
+  const attempts = useSessionShareAttempts(session);
+  const saved = frozen ?? attempts.get(channel.id);
   const source = list.channels.find((item) => item.id === channel.id);
   const eligible = canShareConversation(session, source);
   const chosenId = saved
     ? (saved.created ?? saved.intent.destination)
     : destination;
-  const chosen = list.channels.find(
+  const liveChosen = list.channels.find(
     (item) => item.id === chosenId && item.id !== channel.id,
   );
+  const submittedAudience = saved?.audienceKeys !== undefined;
+  const chosen = submittedAudience
+    ? (saved.channelSnapshot ?? liveChosen ?? { id: chosenId, name: chosenId })
+    : liveChosen;
+  const destinationMembers = submittedAudience
+    ? (saved.channelSnapshot?.members ?? saved.audienceKeys)
+    : liveChosen &&
+        destinationRoster?.id === liveChosen.id &&
+        destinationRoster.status === "ready" &&
+        !liveChosen.cached &&
+        liveChosen.members
+      ? [...new Set(liveChosen.members)]
+      : undefined;
   const shownKeys =
     saved?.intent.sessionPeople ?? people.map((person) => person.pubkey);
   const input = useRef<HTMLInputElement>(null);
@@ -252,7 +270,7 @@ export function SessionShare({
   const chosenChannelId = chosen?.id;
   useEffect(() => {
     void destinationReload;
-    if (!open || !chosenChannelId) return;
+    if (!open || !chosenChannelId || submittedAudience) return;
     const controller = new AbortController();
     const active = AbortSignal.any([
       controller.signal,
@@ -278,7 +296,14 @@ export function SessionShare({
       }
     })();
     return () => controller.abort();
-  }, [open, chosenChannelId, session, signal, destinationReload]);
+  }, [
+    open,
+    chosenChannelId,
+    submittedAudience,
+    session,
+    signal,
+    destinationReload,
+  ]);
   const memberKeys =
     open && rosterState === "ready" && !source?.cached
       ? source?.members?.join(":")
@@ -293,9 +318,7 @@ export function SessionShare({
     void session.memberAdministration.refresh(channel.id).catch(() => {});
   }, [session, channel.id, memberKeys]);
   const destinationProfileKeys =
-    open && expandedChannel === chosen?.id && !chosen?.cached
-      ? chosen?.members?.join(":")
-      : "";
+    open && expandedChannel === chosen?.id ? destinationMembers?.join(":") : "";
   useEffect(() => {
     if (destinationProfileKeys)
       void session.profiles
@@ -349,7 +372,7 @@ export function SessionShare({
   const displayKeys = [
     ...new Set([
       ...(source?.members ?? []),
-      ...(chosen?.members ?? []),
+      ...(destinationMembers ?? []),
       ...shownKeys,
       ...results.map((person) => person.pubkey),
     ]),
@@ -381,14 +404,6 @@ export function SessionShare({
       labels.set(key, `${labels.get(key)} · ${qualifiers.get(key)}`);
   }
   const names = (key: string) => labels.get(key) ?? "Member";
-  const destinationMembers =
-    chosen &&
-    destinationRoster?.id === chosen.id &&
-    destinationRoster.status === "ready" &&
-    !chosen.cached &&
-    chosen.members
-      ? [...new Set(chosen.members)]
-      : undefined;
   const ungrouped =
     source?.members?.filter(
       (key) =>
@@ -748,9 +763,16 @@ export function SessionShare({
             <Button
               disabled={busy || !!saved || !!signal?.aborted}
               onClick={() => {
-                if (!visible() || busy || saved) return;
+                if (
+                  !visible() ||
+                  busy ||
+                  saved ||
+                  sessionShareAttempt(session, channel.id)
+                )
+                  return;
                 setOpen(false);
-                setConverting(true);
+                if (onConvert) onConvert(trigger.current);
+                else setConverting(true);
               }}
             >
               Convert to channel
@@ -911,7 +933,7 @@ export function SessionShare({
                               <span>#{chosen.name}</span>
                               <span className="text-body-sm text-subtle">
                                 {destinationMembers
-                                  ? `${destinationMembers.length} member${destinationMembers.length === 1 ? "" : "s"}`
+                                  ? `${destinationMembers.length} member${destinationMembers.length === 1 ? "" : "s"}${submittedAudience ? " · Submitted audience" : ""}`
                                   : destinationRoster?.id !== chosen.id ||
                                       destinationRoster.status === "loading"
                                     ? "Loading participants…"

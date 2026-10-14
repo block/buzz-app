@@ -15,7 +15,7 @@ const bytes = 64 * 1024;
 const keyPattern = /^[0-9a-f]{64}$/;
 export const shareHistoryKey = (source: string) => `sessions:shares:${source}`;
 const unavailable =
-  "Sharing history is unavailable on this device. Existing access is listed individually.";
+  "Sharing history is unavailable on this device. Unrecorded people appear under Other access.";
 function keys(value: unknown, limit: number): string[] {
   if (
     !Array.isArray(value) ||
@@ -93,7 +93,7 @@ export function saveShareHistory(
   const serialized = JSON.stringify(next);
   if (new TextEncoder().encode(serialized).length > bytes)
     throw new Error(
-      "Sharing history is full on this device. Access is unchanged; new recipients will be listed individually.",
+      "Sharing history is full on this device. Access is unchanged; unrecorded people appear under Other access.",
     );
   readShareHistory(serialized);
   if (!writeView(scope, key, next))

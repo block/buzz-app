@@ -700,3 +700,63 @@ test("explicit conversion exposes the same conversation in Messages and keeps Me
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
 });
+
+// Browser-only: native modal focus handoff to a replacement Messages header.
+// The held metadata/completion ordering matrix lives in the mounted page test.
+test("Messages conversion restores focus after its session header is replaced", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+    )
+    .toBe("opened");
+  expect(
+    await page.evaluate((target) => window.fixtureNavigation.open(target), {
+      version: 1,
+      kind: "conversation",
+      channelId: id,
+      scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+    }),
+  ).toEqual({ status: "opened" });
+  const trigger = page.getByRole("button", { name: "Share", exact: true });
+  await trigger.click();
+  const share = page.getByRole("dialog", { name: "Share session" });
+  await share.getByRole("button", { name: "Convert to channel" }).click();
+  const dialog = page.getByRole("dialog", { name: "Convert to channel" });
+  await expect(
+    dialog.getByRole("button", { name: "Convert to channel" }),
+  ).toBeEnabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(trigger).toBeFocused();
+  await trigger.press("Enter");
+  await share.getByRole("button", { name: "Convert to channel" }).click();
+  const confirm = dialog.getByRole("button", { name: "Convert to channel" });
+  await expect(confirm).toBeEnabled();
+  await confirm.focus();
+  await confirm.press("Enter");
+  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByText("Now a channel. Find it in Messages.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Channel actions" }),
+  ).toBeFocused();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  await expect(trigger).toHaveCount(0);
+  expect(app.report.detailsPublications).toHaveLength(1);
+  expect(app.report.detailsPublications[0].tags).toEqual([
+    ["h", id],
+    ["name", "Alpha"],
+    ["about", ""],
+  ]);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
+});

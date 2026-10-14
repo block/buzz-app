@@ -21,6 +21,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
+import {
+  beginSessionShare,
+  finishSessionShare,
+} from "../../features/sessions/share-attempt";
 import { SessionsPage } from "./SessionsPage";
 
 composerDOMFixture();
@@ -294,4 +298,36 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   );
   expect(f.set).not.toHaveBeenCalled();
   expect(f.session.channelDetails.load).not.toHaveBeenCalled();
+});
+
+it("updates the header conversion guard when a share starts and finishes elsewhere", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  const convert = await screen.findByRole("menuitem", {
+    name: "Convert to channel",
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  act(() => {
+    beginSessionShare(f.session, id, {
+      destination: id,
+      audience: "selected",
+      channelPeople: [],
+      sessionPeople: [],
+    });
+  });
+  expect(convert).toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    screen.queryByRole("dialog", { name: "Convert to channel" }),
+  ).toBeNull();
+  act(() => {
+    finishSessionShare(f.session, id);
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    await screen.findByRole("dialog", { name: "Convert to channel" }),
+  ).toBeVisible();
 });

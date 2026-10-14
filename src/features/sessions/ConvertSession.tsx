@@ -11,6 +11,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { sessionShareAttempt, useSessionShareAttempts } from "./share-attempt";
 import { sessionMetadata } from "./metadata";
 import { applySharedChannelDetails } from "./share";
 
@@ -45,6 +46,7 @@ export function ConvertSession({
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const details = session.channelDetails;
+  const sharing = useSessionShareAttempts(session).has(id);
   const notify = useToastNotification();
   const attempt = useSyncExternalStore(details.subscribe, () =>
     details.snapshot(id),
@@ -123,6 +125,10 @@ export function ConvertSession({
             : !eligible || !!attempt)
         )
           return;
+        if (action === "convert" && sessionShareAttempt(session, id))
+          throw new Error(
+            "Finish sharing or choose Start over before converting.",
+          );
         if (action === "check") await details.check(id, active);
         else
           await applySharedChannelDetails(
@@ -177,7 +183,9 @@ export function ConvertSession({
           ) : (
             <Button
               variant="prominent"
-              disabled={busy || !!attempt || !eligible || !!signal?.aborted}
+              disabled={
+                busy || sharing || !!attempt || !eligible || !!signal?.aborted
+              }
               onClick={() => void run("convert")}
             >
               Convert to channel
@@ -190,7 +198,9 @@ export function ConvertSession({
         <RadioGroup
           aria-label="Visibility"
           value={selectedVisibility}
-          disabled={busy || !!attempt || !eligible || !!signal?.aborted}
+          disabled={
+            busy || sharing || !!attempt || !eligible || !!signal?.aborted
+          }
           onValueChange={(value) => {
             if (value === "private" || value === "public") setVisibility(value);
           }}
@@ -207,6 +217,11 @@ export function ConvertSession({
           />
         </RadioGroup>
       </Field>
+      {sharing && (
+        <p role="status">
+          Finish sharing or choose Start over before converting.
+        </p>
+      )}
       {!base && !error && <p role="status">Loading session details…</p>}
       {base && !base.canEdit && (
         <p role="status">You don’t have permission to convert this session.</p>

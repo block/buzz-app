@@ -1,4 +1,8 @@
 import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
   ConvertSession,
   canConvertSession,
 } from "../../features/sessions/ConvertSession";
@@ -288,6 +292,7 @@ function SessionWork({
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
+  const shareAttempts = useSessionShareAttempts(session);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const placement = useMePlacement(session);
@@ -414,7 +419,13 @@ function SessionWork({
               />
               <MenuPopup aria-label="Session actions" align="end">
                 {canConvertSession(session, channel) && (
-                  <MenuItem onClick={() => setConvertOpen(true)}>
+                  <MenuItem
+                    disabled={shareAttempts.has(channel.id)}
+                    onClick={() => {
+                      if (!sessionShareAttempt(session, channel.id))
+                        setConvertOpen(true);
+                    }}
+                  >
                     Convert to channel
                   </MenuItem>
                 )}

@@ -14,6 +14,7 @@ import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
 import { sessionDescription } from "./metadata";
+import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { ConvertSession } from "./ConvertSession";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -380,5 +381,31 @@ it("an unrelated unconfirmed metadata change cannot be checked as conversion", a
   expect(screen.getByRole("status")).toHaveTextContent("Finish the existing");
   expect(screen.queryByRole("button", { name: "Check status" })).toBeNull();
   expect(confirm()).toBeDisabled();
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+
+it("blocks an already open conversion while a share remains pending and recovers after Start over", async () => {
+  const h = setup();
+  await ready();
+  act(() => {
+    beginSessionShare(h.session, id, {
+      destination: id,
+      audience: "selected",
+      channelPeople: [],
+      sessionPeople: [],
+    });
+  });
+  expect(confirm()).toBeDisabled();
+  fireEvent.click(confirm());
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(
+    screen.getByText("Finish sharing or choose Start over before converting."),
+  ).toBeVisible();
+  act(() => {
+    finishSessionShare(h.session, id);
+  });
+  await ready();
+  fireEvent.click(confirm());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledOnce();
 });

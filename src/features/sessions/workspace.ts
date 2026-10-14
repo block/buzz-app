@@ -160,11 +160,14 @@ export function sectionTemplate(
     description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
   };
   // Validate the complete encrypted recipe budget before publication.
-  parseKitRecord(
+  const record = parseKitRecord(
     { version: 1, community: "", deleted: false, value: template },
     "",
   );
-  return template;
+  if (record.value.type !== "template")
+    throw new Error("Expected project defaults");
+  // Keep the exact parsed shape used on reread, including field order.
+  return record.value;
 }
 export function templateEntry(entries: readonly KitEntry[], id: string) {
   return entries.find(

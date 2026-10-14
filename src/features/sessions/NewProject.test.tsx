@@ -10,7 +10,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
-import type { KitEntry, Template } from "../channel-templates/model";
+import {
+  parseKitRecord,
+  type KitEntry,
+  type Template,
+} from "../channel-templates/model";
 import { NewProject } from "./NewProject";
 
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
@@ -32,7 +36,10 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
     await gate;
     entries = [
       {
-        record: { version: 1, community: "", deleted: false, value: template },
+        record: parseKitRecord(
+          { version: 1, community: "", deleted: false, value: template },
+          "",
+        ),
         eventId: "saved",
         createdAt: 1,
       },

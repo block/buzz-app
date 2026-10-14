@@ -204,8 +204,10 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const meAgentKeys = [];
     const meAgents = [...meAgentNames, ...meOutsideAgentNames].map((name) => {
       const key = generateSecretKey();
+      meAgentKeys.push(key);
       const pubkey = getPublicKey(key);
       servedProfiles.set(
         pubkey,
@@ -2206,6 +2208,22 @@ export const test = base.extend({
         },
         participants,
         meAgents,
+        meAgentMessage(channelId, content) {
+          const agent = meAgents[0];
+          expect(agent).toBeTruthy();
+          const history = histories.get(`primary/${channelId}`);
+          expect(history).toBeTruthy();
+          const event = sign(
+            9,
+            [["h", channelId]],
+            content,
+            meAgentKeys[0],
+            (history.at(-1)?.created_at ?? 1700000100) + 1,
+          );
+          history.push(event);
+          relay.publish("primary", event);
+          return event;
+        },
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {

@@ -1,4 +1,7 @@
-import type { ChannelDetailsDraft } from "../relay/channel-details-protocol";
+import {
+  sameLabels,
+  type ChannelDetailsDraft,
+} from "../relay/channel-details-protocol";
 import {
   addChannelMember,
   canAddMembers,
@@ -298,7 +301,9 @@ export async function applySharedChannelDetails(
     value.name === draft.name &&
     value.description === draft.description &&
     value.visibility === draft.visibility &&
-    value.ttlSeconds === draft.ttlSeconds;
+    value.ttlSeconds === draft.ttlSeconds &&
+    (draft.labels === undefined ||
+      sameLabels(value.labels ?? [], draft.labels));
   const pending = details.snapshot(id);
   if (pending) {
     if (!matches(pending.draft) || pending.status !== "unconfirmed")
@@ -315,7 +320,9 @@ export async function applySharedChannelDetails(
       base.name !== expected.name ||
       base.description !== expected.description ||
       base.visibility !== expected.visibility ||
-      base.ttlSeconds !== expected.ttlSeconds
+      base.ttlSeconds !== expected.ttlSeconds ||
+      (draft.labels !== undefined &&
+        !sameLabels(base.labels ?? [], expected.labels ?? []))
     )
       throw new Error(
         "Channel settings changed. Reload details before continuing.",

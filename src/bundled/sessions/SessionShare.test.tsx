@@ -516,6 +516,88 @@ it("keeps exact selected session recipients over close/reopen after posting fail
   expect(t.published.map((item) => item.kind)).toEqual([9000, 9]);
 });
 
+it("shows Start over only for recovery and keeps the footer actions stable while retrying", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  const footer = dialog.querySelector("footer");
+  if (!footer) throw new Error("Share footer missing");
+  const actions = () =>
+    within(footer)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+  const initialActions = actions();
+  let releaseFirst!: () => void;
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  t.holdLink(first);
+  t.failLink(true);
+  try {
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
+    await waitFor(() =>
+      expect(
+        t.publish.mock.calls.filter(([event]) => event.kind === 9),
+      ).toHaveLength(1),
+    );
+    expect(actions()).toEqual(initialActions);
+    expect(
+      within(dialog).queryByRole("button", { name: "Start over" }),
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Convert to channel" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Share" }),
+    ).toHaveAttribute("aria-busy", "true");
+  } finally {
+    releaseFirst();
+    t.holdLink(undefined);
+  }
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Post refused",
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Start over" }),
+  ).toBeEnabled();
+  const recoveryActions = actions();
+  let releaseRetry!: () => void;
+  const retry = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
+  t.holdLink(retry);
+  t.failLink(false);
+  try {
+    await user.click(
+      within(dialog).getByRole("button", { name: "Retry share" }),
+    );
+    await waitFor(() =>
+      expect(
+        t.publish.mock.calls.filter(([event]) => event.kind === 9),
+      ).toHaveLength(2),
+    );
+    expect(actions()).toEqual(recoveryActions);
+    expect(
+      within(dialog).getByRole("button", { name: "Start over" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Retry share" }),
+    ).toHaveAttribute("aria-busy", "true");
+  } finally {
+    releaseRetry();
+    t.holdLink(undefined);
+  }
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  const links = t.publish.mock.calls.filter(([event]) => event.kind === 9);
+  expect(links[1]?.[0].id).toBe(links[0]?.[0].id);
+  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+});
+
 it("serializes the same submitted attempt across two mounted entry points", async () => {
   const t = fixture();
   await t.ready();

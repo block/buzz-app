@@ -32,6 +32,7 @@ function setup(description = sessionDescription()) {
     name = "Original",
     about = description,
     visibility = "private";
+  let labels = ["work"];
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent(
       { kind, tags: [["d", id], ...tags], content: "", created_at: clock },
@@ -42,6 +43,7 @@ function setup(description = sessionDescription()) {
       ["name", name],
       ["about", about],
       ["t", "stream"],
+      ...labels.map((label) => ["t", label]),
       [visibility],
       ["ttl", "86400"],
     ]);
@@ -91,6 +93,10 @@ function setup(description = sessionDescription()) {
     details,
     authority: (next: string) => {
       role = next;
+    },
+    relabel: () => {
+      labels = ["updated"];
+      clock++;
     },
     rename: () => {
       name = "Changed";
@@ -147,6 +153,7 @@ it.each(["private", "public"])(
       description: "",
       visibility,
       ttlSeconds: 86400,
+      labels: ["work"],
     });
   },
 );
@@ -171,6 +178,10 @@ it.each(["authority", "conflict"])(
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.sign.mock.calls[0]?.[0].tags.some(([tag]) => tag === "t")).toBe(
+      false,
+    );
+    expect((await h.details.capability.load(id)).labels).toEqual(["work"]);
   },
 );
 it.each(
@@ -257,6 +268,47 @@ it.each(
     expect(h.publish).toHaveBeenCalledOnce();
   },
 );
+it("conversion preserves independently changed labels without publishing a label edit", async () => {
+  const h = setup();
+  await ready();
+  h.relabel();
+  fireEvent.click(confirm());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", id],
+    ["name", "Original"],
+    ["about", ""],
+  ]);
+  expect((await h.details.capability.load(id)).labels).toEqual(["updated"]);
+});
+
+it.each([false, true])(
+  "uncertain conversion recovers after an independent label change, remount=%s",
+  async (remount) => {
+    const h = setup();
+    h.publish.mockRejectedValueOnce(new Error("lost acknowledgement"));
+    await ready();
+    fireEvent.click(confirm());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "may have been saved",
+    );
+    h.converted();
+    h.relabel();
+    if (remount) {
+      h.mounted.unmount();
+      render(<ConvertSession session={h.session} id={id} close={h.close} />);
+    }
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Check status" }),
+    );
+    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+    expect(h.details.capability.snapshot(id)).toBeUndefined();
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect((await h.details.capability.load(id)).labels).toEqual(["updated"]);
+  },
+);
+
 it("definitive rejection permits explicit retry without losing the confirmation", async () => {
   const h = setup();
   h.publish.mockRejectedValueOnce(new PublishRejected("Denied"));

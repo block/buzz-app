@@ -187,8 +187,8 @@ export function SessionShare({
   const [rosterReload, setRosterReload] = useState(0);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [pendingLabel, setPendingLabel] = useState("");
+  const [pendingAction, setPendingAction] = useState<"share" | "retry">();
+  const busy = pendingAction !== undefined;
   const [copyStatus, setCopyStatus] = useState("");
   const [frozen, setFrozen] = useState<ShareAttempt | undefined>(() =>
     sessionShareAttempt(session, channel.id),
@@ -527,9 +527,8 @@ export function SessionShare({
       setError("This share is already in progress in another view.");
       return;
     }
-    setPendingLabel(saved ? "Retry share" : "Share");
     exact.running = true;
-    setBusy(true);
+    setPendingAction(saved ? "retry" : "share");
     setError("");
     const controller = new AbortController();
     const remember = () => {
@@ -683,7 +682,7 @@ export function SessionShare({
       );
     } finally {
       delete exact.running;
-      if (visible()) setBusy(false);
+      if (visible()) setPendingAction(undefined);
     }
   };
   const identity = (key: string) => (
@@ -777,7 +776,8 @@ export function SessionShare({
                 </span>
               </Button>
             </Tooltip>
-            {saved && (
+            {/* A new receipt is not recovery UI. Keep the existing action set on submit. */}
+            {saved && pendingAction !== "share" && (
               <Button disabled={busy} onClick={startOver}>
                 Start over
               </Button>
@@ -796,7 +796,9 @@ export function SessionShare({
               onClick={() => void submit()}
             >
               {busy
-                ? pendingLabel
+                ? pendingAction === "retry"
+                  ? "Retry share"
+                  : "Share"
                 : saved
                   ? "Retry share"
                   : destination || people.length

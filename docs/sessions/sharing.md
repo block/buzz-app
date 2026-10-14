@@ -88,7 +88,10 @@ capture a different audience. Confirmed grants are skipped; direct selections ne
 vanish when choosing a channel. Saved grant IDs, link IDs, unknown delivery, concurrent
 remount guards, stale Retry/Start over guards and session lifetime fencing remain.
 Partial failures distinguish confirmed access from unconfirmed link posting. Pending
-buttons retain their label and block duplicate activation. Changed eligibility
+buttons retain their label and block duplicate activation. The first pending share
+keeps its existing footer actions: saving an in-flight receipt does not insert a
+disabled **Start over** button. Recovery offers Start over after failure and keeps
+that button in place, disabled, while Retry runs. Changed eligibility
 shows inline access-change recovery and disables Share/Retry until access recovers. Closing a view does not
 cancel submitted work; a superseded visit receives no completion navigation.
 
@@ -122,7 +125,9 @@ signed metadata and owner/admin authority before saving, reject conflicting
 settings, and check authority again after signing. Conversion emits one kind-9002
 command clearing the session description marker and applying the explicitly
 selected visibility. Name and TTL are preserved; unchanged visibility/TTL tags
-are omitted so conversion does not reset a cleanup deadline. Public uses the
+are omitted so conversion does not reset a cleanup deadline. Conversion never
+submits label edits: its explicit draft omits `labels`, preserving independently
+updated labels and keeping them outside uncertain conversion confirmation. Public uses the
 existing `visibility=open` wire tag. Parent-linked sessions
 remain ineligible. No grants, Me writes, creation or automatic navigation occur.
 Messages' sidebar now admits verified ordinary streams even when retained in Me;
@@ -157,7 +162,8 @@ metadata transaction or proof against changes after dispatch.
 - Dynamic destination inheritance/revocation, synced grant provenance and removal
   permissions remain unimplemented. The approved device-local display history is
   not an authorization record or a composite restart journal. Standalone
-  creation/lifetime editing is a separate implemented slice, not a Share option.
+  creation/lifetime editing is separate work in PR #1079, not a dependency of
+  sharing or conversion and not a Share option.
   No provenance is inferred from links or membership.
 
 ## Device-local display history

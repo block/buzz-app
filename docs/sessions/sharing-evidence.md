@@ -4,7 +4,73 @@ Behavior and limitations live in [Sharing a live session](sharing.md) and
 [Me and sessions](README.md). This record separates checked snapshots from
 outstanding acceptance; earlier feedback-round counts are not aggregate results.
 
-## Checked snapshots
+## Independent sharing PR and pending-footer correction (2026-10-14)
+
+PR #1070 is rebased from the published sharing head `ec2a44b81` onto main
+`f442ed0a5`. Lifetime/settings and optional naming remain separate in PR #1079;
+sharing and conversion do not depend on them. The main-relative diff has no
+lifetime editor, creation/TTL host changes, settings form, or naming implementation.
+Conversion retains only the required session-menu trigger/ref wiring and its focus
+regression. The running sharing checkout remains unchanged.
+
+The initial pending share no longer inserts a disabled **Start over** action.
+One pending-action state retains the original Share/Retry label and recovery
+button set, without changing operation receipts or grant/link admission. Its mounted
+regression failed before repair; the existing held-readback browser journey also
+failed in Chromium and WebKit before repair. No new browser case was needed.
+The repaired journey compares exact footer geometry before/after submission and
+captures pending light/dark 390/950/1280px layouts. The first after-run caught a
+fixture mistake: the new narrow capture left the sidebar collapsed before an
+existing desktop row assertion. Restoring the original viewport fixes the fixture,
+without changing product behavior, assertions, timeouts, or retries.
+
+Main's new channel labels remain outside conversion intent. The explicit conversion
+draft omits labels, so no label tags are sent; independent relabeling cannot be
+overwritten or strand uncertain recovery. Read-only review caught the initial
+label-sensitive recovery error. Both mounted/remounted uncertainty regressions
+failed before this repair and passed afterward. Existing name/visibility/TTL
+conflict checks and readback-only recovery remain.
+
+Checked production tree: `732b855b8` plus the pending-action and label-neutral
+conversion changes (final commit/check links are recorded in the PR).
+
+| Check | Result | Local time |
+| --- | --- | --- |
+| Eight complete affected Vitest owner files | 176 tests | 14.81s wall; 22.47s summed test execution |
+| Complete Me/sharing files, Chromium + WebKit | 16 cases | 31.2s wall; 48.4s summed case time; two workers, no retries |
+| Changed-file Biome | Passed | Pinned tools |
+
+Vitest files: `SessionShare`, `ConvertSession`, `share`, `share-history`,
+`SessionsPage.loading`, `ChannelSidebar`, `channel-details`, and channel-member
+`members`. Browser files: `me-polish.spec.mjs` and `session-sharing.spec.mjs`,
+using `pnpm test:browser <files> --no-deps --project=chromium --project=webkit`.
+Commands use pinned Hermit tools. The slowest owner file was `SessionShare`
+(about 13s); the slowest browser case was WebKit Share reachability/recovery (5.5s).
+Read-only follow-up closed the concrete label-recovery finding; source verification
+rejected a mistaken first-button focus claim because the existing row button
+precedes the indicator. The 9/10 review bar is met for the changed integration.
+Commands use no hook bypasses. Screenshots were inspected. These tests use
+isolated fixture identities and do not touch configured accounts.
+
+The previous combined stack had 18 browser cases in these files. Its one
+lifetime/settings case per engine remains in #1079, not deleted from that work.
+All sharing/conversion cases and their assertions remain here; same-ID conversion
+is the one added case per engine relative to main. Failure matrices remain in
+mounted/service tests. No routine full scan, live write, app restart or merge.
+Human confirmation of the independently rebased build, packaged/native and live
+relay acceptance, current hosted CI and required review remain separate gates.
+A concurrent hosted review of `ec2a44b81` reported frozen-audience display drift
+and Messages-header conversion lifetime/focus issues. They are not repaired or
+closed by this bounded unstack/footer update; the PR remains draft with those
+findings open. Its other permission-entry and copy comments also remain for triage.
+The local follow-up above is a changed-integration review, not whole-feature approval.
+
+## Historical combined-stack evidence
+
+The following results include the earlier combined lifetime/settings work where
+noted. They are not validation of the independent PR snapshot above.
+
+### Checked snapshots
 
 Rebase onto main `49ae64bb0` completed without conflicts. Feature snapshot
 `c98fc1fce` passed the following focused integration checks:
@@ -38,7 +104,7 @@ now rendered individually, leaving 15. The mounted solo-agent case failed before
 repair; channel-only/direct-history overlap remains covered. No cases were added
 or removed. Hosted checks remain a separate gate reported in the pull request.
 
-## Selected-channel footer correction
+### Selected-channel footer correction
 
 On the stacked `ae5796e94` tree plus this correction, 54 owner tests in five files
 passed (14.65s wall; 16.36s execution), then all 18 Chromium/WebKit Me/sharing
@@ -52,7 +118,7 @@ and default/enlarged layouts passed. No cases added/removed or permissions chang
 Normal-width actions stay on one row; narrow enlarged controls scroll as one group.
 Screenshots were inspected; human/native/hosted acceptance remains separate.
 
-## Discriminating regressions
+### Discriminating regressions
 
 Mounted React uses real collaborating owners and held external operations, not
 mocked hooks. The following failures were demonstrated before repair and passed
@@ -80,10 +146,10 @@ Catcher reviews closed their concrete findings. Final bounded integration/ref
 follow-ups scored 9/10 or higher with no remaining finding. Exhausted delegates
 were not treated as approvals. These reviews do not certify shipping acceptance.
 
-## Browser coverage and remaining gates
+### Historical browser coverage and remaining gates
 
-Two cases per engine were added: same-ID conversion and combined lifetime/settings.
-No browser cases were removed. Existing journeys retain routing/history, local
+The historical combined feature added two cases per engine: same-ID conversion
+and combined lifetime/settings. The independent split is mapped above. Existing journeys retain routing/history, local
 storage reload, exact link recovery, portalled search, scrolling/hit testing,
 keyboard dismissal and focus restoration. Lower-layer tests own failure matrices.
 Light/dark, 390/950/1280px and enlarged-text captures were inspected; shared

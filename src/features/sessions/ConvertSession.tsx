@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import type { ChannelDetails } from "../relay/channel-details-protocol";
+import {
+  sameLabels,
+  type ChannelDetails,
+} from "../relay/channel-details-protocol";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -60,6 +63,8 @@ export function ConvertSession({
     conversionAttempt &&
     conversionAttempt.draft.name === base.name &&
     conversionAttempt.draft.ttlSeconds === base.ttlSeconds &&
+    (conversionAttempt.draft.labels === undefined ||
+      sameLabels(conversionAttempt.draft.labels, base.labels ?? [])) &&
     (base.description === "" || (metadata && !metadata.parentId))
   );
   const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
@@ -123,7 +128,12 @@ export function ConvertSession({
           await applySharedChannelDetails(
             session,
             id,
-            { ...base, description: "", visibility },
+            {
+              name: base.name,
+              description: "",
+              visibility,
+              ttlSeconds: base.ttlSeconds,
+            },
             base,
             active,
           );

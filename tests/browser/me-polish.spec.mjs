@@ -422,10 +422,49 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   await page.keyboard.press("Escape");
   await expect(hint).not.toBeVisible();
   await expect(dialog).toBeVisible();
+  const footerBounds = () =>
+    dialog.locator("footer").evaluate((footer) =>
+      [...footer.querySelectorAll("button")].map((button) => {
+        const { x, y, width, height } = button.getBoundingClientRect();
+        return { label: button.textContent, x, y, width, height };
+      }),
+    );
+  const beforeShare = await footerBounds();
   try {
     await page.keyboard.press("Enter");
     await requestedReadback;
     await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Start over" }),
+    ).toHaveCount(0);
+    await expect(primary).toHaveAttribute("aria-busy", "true");
+    await expect.poll(footerBounds).toEqual(beforeShare);
+    // Held grant readback proves the real initial -> pending layout transition,
+    // including light/dark and a narrow viewport where the footer already wraps.
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [1280, 950, 390]) {
+        await page.setViewportSize({ width, height: 850 });
+        await expect(convert).toBeInViewport();
+        await expect(primary).toBeInViewport();
+        if (width > 390) {
+          await expect
+            .poll(async () => {
+              const rows = await footerBounds();
+              return (
+                Math.max(...rows.map((row) => row.y)) -
+                Math.min(...rows.map((row) => row.y))
+              );
+            })
+            .toBeLessThanOrEqual(1);
+        }
+        await page.screenshot({
+          path: test.info().outputPath(`share-pending-${mode}-${width}.png`),
+        });
+      }
+    }
     await expect(
       dialog.getByRole("combobox", { name: "People or channel" }),
     ).toBeDisabled();
@@ -436,6 +475,8 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
     expect(
       app.report.publications.filter(({ event }) => event.kind === 9),
     ).toHaveLength(0);
+    // Restore the desktop sidebar before asserting its retained row after close.
+    await page.setViewportSize({ width: 1280, height: 850 });
     releaseReadback();
     await expect(dialog).not.toBeVisible();
     expect(evidence).toEqual([

@@ -2687,12 +2687,21 @@ html[data-keyboard-navigation] .channelJoinSurface {
   display: none;
 }
 
-/* Messages between agents: one quiet line each, in time order, on a rail
-   that joins adjacent lines. */
+/* Keep coordination content on the surrounding message's text edge;
+   hover paint extends into its inset without adding a permanent container. */
 .audienceRow {
-  margin-inline-start: calc(var(--size-control-sm) / 2);
-  padding-inline-start: var(--space-2);
-  border-inline-start: 1px solid var(--border-standard);
+  margin-inline-start: calc(
+    var(--size-control-sm) +
+    var(--space-2) -
+    var(--space-1)
+  );
+}
+.feed .audienceRow {
+  margin-inline-start: calc(
+    var(--size-control) +
+    var(--space-3) -
+    var(--space-1)
+  );
 }
 .audienceLine {
   display: flex;
@@ -2712,9 +2721,6 @@ html[data-keyboard-navigation] .channelJoinSurface {
   letter-spacing: var(--text-caption--letter-spacing);
   text-align: start;
 }
-.audienceLine:hover {
-  background: var(--affordance-subtle-hover);
-}
 html[data-keyboard-navigation] .audienceLine:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
@@ -2722,26 +2728,48 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 .audienceEntry {
   display: flex;
   align-items: flex-start;
+  min-block-size: calc(var(--size-control-sm) * 0.75 + var(--space-1));
   border-radius: var(--radius-control);
 }
-.audienceRow[data-open] .audienceEntry {
+.audienceEntry:has(> .audiencePanel) {
   cursor: pointer;
-  background: var(--affordance-subtle);
 }
-.audienceRow[data-open] .audienceEntry:hover {
-  background: var(--affordance-subtle-hover);
+@media (hover: hover) {
+  .audienceEntry:hover {
+    background: var(--affordance-subtle-hover);
+  }
 }
-.audienceRow[data-open] .audienceLine {
+/* Retain the address column through the exit, so the text does not rewrap
+   while its height contracts. Base UI retires the panel after the transition. */
+.audienceEntry:has(> .audiencePanel) .audienceLine {
   flex: none;
   inline-size: auto;
+  /* Match the trigger's avatar-to-preview gap when the prose is its sibling. */
+  padding-inline-end: var(--space-1h);
   background: none;
+}
+.audiencePanel {
+  flex: 1;
+  min-inline-size: 0;
+  height: var(--collapsible-panel-height);
+  overflow: clip;
+  transition: height var(--duration-settle) var(--easing-settle);
+}
+.audiencePanel:is([data-starting-style], [data-ending-style]) {
+  /* The disclosure replaces a one-line preview, not empty space. Keep that
+     first line painted until the preview returns when Base UI unmounts it. */
+  height: calc(var(--size-control-sm) * 0.75 + var(--space-1));
+}
+@media (prefers-reduced-motion: reduce) {
+  .audiencePanel {
+    transition: none;
+  }
 }
 /* Open, the text keeps the line's size and colour and starts where its
    preview was, so expanding only lets it run on. */
 .audienceBody {
-  flex: 1;
   min-inline-size: 0;
-  padding-block-start: calc(
+  padding-block: calc(
     (
       var(--size-control-sm) *
       0.75 -
@@ -2753,6 +2781,8 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   color: var(--text-subtle);
 }
 .audienceBody .message[data-layout="continuation"] {
+  /* Coordination keeps its own balanced insets, not a grouped-message seam. */
+  padding-block: var(--space-half);
   padding-inline-end: var(--space-1);
 }
 .audienceBody .message[data-layout="continuation"] .text {
@@ -2779,6 +2809,17 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.audienceEntry:has(> .audiencePanel) .audiencePreview {
+  display: none;
+}
+@container messages (max-width: 20rem) {
+  .audienceEntry {
+    flex-wrap: wrap;
+  }
+  .audiencePanel {
+    flex-basis: 100%;
+  }
 }
 
 /* Returning from a thread only paints its already-visible origin. The wash

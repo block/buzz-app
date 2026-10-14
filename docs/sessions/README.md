@@ -61,20 +61,25 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Me. Archived chats
   are restored from search and Channel Settings, as before.
-- Me uses the ordinary composer with a visible selected assistant plus explicit
-  owner-scoped mentions. The selected assistant is device-local view intent keyed
-  by account, community and chat; it is not Canvas, group data or channel metadata.
-  A plain send targets that assistant, while explicit authored mentions override
-  it. Clearing the selection allows an unaddressed message. Me does not apply the
-  global automatic remembered-mention prefill; Messages retains that behavior.
-  The empty picker says “Choose follow-up assistant” so a one-off mention is not
-  mistaken for persistent routing; trials should select the picker before testing
-  an unmentioned follow-up.
-  The selected assistant is revalidated before every send, and a failure keeps the
-  draft. Model and effort controls appear only when the selected or mentioned
-  agent exposes those existing capabilities. Saved placement must load before the
-  Me reader enables sending; an unavailable preference read is not evidence of
-  Messages.
+- Me (labelled **Berd** in navigation) uses the ordinary composer with explicit
+  owner-scoped agent tags. Empty new drafts start tagged with the device's default
+  agent for this account/community. **Agents → right-click → Make default agent**
+  changes that choice; its card shows **Default agent**. An unavailable choice
+  falls back to the first managed agent, then the first selectable agent.
+  Removing or replacing a tag is respected for that draft. Both Send and Enter
+  require a tagged agent; existing signed-send recovery preserves its recipients.
+  The removed per-chat assistant picker is no longer consulted. A legacy pending
+  creation keeps the exact recipient admitted in its receipt, not an old picker
+  preference. The project control follows the editor tools on the same rail;
+  model/effort controls read the explicitly tagged recipients.
+  Saved placement must load before sending; unavailable evidence is not Messages.
+- Claude Code can name a Berd chat from its own generated session title after its
+  first successful turn. Only the first tagged agent can propose the title, and
+  the chat must still have its original first-message name. Human names are never
+  replaced. Codex title generation is intentionally not implemented. This reads
+  Claude Code's local history, adds no model request, and uses the owner's ordinary
+  channel-details save with revision validation. Live/native title acceptance is
+  a separate gate from unit tests.
 - Me reuses Messages' sidebar working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
   Agent activity opens the agent's profile in Me's per-conversation panel workspace;

@@ -78,12 +78,8 @@ import {
 } from "../../features/conversation/Conversation";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
+import { useDefaultAgent } from "../../features/sessions/default-agent";
 import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
-import {
-  readSelectedAssistant,
-  writeSelectedAssistant,
-} from "../../features/sessions/selected-assistant";
 import {
   SessionColumn,
   SessionHeading,
@@ -402,13 +398,7 @@ function SessionWork({
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
   }>();
-  const [selectedAgent, setSelectedAgent] = useState(() =>
-    readSelectedAssistant(scope, channel.id),
-  );
-  const selectAgent = (agent: string) => {
-    setSelectedAgent(agent);
-    writeSelectedAssistant(scope, channel.id, agent);
-  };
+  const defaultAgent = useDefaultAgent(session, scope);
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const personalChat = inMe && channel.channelType === "session";
@@ -672,27 +662,18 @@ function SessionWork({
                 channel.channelType === "session" &&
                 (placement.status !== "ready" || inMe)
               }
-              selectedAgent={personalChat ? selectedAgent : undefined}
+              defaultMention={personalChat ? defaultAgent : undefined}
+              requireMention={personalChat}
               trailingTool={
                 personalChat ? (
-                  <>
-                    <SessionAgentControl
-                      session={session}
-                      channelId={channel.id}
-                      value={selectedAgent}
-                      onChange={selectAgent}
-                      disabled={
-                        !!channel.archived || placement.status !== "ready"
-                      }
-                    />
-                    <SessionProjectControl
-                      session={session}
-                      channelId={channel.id}
-                      disabled={
-                        !!channel.archived || placement.status !== "ready"
-                      }
-                    />
-                  </>
+                  <SessionProjectControl
+                    session={session}
+                    channelId={channel.id}
+                    disabled={
+                      !!channel.archived ||
+                      placement.status !== "ready"
+                    }
+                  />
                 ) : undefined
               }
               onSend={setSent}

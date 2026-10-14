@@ -614,29 +614,17 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composerToolRow {
   display: contents;
 }
-.composerConversationControls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-.composer:is([data-chat-presentation], [data-conversation-controls])
-  .composerActions {
+.composer[data-chat-presentation] .composerActions {
   flex-direction: column;
   flex-wrap: nowrap;
   align-items: stretch;
 }
-.composer:is([data-chat-presentation], [data-conversation-controls])
-  .composerToolRow {
+.composer[data-chat-presentation] .composerToolRow {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   min-width: 0;
   gap: var(--space-2);
-}
-.composer:is([data-chat-presentation], [data-conversation-controls])
-  .composerConversationControls {
-  width: 100%;
 }
 .backgroundUpload {
   display: flex;

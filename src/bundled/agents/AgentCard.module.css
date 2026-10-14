@@ -278,3 +278,11 @@
     display: none;
   }
 }
+/* Placeholder treatment until the card's status styling is designed. */
+.tag {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-start: var(--space-3);
+  color: var(--text-subtle);
+  @apply text-caption;
+}

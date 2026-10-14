@@ -4364,11 +4364,19 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   expect(h.input()).toHaveValue("");
 });
 
-it("uses Me's selected assistant for plain follow-ups while explicit mentions override it", async () => {
+it("tags a Berd draft with the default agent once and needs a tag to send", async () => {
+  const submit = vi.fn();
   const h = mount({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit,
+    },
     personalConversation: true,
     sessionConversation: true,
-    selectedAgent: second.pubkey,
+    requireMention: true,
+    defaultMention: { pubkey: second.pubkey, name: "Selected" },
   });
   h.setLibrary([
     { pubkey: first.pubkey, name: "Explicit" },
@@ -4380,59 +4388,29 @@ it("uses Me's selected assistant for plain follow-ups while explicit mentions ov
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  const channel = {
-    id: "channel",
-    channelType: "session" as const,
-    members: [first.pubkey, second.pubkey],
-  };
-  Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => channel),
-      addAgents: vi.fn(async () => {}),
-    },
-  });
-
-  h.fill("plain follow-up");
+  Object.assign(h.session, { mePlacement: { has: () => true } });
+  // The default agent arrives in the empty draft as an ordinary tag.
+  await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
+  const send = screen.getByRole("button", { name: "Send message" });
+  // Removing the tag is respected: no re-tag, and Send explains what's missing.
+  h.fill("no agent here");
+  expect(h.input()).toHaveValue("no agent here");
+  // Enter and native form submission obey the same rule, not just the button.
+  fireEvent.keyDown(h.input(), { key: "Enter" });
   h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
-  expect(h.input()).toHaveValue("");
-
-  h.fill("override");
+  expect(submit).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("no agent here");
+  // Still focusable, so its tooltip explains why.
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await userEvent.hover(send);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Tag an agent to send",
+  );
+  await userEvent.unhover(send);
   act(() => {
     h.commands().insertMention(first);
   });
-  h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
-  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
-  expect(h.input()).toHaveValue("");
-});
-
-it("keeps a Me draft when its selected assistant is unavailable", async () => {
-  const h = mount({
-    personalConversation: true,
-    sessionConversation: true,
-    selectedAgent: second.pubkey,
-  });
-  Object.assign(h.session, {
-    mePlacement: { has: () => true },
-    workSessions: {
-      refreshMembership: vi.fn(async () => ({
-        id: "channel",
-        channelType: "session" as const,
-        members: [],
-      })),
-      addAgents: vi.fn(async () => {}),
-    },
-  });
-  h.fill("keep this draft");
-  h.submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "selected assistant is no longer available",
-  );
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("keep this draft");
+  expect(send).not.toHaveAttribute("aria-disabled");
 });
 
 it.each([

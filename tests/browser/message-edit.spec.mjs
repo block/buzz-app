@@ -2,6 +2,59 @@ import { test, expect } from "@playwright/test";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
 
+test("Cmd+Up edits the last own message only from an empty composer", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html`,
+    );
+    const input = page.getByRole("textbox", {
+      name: "Message #General",
+      exact: true,
+    });
+    await input.fill("First message");
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty("value", "");
+    await input.fill("Latest message");
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty("value", "");
+    await input.fill("Keep my draft");
+    await input.press("Meta+ArrowUp");
+    await expect(input).toHaveJSProperty("value", "Keep my draft");
+    await input.fill("");
+    for (const modifier of ["Shift", "Alt", "Control", "Meta+Shift"]) {
+      await input.press(`${modifier}+ArrowUp`);
+      await expect(input).toHaveAccessibleName("Message #General");
+    }
+    await input.press("Meta+ArrowUp");
+    const editor = page.getByRole("textbox", { name: "Edit message" });
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveJSProperty("value", "Latest message");
+    await editor.fill("Revised message");
+    await editor.press("Enter");
+    await expect(input).toBeFocused();
+    await expect(
+      page.getByText("Revised message", { exact: true }),
+    ).toBeVisible();
+    await input.press("Meta+ArrowUp");
+    await expect(editor).toHaveJSProperty("value", "Revised message");
+    await editor.press("Escape");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveJSProperty("value", "");
+  } finally {
+    await server.close();
+  }
+});
+
 // Browser boundary: native caret/focus and undo in the real decorated composer,
 // plus channel/session wiring and responsive edit-header geometry. State and
 // eligibility matrices live in colocated unit/component tests.

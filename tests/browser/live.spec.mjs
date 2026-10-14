@@ -39,8 +39,11 @@ const heads = (app, channel) =>
  * clicks; advancing the page clock by the full delay from here passes it. The
  * broker's lane uses real time, so also wait for its exact reopening. */
 async function crossCooldown(page, app) {
-  await page.clock.runFor(app.relay.rejected[0].retryAfterMs);
+  // The broker's lane reopens in real time. Wait for it before the paused page
+  // clock passes the app's deadline: a queued automatic retry sends at once,
+  // and a second refusal would arm a new deadline that the clock never passes.
   await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
+  await page.clock.runFor(app.relay.rejected[0].retryAfterMs);
 }
 /** Cross a quota cooldown in real time, for a page whose timeline must keep
  * the browser's own clock. The app arms its deadline when it consumes the
@@ -274,6 +277,10 @@ test("automatic recovery restores an empty paused roster without restarting heal
     roster.resolve();
   }
   await expect.poll(() => app.relay.rejected.length).toBe(1);
+  // The notice appears with the first automatic retry, 1 s after the refusal
+  // (RECOVERY_DELAYS_MS[0]). Run the paused clock only that far: the 2 s
+  // cooldown still holds, so the ignored clicks below land before it ends.
+  await page.clock.runFor(1_000);
   await expect(notice(page)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),
@@ -314,7 +321,8 @@ test("automatic recovery restores an empty paused roster without restarting heal
   await retry(page).click();
   await retry(page).click();
   expect(rosters()).toHaveLength(calls);
-  await crossCooldown(page, app);
+  // Automatic recovery can read the roster while the clock crosses the
+  // cooldown, so listen for the observer update before crossing it.
   const previousGeneration = displayGeneration;
   const observerUpdated = page.waitForResponse(
     (response) =>
@@ -322,6 +330,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
       response.ok() &&
       response.request().postDataJSON().observer > previousGeneration,
   );
+  await crossCooldown(page, app);
   await retryIfShown(page);
   await expect(
     page.getByText("No channels yet.", { exact: true }),

@@ -5,6 +5,7 @@ import {
 import { channelIcon } from "../channels/channel-icon";
 import type { ReactNode } from "react";
 import type { ChannelSummary } from "../relay/contracts";
+import { rejectUnhandledFileDrop } from "../messages/use-file-drop";
 import styles from "./Sessions.module.css";
 
 export function NewSessionView({
@@ -21,6 +22,9 @@ export function NewSessionView({
   return (
     <section
       className={styles.work}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
       aria-label={
         parentName
           ? `New session in ${parentName}`

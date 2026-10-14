@@ -5,7 +5,6 @@
   "host": {
     "networkOrigins": ["https://releases.openai.com"],
     "processes": [
-      { "id": "login", "program": "codex", "args": ["login"] },
       {
         "id": "workspace",
         "program": "pwd"

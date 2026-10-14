@@ -24,9 +24,8 @@ export type Request = (input: HostRequest) => Promise<HostResponse>;
 
 /** Where Anthropic publishes each release with its checksums. */
 const RELEASES = "https://downloads.claude.ai/claude-code-releases";
-/** The oldest release Buzz drives: MCP servers marked `alwaysLoad`, which the
- * Buzz tools are, arrived in 2.1.121. */
-export const MIN_VERSION = "2.1.121";
+/** Model discovery disables customizations with --safe-mode (2.1.169+). */
+export const MIN_VERSION = "2.1.169";
 /** `uname -sm` to the release's platform name. */
 const PLATFORMS: Readonly<Record<string, string>> = {
   "Darwin arm64": "darwin-arm64",
@@ -282,7 +281,7 @@ export class ClaudeSetup {
     this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
   }
 
-  async check() {
+  async check(refreshModels = true) {
     if (!this.spawn) {
       this.set({
         status: {
@@ -293,19 +292,21 @@ export class ClaudeSetup {
       return;
     }
     if (this.state.checking || this.state.running) return;
-    this.modelRequest?.abort();
-    this.modelRequest = undefined;
-    this.modelsLoaded = false;
-    this.set({
-      checking: true,
-      models: [],
-      modelsChecking: false,
-      modelsError: "",
-    });
+    const previous = this.state.status;
+    this.set({ checking: true });
     const status = await checkClaude(this.spawn);
+    const invalidate =
+      refreshModels || JSON.stringify(previous) !== JSON.stringify(status);
+    if (invalidate) {
+      this.modelRequest?.abort();
+      this.modelRequest = undefined;
+      this.modelsLoaded = false;
+    }
     this.set({
       status,
-      ...(status.state === "ready" ? {} : { models: [] }),
+      ...(invalidate
+        ? { models: [], modelsChecking: false, modelsError: "" }
+        : {}),
       checking: false,
     });
   }
@@ -315,6 +316,7 @@ export class ClaudeSetup {
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
+      this.state.checking ||
       this.modelRequest ||
       (this.modelsLoaded && !retry)
     )
@@ -324,6 +326,7 @@ export class ClaudeSetup {
     this.set({ modelsChecking: true, modelsError: "" });
     try {
       const models = await queryModels(this.spawn, request.signal);
+      if (!models.length) throw new Error("Claude did not list its models");
       if (this.modelRequest === request) this.set({ models });
     } catch (error) {
       if (this.modelRequest === request && !request.signal.aborted)
@@ -425,7 +428,7 @@ export class ClaudeSetup {
       this.process = undefined;
       this.set({ running: undefined });
     }
-    await this.check();
+    await this.check(asked);
   }
 
   /** Runs one process with its output shown; throws unless it succeeds. */

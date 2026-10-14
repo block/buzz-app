@@ -54,15 +54,54 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 // jsdom leaves focus on a button that becomes natively disabled, where a
 // browser drops it, so the focus tests also check for no `disabled`.
 
+/** The models Claude lists in its answer to `initialize`. */
+const CATALOG = [
+  {
+    value: "default",
+    resolvedModel: "claude-opus-5-5",
+    displayName: "Default (recommended)",
+    description: "Opus 5.5 · Best for everyday, complex tasks",
+  },
+  {
+    value: "opus",
+    resolvedModel: "claude-opus-5-5",
+    displayName: "Opus",
+    description: "Opus 5.5 · Best for everyday, complex tasks",
+  },
+  {
+    value: "claude-fable-5-1[1m]",
+    resolvedModel: "claude-fable-5-1",
+    displayName: "Fable",
+    description: "Fable 5.1 · Most capable for your hardest tasks",
+  },
+  {
+    value: "sonnet",
+    resolvedModel: "claude-sonnet-5-5",
+    displayName: "Sonnet",
+    description: "Sonnet 5.5 · Efficient for routine tasks",
+  },
+  {
+    value: "haiku",
+    resolvedModel: "claude-haiku-4-5",
+    displayName: "Haiku",
+    description: "Haiku 4.5 · Fastest for quick answers",
+  },
+];
+
 /** Applies the plugin to a stand-in context; setup steps run until killed. */
 function applied({
   loggedIn = true,
   available = true,
+  version = "2.1.292",
   files = {},
+  catalog = { listed: true },
 }: {
   loggedIn?: boolean;
   available?: boolean;
+  version?: string;
   files?: Record<string, string>;
+  /** Whether Claude lists its models when asked. */
+  catalog?: { listed: boolean };
 } = {}) {
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
@@ -132,7 +171,7 @@ function applied({
             : name === "platform"
               ? "Darwin arm64\n"
               : args === "--version"
-                ? "2.1.292 (Claude Code)\n"
+                ? `${version} (Claude Code)\n`
                 : args === "auth status --json"
                   ? JSON.stringify({ loggedIn, email: "me@example.com" })
                   : "",
@@ -154,34 +193,7 @@ function applied({
                 subtype: "success",
                 request_id: message.request_id,
                 response: {
-                  models: [
-                    {
-                      value: "default",
-                      resolvedModel: "claude-opus-5-5",
-                      displayName: "Default (recommended)",
-                      description:
-                        "Opus 5.5 · Best for everyday, complex tasks",
-                    },
-                    {
-                      value: "opus",
-                      resolvedModel: "claude-opus-5-5",
-                      displayName: "Opus",
-                      description:
-                        "Opus 5.5 · Best for everyday, complex tasks",
-                    },
-                    {
-                      value: "sonnet",
-                      resolvedModel: "claude-sonnet-5-5",
-                      displayName: "Sonnet",
-                      description: "Sonnet 5.5 · Efficient for routine tasks",
-                    },
-                    {
-                      value: "haiku",
-                      resolvedModel: "claude-haiku-4-5",
-                      displayName: "Haiku",
-                      description: "Haiku 4.5 · Fastest for quick answers",
-                    },
-                  ],
+                  models: catalog.listed ? CATALOG : [],
                 },
               },
             })}\n`,
@@ -202,7 +214,7 @@ function applied({
         status: 200,
         headers: {},
         body: url.endsWith("/latest")
-          ? "2.1.292"
+          ? version
           : JSON.stringify({
               platforms: { "darwin-arm64": { checksum: "a".repeat(64) } },
             }),
@@ -269,22 +281,18 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
       message: { content: [{ type: "text", text: "Two files." }] },
     }),
   ].join("\n");
-  const Claude = tab(
+  const Activity = tab(
     installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
-    0,
+    1,
   );
   const save = vi.fn();
-  render(<Claude agent={agent()} save={save} />);
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  render(<Activity agent={agent()} save={save} />);
   const user = userEvent.setup();
   const rows = screen.getAllByRole("listitem");
   expect(rows.map((row) => row.textContent)).toEqual([
     expect.stringContaining("channel · thread eeeeeeee"),
     expect.stringContaining("channel · channel"),
   ]);
-  fireEvent.change(screen.getByLabelText("Workspace"), {
-    target: { value: "/draft" },
-  });
   const viewButton = (index: number) =>
     screen.getAllByRole("button", { name: "View transcript" })[
       index
@@ -305,7 +313,6 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     await screen.findByText(/no transcript for this conversation/),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByLabelText("Workspace")).toHaveValue("/draft");
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -320,15 +327,14 @@ it("sets the conversation the profile was opened from apart from recent conversa
       },
     }),
   );
-  const Claude = tab(installed().type, 0);
+  const Activity = tab(installed().type, 1);
   render(
-    <Claude
+    <Activity
       agent={agent()}
       save={vi.fn()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
     within(opened).getByRole("button", { name: "View transcript" }),
@@ -347,18 +353,17 @@ it("finds the thread's Claude session another build started", async () => {
       content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
     },
   });
-  const Claude = tab(
+  const Activity = tab(
     installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
-    0,
+    1,
   );
   render(
-    <Claude
+    <Activity
       agent={agent()}
       save={vi.fn()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
     await within(opened).findByRole("button", { name: "View transcript" }),
@@ -423,7 +428,10 @@ it("is an agent type on the desktop app", () => {
     "opus",
   );
   expect(type.provider).toBeDefined();
-  expect(type.tabs?.map((tab) => tab.title)).toEqual(["Settings"]);
+  expect(type.tabs?.map(({ title, role }) => [title, role])).toEqual([
+    ["Settings", "settings"],
+    ["Activity", "activity"],
+  ]);
 });
 
 it("registers only where setup's bash and base64 exist", () => {
@@ -436,7 +444,7 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("keeps provider readiness quiet and agent diagnostics collapsed", async () => {
+it("keeps provider readiness quiet and agent sessions out of Settings", async () => {
   const installedType = installed().type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
@@ -450,9 +458,11 @@ it("keeps provider readiness quiet and agent diagnostics collapsed", async () =>
   cleanup();
   const Settings = tab(installedType, 0);
   render(<Settings agent={agent()} save={vi.fn()} />);
-  expect(
-    screen.getByText("Runtime diagnostics").closest("details"),
-  ).not.toHaveAttribute("open");
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.queryByText("Recent conversations")).not.toBeInTheDocument();
+  cleanup();
+  const Activity = tab(installedType, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
   expect(
     screen.getByText(/None\. A conversation's session starts/),
   ).toBeInTheDocument();
@@ -477,9 +487,12 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
       name: "Claude default (Opus 5.5)",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
-  const sonnet = await screen.findByRole("option", { name: "Sonnet 5.5" });
-  expect(sonnet).toHaveAccessibleDescription("Efficient for routine tasks");
-  await user.click(sonnet);
+  // Every model Claude lists is offered, not only the aliases.
+  const fable = await screen.findByRole("option", { name: "Fable 5.1" });
+  expect(fable).toHaveAccessibleDescription(
+    "Most capable for your hardest tasks",
+  );
+  await user.click(fable);
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(onClose).toHaveBeenCalledOnce();
   cleanup();
@@ -489,10 +502,33 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Sonnet 5.5",
+      "Provider default · Fable 5.1",
     ),
   );
   expect(save).not.toHaveBeenCalled();
+});
+
+it("says when Claude's models could not be loaded and tries again", async () => {
+  const catalog = { listed: false };
+  const Provider = providerSetup(installed({ catalog }).type);
+  render(<Provider onClose={() => undefined} />);
+  const defaultModel = await screen.findByRole("combobox", {
+    name: "Default model",
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't load Claude's models: Claude did not list its models",
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  catalog.listed = true;
+  const user = userEvent.setup();
+  await user.click(retry);
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  await user.click(defaultModel);
+  expect(
+    await screen.findByRole("option", { name: "Fable 5.1" }),
+  ).toBeInTheDocument();
 });
 
 it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {
@@ -808,17 +844,40 @@ it("does not open a competing Claude sign-in or let it cancel the owner", async 
       />
     )),
   );
-  const buttons = await screen.findAllByRole("button", { name: "Sign in" });
+  await waitFor(() => {
+    const buttons = screen.getAllByRole("button", { name: "Sign in" });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeEnabled();
+  });
+  const buttons = screen.getAllByRole("button", { name: "Sign in" });
   if (!buttons[0] || !buttons[1]) throw new Error("Missing sign-in");
   fireEvent.click(buttons[0]);
   fireEvent.click(buttons[1]);
   expect(
     spawn.mock.calls.filter(
-      ([, options]) => options?.args?.join(" ") === "auth login",
+      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
     ),
   ).toHaveLength(1);
   expect(
     screen.getAllByRole("dialog", { name: "Sign in to Claude" }),
   ).toHaveLength(1);
   expect(buttons[1]).toBeDisabled();
+});
+
+it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {
+  const { type, spawn } = installed({ version: "2.1.168" });
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Update Claude" })).toBeEnabled(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Sign in" }),
+  ).not.toBeInTheDocument();
+  expect(
+    spawn.mock.calls.filter(([, options]) =>
+      options?.args?.includes("--safe-mode"),
+    ),
+  ).toHaveLength(0);
 });

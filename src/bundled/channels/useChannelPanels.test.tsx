@@ -158,7 +158,7 @@ it.each(["bottom", "side"] as const)(
     };
     const open = vi.fn(() => true);
     function Harness() {
-      const drawer = useChannelPanels(panels, context, undefined, {
+      const drawer = useChannelPanels(panels, context, undefined, undefined, {
         canOpen: (target) => target.startsWith("todo:"),
         open,
       });

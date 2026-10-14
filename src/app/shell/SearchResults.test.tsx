@@ -2607,7 +2607,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       ["t", "stream"],
     ]),
   );
-  // A full first page means an exact-name miss outside it cannot be declared exhaustive.
+  // Reaching the read bound means an exact-name miss outside it cannot be declared exhaustive.
   for (let i = 0; i < 491; i++)
     discovery.push(
       metadata(relay, `extra-${i}`, `extra-${i}`, 1700000000, [
@@ -2616,18 +2616,21 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       ]),
     );
   const reads: Filter[][] = [];
-  const owner = createRelaySession({
-    ...wire.transport,
-    async query(filters) {
-      if (filters.some((filter) => filter.search !== undefined)) {
-        reads.push(filters as Filter[]);
-        return [message(viewer, "dev", "deploy found", 1700000001)];
-      }
-      return discovery.filter((event) =>
-        filters.some((filter) => matchFilter(filter as Filter, event)),
-      );
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) {
+          reads.push(filters as Filter[]);
+          return [message(viewer, "dev", "deploy found", 1700000001)];
+        }
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
     },
-  });
+    { maxPublicChannels: 500 },
+  );
   try {
     render(
       <SearchResults
@@ -2646,9 +2649,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       expect.objectContaining({ "#h": ["dev"], search: "deploy" }),
     ]);
     expect(
-      screen.getByText(
-        "Public channel results include only the first page of channels.",
-      ),
+      screen.getByText("Only the newest open channels were searched."),
     ).toBeVisible();
   } finally {
     cleanup();

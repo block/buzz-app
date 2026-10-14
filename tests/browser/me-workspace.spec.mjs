@@ -108,6 +108,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   page,
   app,
 }) => {
+  // Install before app timers exist so hover cleanup never mixes real/fake IDs.
+  await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Me conversations" });
@@ -150,11 +152,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // The installed clock runs, so pause at a fixed instant ahead of it rather
-  // than a test-side timestamp that the page clock may already have passed.
-  const base = Date.now();
-  await page.clock.install({ time: base });
-  await page.clock.pauseAt(base + 1_000);
+  // Read the running page clock instead of assuming the host clock matches it.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);

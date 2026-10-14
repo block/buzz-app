@@ -37,6 +37,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -1513,20 +1514,23 @@ function ChannelWorkspace({
         </div>
       </Panel>
       {showingMediaReview && (
-        <MediaReviewViewer
-          extensions={extensions}
-          attachment={showingMediaReview.attachment}
-          session={queries}
-          scope={scope}
-          channelId={showingMediaReview.channelId}
-          channelName={showingMediaReview.channelName}
-          messageId={showingMediaReview.messageId}
-          initialTime={showingMediaReview.initialTime}
-          hasComments={showingMediaReview.hasComments}
-          restoreFocus={mediaReviewTrigger}
-          onOpenLink={openLink}
-          close={() => setMediaReview(undefined)}
-        />
+        // Review comment links stay inert; they never open tabs behind it.
+        <LinkThreadTabContext value={undefined}>
+          <MediaReviewViewer
+            extensions={extensions}
+            attachment={showingMediaReview.attachment}
+            session={queries}
+            scope={scope}
+            channelId={showingMediaReview.channelId}
+            channelName={showingMediaReview.channelName}
+            messageId={showingMediaReview.messageId}
+            initialTime={showingMediaReview.initialTime}
+            hasComments={showingMediaReview.hasComments}
+            restoreFocus={mediaReviewTrigger}
+            onOpenLink={openLink}
+            close={() => setMediaReview(undefined)}
+          />
+        </LinkThreadTabContext>
       )}
       {secondary.drag.feedback}
       {secondary.hosts}
@@ -1606,7 +1610,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={secondary.openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }

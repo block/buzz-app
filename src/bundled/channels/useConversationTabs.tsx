@@ -536,12 +536,37 @@ export function useConversationTabs({
   }
   // The currently resolved channel can be a verified public/archived preview
   // absent from the joined sidebar list. Reading its thread is not write access.
-  function tabChannel(tab: Exclude<Tab, { kind: "new" }>) {
+  function tabChannel(tab: Pick<Tab, "kind" | "channelId">) {
     if (tab.kind === "thread" && current?.id === tab.channelId)
       return current.cached ? undefined : current;
     const target = channels.find((item) => item.id === tab.channelId);
     return target && usableChannel(target) ? target : undefined;
   }
+  // Message rows are memoized: links read one stable opener that consults the
+  // live workspace when chosen. Only current-channel threads use the main pane.
+  const linkedThread = useRef<
+    (channelId: string, messageId: string, rootId: string) => boolean
+  >(() => false);
+  useLayoutEffect(() => {
+    linkedThread.current = (channelId, messageId, rootId) => {
+      if (!currentVisit() || !tabChannel({ kind: "thread", channelId }))
+        return false;
+      opening.current = undefined;
+      tabState.openThreadTab(
+        channelId,
+        messageId,
+        rootId,
+        undefined,
+        mainPane && channelId === currentId ? undefined : "side",
+      );
+      return true;
+    };
+  });
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) =>
+      linkedThread.current(channelId, messageId, rootId),
+    [],
+  );
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
     const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
@@ -628,6 +653,7 @@ export function useConversationTabs({
     panelTrigger,
     openConversationLink,
     openConversationThread,
+    openLinkedThread,
     announcement,
     drag,
     mainItems: mainTabs.map(tabItem),

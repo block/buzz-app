@@ -28,7 +28,11 @@ HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
 on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
 **Open in browser** uses the same `_blank` fallback above without consulting pane
 handlers; both actions retain the original URL, including query and fragment.
-Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+Normal and modified clicks are unchanged. In Messages, `buzz://` message links
+expose **Open link** and **Copy link** the same ways. **Open link** opens the
+linked thread as a tab in the current channel's workspace without navigating;
+another channel's thread uses the side pane. When that channel isn't readable
+there, it opens as a click would. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 

@@ -20,7 +20,8 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
-import { useChannelTabState } from "./useChannelTabState";
+import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 
 afterEach(cleanup);
@@ -624,3 +625,73 @@ it.each(["side", "main"] as const)(
     ).not.toBeNull();
   },
 );
+
+it("opens a linked thread from a readable channel through one stable opener", () => {
+  setThreadPlacementPreference("main");
+  const channels = [
+    { id: "alpha", name: "Alpha" },
+    { id: "beta", name: "Beta" },
+    { id: "gone", name: "Gone", archived: true as const },
+  ];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+      mainPane: true,
+    });
+    return { state, workspace };
+  });
+  try {
+    const open = h.result.current.workspace.openLinkedThread;
+    expect(open("gone", "root", "root")).toBe(false);
+    expect(open("unknown", "root", "root")).toBe(false);
+    expect(h.result.current.state.tabs).toEqual([]);
+    let opened: boolean | undefined;
+    act(() => {
+      opened = open("beta", "reply", "root");
+    });
+    expect(opened).toBe(true);
+    // Another channel's thread never occupies the main pane.
+    const [linked] = h.result.current.state.tabs;
+    expect(linked).toMatchObject({
+      id: "thread:beta:root",
+      channelId: "beta",
+      messageId: "reply",
+    });
+    expect(linked && tabPane(linked)).toBe("side");
+    expect(h.result.current.state.selected).toBe("thread:beta:root");
+    act(() => {
+      open("alpha", "own", "own");
+    });
+    const own = h.result.current.state.tabs[1];
+    expect(own && tabPane(own)).toBe("main");
+    expect(h.result.current.workspace.openLinkedThread).toBe(open);
+    h.unmount();
+    expect(open("beta", "later", "later")).toBe(false);
+  } finally {
+    setThreadPlacementPreference("side");
+  }
+});

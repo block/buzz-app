@@ -215,9 +215,7 @@ test("Me leaves an empty pane unavailable until content opens it", async ({
     name: "Toggle tab pane",
     exact: true,
   });
-  await expect(split).toHaveAttribute("aria-disabled", "true");
-  await split.focus();
-  await split.press("Enter");
+  await expect(split).toHaveCount(0);
   await expect(page.locator("[data-panel-workspace]")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Choose a tab" })).toHaveCount(
     0,

@@ -25,7 +25,10 @@ import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -738,5 +741,88 @@ it.each([true, false])(
     ).toBe(owner);
     expect(load).toHaveBeenCalledWith("beta", expect.any(AbortSignal));
     expect(run).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["archive", "delete"] as const)(
+  "%s completion preserves focus moved during pending work and retains required navigation",
+  async (action) => {
+    const h = fixture();
+    const channel = h.list.channels[1];
+    assert(channel);
+    const origin = new AbortController();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const run = vi.fn(
+      (_action: unknown, _id: string, _signal?: AbortSignal) => pending,
+    );
+    h.session.channelLifecycle = {
+      ...h.session.channelLifecycle,
+      available: true,
+      run,
+    };
+    function StartAction() {
+      const navigation = useChannelNavigation();
+      return (
+        <button
+          type="button"
+          onClick={(event) => {
+            assert(channel);
+            navigation?.openLifecycle(
+              channel,
+              action,
+              event.currentTarget,
+              origin.signal,
+            );
+          }}
+        >
+          Start action
+        </button>
+      );
+    }
+    render(
+      h.view(
+        "beta",
+        true,
+        <>
+          <StartAction />
+          <button type="button">Other control</button>
+        </>,
+      ),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Start action" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: action === "archive" ? "Archive channel" : "Delete channel",
+      }),
+    );
+    try {
+      await screen.findByRole("dialog", {
+        name: action === "archive" ? "Archiving channel…" : "Deleting channel…",
+      });
+      act(() => origin.abort());
+      expect(run.mock.calls[0]?.[2]?.aborted).toBe(false);
+      await user.click(screen.getByRole("button", { name: "Other control" }));
+      expect(
+        screen.getByRole("button", { name: "Other control" }),
+      ).toHaveFocus();
+    } finally {
+      await act(async () => finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: beta"
+          : "Channel deleted: beta",
+    });
+    expect(screen.getByRole("button", { name: "Other control" })).toHaveFocus();
+    if (action === "delete")
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "conversation", channelId: "alpha" }),
+      );
+    else expect(h.navigator.open).not.toHaveBeenCalled();
   },
 );

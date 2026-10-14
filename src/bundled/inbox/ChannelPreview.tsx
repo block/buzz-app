@@ -6,6 +6,8 @@ import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Inbox.module.css";
 
@@ -125,9 +127,13 @@ export function ChannelPreview({
           {window.status === "ready" &&
             !window.error &&
             !window.rows.length && (
-              <p className={styles.notice} role="status">
-                No messages yet.
-              </p>
+              <div className={styles.empty} role="status">
+                <EmptyState
+                  icon={<ChatCircleIcon />}
+                  title="No messages yet."
+                  description="Start the conversation below."
+                />
+              </div>
             )}
           {(window.status === "idle" || window.status === "loading") &&
             !window.error &&

@@ -1174,11 +1174,12 @@ function NavigationItemSpecimen() {
         </div>
       </SpecimenGroup>
       <SpecimenGroup
-        label="Picker option — even padding and immediate hover feedback"
+        label="Picker option — transient highlight and immediate hover feedback"
         code={`<div className="w-full max-w-sm">
   <NavigationItem
     variant="option"
     label="Alex"
+    highlighted
     icon={<Avatar fallback="Alex" alt="" size="default" />}
   />
   <NavigationItem
@@ -1193,6 +1194,7 @@ function NavigationItemSpecimen() {
           <NavigationItem
             variant="option"
             label="Alex"
+            highlighted
             icon={<Avatar fallback="Alex" alt="" size="default" />}
           />
           <NavigationItem

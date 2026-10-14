@@ -689,7 +689,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button.",
-    variants: ["row", "pill", "option", "inset", "selected"],
+    variants: ["row", "pill", "option", "inset", "selected", "highlighted"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

@@ -1,34 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import {
-  ChannelLifecycleUnconfirmed,
-  type ChannelLifecycleCapability,
-} from "../../features/relay/channel-lifecycle";
+import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import {
+  ToastNotice,
+  useToastNotification,
+} from "../../shared/design-system/ui/Toast";
 
 const copy = {
   archive: {
+    pending: "Archiving channel…",
+    done: "Channel archived",
     title: "Archive channel",
     detail:
       "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
   },
   unarchive: {
+    pending: "Unarchiving channel…",
+    done: "Channel unarchived",
     title: "Unarchive channel",
     detail:
       "Unarchive this channel for everyone and return it to the sidebar. Members can send messages again.",
   },
   delete: {
+    pending: "Deleting channel…",
+    done: "Channel deleted",
     title: "Delete channel",
-    detail:
-      "Delete this channel for everyone. You cannot undo this action from Buzz.",
+    detail: "This deletes the channel for everyone. You can’t undo this.",
   },
   leave: {
+    pending: "Leaving channel…",
+    done: "Channel left",
     title: "Leave channel",
     detail:
       "Leave this channel and remove it from your sidebar. You may need an invitation to rejoin a private channel.",
   },
   hide: {
+    pending: "Hiding conversation…",
+    done: "Conversation hidden",
     title: "Hide conversation",
     detail:
       "Hide this conversation from your sidebar only. Messages and membership are kept; other participants are not removed.",
@@ -42,6 +52,7 @@ export function ChannelLifecycleDialog({
   lifecycle,
   close,
   completed,
+  onSubmit,
 }: {
   channelId: string;
   channelName: string;
@@ -49,11 +60,12 @@ export function ChannelLifecycleDialog({
   lifecycle: ChannelLifecycleCapability;
   close(): void;
   completed(): void;
+  onSubmit?(): void;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [refreshRequired, setRefreshRequired] = useState(false);
+  const notify = useToastNotification();
   const operation = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     return () => {
@@ -61,60 +73,71 @@ export function ChannelLifecycleDialog({
     };
   }, []);
   const submit = async () => {
-    if (operation.current || refreshRequired) return;
+    if (operation.current || error) return;
     const controller = new AbortController();
     operation.current = controller;
+    onSubmit?.();
     setBusy(true);
     setError("");
     try {
       await lifecycle.run(action, channelId, controller.signal);
-      if (!controller.signal.aborted) completed();
+      if (!controller.signal.aborted) {
+        notify(`${copy[action].done}: ${channelName}`, "success");
+        completed();
+      }
     } catch (error) {
       if (!controller.signal.aborted) {
         setError(error instanceof Error ? error.message : String(error));
-        setRefreshRequired(error instanceof ChannelLifecycleUnconfirmed);
       }
     } finally {
       operation.current = undefined;
       if (!controller.signal.aborted) setBusy(false);
     }
   };
+  // Keep the owner mounted while closing the modal, so shared focus restoration
+  // runs and the caller's duplicate gate remains held until the result settles.
   return (
-    <Dialog
-      open
-      dismissOnOutsideClick
-      preventClose={busy}
-      initialFocus={cancel}
-      // The sidebar owns both cancellation and completed-navigation focus.
-      finalFocus={false}
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
-      title={`${copy[action].title}: ${channelName}`}
-      description={copy[action].detail}
-      actions={
-        <>
-          <Button ref={cancel} type="button" disabled={busy} onClick={close}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant={action === "delete" ? "destructive" : "prominent"}
-            loading={busy}
-            disabled={refreshRequired}
-            onClick={() => void submit()}
-          >
-            {copy[action].title}
-          </Button>
-        </>
-      }
-    >
-      {error && <p role="alert">{error}</p>}
-      {busy && (
-        <p role="status" className="sr-only">
-          Checking permissions and waiting for relay confirmation…
-        </p>
+    <>
+      {(busy || error) && (
+        <ToastNotice
+          title={busy ? copy[action].pending : `${copy[action].title} failed`}
+          description={busy ? channelName : error}
+          tone={busy ? "info" : "error"}
+          {...(!busy && { onDismiss: close })}
+        />
       )}
-    </Dialog>
+      <Dialog
+        open={!busy && !error}
+        dismissOnOutsideClick
+        initialFocus={cancel}
+        // Cancellation remains sidebar-owned; submission returns to the trigger.
+        {...(!busy && !error && { finalFocus: false })}
+        onOpenChange={(open) => {
+          if (!open) close();
+        }}
+        title={
+          action === "delete"
+            ? `Delete ${channelName}?`
+            : `${copy[action].title}: ${channelName}`
+        }
+        description={copy[action].detail}
+        actions={
+          <>
+            <Button ref={cancel} type="button" onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant={action === "delete" ? "destructive" : "prominent"}
+              onClick={() => void submit()}
+            >
+              {copy[action].title}
+            </Button>
+          </>
+        }
+      >
+        {null}
+      </Dialog>
+    </>
   );
 }

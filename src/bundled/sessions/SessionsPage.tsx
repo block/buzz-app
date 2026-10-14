@@ -293,6 +293,7 @@ function SessionWork({
     session.names,
   );
   const tabState = useChannelTabState(session, channel.id, "me");
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const mounted = useRef(false);
   const continuing = useRef(false);
   useLayoutEffect(() => {
@@ -316,6 +317,7 @@ function SessionWork({
     navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
+    fallbackFocus: actionsTrigger,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;
@@ -406,6 +408,7 @@ function SessionWork({
             />
             <MenuRoot>
               <MenuTrigger
+                ref={actionsTrigger}
                 render={(props) => (
                   <IconButton
                     {...props}
@@ -439,7 +442,7 @@ function SessionWork({
                 </MenuItem>
               </MenuPopup>
             </MenuRoot>
-            {!showingPanel && (
+            {hasLocalPanel && !showingPanel && (
               <span className={panelStyles.paneToggle}>
                 <IconButton
                   ref={splitTrigger}
@@ -449,8 +452,6 @@ function SessionWork({
                   title={showingPanel ? "Close tab pane" : "Open tab pane"}
                   aria-expanded={!!showingPanel}
                   icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
                   onClick={() => tabState.setPaneOpen(!showingPanel)}
                 />
               </span>

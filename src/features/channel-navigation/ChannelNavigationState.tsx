@@ -69,7 +69,7 @@ type State = {
         action: ChannelLifecycleAction;
         trigger?: HTMLElement;
         focusFallback?: HTMLElement | undefined;
-        origin?: AbortSignal;
+        origin?: AbortSignal | undefined;
       }
     | undefined;
 };
@@ -98,6 +98,7 @@ type Handoff = State & {
     trigger?: HTMLElement,
     origin?: AbortSignal,
   ): void;
+  beginLifecycle(): void;
   closeLifecycle(): void;
 };
 const ChannelNavigationContext = createContext<Handoff | undefined>(undefined);
@@ -207,6 +208,20 @@ export function ChannelNavigationProvider({
                   ...(origin ? { origin } : {}),
                 },
               },
+        );
+      },
+      beginLifecycle() {
+        // A confirmed operation belongs to the session, not its originating visit.
+        update((previous) =>
+          previous.lifecycleDialog
+            ? {
+                ...previous,
+                lifecycleDialog: {
+                  ...previous.lifecycleDialog,
+                  origin: undefined,
+                },
+              }
+            : previous,
         );
       },
       closeLifecycle() {

@@ -364,6 +364,9 @@ function ReadySidebar({
     lifecycleFocus.current = undefined;
     const trigger = lifecycleTrigger.current;
     lifecycleTrigger.current = undefined;
+    // The pending operation is nonmodal; keep focus where the user moved it.
+    if (document.activeElement && document.activeElement !== document.body)
+      return;
     if (trigger?.isConnected) {
       trigger.focus({ preventScroll: true });
       return;
@@ -895,6 +898,7 @@ function ReadySidebar({
           channelName={lifecycleDialog.channel.name}
           action={lifecycleDialog.action}
           lifecycle={lifecycle}
+          onSubmit={handoff?.beginLifecycle}
           close={() => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
             lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected

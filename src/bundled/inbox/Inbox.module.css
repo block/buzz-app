@@ -188,7 +188,6 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .empty {
   padding: var(--space-page-section-gap) var(--space-panel-inset);
-  max-width: 65ch;
 }
 
 .list {
@@ -204,18 +203,18 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 .rowSurface {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-row-gap);
+  align-items: stretch;
   min-width: 0;
+  border-radius: var(--radius-row);
 }
 
-/* Keep the sibling action from consuming the label in a narrow list pane. */
-@container inbox-list (max-width: 24rem) {
-  .rowSurface {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .rowArchive {
-    justify-self: end;
+.row[data-selected] .rowSurface {
+  background: var(--interaction-selected);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rowSurface:hover {
+    background: var(--interaction-row-hover);
   }
 }
 
@@ -228,6 +227,8 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 /* Revealed on hover or keyboard focus; always shown without a hover pointer. */
 .rowArchive {
+  display: flex;
+  align-self: stretch;
   opacity: 0;
 }
 
@@ -273,29 +274,21 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   white-space: nowrap;
 }
 
-.sourceLine {
+.identity {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
   min-width: 0;
 }
 
 .source {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
   min-width: 0;
-  max-width: 100%;
-  border-radius: var(--radius-chip);
-  padding-inline: var(--space-chip-inset);
-  background: var(--affordance-subtle);
-  color: var(--text-subtle);
-}
-
-.sourceName {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-subtle);
 }
 
 .preview {
@@ -309,8 +302,5 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 @media (max-width: 600px) {
   .row {
     padding-bottom: var(--space-3);
-  }
-  .rowSurface {
-    gap: var(--space-1);
   }
 }

@@ -497,6 +497,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
 }
+.emptyConversation {
+  padding-block: var(--space-page-section-gap);
+}
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-subtle);

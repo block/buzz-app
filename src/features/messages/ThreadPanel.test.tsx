@@ -605,10 +605,10 @@ it("separates the original from replies with the relay's reply total", () => {
 
   // Empty presentation never proves empty history, including after a repair
   // or selection reset leaves ready with no continuation or error evidence.
-  for (const [canLoadMore, limited] of [
-    [true, false],
-    [false, true],
-    [false, false],
+  for (const { canLoadMore, limited } of [
+    { canLoadMore: true, limited: false },
+    { canLoadMore: false, limited: true },
+    { canLoadMore: false, limited: false },
   ]) {
     h.snapshot.canLoadMore = canLoadMore;
     h.snapshot.limited = limited;

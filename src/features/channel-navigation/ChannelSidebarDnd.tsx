@@ -2,7 +2,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
-  closestCenter,
+  type CollisionDetection,
   pointerWithin,
   useDraggable,
   useDroppable,
@@ -20,6 +20,40 @@ import { createPortal } from "react-dom";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
 
 const Writable = createContext(false);
+
+// Group gaps target the neighbour whose insertion edge lies in that same gap.
+const sidebarCollisions: CollisionDetection = (args) => {
+  if (!args.active.data.current?.group) return pointerWithin(args);
+  const groups = args.droppableContainers
+    .filter(({ id }) => String(id).startsWith("group:"))
+    .sort((a, b) => a.data.current?.groupIndex - b.data.current?.groupIndex);
+  const hits = pointerWithin({ ...args, droppableContainers: groups });
+  if (hits.length) return hits;
+  const pointer = args.pointerCoordinates;
+  if (!pointer) return [];
+  for (let index = 1; index < groups.length; index++) {
+    const above = groups[index - 1];
+    const below = groups[index];
+    if (!above || !below) continue;
+    const top = args.droppableRects.get(above.id);
+    const bottom = args.droppableRects.get(below.id);
+    if (
+      top &&
+      bottom &&
+      pointer.y > top.bottom &&
+      pointer.y < bottom.top &&
+      pointer.x >= Math.max(top.left, bottom.left) &&
+      pointer.x <= Math.min(top.right, bottom.right)
+    ) {
+      const target =
+        args.active.data.current.groupIndex < below.data.current?.groupIndex
+          ? above
+          : below;
+      return [{ id: target.id }];
+    }
+  }
+  return [];
+};
 
 /**
  * Pointer moves between saved groups, Starred and Channels, and reorders saved
@@ -47,44 +81,7 @@ export function ChannelSidebarDnd({
   return (
     <DndContext
       sensors={sensors}
-      // A group lands only among saved groups; channels keep their targets.
-      collisionDetection={(args) => {
-        if (!args.active.data.current?.group) return pointerWithin(args);
-        const groups = {
-          ...args,
-          droppableContainers: args.droppableContainers.filter(({ id }) =>
-            String(id).startsWith("group:"),
-          ),
-        };
-        const hits = pointerWithin(groups);
-        if (hits.length) return hits;
-        const rects = groups.droppableContainers.flatMap(({ id }) => {
-          const rect = args.droppableRects.get(id);
-          return rect ? [rect] : [];
-        });
-        const pointer = args.pointerCoordinates;
-        // Fill only the saved-group gaps, never adjacent built-ins or panes.
-        if (
-          !pointer ||
-          !rects.length ||
-          pointer.x < Math.min(...rects.map((rect) => rect.left)) ||
-          pointer.x > Math.max(...rects.map((rect) => rect.right)) ||
-          pointer.y < Math.min(...rects.map((rect) => rect.top)) ||
-          pointer.y > Math.max(...rects.map((rect) => rect.bottom))
-        )
-          return [];
-        return closestCenter({
-          ...groups,
-          // The pointer identifies the gap, independent of header grab offset.
-          collisionRect: {
-            ...args.collisionRect,
-            left: pointer.x,
-            top: pointer.y,
-            width: 0,
-            height: 0,
-          },
-        });
-      }}
+      collisionDetection={sidebarCollisions}
       // The sidebar's own status is its loading notice; drag announcements live outside it.
       accessibility={{ container: document.body }}
       onDragStart={({ active }) =>
@@ -159,6 +156,7 @@ export function DroppableSidebarSection({
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
+    data: { groupIndex },
     disabled,
   });
   const drag = useDraggable({

@@ -22,12 +22,14 @@ export type FakeClaude = {
   /** When set, a turn stays open until `finish()`. */
   hold: boolean;
   killed: boolean;
+  /** When false, a kill is only a request; the test calls `exit()`. */
+  exitOnKill: boolean;
   emit(message: Record<string, unknown>): void;
   finish(result?: Readonly<{ error?: string }>): void;
   exit(code: number | null, stderr?: string): void;
 };
 
-/** The models the fake lists, as Claude Code's `initialize` answer does. */
+/** The models the fake lists, as Claude's `initialize` answer does. */
 export const MODELS = [
   { value: "default", resolvedModel: "claude-opus-5-5" },
   {
@@ -47,7 +49,7 @@ export const MODELS = [
 const resolved = (model: string) =>
   MODELS.find((item) => item.value === model)?.resolvedModel ?? model;
 
-/** A spawn whose `claude` processes answer like Claude Code. Sessions named in
+/** A spawn whose `claude` processes answer like Claude. Sessions named in
  * `known` (or created by a process) can be resumed; others fail to load. */
 export function fakeSpawn(known = new Set<string>()) {
   const processes: FakeClaude[] = [];
@@ -77,6 +79,7 @@ export function fakeSpawn(known = new Set<string>()) {
       models: [],
       hold: false,
       killed: false,
+      exitOnKill: true,
       emit(message) {
         if (alive) options.onStdout?.(`${JSON.stringify(message)}\n`);
       },
@@ -90,7 +93,7 @@ export function fakeSpawn(known = new Set<string>()) {
           ...(result.error ? { result: result.error } : {}),
           session_id: session,
         });
-        // Claude Code reports idle only when asked to.
+        // Claude reports idle only when asked to.
         if (options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS === "1")
           fake.emit({
             type: "system",
@@ -167,6 +170,8 @@ export function fakeSpawn(known = new Set<string>()) {
         });
       }
       open++;
+      if (args.includes("--replay-user-messages"))
+        fake.emit({ ...message, isReplay: true, session_id: session });
       fake.emit({
         type: "assistant",
         session_id: session,
@@ -183,7 +188,7 @@ export function fakeSpawn(known = new Set<string>()) {
       end: async () => undefined,
       kill: async () => {
         fake.killed = true;
-        fake.exit(null);
+        if (fake.exitOnKill) fake.exit(null);
       },
       exited,
     };

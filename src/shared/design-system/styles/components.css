@@ -2,11 +2,6 @@
 @import "./tab-drag.css";
 
 @layer components {
-  /* Optical alignment: lift Robot face artwork without moving its layout box. */
-  .tabler-icon-robot-face {
-    translate: 0 -1px;
-  }
-
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -417,6 +412,13 @@
     color: var(--text-subtle);
   }
 
+  /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
+  .buzz-avatar[data-size="compact"] {
+    @apply text-caption;
+    width: 1.3125rem;
+    height: 1.3125rem;
+  }
+
   .buzz-avatar[data-size="small"] {
     @apply text-caption;
     width: 1.5rem;
@@ -495,8 +497,8 @@
   }
 
   /* A panel is the default opaque reading surface over the atmospheric
-     backdrop. Its border and threshold shadow arrive together: taking only
-     bg-panel would lose the boundary that lets it sit above the gradient. */
+     backdrop. A transparent border reserves its geometry; shadow-panel supplies
+     the shared translucent contour and elevation above the gradient. */
   /* One set of declarations, two selectors.
 
      A dockview group *is* a Panel — it is the movable, independently legible
@@ -516,10 +518,10 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border-standard);
-    border-radius: var(--radius-panel);
+    border: 1px solid transparent;
+    border-radius: var(--radius-container);
     background: var(--surface-panel);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-panel);
   }
 
   /* A joined surface keeps one outer edge; nested panels retain opaque
@@ -1434,6 +1436,20 @@
     justify-content: space-between;
     gap: var(--space-4);
   }
+  .buzz-select-option-main {
+    display: flex;
+    align-items: start;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-row-gap);
+  }
+  .buzz-select-option-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
+  }
   .buzz-select-option[data-highlighted] {
     outline: none;
   }
@@ -1720,6 +1736,68 @@
   @media (prefers-reduced-motion: reduce) {
     .buzz-tabs-arrival {
       animation-timing-function: steps(1, end);
+    }
+  }
+
+  /* Activity arrival: a quiet fade. data-arrive="grow" (standalone pills)
+     also opens and closes its space with the same settle timing, so content
+     below moves instead of jumping. */
+  .buzz-arrive {
+    animation: buzz-arrive var(--duration-state) var(--easing-enter) both;
+  }
+  .buzz-arrive[data-arrive="grow"] {
+    display: grid;
+    grid-template-rows: 1fr;
+    animation: buzz-arrive-grow var(--duration-settle) var(--easing-settle) both;
+  }
+  .buzz-arrive[data-arrive="grow"] > * {
+    min-height: 0;
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      backwards;
+  }
+  @keyframes buzz-arrive {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes buzz-arrive-grow {
+    from {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+    to {
+      grid-template-rows: 1fr;
+    }
+  }
+  /* Clips only while the space animates (discrete, held for the duration), so
+     hidden content never adds scroll height and focus rings are unclipped at rest. */
+  @keyframes buzz-arrive-reveal {
+    from,
+    to {
+      overflow: clip;
+    }
+  }
+  /* Leaving: the owner keeps the element mounted until this finishes. */
+  .buzz-arrive[data-arrive="grow"][data-leaving] {
+    pointer-events: none;
+    animation: buzz-leave var(--duration-settle) var(--easing-settle) forwards;
+  }
+  .buzz-arrive[data-arrive="grow"][data-leaving] > * {
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      reverse forwards;
+  }
+  @keyframes buzz-leave {
+    to {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-arrive,
+    .buzz-arrive[data-leaving] {
+      animation: none;
     }
   }
 }

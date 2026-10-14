@@ -558,6 +558,15 @@
     box-shadow: var(--elevation-dock);
   }
 }
+/* The shell's space-1 gutter follows the sidebar. Center the existing hit
+   target in that gutter without changing its width or the sidebar's geometry. */
+.sidebarResizeHandle[aria-orientation="vertical"] {
+  --resize-grip-opacity: 0.5;
+  translate: calc(-1 * var(--space-1) / 2) 0;
+}
+.sidebarResizeHandle[aria-orientation="vertical"]::after {
+  left: 50%;
+}
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {
   .board,
@@ -878,37 +887,6 @@
   border-radius: var(--radius-pill);
   background: var(--affordance-subtle-hover);
 }
-.thinkingBadge i {
-  display: block;
-  width: 0.1875rem;
-  height: 0.1875rem;
-  border-radius: 50%;
-  background: var(--text-standard);
-}
-@keyframes thinking-badge-pulse {
-  0%,
-  40%,
-  100% {
-    opacity: 0.45;
-    transform: translateY(0);
-  }
-  20% {
-    opacity: 1;
-    transform: translateY(-0.125rem);
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .thinkingBadge i {
-    animation: thinking-badge-pulse 1.2s linear infinite;
-  }
-  .thinkingBadge i:nth-child(2) {
-    animation-delay: 80ms;
-  }
-  .thinkingBadge i:nth-child(3) {
-    animation-delay: 160ms;
-  }
-}
-
 /* Occupies the DM identity box while it replaces the avatar or count; shares
    the participant-count chip's subtle roles. */
 .typing {

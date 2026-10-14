@@ -1,3 +1,4 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
@@ -11,7 +12,6 @@ import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
-  personalGroups,
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
@@ -66,11 +66,6 @@ import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
-import {
-  activeSidebarAssignment,
-  activeSidebarSectionRemoval,
-  readActiveSidebarGroups,
-} from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
@@ -205,6 +200,7 @@ export function createRelaySession(
   options: ChannelStoreOptions & {
     identityNames?: IdentityNames | undefined;
     agentChoices?: LocalAgents | undefined;
+    localAgents?: LocalAgentSource | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -553,6 +549,8 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
+        activity.messagesChanged(visible);
+        if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
@@ -684,6 +682,10 @@ export function createRelaySession(
           host: transport.activityArchive,
           canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
         }
+      : undefined,
+    (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    options.localAgents && transport
+      ? { source: options.localAgents, scope: transportPartition(transport) }
       : undefined,
   );
   const channelActivity = createChannelActivity(
@@ -1179,19 +1181,18 @@ export function createRelaySession(
         AbortSignal.timeout(10_000),
         ...(signal ? [signal] : []),
       ]);
-      const legacy = await readSidebarPreferences(
+      return readSidebarPreferences(
         preferenceReader,
         transport.viewer,
         decode,
         combined,
       );
-      return readActiveSidebarGroups(channelKit.capability, legacy, combined);
     },
     !!transport?.decodeSidebarPreferences,
     (() => {
       const write = transport?.writeSidebarAssignment;
       return write
-        ? activeSidebarAssignment(channelKit.capability, (intent, signal) =>
+        ? (intent, signal) =>
             write(
               intent,
               AbortSignal.any([
@@ -1199,8 +1200,7 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
-            ),
-          )
+            )
         : undefined;
     })(),
     (() => {
@@ -1252,31 +1252,22 @@ export function createRelaySession(
     (() => {
       const write = transport?.removeSidebarSection;
       return write
-        ? activeSidebarSectionRemoval(
-            channelKit.capability,
-            (sectionId, signal) =>
-              write(
-                sectionId,
-                AbortSignal.any([
-                  lifetime.signal,
-                  AbortSignal.timeout(20_000),
-                  signal,
-                ]),
-              ),
-          )
+        ? (sectionId, signal) =>
+            write(
+              sectionId,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
         : undefined;
     })(),
   );
-  let groupHead: string | undefined;
   let meHead: string | undefined;
-  const stopSidebarGroups = channelKit.capability.subscribe(() => {
+  const stopMeGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
-    const head = personalGroups(state.entries)?.eventId;
-    if (head !== groupHead) {
-      groupHead = head;
-      void sidebarPreferences.queries.refresh();
-    }
     const nextMe = meGroups(state.entries)?.eventId;
     if (nextMe !== meHead) {
       meHead = nextMe;
@@ -1350,18 +1341,9 @@ export function createRelaySession(
             if (!setup) return;
             parseLineup({ ...setup, teamIds: [] });
             if (
-              setup.groupSource !== undefined &&
-              setup.groupSource !== "legacy"
-            )
-              throw new Error("Invalid group source");
-            if (
               typeof setup.groupId !== "string" ||
-              setup.groupId.length >
-                (setup.groupSource === "legacy" ? 256 : 128) ||
-              (setup.groupId !== "" &&
-                (setup.groupSource === "legacy"
-                  ? !setup.groupId.trim()
-                  : !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.groupId))) ||
+              setup.groupId.length > 256 ||
+              (setup.groupId !== "" && !setup.groupId.trim()) ||
               typeof setup.templateId !== "string" ||
               (setup.templateId !== "" &&
                 !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.templateId))
@@ -1409,8 +1391,6 @@ export function createRelaySession(
               const state = sidebarPreferences.queries.snapshot();
               if (
                 !sidebarPreferences.queries.writable ||
-                (setup.groupSource === "legacy") !==
-                  (state.data?.groupSource !== "personal") ||
                 !state.data?.sections.some((g) => g.id === setup.groupId)
               )
                 throw new Error(
@@ -1418,13 +1398,11 @@ export function createRelaySession(
                 );
             }
           },
-          async place(id, groupId, source) {
+          async place(id, groupId) {
             await sidebarPreferences.queries.refresh();
             const state = sidebarPreferences.queries.snapshot();
             if (
               !sidebarPreferences.queries.writable ||
-              (source === "legacy") !==
-                (state.data?.groupSource !== "personal") ||
               !state.data?.sections.some((g) => g.id === groupId)
             )
               throw new Error(
@@ -2411,6 +2389,7 @@ export function createRelaySession(
         catchupQueue.clear();
         dropHintConfirmations();
         requests.invalidate();
+        projects.clearHomes();
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -2574,6 +2553,7 @@ export function createRelaySession(
         unread.clear();
         inboxFeed.clear();
         requests.invalidate();
+        projects.clearHomes();
         profiles.clear();
         emoji.clear();
         statuses.clear();
@@ -2592,8 +2572,9 @@ export function createRelaySession(
       }
     },
     dispose() {
-      stopSidebarGroups();
+      stopMeGroups();
       closed = true;
+      projects.clearHomes();
       typing.dispose();
       lifetime.abort();
       activity.dispose();

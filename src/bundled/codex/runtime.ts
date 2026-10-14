@@ -1,3 +1,4 @@
+import type { WorkOutcome } from "../../features/agents/local-activity";
 import {
   fromOwner,
   type Agent,
@@ -5,9 +6,11 @@ import {
   type Delivery,
   type Models,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
+import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
@@ -32,6 +35,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -48,10 +52,17 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
-  /** Called once a final send answers this request, or one steered after it. */
+  /** Called once a final send answers this request, or one steered after it,
+   * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
+  step?: (tool: string, target?: string) => void;
+  acknowledged?: () => void;
+  superseded?: () => void;
+  failActivity(reason: string): void;
 };
-type Saved = { threadId: string; workspace: string };
+/** `at` is when the binding last started a turn; bindings saved before it
+ * existed have none. */
+type Saved = { threadId: string; workspace: string; at?: number };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -61,15 +72,20 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** What the turn runs on, once resolved; a differing pick queues a turn. */
+  model?: string;
+  effort?: string;
   workspace: string;
   signal: AbortSignal;
-  version: number;
-  sentVersion?: number;
   /** Every request this turn has taken in, the first and each steered one. */
   requests: Request[];
+  /** Latest acknowledged mention per Buzz thread; independent of session scope. */
+  activity: Map<string, Request>;
 };
 type Lane = {
   tail: Promise<void>;
+  /** Turns waiting on `tail` to start; steering past them would reorder. */
+  queued: number;
   active?: Active;
 };
 type Entry = {
@@ -87,6 +103,16 @@ type Server = {
   threads: Map<string, string>;
 };
 export type SessionView = { key: string; status: string; detail: string };
+/** A saved binding, newest first, for the owner's transcript list. */
+export type SavedConversation = {
+  key: string;
+  channelId: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  root?: string;
+  threadId: string;
+  at?: number;
+};
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -108,11 +134,13 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -123,7 +151,7 @@ export class CodexRuntime {
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
-    const settings = config(agent.config);
+    const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([
       settings.workspace,
       settings.model,
@@ -189,7 +217,7 @@ export class CodexRuntime {
     const code = await process.exited;
     const workspace = directory.trim();
     if (code !== 0 || !absoluteWorkspace(workspace))
-      throw new Error("Could not resolve the default Codex workspace.");
+      throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
@@ -231,10 +259,16 @@ export class CodexRuntime {
       );
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
+          if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
+            .catch((error) =>
+              console.error(
+                "Codex could not clean a stopped agent's terminals",
+                error,
+              ),
+            );
         }
     })();
     this.stopping.set(pubkey, stopped);
@@ -279,25 +313,9 @@ export class CodexRuntime {
     const pubkey = request.agent.pubkey;
     const prior = this.entries.get(pubkey);
     if (prior) return prior;
-    let saved: Record<string, Saved> = {};
-    try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(request)) ?? "{}",
-      );
-      if (stored && typeof stored === "object" && !Array.isArray(stored))
-        saved = Object.fromEntries(
-          Object.entries(stored).filter(
-            ([, value]) =>
-              value &&
-              typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
-          ),
-        );
-    } catch {
-      /* Start fresh after malformed local data. */
-    }
+    const saved = this.load(this.storageKey(request.scope, pubkey));
     const entry: Entry = {
-      storageKey: this.storageKey(request),
+      storageKey: this.storageKey(request.scope, pubkey),
       abort: new AbortController(),
       after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
@@ -306,12 +324,103 @@ export class CodexRuntime {
     this.entries.set(pubkey, entry);
     return entry;
   }
-  private storageKey(request: Request) {
+  private load(storageKey: string) {
+    try {
+      const stored: unknown = JSON.parse(
+        this.storage.getItem(storageKey) ?? "{}",
+      );
+      if (stored && typeof stored === "object" && !Array.isArray(stored))
+        return Object.fromEntries(
+          Object.entries(stored).filter(
+            ([, value]) =>
+              value &&
+              typeof value.threadId === "string" &&
+              typeof value.workspace === "string",
+          ),
+        ) as Record<string, Saved>;
+    } catch {
+      /* Start fresh after malformed local data. */
+    }
+    return {};
+  }
+  /** The agent's bindings in this community, most recently used first. */
+  conversations(pubkey: string): SavedConversation[] {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const ready = snapshot?.status === "ready" ? snapshot : undefined;
+    const saved =
+      this.entries.get(pubkey)?.saved ??
+      (ready ? this.load(this.storageKey(ready.scope ?? "", pubkey)) : {});
+    const channels = ready?.session.channels.list().channels ?? [];
+    // Untimestamped bindings keep save order, newest last; listed newest first.
+    return Object.entries(saved)
+      .reverse()
+      .flatMap(([key, { threadId, at }]) => {
+        try {
+          const [channelId, root] = JSON.parse(key) as unknown[];
+          if (typeof channelId !== "string" || typeof root !== "string")
+            return [];
+          const name = channels.find((row) => row.id === channelId)?.name;
+          return [
+            {
+              key,
+              channelId,
+              ...(name ? { name } : {}),
+              ...(root === "channel" ? {} : { root }),
+              threadId,
+              ...(at === undefined ? {} : { at }),
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
+  }
+  private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v4 added media_get.
-    return `buzz.codex.sessions.v4:${request.scope}:${request.agent.pubkey}`;
+    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
+    // Reinserted so the bounded set keeps the most recently used bindings.
+    delete entry.saved[key];
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
@@ -333,25 +442,53 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (!(await fromOwner(trigger.event, agent.owner))) return;
     const snapshot = this.relay(agent.pubkey)?.snapshot();
+    if (
+      !(await fromOwner(trigger.event, agent.owner, {
+        agent: agent.pubkey,
+        authority:
+          snapshot?.status === "ready"
+            ? snapshot.session.workflowAuthority
+            : undefined,
+        profiles:
+          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
+      }))
+    ) {
+      delivery.ignored?.();
+      return;
+    }
+    delivery.signal.throwIfAborted();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = config(delivery.config);
+    const settings = this.resolveConfig(delivery.config);
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
+    const topLevel =
+      trigger.type === "mention" &&
+      (await meChat(
+        () => this.relay(agent.pubkey),
+        agent.owner,
+        channelId,
+        delivery.signal,
+      ));
     const toolRoot =
-      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+      channel?.channelType === "dm" || topLevel
+        ? undefined
+        : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
-    let answered!: () => void;
+    let finishActivity!: (result: WorkOutcome) => void;
+    const replied = new Promise<WorkOutcome>((resolve) => {
+      finishActivity = resolve;
+    });
+    const answered = () => finishActivity({ ok: true });
+    const failActivity = (error: string) =>
+      finishActivity({ ok: false, error });
+    delivery.workingUntil(replied);
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
-    const replied = new Promise<void>((resolve) => {
-      answered = resolve;
-    });
     const request: Request = {
       scope: snapshot.scope ?? "",
       event: trigger.event,
@@ -364,16 +501,30 @@ export class CodexRuntime {
         channelId,
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
+        ...(topLevel ? { topLevel } : {}),
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
       team: delivery.team ?? "",
       answered,
+      failActivity,
+      ...(trigger.type === "mention"
+        ? {
+            ...(delivery.step ? { step: delivery.step } : {}),
+            ...(delivery.acknowledged
+              ? { acknowledged: delivery.acknowledged }
+              : {}),
+            ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
+          }
+        : {}),
     };
     if (!validWorkspace(settings.workspace)) {
+      failActivity(
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      );
       await this.publish(
         request,
-        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+        "Choose an absolute or ~/… workspace path in Codex settings first.",
       );
       return;
     }
@@ -382,7 +533,7 @@ export class CodexRuntime {
     const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: entry.after };
+      lane = { tail: entry.after, queued: 0 };
       entry.lanes.set(key, lane);
     }
     if (lane.active) {
@@ -391,13 +542,31 @@ export class CodexRuntime {
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
-          if (entry.abort.signal.aborted) return;
-          if (active.finished) {
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
+          // Steering cannot carry a model or effort, so a differing pick
+          // waits for this turn and runs as the next one. Everything after
+          // it queues too until the lane drains: steering would run later
+          // messages first. A turn keeps the posting policy it was admitted
+          // with, so a request under the other policy waits for it too.
+          if (
+            active.finished ||
+            lane.queued ||
+            request.conversation.topLevel !==
+              active.reply.conversation.topLevel ||
+            (request.model && request.model !== active.model) ||
+            (request.effort && request.effort !== active.effort)
+          ) {
             this.start(request, text, key, lane, entry);
             return;
           }
           const context = await this.history(request, entry.abort.signal);
-          if (entry.abort.signal.aborted) return;
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
           if (active.finished) {
             this.start(request, text, key, lane, entry);
             return;
@@ -411,34 +580,50 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
-          active.version++;
+          this.acknowledgeActivity(active, request);
         } catch (error) {
-          if (entry.abort.signal.aborted) return;
+          if (entry.abort.signal.aborted) {
+            request.failActivity("Codex was stopped");
+            return;
+          }
           // A completion racing the request means this is the next ordinary turn.
           if (message(error) === "no active turn to steer") {
             this.start(request, text, key, lane, entry);
             return;
           }
+          request.failActivity(`Steering was not accepted: ${message(error)}`);
           await this.publish(
             request,
             `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
           );
+          // The running turn never took this request in, so nothing else
+          // answers it: let go of its working hold now, not at that turn's end.
+          request.answered();
         }
       });
       active.steering = accepted.catch((error) =>
         console.error("Codex steering failed", error),
       );
-      // The steered turn, or one started in its place, answers this mention.
-      const steered = lane;
-      delivery.workingUntil(
-        Promise.race([replied, accepted.then(() => steered.tail)]),
-      );
       return;
     }
-    delivery.workingUntil(
-      Promise.race([replied, this.start(request, text, key, lane, entry)]),
-    );
+    this.start(request, text, key, lane, entry);
   }
+
+  /** A positive harness response transfers presentation, not execution or
+   * success. Watches have no bubble; mentions in other threads keep theirs,
+   * and a top-level chat is one scope. */
+  private acknowledgeActivity(active: Active, request: Request) {
+    if (!request.step) return;
+    const scope = request.conversation.topLevel
+      ? request.conversation.channelId
+      : rootOf(request.event);
+    const prior = active.activity.get(scope);
+    if (prior === request) return;
+    prior?.superseded?.();
+    active.activity.set(scope, request);
+    request.acknowledged?.();
+  }
+
   private start(
     request: Request,
     text: string,
@@ -447,10 +632,15 @@ export class CodexRuntime {
     entry: Entry,
   ) {
     const current = lane;
+    current.queued++;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
-        if (entry.abort.signal.aborted) return;
+        current.queued--;
+        if (entry.abort.signal.aborted) {
+          request.failActivity("Codex was stopped");
+          return;
+        }
         await this.execute(request, text, key, current, entry);
       });
     lane.tail = job;
@@ -480,7 +670,9 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ["e", rootOf(request.event), "", "reply"],
+        ...(request.conversation.topLevel
+          ? []
+          : [["e", rootOf(request.event), "", "reply"]]),
         ["p", request.agent.owner],
       ],
     });
@@ -512,7 +704,6 @@ export class CodexRuntime {
     )
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
-    const version = active.version;
     const request = active.reply;
     const answering = [...active.requests];
     const client = appClient(request.agent, {
@@ -521,23 +712,14 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
+        const { entries } = await this.memories(request, active.signal);
+        check();
+        return entries;
+      },
+      remembered: () => {
         const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
-          throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(request.agent.pubkey);
-        const abort = () => view.dispose();
-        active.signal.addEventListener("abort", abort, { once: true });
-        try {
-          await view.refresh();
-          check();
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          active.signal.removeEventListener("abort", abort);
-          view.dispose();
-        }
+        if (snapshot?.status === "ready")
+          this.memoryReads.forget(snapshot.session, request.agent.pubkey);
       },
     });
     const reply = await callTool(
@@ -545,13 +727,13 @@ export class CodexRuntime {
       {
         channel: request.conversation.channelId,
         ...(request.toolRoot ? { root: request.toolRoot } : {}),
+        ...(request.conversation.topLevel ? { topLevel: true } : {}),
       },
       call.tool,
       args,
     );
     const final = call.tool === "send" && args.final === true;
     if (final) {
-      active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
     return {
@@ -565,6 +747,39 @@ export class CodexRuntime {
             },
       ],
     };
+  }
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private async memories(request: Request, signal: AbortSignal) {
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+      throw new Error("Buzz is not connected to this community");
+    const { session } = snapshot;
+    const listing = await this.memoryReads.read(
+      session,
+      request.agent.pubkey,
+      signal,
+    );
+    signal.throwIfAborted();
+    const current = this.relay(request.agent.pubkey)?.snapshot();
+    if (
+      current?.status !== "ready" ||
+      current.scope !== request.scope ||
+      current.session !== session
+    )
+      throw new Error("Buzz is not connected to this community");
+    return listing;
+  }
+  /** The agent's `core` memory for a turn: its text, `null` when it has none,
+   * or undefined when it could not be read, so the turn goes on without it. */
+  private async core(request: Request, signal: AbortSignal) {
+    try {
+      return coreOf(await this.memories(request, signal));
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Codex could not read the agent's memory", error);
+      return undefined;
+    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -628,8 +843,8 @@ export class CodexRuntime {
       finished: false,
       workspace: request.settings.workspace,
       signal,
-      version: 0,
       requests: [request],
+      activity: new Map(),
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
@@ -664,6 +879,11 @@ export class CodexRuntime {
       }
       if (!p || p.threadId !== active.threadId) return;
       if (wire.method === "turn/started" && p.turn) active.turnId = p.turn.id;
+      const step =
+        wire.method === "item/started" ? codexStep(p.item) : undefined;
+      if (step)
+        for (const taken of active.activity.values())
+          taken.step?.(step.tool, step.target);
       if (wire.method === "item/started" && p.item?.command)
         this.status(agent.pubkey, key, "Working", p.item.command);
       if (
@@ -686,7 +906,7 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
-      // The process host expands ~/.buzz and creates it; Codex's RPC needs
+      // The process host expands ~/… and creates the directory; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
@@ -719,6 +939,8 @@ export class CodexRuntime {
         [request.effort, settings.effort].find(
           (level) => level && supported.includes(level),
         ) ?? selected.defaultReasoningEffort;
+      active.model = model;
+      active.effort = effort;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
@@ -738,7 +960,7 @@ export class CodexRuntime {
         cwd: workspace,
         developerInstructions: developerInstructions(agent),
         approvalPolicy: "never",
-        // Matches Claude Code's bypassPermissions; only the owner can start work.
+        // Matches Claude's bypassPermissions; only the owner can start work.
         sandbox: "danger-full-access",
         config: {
           web_search: "disabled",
@@ -780,7 +1002,10 @@ export class CodexRuntime {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
       });
-      const context = await this.history(request, signal);
+      const [context, memory] = await Promise.all([
+        this.history(request, signal),
+        this.core(request, signal),
+      ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
@@ -793,15 +1018,17 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team),
+            value: developerInstructions(agent, settings, request.team, memory),
           },
         },
       });
       active.turnId = turn.turn.id;
+      this.acknowledgeActivity(active, request);
       // Empty threads have no resumable rollout until a user turn is accepted.
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
+        at: Date.now(),
       });
       ready();
       this.status(agent.pubkey, key, "Working");
@@ -809,6 +1036,8 @@ export class CodexRuntime {
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted") {
+        for (const taken of active.requests)
+          taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
         await this.publish(
           active.reply,
@@ -816,14 +1045,12 @@ export class CodexRuntime {
         );
         this.status(agent.pubkey, key, "Interrupted");
       } else {
-        if (active.sentVersion !== active.version)
-          await this.publish(
-            active.reply,
-            "Codex ended this turn without a final reply through buzz.send. Send another mention to ask it to continue.",
-          );
+        // A turn may end without a reply when there is nothing new to say.
+        for (const taken of active.requests) taken.answered();
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
       active.finished = true;
       notReady(error);
@@ -849,6 +1076,8 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Needs attention", reason);
       }
     } finally {
+      for (const taken of active.requests)
+        taken.failActivity("Codex ended without a final reply");
       signal.removeEventListener("abort", abort);
       turnAbort.abort(new Error("The Codex turn has ended"));
       off();
@@ -871,3 +1100,101 @@ const DYNAMIC_TOOLS = [
   },
 ];
 const EMPTY: readonly SessionView[] = Object.freeze([]);
+
+/** A started Codex item as a step, named in the shared step vocabulary.
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+export function codexStep(
+  item: Record<string, unknown> | undefined,
+): { tool: string; target?: string } | undefined {
+  const text = (value: unknown) =>
+    typeof value === "string" && value ? value : undefined;
+  const step = (tool: string, target?: unknown) => {
+    const on = text(target);
+    return on ? { tool, target: on } : { tool };
+  };
+  const file = (value: unknown) => text(value)?.split("/").at(-1);
+  switch (item?.type) {
+    case "commandExecution": {
+      const actions = Array.isArray(item.commandActions)
+        ? (item.commandActions as Record<string, unknown>[])
+        : [];
+      const action = actions[0];
+      if (action?.type === "read")
+        return step("Read", text(action.name) ?? file(action.path));
+      if (action?.type === "search") return step("Grep", action.query);
+      if (action?.type === "listFiles") return step("ListFiles", action.path);
+      return step(
+        "Shell",
+        programs(text(action?.command) ?? text(item.command)),
+      );
+    }
+    case "fileChange": {
+      const first = Array.isArray(item.changes)
+        ? (item.changes[0] as { path?: unknown } | undefined)
+        : undefined;
+      return step("Edit", file(first?.path));
+    }
+    case "mcpToolCall":
+    case "dynamicToolCall":
+      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "collabAgentToolCall":
+      return step("Agent", item.prompt);
+    case "webSearch":
+      return step("WebSearch", item.query);
+    case "imageView":
+      return step("ImageView", file(item.path));
+    case "plan":
+      return step("TodoWrite");
+    case "contextCompaction":
+      return step("Compacting");
+    case "reasoning":
+      return step("Thinking");
+    case "agentMessage":
+      return step("Writing reply");
+    default:
+      return undefined;
+  }
+}
+
+/** The programs a shell command runs ("mktemp, xargs"), without the login-shell
+ * wrapper, arguments or quoted scripts. Raw commands stay in the transcript. */
+export function programs(command: string | undefined): string | undefined {
+  if (!command) return undefined;
+  const inner =
+    /^(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+(["'])([\s\S]*)\1\s*$/.exec(
+      command.trim(),
+    )?.[2] ?? command;
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (const char of inner) {
+    if (quote) {
+      if (char === quote) quote = undefined;
+      current += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+    } else if (char === "|" || char === ";" || char === "&" || char === "\n") {
+      segments.push(current);
+      current = "";
+    } else current += char;
+  }
+  segments.push(current);
+  const names = new Set<string>();
+  for (const segment of segments) {
+    const word = segment
+      .trim()
+      .split(/\s+/)
+      .find((token) => token && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token));
+    const name = word
+      ?.replace(/^["']|["']$/g, "")
+      .split("/")
+      .at(-1);
+    if (name && /^[\w.+-]+$/.test(name)) names.add(name);
+  }
+  const list = [...names];
+  if (!list.length) return undefined;
+  return list.length > 3
+    ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more`
+    : list.join(", ");
+}

@@ -209,6 +209,9 @@ export function EditableInput({
     disabled,
     placeholder,
   };
+  const tokenClassName = styles.token ?? "";
+  const tokenClass = useRef(tokenClassName);
+  tokenClass.current = tokenClassName;
   const hosts = useRef(
     new Map<
       HTMLElement,
@@ -222,12 +225,31 @@ export function EditableInput({
   const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
+  const pointing = useRef(false);
+  const nativeEditing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
   } | null>(null);
+
+  useLayoutEffect(() => {
+    const document = mount.current?.ownerDocument;
+    if (!document) return;
+    const release = () => {
+      pointing.current = false;
+    };
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
+    document.defaultView?.addEventListener("blur", release);
+    return () => {
+      release();
+      document.removeEventListener("pointerup", release);
+      document.removeEventListener("pointercancel", release);
+      document.defaultView?.removeEventListener("blur", release);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (!mount.current) return;
@@ -1178,7 +1200,7 @@ export function EditableInput({
         nodeViews: {
           token(node, _view, getPos) {
             const dom = document.createElement("span");
-            dom.className = styles.token ?? "";
+            dom.className = tokenClass.current;
             dom.contentEditable = "false";
             dom.dataset.source = node.attrs.source;
             hosts.current.set(dom, {
@@ -1387,6 +1409,12 @@ export function EditableInput({
             );
           },
           beforeinput(_view, event) {
+            // Native insertion can restore focus before its input/selectionchange
+            // events. That focus must not overwrite the just-advanced caret.
+            nativeEditing.current = true;
+            queueMicrotask(() => {
+              nativeEditing.current = false;
+            });
             if (!event.isComposing) syncNativeSelection();
             // The host's native text-input path can commit a caret key as a
             // control character (Right Arrow arrives as U+001D, or as AppKit's
@@ -1714,6 +1742,11 @@ export function EditableInput({
       );
   }, [decorationRanges]);
   useLayoutEffect(() => {
+    // Node views survive CSS-module hot updates; keep their imperative hosts
+    // on the current class just like React-owned editor elements.
+    for (const host of hosts.current.keys()) host.className = tokenClassName;
+  }, [tokenClassName]);
+  useLayoutEffect(() => {
     // Token portals acquire their real geometry at React commit, after the
     // transaction's first scroll. Keep the same editor-owned caret visible.
     if (!scrollAfterTokens.current) return;
@@ -1732,7 +1765,33 @@ export function EditableInput({
         aria-label={events["aria-label"] ?? placeholder}
         aria-disabled={disabled || undefined}
         tabIndex={disabled ? -1 : 0}
-        className={styles.input}
+        className={`ProseMirror ${styles.input ?? ""}`}
+        onPointerDown={(event) => {
+          pointing.current = true;
+          events.onPointerDown?.(event as never);
+        }}
+        onPointerUp={(event) => {
+          pointing.current = false;
+          events.onPointerUp?.(event as never);
+        }}
+        onFocus={(event) => {
+          // Returning by keyboard or a host's focus handoff (such as choosing
+          // its tab) resumes the editor's own caret. Mac WebKit can otherwise
+          // keep painting the native caret from before the editor was hidden;
+          // see insertLineBreak. A pointer places its own caret.
+          const editor = view.current;
+          if (
+            !pointing.current &&
+            !nativeEditing.current &&
+            editor &&
+            event.target === event.currentTarget
+          ) {
+            if (macWebKit())
+              editor.dom.ownerDocument.getSelection()?.removeAllRanges();
+            editor.focus();
+          }
+          events.onFocus?.(event as never);
+        }}
         onKeyDown={(event) => {
           if (
             composing.current ||

@@ -342,31 +342,53 @@ test("a selected hidden provisional tab merges without switching the main pane",
   expect(h.result.current.paneOpen).toBe(false);
 });
 
-test("wrong-root diversion preserves the confirmed tab and resolves into the actual owner", () => {
-  const session = {} as RelaySession;
-  const h = renderHook(() => useChannelTabState(session, "alpha"));
-  act(() => h.result.current.openThreadTab("alpha", "x", "x"));
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x"));
-  act(() =>
-    h.result.current.openThreadTab("alpha", "y", "y", "select", "main"),
-  );
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:y", "y"));
-  act(() => h.result.current.openThreadTab("alpha", "reply-y", "x", "select"));
-  act(() => h.result.current.divertThread("thread:alpha:x", "reply-y", "x"));
-  expect(
-    h.result.current.tabs.find((tab) => tab.id === "thread:alpha:x"),
-  ).toMatchObject({ messageId: "x", rootId: "x", pane: "side" });
-  expect(h.result.current.selected).toBe("thread:alpha:reply-y");
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:reply-y", "y"));
-  expect(h.result.current.tabs).toHaveLength(2);
-  expect(h.result.current.mainSelected).toBe("thread:alpha:y");
-  expect(
-    h.result.current.tabs.find((tab) => tab.id === "thread:alpha:y"),
-  ).toMatchObject({ messageId: "reply-y" });
-  const tabs = h.result.current.tabs;
-  act(() => h.result.current.divertThread("thread:alpha:x", "reply-y", "x"));
-  expect(h.result.current.tabs).toBe(tabs);
-});
+test.each(["side", "main"] as const)(
+  "wrong-root diversion preserves the %s pane despite the opposite default and resolves into the actual owner",
+  (pane) => {
+    const otherPane = pane === "side" ? "main" : "side";
+    setThreadPlacementPreference(otherPane);
+    const session = {} as RelaySession;
+    const h = renderHook(() => useChannelTabState(session, "alpha"));
+    act(() =>
+      h.result.current.openThreadTab("alpha", "x", "x", "select", pane),
+    );
+    act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x"));
+    act(() =>
+      h.result.current.openThreadTab("alpha", "y", "y", "select", otherPane),
+    );
+    act(() => h.result.current.resolveThreadRoot("thread:alpha:y", "y"));
+    act(() =>
+      h.result.current.openThreadTab("alpha", "reply-y", "x", "select", pane),
+    );
+    act(() => h.result.current.divertThread("thread:alpha:x", "reply-y", "x"));
+    expect(
+      h.result.current.tabs.find((tab) => tab.id === "thread:alpha:x"),
+    ).toMatchObject({ messageId: "x", rootId: "x", pane });
+    expect(
+      h.result.current.tabs.find((tab) => tab.id === "thread:alpha:reply-y"),
+    ).toMatchObject({ messageId: "reply-y", pane });
+    expect(
+      pane === "side"
+        ? h.result.current.selected
+        : h.result.current.mainSelected,
+    ).toBe("thread:alpha:reply-y");
+    // An already-open verified destination still keeps its own placement.
+    act(() => h.result.current.resolveThreadRoot("thread:alpha:reply-y", "y"));
+    expect(h.result.current.tabs).toHaveLength(2);
+    expect(
+      otherPane === "main"
+        ? h.result.current.mainSelected
+        : h.result.current.selected,
+    ).toBe("thread:alpha:y");
+    expect(
+      h.result.current.tabs.find((tab) => tab.id === "thread:alpha:y"),
+    ).toMatchObject({ messageId: "reply-y", pane: otherPane });
+    const tabs = h.result.current.tabs;
+    act(() => h.result.current.divertThread("thread:alpha:x", "reply-y", "x"));
+    expect(h.result.current.tabs).toBe(tabs);
+    expect(threadPlacementPreference()).toBe(otherPane);
+  },
+);
 
 test("verified identity takes precedence over a tab's original hint id", () => {
   const session = {} as RelaySession;
@@ -445,4 +467,22 @@ test("new ordinary and routed threads follow the device choice; existing tabs an
   expect(mounted.result.current.tabs[2]).toMatchObject({ pane: "main" });
   act(() => mounted.result.current.moveTab("thread:alpha:two", "side", 0));
   expect(threadPlacementPreference()).toBe("main");
+});
+
+test("the returned state keeps its identity across unrelated re-renders", () => {
+  const session = {} as RelaySession;
+  const mounted = renderHook(
+    ({ channel }) => useChannelTabState(session, channel),
+    { initialProps: { channel: "alpha" } },
+  );
+  const initial = mounted.result.current;
+  mounted.rerender({ channel: "alpha" });
+  expect(mounted.result.current).toBe(initial);
+  act(() => mounted.result.current.select("beta-tab"));
+  const selected = mounted.result.current;
+  expect(selected).not.toBe(initial);
+  expect(selected.selected).toBe("beta-tab");
+  expect(selected.select).toBe(initial.select);
+  mounted.rerender({ channel: "beta" });
+  expect(mounted.result.current).not.toBe(selected);
 });

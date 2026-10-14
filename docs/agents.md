@@ -31,6 +31,45 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
+## Agent types and providers
+
+Harness plugins register agent types with the Agents service. An agent type owns
+the defaults, migration policy, per-agent settings tabs, model discovery and run
+behavior for its agents. The host appends the shared Attention tab.
+
+A type marks its primary configuration tab with `role: "settings"`. In the
+Agents build view and profile panel, the host keeps that tab at a stable
+`Settings` destination and supplies the current type identity plus retype
+control through `settingsHost`. The type keeps ownership of its config draft
+and Save behavior. Types without a settings-role tab receive a host-owned,
+type-only Settings tab in both surfaces.
+
+A reviewed provider choice remains a host-owned draft until that Settings
+form's Save action succeeds. While it is pending, the selected provider's
+settings tab edits the destination config produced by its migration policy, and
+Save is available without another edit. Save commits the provider and that
+config together; a failed save leaves the choice and draft available to retry
+or revert.
+
+An agent type may also contribute `provider`: a subscribable readiness snapshot,
+a read-only check, and a management-dialog body. **More → Providers** lists each
+active type once using the registered title and icon. It is a quick health view:
+rows show only ready, checking, attention, or a neutral unavailable state. The
+Agents host owns the submenu, modal framing, focus restoration and contribution
+error boundary. The plugin owns connection actions and optional defaults inside
+the dialog; blocking install or sign-in work must expose cancellation before the
+dialog can close. Disabled or unloaded types remain in Settings → Plugins.
+
+Workspace, instructions and session scope are always per-agent. Claude and Codex
+model/thinking choices may instead be blank, which means inherited rather than
+rewritten. Their effective order is explicit agent override, saved device-wide
+provider default, then the provider's native default. Missing or malformed
+provider preferences preserve native behavior. A provider-default save notifies
+the runtime like the corresponding per-agent save but does not mutate agent
+records. Codex uses an inherited thinking choice only when the effective model
+supports it, otherwise that model's default applies. Transient process/session
+state may appear as collapsed diagnostics in Settings, but is not durable history.
+
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 
@@ -358,22 +397,16 @@ HTTP broker/verified transport, including corrupted signature rejection.
 
 ## Agent Activity plugin
 
-**Agent Activity** is an independently toggleable bundled plugin that owns capture
-and the transcript panel. Conversation presentation uses a compact, floating
-avatar control above the composer, without a reserved strip or permanent avatar
-container. Hover, click, tap or keyboard opens **Working now**, reusing the sidebar's
-working-agent row. The row opens its known thread (or channel when no unique thread
-is known); a separate **View activity** action opens the agent's transcript.
+**Agent Activity** owns live capture demand and the full Transcript/Raw panel;
+host-owned saved history remains independent of plugin enablement. This branch
+adds an avatar-and-dots bubble beneath the exact message that triggered current
+work. Multiple turns group by agent; completing one turn does not hide another.
+Hover, click, tap or keyboard opens a compact avatar-and-latest-tool popup. Its
+row opens that exact agent's profile Activity tab, using the mainline transcript,
+conversation filtering and saved-history controls. Escape or outside click closes
+the popup. Human typing remains in the ordinary conversation indicator.
 
-The channel control includes work in threads. A thread control includes only
-exact-root evidence, never unconfirmed work. Current owner-visible turns provide
-brief tool status; unknown scopes fall back to channel activity. Multiple concurrent
-scopes never choose an arbitrary transcript thread. Public typing for the viewer's
-own `agentChoices` identities remains visible without telemetry; someone else's
-self-declared agent remains ordinary typing, without this owner-activity doorway.
-All projections consume existing stores and loaded profiles/channel rows, not new
-capture leases, relay reads or timers. A persistent, visually hidden status region
-announces working/typing transitions even when visual controls are absent.
+### Local plugin-agent lifecycle
 
 The popup resets on conversation changes and when current work ends. Idle and
 historical activity remain accessible from the activity panel rather
@@ -423,7 +456,7 @@ from the `<buzz-event>` framing, other sections collapsed), the session's system
 prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
 their tool call with the auto-approval outcome, plans, mode changes, the session's
 selected config values (e.g. model), context usage, stop reason and errors. Tool
-names and inputs differ by adapter (Pi, Goose, Codex, Claude Code), so tool rows show the
+names and inputs differ by adapter (Pi, Goose, Codex, Claude), so tool rows show the
 adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
 `locations` and content (text, with a wholly fenced Markdown block shown as its body,
 and `diff` as removed/added lines) are interpreted.

@@ -306,7 +306,6 @@ test("failed upload survives disabling the plugin and switching conversations", 
     window.voiceFixture.report.failUpload = true;
   });
   await record(page);
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Retry voice note upload", exact: true }),
   ).toBeVisible();
@@ -393,6 +392,11 @@ test("rejects a full attachment draft before opening the microphone", async ({
       buffer: Buffer.from("test"),
     })),
   );
+  // The attachment rows grow as the draft settles, moving the toolbar under a
+  // pointer aimed at its earlier position. Click once every file is Ready.
+  await expect(
+    page.getByRole("status").filter({ hasText: /· Ready$/ }),
+  ).toHaveCount(10);
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();

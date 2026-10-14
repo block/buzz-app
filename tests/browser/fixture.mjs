@@ -51,7 +51,6 @@ export const test = base.extend({
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
-  personalSidebar: [false, { option: true }],
   meChannels: [[], { option: true }],
   meAgentNames: [[], { option: true }],
   meOutsideAgentNames: [[], { option: true }],
@@ -80,6 +79,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -108,7 +108,6 @@ export const test = base.extend({
       sessionParents,
       sidebarUnread,
       savedSidebar,
-      personalSidebar,
       meChannels,
       meAgentNames,
       meOutsideAgentNames,
@@ -268,7 +267,6 @@ export const test = base.extend({
           : inboxDm || inboxDmOldAnchor
             ? ["dm-peer"]
             : [];
-    const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
@@ -291,7 +289,6 @@ export const test = base.extend({
     const rosterIds = [
       ...new Set([
         ...channels,
-        ...(personalSidebar ? [personalChannel] : []),
         ...dmIds,
         ...sortingIds,
         ...lifecycleRows.map((row) => row.id),
@@ -350,44 +347,6 @@ export const test = base.extend({
         }
       }
     }
-    if (personalSidebar) {
-      for (const community of ["primary", "secondary"]) {
-        const scope = JSON.parse(fixtureAliases)[community];
-        const coordinate = `buzz-channel-kit-v1:${encodeURIComponent(scope)}:groups:personal`;
-        const record = {
-          version: 1,
-          community: scope,
-          deleted: false,
-          value: {
-            type: "groups",
-            id: "personal",
-            groups: [
-              {
-                id: "personal-work",
-                name: "Personal work",
-                defaultTemplateId: "template",
-              },
-            ],
-            assignments: { [personalChannel]: "personal-work" },
-          },
-        };
-        readEvents.get(community).set(
-          coordinate,
-          sign(
-            30078,
-            [
-              ["d", coordinate],
-              ["t", "buzz-channel-kit-v1"],
-            ],
-            nip44.v2.encrypt(
-              JSON.stringify(record),
-              nip44.v2.utils.getConversationKey(userKey, viewer),
-            ),
-            userKey,
-          ),
-        );
-      }
-    }
     if (meChannels.length) {
       if (!productionBroker)
         throw new Error("Me placement fixtures require the production decoder");
@@ -433,9 +392,6 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const parent of Object.values(sessionParents))
         histories.set(`${community}/${parent}`, []);
-    if (personalSidebar)
-      for (const community of ["primary", "secondary"])
-        histories.set(`${community}/${personalChannel}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -893,7 +849,7 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
-      if ((personalSidebar || meChannels.length > 0) && filter.ids)
+      if (meChannels.length > 0 && filter.ids)
         return [...readEvents.get(community).values()].filter((event) =>
           filter.ids.includes(event.id),
         );
@@ -1697,18 +1653,14 @@ export const test = base.extend({
           "channel-stars",
           "channel-sort",
         ].includes(sidebarCoordinate) ||
-        (personalSidebar &&
-          sidebarCoordinate?.startsWith("buzz-channel-kit-v1:")) ||
         (meChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
       ) {
         expect(event.tags).toContainEqual([
           "t",
-          sidebarCoordinate.startsWith("buzz-channel-kit-v1:")
-            ? "buzz-channel-kit-v1"
-            : sidebarCoordinate.startsWith("buzz-me-kit-v1:")
-              ? "buzz-me-kit-v1"
-              : sidebarCoordinate,
+          sidebarCoordinate.startsWith("buzz-me-kit-v1:")
+            ? "buzz-me-kit-v1"
+            : sidebarCoordinate,
         ]);
         const blob = JSON.parse(
           nip44.v2.decrypt(
@@ -2368,6 +2320,23 @@ export const test = base.extend({
           );
           targetEvents.push(event);
           relay.publish("primary", event);
+        },
+        // Relay-owned summary evidence, not a mutation of the client's row.
+        threadSummary(rootId, participants, replyCount) {
+          const event = sign(
+            39005,
+            [
+              ["h", "alpha"],
+              ["e", rootId],
+              ["d", rootId],
+            ],
+            JSON.stringify({ reply_count: replyCount, participants }),
+            relayKey,
+            Math.floor(Date.now() / 1000) + 1,
+          );
+          threadSummaries.push(event);
+          relay.publish("primary", event);
+          return event;
         },
         reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);

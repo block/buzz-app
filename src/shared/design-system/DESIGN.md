@@ -408,11 +408,11 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell uses one `Panel joined` around navigation and content on the gradient backdrop. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels keep their own outer treatment.
+- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-1` (4px at default scale). Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
 - **Reading surfaces:** documentation and dense prose sit on `bg-panel`. Keep page-wide gradients behind product chrome and panels, where their changing contrast will not interfere with reading.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
-- **Shadows:** use the two shared elevation values and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
+- **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
 
 ### Floating surfaces
 
@@ -431,9 +431,9 @@ content; Base UI retains each control's keyboard and focus semantics.
 Short action menus and compact account popovers retain 8px `radius-row`
 corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
 never automatically because the viewport is narrow. Dialogs and alert dialogs
-use the same `elevated-material` fill, blur, and accessibility fallback while
-retaining their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
-apply the material to each step; their shared wrapper stays transparent.
+use opaque `surface-popover` so inset fields stay distinct above the dimmed
+page, retaining their 20px `radius-panel` corners and modal backdrop. Stepped
+dialogs apply the fill to each step; their shared wrapper stays transparent.
 
 ### Corner scale and nesting
 
@@ -678,13 +678,16 @@ form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
-trailing row choices: a small ghost trigger with a visually hidden accessible
+trailing row choices: a small outlined trigger with a quiet `border-standard`
+boundary and a visually hidden accessible
 label, bounded single-line value, and full choice text in the popup and value hint.
 Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
 selection-mark slot in every option so selecting the widest label cannot resize it.
 The caller owns its column width. `align="end"` anchors a trailing choice popup
 to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. For searchable choices, use the shared Combobox parts; keep
+when the choice is unavailable. An option may include one concise supporting
+description; Select shows it as a byline in the popup while the closed trigger
+retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep
@@ -1170,6 +1173,22 @@ inside a group than between groups.
 Use motion to explain a change in state, position, or structure. Remove animation
 that adds no useful information.
 
+### Activity dots
+
+`TypingDots` owns the shared decorative activity motion. `state="waiting"`
+breathes all three dots together over 2.4 seconds for a received request waiting
+to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
+Switching state keeps the same footprint. These named component rhythms are
+continuous status motion, not the short state-transition durations.
+
+The feature must supply reliable receipt/work evidence; rendering the waiting
+variant does not establish that an agent received a message. Keep visible or
+accessible state text with the owning surface. The dots are hidden from assistive
+technology and stay static under reduced motion, so motion alone must never be
+the only way to distinguish lifecycle states. The component viewer includes both
+states and an interactive transition. Agents2 waiting/working presentations reuse
+these states in messages, thread summaries and navigation.
+
 Direct manipulation follows the pointer without easing. Apply settling motion
 after release, and prevent a drag from selecting text it passes over.
 
@@ -1194,6 +1213,21 @@ Add roles for real uses and their required states; document the intended surface
 and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
+
+`ShimmerText` gives a short live-work label (an agent's current step) a slow
+sheen between the subtle and standard text roles. Use it only while that work is
+live, never on finished, failed or waiting text. Reduced motion shows plain text.
+
+Activity indicators that appear while work is live (the message activity pill,
+thread-summary dots, sidebar working badge) use the `buzz-arrive` recipe.
+Inline indicators beside text get a quiet fade at `--duration-state`.
+Standalone pills add `data-arrive="grow"`: they open their space while fading
+in, with `--duration-settle` and `--easing-settle`, so content below moves
+instead of jumping. When work ends, the owner may set `data-leaving` and keep
+the pill mounted until its animation finishes; it fades and closes its space.
+Growing and closing resize the row for a few frames, so reserve them for
+indicators that start and end with work, never for revoked access. Reduced
+motion disables all of it.
 
 ### Changing a color
 
@@ -1387,9 +1421,26 @@ Keep the public gateway names stable. For chat and conversation metaphors, use
 the variant that matches the meaning. Keep accessible names on controls and
 decorative artwork hidden from assistive technology.
 
+`RobotIcon` is the designer-approved **Soft & wide** custom agent mark, using the
+**Fuller canvas** refinement: a larger rounded head, short antenna, narrow ear
+strokes moved inward to meet the head, and filled dot eyes, with no mouth. The
+artwork fills more of the same icon box without widening the ears or adding fill
+between them and the head. It uses Tabler's 24-unit canvas, round caps and default
+stroke width of 2. Use the
+existing gateway export for agent mentions, navigation and placeholders; retain
+its inherited color, relative sizing and decorative-by-default semantics. This
+is a specific product-mark exception, not another general icon family.
+
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
 the shared icon gateway. It does not permit another general icon library.
+
+Agent-type provider marks follow the same single-owner path. Keep approved artwork
+in `icons/HarnessLogos.tsx` (with colocated raster assets when needed), record its
+provenance in `NOTICE.md`, and export it through `icons/index.ts` with custom-icon
+metadata. The registering agent type references that export once through
+`AgentType.icon`; host-owned selectors render the registered mark and never rebuild
+a provider-to-icon map from type IDs.
 
 ### Picker search and choices
 
@@ -1416,6 +1467,12 @@ while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
+Messages represents the containing area for registered sidebar/default-placement
+pages, while their sidebar selection and route remain exact. Its tab stays linked
+to the active child panel. The shell opts into Tabs' `onReselect` to return from a
+child to Messages without changing ordinary active-tab behavior elsewhere. More
+pages marks that containing area with `aria-current="true"`, reserving `page` for
+an exact destination. Settings and independent header pages stay separate.
 
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

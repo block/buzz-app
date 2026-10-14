@@ -68,7 +68,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
-import type { Entity } from "../projects/destinations";
+import type { Entity, ProjectHome } from "../projects/destinations";
 
 composerDOMFixture();
 
@@ -974,6 +974,9 @@ async function mountUploadComposer(
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
+    agents?: Agents;
+    /** Channel members besides the viewer; only members can be mentioned. */
+    members?: readonly string[];
   } = {},
 ) {
   vi.stubGlobal(
@@ -1021,7 +1024,14 @@ async function mountUploadComposer(
               ? [roster(relay, "other", other.members, other.time)]
               : [metadata(relay, "other", "Random", other.time)]
             : filter.kinds?.includes(39002)
-              ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
+              ? [
+                  roster(
+                    relay,
+                    "channel",
+                    [viewer.pubkey, ...(options.members ?? [])],
+                    1700000000,
+                  ),
+                ]
               : filter.kinds?.includes(39000)
                 ? [metadata(relay, "channel", "General", 1700000000)]
                 : [],
@@ -1051,17 +1061,21 @@ async function mountUploadComposer(
   );
   const scope = `https://relay.example.test:${viewer.pubkey}`;
   const view = render(
-    <MessageComposer
-      session={owner.session}
-      scope={scope}
-      channelId="channel"
-      channelName="General"
-      {...(options.extensions ? { extensions: options.extensions } : {})}
-      {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
-      {...(options.replyParentId
-        ? { replyParentId: options.replyParentId }
-        : {})}
-    />,
+    <AgentsContext.Provider value={options.agents}>
+      <MessageComposer
+        session={owner.session}
+        scope={scope}
+        channelId="channel"
+        channelName="General"
+        {...(options.extensions ? { extensions: options.extensions } : {})}
+        {...(options.threadRootId
+          ? { threadRootId: options.threadRootId }
+          : {})}
+        {...(options.replyParentId
+          ? { replyParentId: options.replyParentId }
+          : {})}
+      />
+    </AgentsContext.Provider>,
     { reactStrictMode: true, wrapper: ToastProvider },
   );
   const input = () => within(view.container).getByRole("textbox");
@@ -1083,7 +1097,36 @@ async function mountUploadComposer(
   };
 }
 
-it("keeps picker, paste and drop attachments local until Send starts upload and publish", async () => {
+it("pauses while disabled and resumes attachment Send without Retry when re-enabled", async () => {
+  const h = await mountUploadComposer();
+  fireEvent.change(h.input(), { target: { value: "Keep my files" } });
+  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const tree = (disabled: boolean) => (
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      disabled={disabled}
+    />
+  );
+  h.rerender(tree(true));
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  expect(screen.queryByRole("button", { name: "Retry paused.txt" })).toBeNull();
+  expect(h.send()).toBeDisabled();
+  h.rerender(tree(false));
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.send()).toBeEnabled();
+  fireEvent.click(h.send());
+  await act(async () =>
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt")),
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.uploadCalls).toHaveLength(2);
+});
+
+it("starts picker, paste and drop uploads eagerly and publishes only after Send", async () => {
   const h = await mountUploadComposer();
   const picker =
     h.container.querySelector<HTMLInputElement>('input[type="file"]');
@@ -1099,7 +1142,7 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   await waitFor(() =>
     expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(3),
   );
-  expect(h.uploadCalls).toHaveLength(0);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.sign).not.toHaveBeenCalled();
   expect(h.publish).not.toHaveBeenCalled();
 
@@ -1109,7 +1152,9 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   expect(h.uploadCalls[0]?.file.name).toBe("picker.txt");
   expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
   // Send hands the files to the background upload and frees the composer.
-  expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0);
+  await waitFor(() =>
+    expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0),
+  );
   expect(screen.getByText("Uploading", { exact: true })).toHaveAttribute(
     "role",
     "status",
@@ -1167,13 +1212,140 @@ it("restores a failed background upload into the composer with Desktop's toast",
   expect(h.input()).toHaveValue("caption");
   expect(h.publish).not.toHaveBeenCalled();
 
-  await userEvent.click(
-    screen.getByRole("button", { name: "Remove metadata.txt" }),
+  fireEvent.keyDown(
+    screen.getByRole("button", { name: "Retry metadata.txt" }),
+    { key: "Delete" },
   );
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      within(h.form()).queryByText("metadata.txt"),
+    ).not.toBeInTheDocument(),
+  );
 });
+
+// Remounting after the failure covers the usual leave-and-return case: the
+// recovery lands with no mounted listener and must wait for the composer.
+it.each(["never", "before the failure", "after the failure"])(
+  "restores the model and effort picks of a failed background upload (remounted: %s)",
+  async (remounted) => {
+    // Snapshots are stable, as the service's are.
+    const snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    const models = {
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    };
+    const types = [{ key: "test/agent", models: () => models }];
+    const agents = {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const tools: readonly Contribution<ComposerTool>[] = [
+      {
+        id: "fixture",
+        key: "test/fixture",
+        pluginId: "test",
+        revision: "1",
+        title: "Fixture tools",
+        component: (props: ComposerToolProps) => (
+          <button type="button" onClick={() => props.insertMention(first)}>
+            First Honey
+          </button>
+        ),
+      },
+    ];
+    const extensions = {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+    };
+    const h = await mountUploadComposer({
+      agents,
+      members: [first.pubkey],
+      extensions,
+    });
+    const picker = () =>
+      screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      });
+    attachByPaste(h.input(), attachmentFile("tuned.txt"));
+    await userEvent.type(h.input(), "think hard");
+    await userEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    await userEvent.click(await picker());
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await userEvent.keyboard("{Escape}");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+
+    let container = h.container;
+    if (remounted !== "never") h.unmount();
+    const remount = () => {
+      container = render(
+        <AgentsContext.Provider value={agents}>
+          <MessageComposer
+            session={h.owner.session}
+            scope={h.scope}
+            channelId="channel"
+            channelName="General"
+            extensions={extensions}
+          />
+        </AgentsContext.Provider>,
+        { wrapper: ToastProvider },
+      ).container;
+    };
+    if (remounted === "before the failure") remount();
+    await act(async () => {
+      h.uploadCalls[0]?.result.reject(new Error("offline"));
+    });
+    if (remounted === "after the failure") remount();
+    const input = () => within(container).getByRole("textbox");
+    await waitFor(() => expect(input()).toHaveValue("think hard@Honey "));
+    expect(within(container).getByText("tuned.txt")).toBeVisible();
+    // The restored draft brings its pick back with it, not the default run.
+    const button = await picker();
+    expect(button).toHaveAttribute("data-selected");
+    await userEvent.hover(button);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Next run: High",
+    );
+    await userEvent.unhover(button);
+    expect(h.publish).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry tuned.txt" }),
+    );
+    fireEvent.click(
+      within(container).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+    await act(async () => {
+      h.uploadCalls[1]?.result.resolve(uploadDescriptor("tuned.txt"));
+    });
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.publish.mock.calls[0]?.[0].tags).toEqual(
+      expect.arrayContaining([
+        ["p", first.pubkey],
+        ["effort", first.pubkey, "high"],
+      ]),
+    );
+  },
+);
 
 it.each(["cleanup", "restore"] as const)(
   "retains a failed attachment send until %s storage recovers",
@@ -1628,54 +1800,40 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("one.txt"));
   attachByPaste(h.input(), attachmentFile("two.txt"));
-  await waitFor(() =>
-    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
-  );
-
-  fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   await act(async () => {
     h.uploadCalls[0]?.result.reject(new Error("first failed"));
   });
-  await waitFor(() =>
-    expect(
-      screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed"]),
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
-  fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
   await act(async () => {
-    h.uploadCalls[1]?.result.reject(new Error("first failed again"));
+    h.uploadCalls[1]?.result.reject(new Error("second failed"));
   });
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed again"]),
+    ).toEqual(["first failed", "second failed"]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
-  fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
   await act(async () => {
-    h.uploadCalls[2]?.result.resolve(uploadDescriptor("one.txt"));
-  });
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(4));
-  await act(async () => {
-    h.uploadCalls[3]?.result.reject(new Error("second failed"));
+    h.uploadCalls[2]?.result.reject(new Error("first failed again"));
   });
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["second failed"]),
+    ).toEqual(["first failed again", "second failed"]),
   );
-
-  await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
-
+  fireEvent.keyDown(screen.getByRole("button", { name: "Retry one.txt" }), {
+    key: "Delete",
+  });
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
     "second failed",
   ]);
-  expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument(),
+  );
   expect(within(h.form()).getByText("two.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
 });
 
 it("retains successful attachment uploads after a later file fails and retries only failed bytes", async () => {
@@ -1705,7 +1863,8 @@ it("retains successful attachment uploads after a later file fails and retries o
 
   await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(within(h.form()).getByText(/Queued/)).toBeVisible();
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(within(h.form()).getByText(/Uploading/)).toBeVisible();
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
   expect(h.uploadCalls[2]?.file.name).toBe("retry.txt");
@@ -1862,7 +2021,10 @@ it("cancels the newest background send, restores its draft and leaves older send
   expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
   await waitFor(() => expect(h.input()).toHaveValue("second"));
   expect(within(h.form()).getByText("two.txt")).toBeVisible();
-  expect(screen.queryByText(/Upload failed/)).toBeNull();
+  expect(screen.queryByText(/^Upload failed: /)).toBeNull();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Upload paused. Retry to continue.",
+  );
 
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
@@ -3029,6 +3191,24 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
     [],
   );
 });
+
+it.each([
+  ["  :party: \n\t :party:  ", true],
+  [":party:".repeat(24), true],
+  [Array(24).fill(":party:").join(" ") + " 😀", false],
+])(
+  "classifies images-only emoji drafts without changing their text: %s",
+  (draft, imagesOnly) => {
+    const h = mount();
+    h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+    h.fill(draft);
+    expect(h.input()).toHaveValue(draft);
+    expect(h.input()).toHaveAttribute("data-single-emoji", "true");
+    if (imagesOnly)
+      expect(h.input()).toHaveAttribute("data-emoji-images-only", "true");
+    else expect(h.input()).not.toHaveAttribute("data-emoji-images-only");
+  },
+);
 
 it("renders a leading custom emoji inline without changing trailing text", () => {
   const h = mount();
@@ -4903,6 +5083,42 @@ it("does not ask about outside recipients in a session media-comment composer", 
   expect(add).not.toHaveBeenCalled();
 });
 
+it("keeps the draft and requires explicit Retry when an eager upload fails during nonmember admission", async () => {
+  const h = mount();
+  const result = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => result.promise);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: [second.pubkey] },
+    ],
+  };
+  Object.assign(h.session, {
+    attachments: { upload },
+    channels: {
+      ...h.session.channels,
+      list: () => list,
+    },
+    memberAdditions: { add: vi.fn() },
+  });
+  h.retarget({});
+  h.fill("Keep my draft");
+  act(() => h.commands().insertMention(first));
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  fireEvent.submit(screen.getByRole("form"));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await act(async () => result.reject(new Error("relay down")));
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(upload).toHaveBeenCalledOnce();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input().value).toContain("Keep my draft");
+  expect(
+    screen.getByRole("button", { name: "Retry notes.txt" }),
+  ).toBeInTheDocument();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
@@ -5244,9 +5460,10 @@ describe("project resource picker", () => {
   };
   const row = /^Fix login, Issue in Game repo$/;
   function picker(
-    home: () => Promise<unknown> = () =>
+    home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
       Promise.resolve({ status: "home", project }),
     issues: readonly (typeof item)[] = [item],
+    cached?: ProjectHome,
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -5268,7 +5485,14 @@ describe("project resource picker", () => {
       },
     );
     const homes = vi.fn(home);
-    Object.assign(h.session as object, { projects: { home: homes, load } });
+    Object.assign(h.session as object, {
+      projects: {
+        home: homes,
+        load,
+        peekHome: (channelId: string) =>
+          channelId === "channel" ? cached : undefined,
+      },
+    });
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "resources",
@@ -5546,6 +5770,93 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
+  it("does not show a PR action while checking a new channel's project", async () => {
+    const pending: {
+      channelId: string;
+      resolve(value: unknown): void;
+    }[] = [];
+    const p = picker(
+      (channelId) =>
+        new Promise((resolve) => pending.push({ channelId, resolve })),
+    );
+    const trigger = () =>
+      screen.queryByRole("button", { name: "Add issue or pull request" });
+    const finish = async (channelId: string, result: unknown) => {
+      await act(async () => {
+        for (const read of pending) {
+          if (read.channelId === channelId) read.resolve(result);
+        }
+      });
+    };
+    try {
+      await waitFor(() => expect(p.homes).toHaveBeenCalled());
+      expect(screen.getByText("Loading project…")).toBeInTheDocument();
+      expect(trigger()).toBeNull();
+      await finish("channel", { status: "home", project });
+      expect(trigger()).toBeEnabled();
+      p.h.retarget({ channelId: "no-project", channelName: "Other" });
+      await waitFor(() =>
+        expect(pending.some((read) => read.channelId === "no-project")).toBe(
+          true,
+        ),
+      );
+      expect(trigger()).toBeNull();
+      await finish("no-project", { status: "none" });
+      expect(trigger()).toBeNull();
+      p.h.retarget({ channelId: "project", channelName: "Project" });
+      await waitFor(() =>
+        expect(pending.some((read) => read.channelId === "project")).toBe(true),
+      );
+      expect(trigger()).toBeNull();
+      await finish("project", { status: "home", project });
+      expect(trigger()).toBeEnabled();
+    } finally {
+      await act(async () => {
+        for (const read of pending) read.resolve({ status: "none" });
+      });
+    }
+  });
+
+  it("keeps a chat without a project free of the PR button after closing formatting", async () => {
+    const pending: ((value: unknown) => void)[] = [];
+    const p = picker(() => new Promise((resolve) => pending.push(resolve)));
+    await waitFor(() => expect(p.homes).toHaveBeenCalled());
+    await act(async () => {
+      for (const resolve of pending) resolve({ status: "none" });
+    });
+    const resourceButton = () =>
+      screen.queryByRole("button", { name: "Add issue or pull request" });
+    expect(resourceButton()).toBeNull();
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle formatting" }),
+      );
+      const close = await screen.findByRole("button", {
+        name: "Close formatting",
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", {
+            name: "Toggle formatting",
+            hidden: true,
+          }),
+        ).toBeNull(),
+      );
+      expect(resourceButton()).toBeNull();
+      fireEvent.click(close);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Toggle formatting" }),
+        ).toBeVisible(),
+      );
+      expect(resourceButton()).toBeNull();
+    } finally {
+      await act(async () => {
+        for (const resolve of pending) resolve({ status: "none" });
+      });
+    }
+  });
+
   it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
     const none = picker(() => Promise.resolve({ status: "none" }));
     await waitFor(() => expect(none.homes).toHaveBeenCalled());
@@ -5588,6 +5899,141 @@ describe("project resource picker", () => {
       expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
     );
   });
+
+  it.each(["formatting", "channel"])(
+    "keeps a known project visible but unusable after %s remount, then preserves ambiguity and retry",
+    async (action) => {
+      const reads: ReturnType<typeof deferred<ProjectHome>>[] = [];
+      const p = picker(
+        () => {
+          const read = deferred<ProjectHome>();
+          reads.push(read);
+          return read.promise;
+        },
+        undefined,
+        { status: "home", project },
+      );
+      const trigger = () =>
+        screen.getByRole("button", { name: "Add issue or pull request" });
+      try {
+        await waitFor(() => expect(reads.length).toBeGreaterThan(0));
+        expect(trigger()).toBeVisible();
+        expect(trigger()).toBeDisabled();
+        await act(async () => {
+          for (const read of reads) read.resolve({ status: "home", project });
+        });
+        expect(trigger()).toBeEnabled();
+        if (action === "formatting") {
+          await p.h.user.click(
+            screen.getByRole("button", { name: "Toggle formatting" }),
+          );
+          const close = await screen.findByRole("button", {
+            name: "Close formatting",
+          });
+          await waitFor(() =>
+            expect(
+              screen.queryByRole("button", {
+                name: "Toggle formatting",
+                hidden: true,
+              }),
+            ).toBeNull(),
+          );
+          await p.h.user.click(close);
+        } else {
+          p.h.retarget({ channelId: "other" });
+          await waitFor(() =>
+            expect(p.homes).toHaveBeenCalledWith(
+              "other",
+              expect.any(AbortSignal),
+            ),
+          );
+          await act(async () => reads.at(-1)?.resolve({ status: "none" }));
+          p.h.retarget({ channelId: "channel" });
+        }
+        await waitFor(() =>
+          expect(
+            p.homes.mock.calls.filter(([id]) => id === "channel").length,
+          ).toBeGreaterThan(1),
+        );
+        expect(trigger()).toBeDisabled();
+        // Closing formatting fades the toolbar back in; wait for that entrance.
+        await waitFor(() => expect(trigger()).toBeVisible());
+        expect(trigger()).toBeDisabled();
+        fireEvent.click(trigger());
+        expect(
+          screen.queryByRole("dialog", { name: "Add issue or pull request" }),
+        ).toBeNull();
+        await act(async () => reads.at(-1)?.resolve({ status: "ambiguous" }));
+        await p.open();
+        expect(
+          await screen.findByText(/belongs to more than one project/),
+        ).toBeVisible();
+        expect(screen.queryByRole("button", { name: row })).toBeNull();
+        await p.h.user.click(
+          screen.getByRole("button", { name: "Retry project" }),
+        );
+        expect(
+          screen.queryByRole("button", { name: "Add issue or pull request" }),
+        ).toBeNull();
+        await act(async () =>
+          reads.at(-1)?.resolve({ status: "home", project }),
+        );
+        expect(await screen.findByRole("button", { name: row })).toBeVisible();
+        p.h.retarget({ channelId: "other" });
+        await waitFor(() => expect(p.homes.mock.lastCall?.[0]).toBe("other"));
+        await act(async () => reads.at(-1)?.resolve({ status: "none" }));
+        p.h.retarget({ channelId: "channel" });
+        await waitFor(() => expect(p.homes.mock.lastCall?.[0]).toBe("channel"));
+        expect(trigger()).toBeVisible();
+        expect(trigger()).toBeDisabled();
+      } finally {
+        await act(async () => {
+          for (const read of reads) read.resolve({ status: "none" });
+        });
+      }
+    },
+  );
+
+  it.each(["none", "ambiguous", "error"] as const)(
+    "a warm project is replaced by the completed %s state",
+    async (outcome) => {
+      const read = deferred<ProjectHome>();
+      const p = picker(() => read.promise, undefined, {
+        status: "home",
+        project,
+      });
+      try {
+        await waitFor(() => expect(p.homes).toHaveBeenCalled());
+        expect(
+          screen.getByRole("button", { name: "Add issue or pull request" }),
+        ).toBeDisabled();
+        await act(async () => {
+          if (outcome === "error") read.reject(new Error("offline"));
+          else read.resolve({ status: outcome });
+        });
+        if (outcome === "none") {
+          expect(
+            screen.queryByRole("button", { name: "Add issue or pull request" }),
+          ).toBeNull();
+        } else {
+          await p.open();
+          expect(
+            screen.getByText(
+              outcome === "ambiguous"
+                ? /belongs to more than one project/
+                : /Could not load this channel's project/,
+            ),
+          ).toBeVisible();
+          expect(
+            screen.getByRole("button", { name: "Retry project" }),
+          ).toBeEnabled();
+          expect(screen.queryByRole("button", { name: row })).toBeNull();
+        }
+      } finally {
+        await act(async () => read.resolve({ status: "none" }));
+      }
+    },
+  );
 });
 
 it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
@@ -6356,6 +6802,7 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(
     await screen.findByRole("button", { name: "Remove voice-note.wav" }),
   ).toBeVisible();
-  expect(h.uploadCalls).toHaveLength(0);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
 });

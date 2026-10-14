@@ -1,10 +1,11 @@
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
-// session for its conversation. The run returns once the turn is handed over,
+// session for its conversation; a watch or timer wake runs as a one-off turn in
+// a new session, in its Interest's lane. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
-import type { Context, Memory } from "../../buzz-mcp/client";
+import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
 import {
   fromOwner,
@@ -14,23 +15,29 @@ import {
   type Effort,
   type Models,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Spawn, ToolServer } from "./claude";
+import type { Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
+import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import { Lanes } from "./lanes";
 import {
+  ATTENTION_REVIEW,
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
   systemPrompt,
   timerPrompt,
   turnPrompt,
+  watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
+import { readTranscript, type Conversation } from "./transcript";
 
-/** What a session can switch to between turns. Claude Code runs `max` as
+/** What a session can switch to between turns. Claude runs `max` as
  * `xhigh` in a stream-json session, so it is not offered. */
 const EFFORTS = [
   { id: "low", label: "Low" },
@@ -40,7 +47,7 @@ const EFFORTS = [
 ];
 
 export type Config = Readonly<{
-  /** A Claude model or alias; empty uses Claude Code's own default. */
+  /** A Claude model or alias; empty uses Claude's own default. */
   model: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
@@ -59,8 +66,15 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-/** How long a read of the agent's core memory is reused. */
-const MEMORY_TTL_MS = 5 * 60_000;
+/** A saved session, for the owner's transcript list. */
+export type SavedConversation = Conversation & {
+  key: string;
+  sessionId: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  at: number;
+};
+
 const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
@@ -72,11 +86,21 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
   name?: string;
-  memory?: { value: string | null | undefined; at: number };
+  /** Whether the owner has attention on: new sessions get its tools, its
+   * guidance and the end-of-turn review. */
+  attention: boolean;
+  /** Watch and timer turns, one lane per Interest. */
+  lanes: Lanes;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  /** Each conversation's latest posting policy: when its turns were handed
+   * over, and when all of them settled. */
+  policies: Map<
+    string,
+    { topLevel: boolean; handed: Promise<unknown>; settled: Promise<unknown> }
+  >;
 };
 
 /** Where an agent's processes run, and with which model. */
@@ -87,7 +111,7 @@ const where = ({ workspace, model }: Config) => ({
 
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
-  private readonly reading = new Map<string, Promise<readonly Memory[]>>();
+  private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
   /** Each agent's last session list, kept until something changes so a view
    * reading it gets the same array back. */
@@ -102,16 +126,16 @@ export class ClaudeRuntime {
   );
 
   constructor(
-    private readonly host: Host,
+    private readonly host: Pick<Host, "spawn">,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
 
   private get spawn(): Spawn {
     const spawn = this.host.spawn?.bind(this.host);
-    if (!spawn)
-      throw new Error("Claude Code agents run only in the desktop app");
+    if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
   }
 
@@ -124,23 +148,33 @@ export class ClaudeRuntime {
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
+        entry.lanes.stop();
         entry.sessions.dispose();
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
-      const next = config(agent.config);
+      const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      if (!entry)
+        this.entry(agent.pubkey, next, agent.attentionEnabled).name =
+          agent.name;
       else if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name
+        entry.name !== agent.name ||
+        entry.attention !== agent.attentionEnabled
       ) {
+        // Attention changes what a new session is told and offered. Turned
+        // off, its waiting watch and timer turns are dropped too.
+        if (!agent.attentionEnabled) entry.lanes.clear();
         entry.config = next;
         entry.name = agent.name;
+        entry.attention = agent.attentionEnabled;
         entry.sessions.reconfigure();
       }
     }
-    this.spare.warm(...agents.map((agent) => where(config(agent.config))));
+    this.spare.warm(
+      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+    );
     this.notify();
   }
 
@@ -180,7 +214,7 @@ export class ClaudeRuntime {
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
-    // An own model Claude Code does not list is still the one it runs.
+    // An own model Claude does not list is still the one it runs.
     return models.some((model) => model.id === current)
       ? { current, models }
       : {
@@ -188,7 +222,7 @@ export class ClaudeRuntime {
           models: [
             {
               id: current,
-              label: current ? modelName(current) : "Claude Code",
+              label: current ? modelName(current) : "Claude",
               efforts: EFFORTS,
               ...resting(EFFORTS),
             },
@@ -206,6 +240,73 @@ export class ClaudeRuntime {
     }
     return view;
   }
+  /** The agent's saved sessions, most recently used first. */
+  conversations(pubkey: string): SavedConversation[] {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const channels =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels.list().channels
+        : [];
+    return localSessions(this.storage, pubkey)
+      .list()
+      .map(([key, saved]) => {
+        const [channelId = key, root] = key.split("/");
+        const name = channels.find((row) => row.id === channelId)?.name;
+        return {
+          key,
+          agent: pubkey,
+          sessionId: saved.id,
+          channelId,
+          ...(root ? { root } : {}),
+          ...(name ? { name } : {}),
+          at: saved.at,
+        };
+      });
+  }
+  /** A conversation's transcript, found from the workspace it ran in. */
+  transcript(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+  ) {
+    return readTranscript(this.spawn, workspace, conversation, working, signal);
+  }
+  /** The agent's latest session for a conversation that another build of the
+   * app started, found in the workspace's Claude Code history. */
+  async find(
+    pubkey: string,
+    place: Readonly<{ channelId: string; root?: string }>,
+    workspace: string,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const transcript = await readTranscript(
+      this.spawn,
+      workspace,
+      { agent: pubkey, ...place },
+      false,
+      signal,
+    );
+    const last = transcript?.turns.at(-1);
+    if (!last?.sessionId) return undefined;
+    const name = this.channelName(pubkey, place.channelId);
+    return {
+      key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
+      agent: pubkey,
+      sessionId: last.sessionId,
+      ...place,
+      ...(name ? { name } : {}),
+      at: last.endedAt ?? last.startedAt,
+    };
+  }
+  private channelName(pubkey: string, channelId: string) {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? snapshot.session.channels
+          .list()
+          .channels.find((row) => row.id === channelId)?.name
+      : undefined;
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
@@ -219,7 +320,10 @@ export class ClaudeRuntime {
 
   dispose() {
     this.spare.dispose();
-    for (const entry of this.agents.values()) entry.sessions.dispose();
+    for (const entry of this.agents.values()) {
+      entry.lanes.stop();
+      entry.sessions.dispose();
+    }
     this.agents.clear();
   }
 
@@ -232,73 +336,233 @@ export class ClaudeRuntime {
     effort,
     team,
     workingUntil,
+    ignored,
+    signal,
+    step,
+    acknowledged,
+    superseded,
+    current,
   }: Delivery) {
-    const settings = config(raw);
-    // Claude runs commands as you, so only you and your agents can ask.
-    if (
-      trigger.type !== "timer" &&
-      !(await fromOwner(trigger.event, agent.owner))
-    )
-      return;
-    const entry = this.entry(agent.pubkey, settings);
+    const settings = this.resolveConfig(raw);
+    // Claude runs commands as you; mentions need owner or delegated authority.
+    // A watch is the agent's own attention: its event is observed data,
+    // framed as such, from anyone.
+    if (trigger.type === "mention") {
+      const snapshot = this.relay(agent.pubkey)?.snapshot();
+      if (
+        !(await fromOwner(trigger.event, agent.owner, {
+          agent: agent.pubkey,
+          authority:
+            snapshot?.status === "ready"
+              ? snapshot.session.workflowAuthority
+              : undefined,
+          profiles:
+            snapshot?.status === "ready"
+              ? snapshot.session.profiles
+              : undefined,
+        }))
+      ) {
+        ignored?.();
+        return;
+      }
+      signal.throwIfAborted();
+    }
+    const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
     entry.handle = agent;
     entry.team = team ?? "";
-    // Read while the turn's prompt is built, not after: a new session's prompt
-    // needs it, and a spare is only faster if nothing else is awaited.
-    void this.memory(agent.pubkey, entry);
-    if (trigger.type === "timer") {
-      const done = entry.sessions.deliver(
-        `timer/${trigger.slug}`,
-        timerPrompt({
-          slug: trigger.slug,
-          prompt: trigger.timer.prompt,
-          ...(trigger.interest
-            ? { instructions: trigger.interest.instructions }
-            : {}),
-        }),
-        0,
-      );
-      workingUntil(done);
-      this.watch(done, () => undefined);
+    if (trigger.type !== "mention") {
+      workingUntil(this.wake(entry, agent, trigger, current));
       return;
     }
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    const label = trigger.type === "watch" ? "watch" : "@mention";
-    const interest =
-      trigger.type === "watch" && trigger.interest
-        ? { interest: trigger.interest.instructions }
-        : {};
-    // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) => {
-      const turn = await this.turn(entry, agent.pubkey, event, channel, fresh);
-      return {
-        key: turn.key,
-        text: turnPrompt({ ...turn, label, ...interest }),
-      };
-    };
-    const { key, text } = await prompt(false);
-    // A conversation's tools default to its thread; a session shared by
-    // several threads is told which to reply in instead.
-    entry.contexts.set(
-      key,
-      key === channel
-        ? { channel }
-        : { channel, root: threadReference(event)?.rootId ?? event.id },
+    const topLevel = await meChat(
+      () => this.relay(agent.pubkey),
+      agent.owner,
+      channel,
+      signal,
     );
-    const done = entry.sessions.deliver(key, text, event.created_at, {
-      steer: steerPrompt(text),
-      fresh: async () => (await prompt(true)).text,
-      pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+    // Frozen with the policy: a scope change while this waits must not move
+    // its prompt to another conversation than the one it is delivered to.
+    const key = this.key(entry, agent.pubkey, event, channel, topLevel);
+    // `fresh` is for a session that has been shown nothing yet.
+    const prompt = async (fresh: boolean) =>
+      this.review(
+        entry,
+        turnPrompt({
+          ...(await this.turn(
+            entry,
+            agent.pubkey,
+            event,
+            channel,
+            key,
+            topLevel,
+            fresh,
+          )),
+          agent: agent.pubkey,
+          label: "@mention",
+        }),
+      );
+    // A turn keeps the posting policy it was admitted with: a request under
+    // the other policy waits for the conversation's turns to settle rather
+    // than steering into them and changing their tools' context.
+    const prior = entry.policies.get(key);
+    const same = prior?.topLevel === topLevel;
+    const wait = prior && (same ? prior.handed : prior.settled);
+    let delivered!: Promise<Settled>;
+    const handed = (async () => {
+      await wait;
+      const text = await prompt(false);
+      // A conversation's tools default to its thread; a session shared by
+      // several threads is told which to reply in instead.
+      entry.contexts.set(
+        key,
+        topLevel
+          ? { channel, topLevel }
+          : key === channel
+            ? { channel }
+            : { channel, root: threadReference(event)?.rootId ?? event.id },
+      );
+      delivered = entry.sessions.deliver(key, text, event.created_at, {
+        steer: steerPrompt(text),
+        fresh: () => prompt(true),
+        activityScope: topLevel
+          ? channel
+          : (threadReference(event)?.rootId ?? event.id),
+        ...(step ? { step } : {}),
+        ...(acknowledged ? { acknowledged } : {}),
+        ...(superseded ? { superseded } : {}),
+        pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      });
+    })();
+    const done = handed.then(
+      () => delivered,
+      (error: unknown): Settled => ({ ok: false, error: String(error) }),
+    );
+    const policy = {
+      topLevel,
+      handed: handed.catch(() => undefined),
+      settled: Promise.all([same ? prior.settled : undefined, done]).then(
+        () => undefined,
+      ),
+    };
+    entry.policies.set(key, policy);
+    void policy.settled.then(() => {
+      if (entry.policies.get(key) === policy) entry.policies.delete(key);
     });
+    // Deliveries keep their order: a later one waits on this handover, and
+    // one with nothing to wait for is handed over before `run` returns.
+    if (!wait) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
     this.notify();
     this.watch(done, async (error) => {
-      if (error) await this.report(agent, channel, event, error);
+      if (error) await this.report(agent, channel, event, error, topLevel);
     });
+  }
+
+  /** A watch or timer wake: a one-off turn in its Interest's lane, as in
+   * Janet. It joins no conversation, and nothing about it is saved. The host
+   * says whether it is still `current`, asked when its lane starts it and
+   * again once it has a process: a wake whose watch or timer was disabled or
+   * removed, whose watch changed or no longer matches, or whose agent's
+   * attention went off, while it waited does not run. Its prompt is built
+   * then, from the attention as it is. */
+  private wake(
+    entry: Entry,
+    agent: AgentHandle,
+    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
+    current: () => boolean,
+  ): Promise<Settled> {
+    const { slug } = trigger;
+    const id = slug.replace(/^watch\//, "");
+    const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
+      .interest_id;
+    let settle!: (result: Settled) => void;
+    const settled = new Promise<Settled>((resolve) => {
+      settle = resolve;
+    });
+    const dropped = (why: string) => {
+      console.warn(`Claude dropped a ${trigger.type} turn: ${why}`);
+      settle({ ok: true });
+    };
+    const queued = entry.lanes.add(
+      lane,
+      async () => {
+        try {
+          if (!current()) return settle({ ok: true });
+          const done = entry.sessions.runOnce(`${trigger.type}/${id}`, () =>
+            this.wakePrompt(agent, trigger, id, current),
+          );
+          this.notify();
+          const result = await done;
+          this.notify();
+          if (!result.ok)
+            console.warn(
+              `Claude ${trigger.type} turn failed: ${id}`,
+              result.error,
+            );
+          settle(result);
+        } finally {
+          // Settled already, unless something above threw.
+          settle({ ok: false, error: "The turn failed" });
+        }
+      },
+      () => dropped("attention was turned off or the agent stopped"),
+    );
+    if (queued !== "queued")
+      dropped(
+        queued === "full"
+          ? `too many are waiting (Interest ${lane})`
+          : "the agent stopped",
+      );
+    return settled;
+  }
+
+  /** The prompt for a wake as its watch now is, or undefined when it should
+   * no longer run. */
+  private async wakePrompt(
+    agent: AgentHandle,
+    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
+    id: string,
+    stillCurrent: () => boolean,
+  ) {
+    const { attention } = agent;
+    if (!stillCurrent()) return undefined;
+    const current = (await attention.show(trigger.slug)).object;
+    const type = trigger.type === "watch" ? "event" : "timer";
+    if (!current || current.type !== type) return undefined;
+    const interest = (await attention.show(`interest/${current.interest_id}`))
+      .object;
+    const instructions =
+      interest?.type === "interest"
+        ? { instructions: interest.instructions }
+        : {};
+    const text =
+      trigger.type === "watch"
+        ? watchPrompt({
+            id,
+            interest: current.interest_id,
+            ...instructions,
+            event: trigger.event,
+            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
+          })
+        : timerPrompt({
+            id,
+            interest: current.interest_id,
+            prompt: current.type === "timer" ? current.prompt : "",
+            ...instructions,
+            spent: trigger.spent,
+          });
+    // Asked again: the attention can change while it is read.
+    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
+  }
+
+  /** `text` with Janet's end-of-turn attention review, when attention is on. */
+  private review(entry: Entry, text: string) {
+    return entry.attention ? `${text}\n\n${ATTENTION_REVIEW}` : text;
   }
 
   private watch(
@@ -307,7 +571,7 @@ export class ClaudeRuntime {
   ) {
     void done
       .then((result) => after(result.ok ? undefined : result.error))
-      .catch((error) => console.warn("Claude Code turn failed", error))
+      .catch((error) => console.warn("Claude turn failed", error))
       .finally(() => this.notify());
   }
 
@@ -319,6 +583,7 @@ export class ClaudeRuntime {
     channel: string,
     event: EventData,
     error: string,
+    topLevel: boolean,
   ) {
     return agent
       .publish({
@@ -326,13 +591,40 @@ export class ClaudeRuntime {
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
         tags: [
           ["h", channel],
-          ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
+          ...(topLevel
+            ? []
+            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
           ["p", agent.owner],
         ],
       })
       .catch((failure) =>
-        console.warn("Claude Code could not report a failed turn", failure),
+        console.warn("Claude could not report a failed turn", failure),
       );
+  }
+
+  /** The conversation the event's turn goes to: a Me chat or DM is one
+   * conversation, as is a channel for an agent with channel scope. */
+  private key(
+    entry: Entry,
+    self: string,
+    event: EventData,
+    channelId: string,
+    topLevel: boolean,
+  ) {
+    const summary = this.summary(self, channelId);
+    return topLevel ||
+      summary?.channelType === "dm" ||
+      entry.config.scope === "channel"
+      ? channelId
+      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+  }
+  private summary(self: string, channelId: string) {
+    const snapshot = this.relay(self)?.snapshot();
+    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
+    return (
+      session?.channels.list().channels.find((item) => item.id === channelId) ??
+      session?.channels.get?.(channelId)
+    );
   }
 
   /** Where the event's turn goes, and what its prompt needs. */
@@ -341,25 +633,24 @@ export class ClaudeRuntime {
     self: string,
     event: EventData,
     channelId: string,
+    key: string,
+    topLevel: boolean,
     fresh = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary =
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId);
+    const summary = this.summary(self, channelId);
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
-    const scope = entry.config.scope;
-    const key =
-      dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
+    // The conversation it was admitted to, not the scope as it is now.
+    const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    if (session && (thread || dm || topLevel))
       try {
         const events = await session.read(
-          thread
+          thread && !topLevel
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
@@ -376,7 +667,7 @@ export class ClaudeRuntime {
           )
           .sort((a, b) => a.created_at - b.created_at);
       } catch (error) {
-        console.warn("Claude Code could not read the conversation", error);
+        console.warn("Claude could not read the conversation", error);
       }
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
@@ -401,6 +692,7 @@ export class ClaudeRuntime {
       key,
       event,
       scope,
+      topLevel,
       channel: {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
@@ -416,34 +708,38 @@ export class ClaudeRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config): Entry {
+  private entry(pubkey: string, initial: Config, attention: boolean): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
+      attention,
+      lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      policies: new Map(),
     };
-    // Each process reads files where it was started, until it is replaced.
+    // Each process reads files where it was started, and keeps the tool list
+    // it was given, until it is replaced.
     const tools =
-      (cwd: string): ToolServer =>
+      (cwd: string, attention: boolean): ToolServer =>
       async (conversation, message) => {
         const handle = entry.handle;
-        const client = handle && {
-          ...appClient(handle, {
+        const client =
+          handle &&
+          appClient(handle, {
             spawn: this.spawn,
             cwd,
-            memories: () => this.memories(pubkey),
-          }),
-          remember: async (slug: string, body: string, after: number) => {
-            await handle.remember(slug, body, after);
-            if (slug === "core") delete entry.memory;
-          },
-        };
+            memories: async () => (await this.memories(pubkey)).entries,
+            remembered: () => this.forget(pubkey),
+          });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message);
+        return respond(client, context, message, {
+          offered: attention,
+          ...(handle ? { api: handle.attention } : {}),
+        });
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -458,19 +754,22 @@ export class ClaudeRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          entry.attention,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.memory(pubkey, entry);
+        const { attention } = entry;
+        const memory = await this.core(pubkey);
         return {
           ...where(entry.config),
-          tools: tools(workspace),
+          tools: tools(workspace, attention),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
+            attention,
             ...(memory === undefined ? {} : { memory }),
           }),
         };
@@ -480,63 +779,32 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's `core` memory, as the harness injects it into a new session:
-   * its text, `null` when it has none, or undefined when it could not be read. */
-  private async memory(pubkey: string, entry: Entry) {
-    if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
-      return entry.memory.value;
-    let value: string | null | undefined;
-    try {
-      const memories = await this.memories(pubkey);
-      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
-    } catch (error) {
-      console.warn("Claude Code could not read the agent's memory", error);
-    }
-    entry.memory = { value, at: Date.now() };
-    return value;
-  }
-
-  /** The agent's memory, read back through the owner's session: it is
-   * encrypted to the owner, so no agent key is needed to read it. */
-  private memories(pubkey: string): Promise<readonly Memory[]> {
-    // The owner's session holds few memory views at once, so calls share one.
-    let reading = this.reading.get(pubkey);
-    if (!reading) {
-      reading = this.readMemories(pubkey).finally(() =>
-        this.reading.delete(pubkey),
-      );
-      this.reading.set(pubkey, reading);
-    }
-    return reading;
-  }
-  private async readMemories(pubkey: string): Promise<readonly Memory[]> {
+  /** The agent's memory, read back through the owner's session. */
+  private memories(pubkey: string) {
     const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const view = snapshot.session.agentMemories.open(pubkey);
+    if (snapshot?.status !== "ready")
+      return Promise.reject(new Error("Buzz is not connected"));
+    return this.memoryReads.read(
+      snapshot.session,
+      pubkey,
+      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+    );
+  }
+  /** The agent's `core` memory for a new session's prompt: its text, `null`
+   * when it has none, or undefined when it could not be read, so the session
+   * starts without it. */
+  private async core(pubkey: string) {
     try {
-      const done = new Promise<void>((resolve) => {
-        const settled = () =>
-          !["idle", "loading"].includes(view.snapshot().status) && resolve();
-        view.subscribe(settled);
-        settled();
-      });
-      void view.refresh();
-      await Promise.race([
-        done,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Memory read timed out")),
-            MEMORY_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      view.dispose();
+      return coreOf(await this.memories(pubkey));
+    } catch (error) {
+      console.warn("Claude could not read the agent's memory", error);
+      return undefined;
     }
+  }
+  private forget(pubkey: string) {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    if (snapshot?.status === "ready")
+      this.memoryReads.forget(snapshot.session, pubkey);
   }
 }
 

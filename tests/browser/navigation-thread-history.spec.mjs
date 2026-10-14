@@ -282,6 +282,58 @@ for (const reading of [false, true]) {
   });
 }
 
+// Browser-only: native focus steps keep a caret already inside the editing
+// root, and inert tab panes are real layout; jsdom models neither.
+test("choosing a thread tab resumes typing where its reply was left", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  for (const [index, root] of roots.slice(0, 2).entries()) {
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      panel.getByText(`Thread root ${index}`, { exact: true }),
+    ).toBeVisible();
+  }
+  const reply = panel.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  const workspace = page.locator("[data-panel-workspace]");
+  const selected = workspace.locator(
+    '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+  );
+  const tabValue = await selected.getAttribute("data-tab-value");
+  await reply.click();
+  await page.keyboard.type("here is a message");
+  for (let step = 0; step < 15; step++) await page.keyboard.press("ArrowLeft");
+  await workspace
+    .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="false"]')
+    .click();
+  await expect(reply).toBeFocused();
+  await expect(reply).toHaveText("");
+  await workspace.locator(`[role="tab"][data-tab-value="${tabValue}"]`).click();
+  await expect(reply).toBeFocused();
+  await page.keyboard.type("X");
+  await expect(reply).toHaveText("heXre is a message");
+
+  // Keyboard selection stays in the tab list.
+  await selected.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Enter");
+  await expect(selected).toBeFocused();
+});
+
 // Real pointer capture, hit testing and retained editor DOM are browser-only.
 test("dragging thread tabs reorders and crosses panes without losing the reply", async ({
   page,
@@ -367,7 +419,7 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
 
   // With the side pane closed there is no header to drop onto. Separating
   // at the main workspace's right edge reveals it without creating a blank tab.
-  await main
+  await side
     .getByRole("button", { name: "Toggle tab pane", exact: true })
     .click();
   await expect(side).toBeHidden();
@@ -403,9 +455,16 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
 
   // Moving the last side tab away also removes the pane, without toggling it.
   for (let remaining = 2; remaining > 0; remaining--) {
+    const moved = await threadTabs(side).first().getAttribute("data-tab-value");
     await threadTabs(side).first().focus();
     await page.keyboard.press("Alt+Shift+ArrowLeft");
     await expect(threadTabs(side)).toHaveCount(remaining - 1);
+    // Placement commits before moveBy's animation-frame focus handoff. Finish
+    // that handoff before focusing another tab for the next shortcut.
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    await expect(
+      main.locator(`[role="tab"][data-tab-value="${moved}"]`),
+    ).toBeFocused();
   }
   await expect(side).toBeHidden();
   const emptyBounds = await main.boundingBox();
@@ -563,6 +622,78 @@ test("closing an active thread highlights its visible channel origin without scr
       ),
     )
     .toBe("none");
+});
+
+// Real retained main-pane selection/focus order differs from DOM-emulator steps.
+test("closing a main-pane thread with Escape returns keyboard focus to its opener", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const trigger = page
+    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await trigger.focus();
+  await trigger.press("Enter");
+  const main = page.locator("[data-main-workspace]");
+  const editor = main.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await expect(editor).toBeVisible();
+  await editor.focus();
+  await page.keyboard.press("Escape");
+  await expect(
+    main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(trigger).toBeFocused();
+});
+
+// Header openings reset a retained main-pane thread selection after mount;
+// only real layout-effect order shows whether that steals the tab's focus.
+test("header openings keep focus while a main-pane thread is retained", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const main = page.locator("[data-main-workspace]");
+  const topbar = page.getByRole("navigation", { name: "Topbar pages" });
+  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
+  const me = topbar.getByRole("tab", { name: "Me", exact: true });
+  const inbox = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Inbox", exact: true });
+  for (const leave of [inbox, me]) {
+    await page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      main.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
+    await leave.click();
+    await messages.focus();
+    await messages.press("Enter");
+    await expect(
+      main.getByRole("tab", { name: "Alpha", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await messages.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(resolve)),
+    );
+    await expect(messages).toBeFocused();
+  }
 });
 
 // A malformed root hint crosses real navigation/reader/store/portal wiring;

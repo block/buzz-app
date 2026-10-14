@@ -28,9 +28,12 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
+import { ChannelJoinNotice } from "./ChannelJoinNotice";
+import { useListedChannel } from "../relay/listed-channel";
+import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
@@ -73,7 +76,7 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
-  onOpenLink(url: string): boolean;
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?(
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
@@ -461,10 +464,29 @@ function ThreadMessages({
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   navigation?: PageNavigation | undefined;
-  onOpenLink(url: string): boolean;
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
   canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
+  const channelAccess = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => {
+      const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.readOnly && !channel.cached) {
+        return !channel.archived &&
+          (channel.channelType === "stream" || channel.channelType === "forum")
+          ? "joinable"
+          : "preview";
+      }
+      return listed && !listed.readOnly && !listed.archived
+        ? "member"
+        : "other";
+    },
+  );
+  const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const [joining, setJoining] = useState(false);
   const snapshot = useSyncExternalStore(
     view.subscribe,
     view.snapshot,
@@ -525,6 +547,11 @@ function ThreadMessages({
     );
     return row.workflowOwnerId ? workflowLabel(name) : name;
   };
+  // Never address the viewer: threads they started (every agent exchange) stay neutral.
+  const replyPlaceholder = (root: ChannelMessage) =>
+    (root.workflowOwnerId ?? root.authorId) === session.viewer
+      ? "Reply in thread"
+      : `Reply in thread to ${senderName(root)}`;
   const rows = useMemo(
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
@@ -544,6 +571,36 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
+  const resizePosition = useRef<
+    | {
+        width: number;
+        height: number;
+        contentHeight: number;
+        anchor?: { element: HTMLElement; top: number };
+      }
+    | undefined
+  >(undefined);
+  const captureResizePosition = useCallback(() => {
+    const element = scroller.current;
+    if (!element || !positioned.current || !element.clientHeight) return;
+    const top = element.getBoundingClientRect().top;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((row) => row.getBoundingClientRect().bottom > top);
+    resizePosition.current = {
+      width: element.clientWidth,
+      height: element.clientHeight,
+      contentHeight: element.scrollHeight,
+      ...(row
+        ? {
+            anchor: {
+              element: row,
+              top: row.getBoundingClientRect().top - top,
+            },
+          }
+        : {}),
+    };
+  }, []);
   const jumpingToLatest = useRef(false);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -625,10 +682,12 @@ function ThreadMessages({
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    setInitialPositioned(true);
+    captureResizePosition();
     readingSettled.current = true;
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
-  }, [navigation, selectedOffset]);
+  }, [captureResizePosition, navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
@@ -705,6 +764,11 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
+  useEffect(() => {
+    if (!joining || channelAccess !== "member") return;
+    setJoining(false);
+    if (active) setReplyFocus((value) => value + 1);
+  }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
     setReplyParent(undefined);
     setReplyFocus((value) => value + 1);
@@ -887,7 +951,9 @@ function ThreadMessages({
       setShowJumpToLatest(!bottom);
       if (bottom) setNewMessageCount(0);
     }
+    captureResizePosition();
   }, [
+    captureResizePosition,
     active,
     revealSelected,
     inlineReveal,
@@ -953,9 +1019,55 @@ function ThreadMessages({
     ].find((element) => element.dataset.messageId === sent);
     if (row) {
       row.scrollIntoView({ block: "nearest" });
+      captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded]);
+  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  // Parent commits already position history, exact targets and own sends. Save
+  // their result; only child-only reflow and viewport resizing need correction.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const content = element?.querySelector("[data-thread-rows]");
+    if (!active || !initialPositioned || !element || !content) return;
+    const observer = new ResizeObserver(() => {
+      const previous = resizePosition.current;
+      if (!previous || !element.clientHeight || jumpingToLatest.current) return;
+      if (
+        previous.width === element.clientWidth &&
+        previous.height === element.clientHeight &&
+        previous.contentHeight === element.scrollHeight
+      )
+        return;
+      if (follow.current) {
+        element.scrollTop = element.scrollHeight;
+      } else if (previous.anchor && element.contains(previous.anchor.element)) {
+        correctScrollTop(
+          element,
+          // WebKit quantizes scrollTop. Round the correction instead of letting
+          // tiny negative fractions lose a whole pixel on every animation frame.
+          Math.round(
+            previous.anchor.element.getBoundingClientRect().top -
+              element.getBoundingClientRect().top -
+              previous.anchor.top,
+          ),
+        );
+      }
+      // Exact-history restoration must start from this corrected geometry,
+      // rather than applying the same child-only height delta a second time.
+      if (targetAnchor.current !== undefined)
+        targetAnchor.current = selectedOffset();
+      if (olderAnchor.current) {
+        const row = element.querySelector<HTMLElement>(
+          `[data-message-id="${olderAnchor.current.id}"]`,
+        );
+        if (row) olderAnchor.current.top = row.getBoundingClientRect().top;
+      }
+      captureResizePosition();
+    });
+    observer.observe(element);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
@@ -974,6 +1086,7 @@ function ThreadMessages({
       if (!current || !jumpingToLatest.current) return;
       current.scrollTop = current.scrollHeight;
       jumpingToLatest.current = false;
+      captureResizePosition();
     }, 1000);
   };
   const keepReadingPosition = () => {
@@ -985,6 +1098,8 @@ function ThreadMessages({
     olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
+    // A new reader gesture supersedes any queued resize restoration.
+    captureResizePosition();
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
@@ -1167,6 +1282,13 @@ function ThreadMessages({
         ref={scroller}
         data-message-scroller
         className={styles.threadHistory}
+        style={
+          {
+            "--channel-preview-inset": preview
+              ? `calc(${joinNoticeHeight}px + var(--space-3))`
+              : "0px",
+          } as CSSProperties
+        }
         aria-label="Thread messages"
         aria-busy={positioning}
         data-positioning={positioning || undefined}
@@ -1180,10 +1302,21 @@ function ThreadMessages({
             ].find((row) => row.dataset.messageId === anchor.id);
             if (row) anchor.top = row.getBoundingClientRect().top;
           }
+          // A browser-generated scroll during reflow must not replace the
+          // reading intent before ResizeObserver has corrected the new geometry.
+          const previous = resizePosition.current;
+          if (
+            previous &&
+            (previous.width !== element.clientWidth ||
+              previous.height !== element.clientHeight ||
+              previous.contentHeight !== element.scrollHeight)
+          )
+            return;
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
           if (jumpingToLatest.current) return;
+          captureResizePosition();
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
@@ -1320,7 +1453,23 @@ function ThreadMessages({
           </div>
         )}
       </section>
-      {snapshot.root &&
+      {preview && (
+        <ChannelJoinNotice
+          ready={
+            !positioning &&
+            (snapshot.status === "ready" ||
+              snapshot.status === "error" ||
+              !!rows.length)
+          }
+          channelId={channelId}
+          lifecycle={session.channelLifecycle}
+          joinable={channelAccess === "joinable"}
+          onJoin={() => setJoining(true)}
+          onHeightChange={setJoinNoticeHeight}
+        />
+      )}
+      {!preview &&
+        snapshot.root &&
         (!requireReadyRoot ||
           (snapshot.root.id === messageId &&
             snapshot.targetStatus === "ready")) && (
@@ -1334,7 +1483,7 @@ function ThreadMessages({
             scope={scope}
             channelId={channelId}
             channelName={channelName}
-            placeholder={`Reply in thread to ${senderName(snapshot.root)}`}
+            placeholder={replyPlaceholder(snapshot.root)}
             threadRootId={snapshot.root.id}
             replyParentId={replyParent}
             disabled={

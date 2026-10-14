@@ -2,13 +2,16 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
-import { afterEach, expect, it, vi } from "vitest";
+import { describe, afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
-import { CodexRuntime } from "./runtime";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { createAgentMemories } from "../../features/agents/memory";
+import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
 
 // The plugin registers only in the Mac/Linux desktop app.
@@ -45,6 +48,8 @@ function fixture(
   let thread = 0;
   let turn = 0;
   const sent: Wire[] = [];
+  /** Methods the server answers with a JSON-RPC error instead of a result. */
+  const failing = new Set<string>();
   const toolCalls = new Map<
     number | string,
     { threadId: string | undefined; turnId: string; callId: string }
@@ -73,6 +78,13 @@ function fixture(
         return;
       }
       if (request.id == null) return;
+      if (request.method && failing.has(request.method)) {
+        emit({
+          id: request.id,
+          error: { message: `${request.method} failed` },
+        });
+        return;
+      }
       const params = request.params as Record<string, unknown>;
       let result: unknown = {};
       if (request.method === "model/list")
@@ -146,8 +158,32 @@ function fixture(
     exited: exits.promise,
   };
   let closed = false;
+  let appServerSpawns = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
+    // The plugin starts the app server as a step of Buzz's `codex.sh`.
+    const appServer =
+      _id === "app-server" ||
+      value?.args?.slice(2, 4).join(" ") === "run app-server";
+    if (plugin && appServer && appServerSpawns++ === 0) {
+      const catalogExit = deferred<number | null>();
+      return {
+        write: async (data: string) => {
+          const request: Wire = JSON.parse(data);
+          if (request.id == null) return;
+          const result =
+            request.method === "account/read"
+              ? { account: { type: "chatgpt" } }
+              : request.method === "model/list"
+                ? { data: [], nextCursor: null }
+                : {};
+          value?.onStdout?.(`${JSON.stringify({ id: request.id, result })}\n`);
+        },
+        end: async () => catalogExit.resolve(0),
+        kill: async () => catalogExit.resolve(null),
+        exited: catalogExit.promise,
+      };
+    }
     if (_id === "workspace") {
       value?.onStdout?.("/home/test/.buzz\n");
       return { ...process, exited: Promise.resolve(0) };
@@ -166,6 +202,12 @@ function fixture(
       );
       return { ...process, exited: Promise.resolve(0) };
     }
+    // The plugin's setup checks find Buzz's copy installed and signed in.
+    const step = value?.args?.slice(3).join(" ");
+    if (step === "--version" || step === "login status") {
+      value?.onStdout?.("codex-cli 0.162.1\n");
+      return { ...process, exited: Promise.resolve(0) };
+    }
     options = value;
     return process;
   });
@@ -177,22 +219,42 @@ function fixture(
   }));
   const read = vi.fn(async () => [] as EventData[]);
   const memories: { slug: string; body: string; createdAt: number }[] = [];
+  const memoryRead = vi.fn(async () => ({ entries: memories, partial: false }));
   const memoryView = {
     refresh: vi.fn(async () => {}),
-    snapshot: () => ({ status: "ready", listing: { entries: memories } }),
+    snapshot: () => ({
+      status: "ready",
+      listing: { entries: memories, partial: false },
+    }),
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
+  // The owner's view, with no channel filed in Me unless a test does so.
+  const personal = new Set<string>();
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
+    viewer: owner,
     session: {
+      workflowAuthority: undefined as string | undefined,
+      profiles: {
+        ensure: vi.fn(async () => {}),
+        event: vi.fn(
+          (_key: string): ReturnType<typeof eventDto> | undefined => undefined,
+        ),
+      },
       read,
-      agentMemories: { open: memoryOpen },
+      agentMemories: { open: memoryOpen, read: memoryRead },
       channels: {
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
         }),
+      },
+      mePlacement: {
+        state: { status: "ready" } as { status: string; error?: string },
+        snapshot: () => snapshot.session.mePlacement.state,
+        refresh: vi.fn(async () => {}),
+        has: (id: string) => personal.has(id),
       },
     },
   };
@@ -274,6 +336,7 @@ function fixture(
       },
       signal: new AbortController().signal,
       workingUntil,
+      current: () => true,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);
@@ -373,6 +436,7 @@ function fixture(
     query,
     fileReads,
     memoryOpen,
+    memoryRead,
     memoryView,
     remember,
     upload,
@@ -387,6 +451,7 @@ function fixture(
     spawn,
     process,
     sent,
+    failing,
     emit,
     publish,
     read,
@@ -397,6 +462,7 @@ function fixture(
     complete,
     interrupt,
     snapshot,
+    personal,
     exits,
   };
 }
@@ -423,6 +489,9 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(
+    "Never publish a bare acknowledgement.",
+  );
   expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
@@ -445,6 +514,15 @@ it("hands over promptly and runs conversations independently on one server", asy
     additionalContext: {
       "buzz.instructions": {
         value: expect.not.stringContaining("<team>"),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "Your `core` memory is auto-injected into your context every turn",
+        ),
       },
     },
   });
@@ -584,6 +662,71 @@ it("ends a stopped agent's leftover shells and lets it start again only after le
     "BACK",
   ]);
 });
+it("logs a failed idle terminal clean without ending the shared server or blocking the agent's return", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  f.failing.add("thread/backgroundTerminals/clean");
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  f.runtime.sync([{ pubkey } as Agent]);
+  await vi.waitFor(() =>
+    expect(error).toHaveBeenCalledWith(
+      "Codex could not clean a stopped agent's terminals",
+      new Error("thread/backgroundTerminals/clean failed"),
+    ),
+  );
+  error.mockRestore();
+  expect(
+    f.sent.find((wire) => wire.method === "thread/backgroundTerminals/clean")
+      ?.params,
+  ).toMatchObject({ threadId: thread });
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: "9".repeat(64) } as Agent]);
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: thread });
+  await f.complete(2, "BACK");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual([
+    "SERVER RUNNING",
+    "BACK",
+  ]);
+});
+it("does not clean or log a cleanup error after the last agent closes the server", async () => {
+  const f = fixture([{ processId: "dev-server" }]);
+  await f.runtime.run(f.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "SERVER RUNNING");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.useFakeTimers();
+  try {
+    f.runtime.sync([]);
+    await vi.runAllTimersAsync();
+    expect(f.process.end).toHaveBeenCalledTimes(1);
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
+    ).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(f.runtime.sessions(pubkey)).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+    error.mockRestore();
+  }
+});
 it("reopens the shared server after it exits", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -712,6 +855,88 @@ it("starts a turn on the model its owner picked, at an effort that model support
     { model: "deep-model", effort: "high" },
     { model: "test-model", effort: "low" },
   ]);
+});
+it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
+  const f = fixture();
+  const settings = (wire: Wire) => {
+    const { threadId, model, effort } = wire.params as Record<string, string>;
+    return { threadId, model, effort };
+  };
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("deeper"),
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // An effort pick alone queues too, on the agent's own model.
+  await f.runtime.run({ ...f.delivery("harder"), effort: "high" });
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
+  expect(f.starts().map(settings)).toEqual([
+    { threadId: "thread-1", model: "test-model", effort: "low" },
+    { threadId: "thread-1", model: "deep-model", effort: "xhigh" },
+    { threadId: "thread-1", model: "test-model", effort: "high" },
+  ]);
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).content),
+  ).toEqual(["FIRST", "SECOND", "THIRD"]);
+});
+it("keeps a plain follow-up behind a queued differing pick instead of steering past it", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({ ...f.delivery("deeper"), model: "deep-model" });
+  await f.runtime.run(f.delivery("plain"));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // "plain" is still queued while "deeper" runs, so this cannot steer either.
+  await f.runtime.run(f.delivery("later"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  await f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(0);
+  const input = (index: number) => JSON.stringify(f.starts()[index]?.params);
+  expect(input(1)).toContain("deeper");
+  expect(input(1)).toContain('"model":"deep-model"');
+  expect(input(2)).toContain("plain");
+  expect(input(2)).toContain('"model":"test-model"');
+  expect(input(3)).toContain("later");
+  f.complete(3, "FOURTH");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(4));
+  expect(
+    f.publish.mock.calls.map(([event]) => (event as EventData).content),
+  ).toEqual(["FIRST", "SECOND", "THIRD", "FOURTH"]);
+});
+it("steers a mid-turn message whose pick matches the running turn, or has none", async () => {
+  const f = fixture();
+  await f.runtime.run({
+    ...f.delivery("first"),
+    model: "test-model",
+    effort: "low",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("same"),
+    model: "test-model",
+    effort: "low",
+  });
+  await f.runtime.run(f.delivery("plain"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      2,
+    ),
+  );
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.starts()).toHaveLength(1);
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
@@ -884,6 +1109,10 @@ it("cleans background terminals on server interruption and permits same-thread r
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("turn was interrupted"),
   });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "Codex’s turn was interrupted",
+  });
   await f.runtime.run(f.delivery("recover"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.complete();
@@ -920,9 +1149,132 @@ it("ignores non-owner messages without spawning", async () => {
   const other = f.delivery("work");
   if (other.trigger.type !== "timer")
     other.trigger.event.pubkey = "f".repeat(64);
-  await f.runtime.run(other);
+  const ignored = vi.fn();
+  await f.runtime.run({ ...other, ignored });
+  expect(ignored).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
+});
+it("runs a verified relay workflow mention for its owner", async () => {
+  const f = fixture();
+  const relay = keypair();
+  f.snapshot.session.workflowAuthority = relay.pubkey;
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(ignored).not.toHaveBeenCalled();
+  await f.complete();
+  expect(f.publish).toHaveBeenCalled();
+});
+it.each([false, true])(
+  "handles sibling workflow authorization with cancellation=%s",
+  async (cancelled) => {
+    const f = fixture();
+    const relay = keypair(),
+      human = keypair(),
+      creator = keypair();
+    const attestation = [
+      "auth",
+      human.pubkey,
+      "",
+      bytesToHex(
+        schnorr.sign(
+          createHash("sha256")
+            .update(`nostr:agent-auth:${creator.pubkey}:`)
+            .digest(),
+          human.secret,
+        ),
+      ),
+    ];
+    const profile = eventDto(
+      signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
+    );
+    f.snapshot.session.workflowAuthority = relay.pubkey;
+    f.snapshot.session.profiles.event.mockReturnValue(profile);
+    const gate = deferred<void>();
+    const controller = new AbortController();
+    f.snapshot.session.profiles.ensure.mockReturnValue(gate.promise);
+    const ask = f.delivery("work");
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Codex workflow",
+        tags: [
+          ["h", "channel"],
+          ["p", pubkey],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", creator.pubkey],
+          ["buzz:workflow-mention", pubkey],
+        ],
+      }),
+    );
+    const done = f.runtime.run({
+      ...ask,
+      signal: controller.signal,
+      agent: { ...ask.agent, owner: human.pubkey },
+      trigger: { type: "mention", event },
+    });
+    await vi.waitFor(() =>
+      expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledOnce(),
+    );
+    if (cancelled) {
+      f.runtime.sync([]);
+      controller.abort();
+      gate.resolve();
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(f.spawn).not.toHaveBeenCalled();
+      expect(f.workingUntil).not.toHaveBeenCalled();
+      expect(f.runtime.sessions(pubkey)).toEqual([]);
+      return;
+    }
+    gate.resolve();
+    await done;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
+      creator.pubkey,
+    ]);
+    await f.complete();
+    expect(f.publish).toHaveBeenCalled();
+  },
+);
+it("ignores a relay workflow mention without explicit community authority", async () => {
+  const f = fixture();
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Codex workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+        ["buzz:workflow-mention", pubkey],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({
+    ...f.delivery("work"),
+    trigger: { type: "mention", event },
+    ignored,
+  });
+  expect(ignored).toHaveBeenCalledOnce();
+  expect(f.spawn).not.toHaveBeenCalled();
 });
 it("answers another agent its owner attested, telling the owner of failures", async () => {
   const f = fixture();
@@ -947,27 +1299,30 @@ it("answers another agent its owner attested, telling the owner of failures", as
   await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   // A failure tells the owner: tagging the sibling would wake it to fail too.
-  f.complete(0, "");
+  f.exits.resolve(3);
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
   expect(failure.tags).toContainEqual(["p", owner]);
   expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
-it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
+it("ends a turn without a reply silently, and publishes an unexpected exit", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.complete(0, "");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("without a final reply"),
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
   });
   await f.runtime.run(f.delivery("next"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.exits.resolve(3);
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
-  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
+  });
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Codex exited"),
   });
 });
 it("sets no deadline of its own on a turn", async () => {
@@ -1087,9 +1442,23 @@ it("publishes workspace errors without starting work", async () => {
     config: { workspace: "relative" },
   });
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("absolute workspace"),
+    content: expect.stringContaining("absolute or ~/… workspace"),
   });
   expect(f.spawn).not.toHaveBeenCalled();
+});
+
+it("resolves a workspace under home through the process host", async () => {
+  const f = fixture();
+  await f.runtime.run({
+    ...f.delivery("hello"),
+    config: { workspace: "~/code" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.spawn).toHaveBeenCalledWith(
+    "workspace",
+    expect.objectContaining({ cwd: "~/code" }),
+  );
+  f.runtime.dispose();
 });
 
 it.each([{}, { workspace: "" }, { workspace: "  " }])(
@@ -1136,7 +1505,7 @@ it("reports a default workspace resolution failure without starting a turn", asy
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining(
-      "Could not resolve the default Codex workspace",
+      "Could not resolve the Codex workspace ~/.buzz",
     ),
   });
   expect(f.starts()).toHaveLength(0);
@@ -1429,6 +1798,102 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
+it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const memory = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext?: Record<string, { value: string }> }
+        | undefined
+    )?.additionalContext?.["buzz.instructions"]?.value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(memory(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
+  );
+  f.complete(0, "FIRST");
+  await f.remember("core", "I am Codex.", 0);
+  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(memory(1)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  f.complete(1, "SECOND");
+  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
+  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
+  expect(memory(2)).not.toContain("<core-memory>");
+  expect(warn).toHaveBeenCalledWith(
+    "Codex could not read the agent's memory",
+    expect.any(Error),
+  );
+  f.complete(2, "THIRD");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  warn.mockRestore();
+});
+
+it("does not declare core missing when the owner listing is partial", async () => {
+  const f = fixture();
+  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
+  await f.runtime.run(f.delivery("partial"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const start = f.starts()[0];
+  expect(start).toBeDefined();
+  const instructions = (
+    start?.params as {
+      additionalContext?: Record<string, { value: string }>;
+    }
+  )?.additionalContext?.["buzz.instructions"]?.value;
+  expect(instructions).toContain("TEST_INSTRUCTIONS");
+  expect(instructions).not.toContain("No core memory found");
+  expect(instructions).not.toContain("<core-memory>");
+});
+
+it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const read = vi.fn(async () => {
+    await gate.promise;
+    return {
+      entries: [
+        {
+          slug: "core",
+          body: "CONCURRENT CORE",
+          eventId: "6".repeat(64),
+          createdAt: 1,
+        },
+      ],
+      partial: false,
+    };
+  });
+  const memories = createAgentMemories(read, owner, () => true);
+  f.snapshot.session.agentMemories =
+    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
+
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      f.runtime.run(
+        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
+      ),
+    ),
+  );
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  expect(f.starts()).toHaveLength(0);
+
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
+  for (const start of f.starts())
+    expect(start.params).toMatchObject({
+      additionalContext: {
+        "buzz.instructions": {
+          value: expect.stringContaining("CONCURRENT CORE"),
+        },
+      },
+    });
+});
+
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -1458,9 +1923,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     ],
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
-  expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
+  expect(f.memoryRead).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
+  // The turn's own `core` read, then mem_set's read and a fresh post-write read.
+  expect(f.memoryRead).toHaveBeenCalledTimes(3);
   expect(
     (
       await f.tool("send", {
@@ -1517,6 +1983,157 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   expect(f.publish).toHaveBeenCalledTimes(2);
 });
 
+it.each(["accepted", "rejected"] as const)(
+  "moves same-thread activity only after steering is accepted: %s",
+  async (outcome) => {
+    const f = fixture();
+    const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+    const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+    await f.runtime.run({ ...f.delivery("first"), ...first });
+    await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
+    const started = f.starts()[0];
+    if (!started) throw new Error("Expected started turn");
+    const threadId = (started.params as { threadId: string }).threadId;
+    const step = (command: string) =>
+      f.emit({
+        method: "item/started",
+        params: { threadId, item: { type: "commandExecution", command } },
+      });
+    step("sleep 20");
+    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep");
+    const requested = deferred<void>();
+    const response = deferred<void>();
+    const write = f.process.write;
+    f.process.write = async (data) => {
+      const wire: Wire = JSON.parse(data);
+      if (wire.method !== "turn/steer") return write(data);
+      if (wire.id === undefined) throw new Error("Expected steering RPC id");
+      requested.resolve();
+      await response.promise;
+      if (outcome === "rejected") {
+        f.emit({
+          id: wire.id,
+          error: { code: -32000, message: "Cannot accept follow-up" },
+        });
+        return;
+      }
+      await write(data);
+    };
+    try {
+      await f.runtime.run({ ...f.delivery("follow-up"), ...next });
+      await requested.promise;
+      step("ls");
+      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+      expect(first.superseded).not.toHaveBeenCalled();
+      expect(next.acknowledged).not.toHaveBeenCalled();
+      expect(next.step).not.toHaveBeenCalled();
+      response.resolve();
+      if (outcome === "accepted") {
+        await vi.waitFor(() =>
+          expect(next.acknowledged).toHaveBeenCalledOnce(),
+        );
+        expect(first.superseded).toHaveBeenCalledOnce();
+        step("pwd");
+        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+        await f.tool("send", {
+          audience: "everyone",
+          text: "Updated answer",
+          final: true,
+        });
+        for (const [done] of f.workingUntil.mock.calls)
+          await expect(done).resolves.toEqual({ ok: true });
+      } else {
+        await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+          ok: false,
+        });
+        expect(first.superseded).not.toHaveBeenCalled();
+        expect(next.acknowledged).not.toHaveBeenCalled();
+        step("pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        await f.tool("send", {
+          audience: "everyone",
+          text: "Original answer",
+          final: true,
+        });
+        await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+          ok: true,
+        });
+      }
+      await f.complete();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+      );
+    } finally {
+      response.resolve();
+    }
+  },
+);
+
+it("keeps each thread's activity in a shared session and does not move it to watches", async () => {
+  const f = fixture();
+  const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const second = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const delivery = (text: string, threadRoot: string) => {
+    const d = f.delivery(text, threadRoot);
+    return { ...d, config: { ...(d.config as object), scope: "channel" } };
+  };
+  await f.runtime.run({ ...delivery("first thread", root), ...first });
+  await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
+  await f.runtime.run({
+    ...delivery("second thread", "e".repeat(64)),
+    ...second,
+  });
+  await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalledOnce());
+  expect(first.superseded).not.toHaveBeenCalled();
+  const watch = delivery("watched message", root);
+  if (watch.trigger.type !== "mention") throw new Error("Expected mention");
+  const watched = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  await f.runtime.run({
+    ...watch,
+    ...watched,
+    trigger: {
+      type: "watch",
+      event: watch.trigger.event,
+      slug: "watch/test",
+      watch: {
+        type: "event",
+        enabled: true,
+        interest_id: "test",
+        since: 0,
+        channels: "all",
+        kinds: [9],
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
+  );
+  // A tool call waits for the steering chain, establishing that the watch was taken.
+  await f.tool("send", {
+    audience: "everyone",
+    text: "Progress",
+    final: false,
+  });
+  const started = f.starts()[0];
+  if (!started) throw new Error("Expected started turn");
+  const threadId = (started.params as { threadId: string }).threadId;
+  f.emit({
+    method: "item/started",
+    params: { threadId, item: { type: "reasoning" } },
+  });
+  expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
+  expect(first.superseded).not.toHaveBeenCalled();
+  expect(second.superseded).not.toHaveBeenCalled();
+  expect(watched.acknowledged).not.toHaveBeenCalled();
+  expect(watched.step).not.toHaveBeenCalled();
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+});
+
 it("delivers pending owner steering after a final send and posts its own answer", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -1557,6 +2174,51 @@ it("delivers pending owner steering after a final send and posts its own answer"
   ).toEqual(["prior answer", "NEW ANSWER"]);
 });
 
+it("lets go of a rejected steering mention without ending the running turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/steer" || wire.id == null) return write(data);
+    f.sent.push(wire);
+    f.emit({ id: wire.id, error: { code: -32600, message: "model busy" } });
+  });
+  await f.runtime.run(f.delivery("new request"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("Steering was not accepted: model busy"),
+  });
+  // The rejection answers the mention; the turn it could not join works on.
+  let working = false;
+  let rejected = false;
+  void Promise.resolve(f.workingUntil.mock.calls[0]?.[0]).then(() => {
+    working = true;
+  });
+  void Promise.resolve(f.workingUntil.mock.calls[1]?.[0]).then(() => {
+    rejected = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(f.workingUntil).toHaveBeenCalledTimes(2);
+  expect(rejected).toBe(true);
+  expect(working).toBe(false);
+  expect(f.starts()).toHaveLength(1);
+  await f.complete(0, "FIRST ANSWER");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(working).toBe(true);
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual([
+    expect.stringContaining("Steering was not accepted"),
+    "FIRST ANSWER",
+  ]);
+});
+
 it("finishes final sends normally and preserves the agent's background terminals", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start server"));
@@ -1572,7 +2234,9 @@ it("finishes final sends normally and preserves the agent's background terminals
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
   // The request is answered, so it stops counting as working before Codex's
   // closing model call ends the turn.
-  await f.workingUntil.mock.calls[0]?.[0];
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
   const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
     ?.threadId;
   f.emit({
@@ -1633,3 +2297,246 @@ it.each([false, true])(
     });
   },
 );
+
+it("lists saved conversations newest first from storage, and moves a started one to the front", async () => {
+  const f = fixture();
+  const thread = JSON.stringify(["channel", root]);
+  const channel = JSON.stringify(["channel", "channel"]);
+  const elsewhere = JSON.stringify(["unlisted", root]);
+  f.storage.set(
+    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+    JSON.stringify({
+      [channel]: { threadId: "before-timestamps", workspace: "/w" },
+      [thread]: { threadId: "older", workspace: "/w", at: 1 },
+      [elsewhere]: { threadId: "newer", workspace: "/w", at: 2 },
+      "not a key": { threadId: "ignored", workspace: "/w", at: 3 },
+    }),
+  );
+  expect(f.runtime.conversations(pubkey)).toEqual([
+    {
+      key: elsewhere,
+      channelId: "unlisted",
+      root,
+      threadId: "newer",
+      at: 2,
+    },
+    {
+      key: thread,
+      channelId: "channel",
+      name: "test",
+      root,
+      threadId: "older",
+      at: 1,
+    },
+    {
+      key: channel,
+      channelId: "channel",
+      name: "test",
+      threadId: "before-timestamps",
+    },
+  ]);
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const [latest] = f.runtime.conversations(pubkey);
+  expect(latest?.at).toBeGreaterThan(2);
+  const stored = Object.keys(
+    JSON.parse(
+      f.storage.get(`buzz.codex.sessions.v4:${scope}:${pubkey}`) ?? "{}",
+    ),
+  );
+  expect(stored.at(-1)).toBe(latest?.key);
+  await f.complete();
+});
+
+describe("codexStep", () => {
+  it("maps started items into the shared step vocabulary", () => {
+    expect(codexStep({ type: "commandExecution", command: "ls" })).toEqual({
+      tool: "Shell",
+      target: "ls",
+    });
+    expect(
+      codexStep({
+        type: "commandExecution",
+        command: "sed -n 1,40p src/a.ts",
+        commandActions: [{ type: "read", name: "a.ts", path: "src/a.ts" }],
+      }),
+    ).toEqual({ tool: "Read", target: "a.ts" });
+    expect(
+      codexStep({
+        type: "commandExecution",
+        command: "rg agent",
+        commandActions: [{ type: "search", query: "agent", path: null }],
+      }),
+    ).toEqual({ tool: "Grep", target: "agent" });
+    expect(
+      codexStep({ type: "fileChange", changes: [{ path: "/x/notes.md" }] }),
+    ).toEqual({ tool: "Edit", target: "notes.md" });
+    expect(codexStep({ type: "mcpToolCall", tool: "send_message" })).toEqual({
+      tool: "send_message",
+    });
+    expect(codexStep({ type: "reasoning" })).toEqual({ tool: "Thinking" });
+    expect(codexStep({ type: "userMessage" })).toBeUndefined();
+    expect(codexStep(undefined)).toBeUndefined();
+  });
+});
+
+describe("programs", () => {
+  it("names the programs a command runs, without the shell wrapper or scripts", () => {
+    expect(
+      programs(
+        `/bin/zsh -lc "mktemp /tmp/activity-test.XXXX | xargs -I'{}' sh -c 'printf hello > \\"$1\\"; printf x' sh '{}'"`,
+      ),
+    ).toBe("mktemp, xargs");
+    expect(programs("which copilot || true")).toBe("which, true");
+    expect(programs("FOO=1 /usr/bin/git status && pnpm test")).toBe(
+      "git, pnpm",
+    );
+    expect(programs("a; b; c; d; e")).toBe("a, b, c and 2 more");
+    expect(programs("")).toBeUndefined();
+  });
+});
+
+/** Files the fixture's channel in its owner's Me. */
+function inMe(f: ReturnType<typeof fixture>) {
+  f.personal.add("channel");
+  return f.personal;
+}
+const inputText = (wire: Wire | undefined) =>
+  JSON.stringify((wire?.params as { input?: unknown } | undefined)?.input);
+const tagsOf = (f: ReturnType<typeof fixture>) =>
+  f.publish.mock.calls.map(([event]) => (event as EventData).tags);
+
+it("continues an owner's Me chat as one channel conversation posted at the top level", async () => {
+  const f = fixture();
+  inMe(f);
+  const first = f.delivery("@Codex first", root);
+  const activity = {
+    step: vi.fn(),
+    acknowledged: vi.fn(),
+    superseded: vi.fn(),
+  };
+  await f.runtime.run({ ...first, ...activity });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain('\\"posting\\":\\"top-level\\"');
+  expect(inputText(f.starts()[0])).toContain(
+    JSON.stringify(TOP_LEVEL_PROMPT).slice(1, 40),
+  );
+  expect(inputText(f.starts()[0])).not.toContain("reply_to");
+  expect(inputText(f.starts()[0])).toContain("conversation-context");
+  // A message in another thread of the chat steers the same turn and takes
+  // over its activity, as one conversation.
+  const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  await f.runtime.run({
+    ...f.delivery("@Codex also", "e".repeat(64)),
+    ...next,
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+  );
+  await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  if (first.trigger.type !== "mention") throw new Error("Expected mention");
+  // A stale reply into the chat is returned for correction, not posted.
+  expect(
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "threaded",
+        reply: first.trigger.event.id,
+      })
+    )?.result,
+  ).toMatchObject({
+    success: false,
+    contentItems: [
+      {
+        text: "This chat stays at the top level: send again without reply.",
+      },
+    ],
+  });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A later prompt in a different thread resumes the same Codex thread.
+  await f.runtime.run(f.delivery("@Codex later", "7".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.find((w) => w.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: "thread-1" });
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(f.publish.mock.calls[2]?.[0]).toMatchObject({
+    content: expect.stringContaining("Codex exited"),
+  });
+  // Progress, final answer and the runtime's own failure notice.
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["p", owner],
+    ],
+  ]);
+});
+
+it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+  const f = fixture();
+  const personal = inMe(f);
+  const channelScope = (delivery: Delivery) => ({
+    ...delivery,
+    config: { ...(delivery.config as object), scope: "channel" },
+  });
+  await f.runtime.run(channelScope(f.delivery("@Codex first")));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  personal.delete("channel");
+  await f.runtime.run(channelScope(f.delivery("@Codex after share")));
+  // The shared chat's request waits for the Me turn instead of steering in.
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
+  expect(f.starts()).toHaveLength(1);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("reply_to");
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["e", root, "", "reply"],
+    ],
+  ]);
+});
+
+it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+  const f = fixture();
+  const placement = f.snapshot.session.mePlacement;
+  placement.state = { status: "error", error: "Recipe read failed" };
+  await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
+    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+  );
+  expect(placement.refresh).toHaveBeenCalledOnce();
+  expect(f.starts()).toEqual([]);
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
+  placement.state = { status: "ready" };
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("keeps Messages routing for a channel filed in someone else's Me", async () => {
+  const f = fixture();
+  inMe(f);
+  Object.assign(f.snapshot, { viewer: "9".repeat(64) });
+  await f.runtime.run(f.delivery("@Codex hi"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});

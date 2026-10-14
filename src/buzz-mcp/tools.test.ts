@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
 import { respond } from "./rpc";
-import { callTool } from "./tools";
+import { ATTENTION_TOOLS } from "./attention";
+import { callTool, TOOLS } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -345,7 +346,8 @@ it("lists its tools before it can call them", async () => {
       method: "tools/list",
     },
   )) as { result: { tools: unknown[] } };
-  expect(list.result.tools).toHaveLength(13);
+  // Every app session lists the same tools: the Buzz and attention tools.
+  expect(list.result.tools).toHaveLength(TOOLS.length + ATTENTION_TOOLS.length);
   await expect(
     respond(
       undefined,

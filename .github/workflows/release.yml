@@ -116,6 +116,7 @@ jobs:
           xcrun stapler validate "$app"
           codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true || { echo '::error::Signed app is missing microphone entitlement'; exit 1; }
+          test -x "$app/Contents/Resources/bin/goose-acp" || { echo '::error::Signed app is missing goose-acp'; exit 1; }
 
       - name: Stage release assets and checksums
         env:
@@ -304,6 +305,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Set candidate version
         run: node scripts/candidate-version.mjs
+      # goose-acp's vendored OpenSSL runs Configure with `perl`. In this job's bash
+      # shell that is Git's MSYS perl, which lacks modules Configure needs.
+      - name: Select Strawberry Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          if (!(Test-Path $perl)) { throw "Strawberry Perl not found at $perl" }
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 1
+          if ($LASTEXITCODE -ne 0) { throw 'Strawberry Perl lacks OpenSSL Configure modules' }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
       - name: Build NSIS installer
         run: pnpm tauri build --ci --no-sign --bundles nsis --config "$RUNNER_TEMP/candidate.json" -- --locked
       - name: Install into disposable runner and verify app executable
@@ -316,6 +327,7 @@ jobs:
           $process = Start-Process $installers[0].FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
           if (!(Test-Path "$destination\buzz-foundation.exe")) { throw 'App executable missing' }
+          if (!(Test-Path "$destination\bin\goose-acp.exe")) { throw 'goose-acp missing' }
       - name: Stage candidate and checksum
         run: |
           mkdir release-assets
@@ -382,11 +394,13 @@ jobs:
           bash scripts/fix-appimage.sh "${images[0]}"
           dpkg-deb -x "${debs[0]}" "$RUNNER_TEMP/deb"
           test -x "$RUNNER_TEMP/deb/usr/bin/buzz-foundation"
+          test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/goose-acp"
           image=$(realpath "${images[0]}")
           mkdir "$RUNNER_TEMP/appimage"
           (cd "$RUNNER_TEMP/appimage" && "$image" --appimage-extract >/dev/null)
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/buzz-foundation"
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/buzz-foundation.bin"
+          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/goose-acp"
           mkdir release-assets
           cp "${debs[0]}" "release-assets/Buzz_${VERSION}_amd64.deb"
           cp "${images[0]}" "release-assets/Buzz_${VERSION}_x86_64.AppImage"

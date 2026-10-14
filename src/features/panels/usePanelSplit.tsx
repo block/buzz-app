@@ -39,6 +39,8 @@ export function usePanelSplit(
       <ResizeHandle
         label="Resize main and secondary panels"
         direction={-1}
+        target={ref}
+        property="--secondary-panel-width"
         width={width}
         min={minimum}
         max={max}

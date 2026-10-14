@@ -1343,14 +1343,10 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
     return screen.findByRole("dialog", { name: "Edit agent" });
   };
   let dialog = await open();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
-  );
-  await user.click(
-    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
   expect(
-    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
+    within(dialog).getByRole("button", { name: "Gloopies 1" }),
   ).toHaveAttribute("aria-pressed", "true");
   expect(
     within(dialog).queryByRole("textbox", { name: "Agent name" }),
@@ -1362,12 +1358,8 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   dialog = await open();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
-  );
-  await user.click(
-    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),
   );

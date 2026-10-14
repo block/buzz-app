@@ -46,8 +46,21 @@ fixed the resulting duplicate-button assertion. All 15 page/sidebar/share-attemp
 tests then passed (3.22s wall; 1.36s summed). Loading/transient, rejection and recovery
 assertions remain. The full 30 browser cases passed again after this integration:
 51.27s wall, 82.43s summed, slowest 5.28s. Both bounded cleanup reviews found no
-blocker. Final hooks and hosted status belong to the cleanup commit/PR; the
-earlier CI failure is not claimed green until rerun.
+blocker. Hosted CI at `0b0e47bcb` confirmed the personal-recipient repair, but
+failed three WebKit cases: held Share readback, an inactive IndexedDB transaction,
+and thread-history two-tab setup.
+
+At `0d9fc1998`, six added clock-control lines keep six pending-layout screenshots
+from consuming the intentionally held read's unchanged 10s production deadline.
+All assertions remain; no browser cases were added/removed. The focused case
+passed in both engines; both complete share files passed twice (36 cases, 1.1m).
+`e3a795c09` then merged main `0179c8b89`, including its exact late-IndexedDB-callback
+fix (#1062) and Virtua update. All four complete affected browser files passed:
+52 Chromium/WebKit cases, 1.3m wall, approximately 140.3s summed execution;
+slowest case 5.3s, slowest file thread-history 58.6s (rounded list-reporter times).
+Two workers, no retries, local Apple Silicon. The thread-tab failure did not
+reproduce; its cause is unconfirmed, not claimed fixed by the upstream update.
+Current-head hosted CI remains the next gate.
 
 ## Regression and test-layer accounting
 
@@ -103,7 +116,8 @@ Raw logs and screenshots remain outside Git.
 At the user's request, the `931271405` desktop was compiled and launched on
 2026-10-14, preserving port 13345 and the configured public identity. This is a
 native window using the development broker, not packaged native acceptance.
-Human confirmation of Share/Convert, packaged native persistence/relaunch, live
-relay ACL/Public history, cross-account discovery/no-wake and live-agent reply
-behavior remain separate gates. Current hosted checks and required human review
-must be verified at the latest PR head; prior green checks do not transfer.
+The author confirmed Share stays in Me and Convert moves to Messages on
+2026-10-14. Packaged native persistence/relaunch, live relay ACL/Public history,
+cross-account discovery/no-wake and live-agent replies remain separate gates.
+Current hosted checks and required human review must be verified at the latest
+PR head; prior green checks do not transfer.

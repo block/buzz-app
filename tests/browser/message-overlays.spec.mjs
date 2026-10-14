@@ -97,6 +97,11 @@ test("video speed options escape the thread and restore focus after selection an
       }),
     )
     .toBeCloseTo(40, 0);
+  // The scroll event commits reading intent after geometry changes. Opening
+  // the menu first can let a pending render follow the old bottom position.
+  await expect(
+    scroller.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
   await trigger.press("Enter");
   const menu = page.getByRole("menu", { name: /^Playback speed:/ });
   await expect(menu).toBeVisible();

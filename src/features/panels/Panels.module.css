@@ -1,3 +1,10 @@
+/* Only the split container consumes this width. Do not invalidate message styles
+   when dragging it; an unset value still uses each layout's existing fallback. */
+@property --secondary-panel-width {
+  syntax: "*";
+  inherits: false;
+}
+
 /* Shared panel content; pages choose the surrounding layout and dividers. */
 .cardLayout {
   min-width: 0;

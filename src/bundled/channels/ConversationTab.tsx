@@ -1,4 +1,3 @@
-import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { useRef, useState } from "react";
 import type {
   Attachment,
@@ -6,12 +5,12 @@ import type {
 } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
+  ConversationChannel,
+  ConversationComposer,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
@@ -83,13 +82,19 @@ export function ConversationTab({
         : null;
     setMedia({ messageId, attachment, seconds, hasComments });
   };
-  const interactions: ConversationInteractions = {
-    onOpenLink: openLink,
-    canOpenLink,
-    onOpenMediaReview: openMedia,
-  };
   return (
-    <MessageManagement session={session} channelId={channel.id} active={active}>
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      channel={channel}
+      active={active}
+      interactions={{
+        onOpenLink: openLink,
+        canOpenLink,
+        onOpenMediaReview: openMedia,
+      }}
+    >
       <section
         data-attachment-drop-zone=""
         onDragOver={rejectUnhandledFileDrop}
@@ -100,13 +105,8 @@ export function ConversationTab({
         <MessageManagementStatus />
         {sessionConversation && <SessionHeading channel={channel} />}
         {tab.kind === "thread" ? (
-          <ThreadPanel
-            sessionConversation={sessionConversation}
+          <ConversationThread
             active={active}
-            session={session}
-            scope={scope}
-            channelId={channel.id}
-            channelName={channel.name}
             messageId={tab.messageId}
             navigation={navigation}
             retainThread
@@ -117,33 +117,18 @@ export function ConversationTab({
             replyRequest={
               tab === restoredTab.current ? undefined : tab.replyRequest
             }
-            extensions={extensions}
             close={close}
-            {...interactions}
           />
         ) : (
           <SessionColumn enabled={sessionConversation}>
             <ChannelBody
-              queries={session}
-              scope={scope}
-              channelId={channel.id}
               viewer={session.viewer}
               cached={!!channel.cached}
-              extensions={extensions}
-              {...interactions}
               onOpenThread={openThread}
               revealMessageId={sent}
             />
-            <MessageComposer
-              sessionConversation={sessionConversation}
+            <ConversationComposer
               label={sessionConversation ? "Message this session" : undefined}
-              session={session}
-              scope={scope}
-              channelId={channel.id}
-              channelName={channel.name}
-              extensions={extensions}
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
               onSend={setSent}
             />
           </SessionColumn>
@@ -165,6 +150,6 @@ export function ConversationTab({
           />
         )}
       </section>
-    </MessageManagement>
+    </ConversationChannel>
   );
 }

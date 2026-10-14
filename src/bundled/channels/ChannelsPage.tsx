@@ -1,4 +1,3 @@
-import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import type { Agents } from "../../features/agents/service";
@@ -68,11 +67,11 @@ import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
+  ConversationChannel,
+  ConversationComposer,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
@@ -1113,11 +1112,6 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
-  const interactions: ConversationInteractions = {
-    onOpenLink: openLink,
-    canOpenLink,
-    onOpenMediaReview: openMediaReview,
-  };
   // The channel conversation: a session column, or the first main-pane tab.
   const body = (
     <SessionColumn enabled={flatSession}>
@@ -1154,18 +1148,13 @@ function ChannelWorkspace({
           <ChannelBody
             onContentReady={setContentReadyChannel}
             viewer={viewer}
-            extensions={extensions}
             key={current.id}
-            queries={queries}
-            scope={scope}
-            channelId={current.id}
             cached={cached}
             navigation={
               flatSession || !requestedMessage || exact?.inTimeline
                 ? navigation
                 : undefined
             }
-            {...interactions}
             onOpenThread={flatSession ? undefined : openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
@@ -1226,14 +1215,8 @@ function ChannelWorkspace({
         />
       )}
       {current && (!current.readOnly || current.cached) && (
-        <MessageComposer
-          sessionConversation={current.channelType === "session"}
-          extensions={extensions}
+        <ConversationComposer
           key={`composer:${current.id}`}
-          session={queries}
-          scope={scope}
-          channelId={current.id}
-          channelName={current.name}
           autoFocus={
             // The bound request arrives after the composer's first render.
             (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
@@ -1243,8 +1226,6 @@ function ChannelWorkspace({
             !requestedThread &&
             !routedThread
           }
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
           label={
             current.channelType === "session"
               ? "Message this session"
@@ -1612,9 +1593,19 @@ function ChannelWorkspace({
     </div>
   );
   return (
-    <MessageManagement session={queries} channelId={currentId}>
+    <ConversationChannel
+      session={queries}
+      scope={scope}
+      extensions={extensions}
+      channel={current}
+      interactions={{
+        onOpenLink: openLink,
+        canOpenLink,
+        onOpenMediaReview: openMediaReview,
+      }}
+    >
       {workspace}
-    </MessageManagement>
+    </ConversationChannel>
   );
 }
 

@@ -1,7 +1,9 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import {
-  ConversationHost,
-  type ConversationHostServices,
-} from "../../features/conversation/ConversationHost";
+  ConversationChannel,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import {
   type ReactNode,
   useEffect,
@@ -12,7 +14,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -399,51 +400,35 @@ export function DraftsView({
             )}
             <div className={styles.draftEditor}>
               {activeChannel ? (
-                <ConversationHost
+                <ConversationChannel
                   key={active.key}
-                  host={host}
                   session={session}
                   scope={session.scope}
-                  channelId={activeChannel.id}
-                  channelName={activeChannel.name}
-                  threadId={active.coordinates.threadRootId}
                   extensions={extensions}
+                  host={host}
+                  threadId={active.coordinates.threadRootId}
+                  channel={activeChannel}
+                  active={false}
                 >
-                  {(interactions) =>
-                    active.coordinates.threadRootId ? (
-                      <ThreadPanel
-                        key={active.key}
-                        session={session}
-                        scope={session.scope}
-                        extensions={extensions}
-                        channelId={activeChannel.id}
-                        channelName={activeChannel.name}
-                        messageId={active.coordinates.threadRootId}
-                        requireReadyRoot
-                        onDraftSaved={retire}
-                        sessionConversation={
-                          activeChannel.channelType === "session"
-                        }
-                        {...interactions}
-                      />
-                    ) : (
-                      <ChannelPreview
-                        interactions={interactions}
-                        key={active.key}
-                        session={session}
-                        extensions={extensions}
-                        channelId={activeChannel.id}
-                        channelName={
-                          activeChannel.channelType === "dm"
-                            ? `DM with ${destination(activeChannel)}`
-                            : activeChannel.name
-                        }
-                        draft
-                        onDraftSaved={retire}
-                      />
-                    )
-                  }
-                </ConversationHost>
+                  <MessageManagementStatus />
+                  {active.coordinates.threadRootId ? (
+                    <ConversationThread
+                      messageId={active.coordinates.threadRootId}
+                      requireReadyRoot
+                      onDraftSaved={retire}
+                    />
+                  ) : (
+                    <ChannelPreview
+                      channelName={
+                        activeChannel.channelType === "dm"
+                          ? `DM with ${destination(activeChannel)}`
+                          : activeChannel.name
+                      }
+                      draft
+                      onDraftSaved={retire}
+                    />
+                  )}
+                </ConversationChannel>
               ) : (
                 <p role="status" className="text-body text-subtle">
                   This conversation is unavailable. Your draft is unchanged.

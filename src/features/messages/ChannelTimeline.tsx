@@ -574,6 +574,8 @@ function Timeline({
       }
     };
     let frame = requestAnimationFrame(() => {
+      // A replaced effect's correction window ends at this effect's first frame.
+      layoutCorrection.current = false;
       if (intent.current === scheduledIntent && handle.current) {
         // Input can move the DOM before its scroll event is delivered.
         if (!restore && scroller.current && measuredPosition.current)
@@ -603,9 +605,10 @@ function Timeline({
               measuredPosition.current &&
               intent.current === scheduledIntent &&
               scroller.current
-            )
+            ) {
               recordPosition(scroller.current, true);
-            layoutCorrection.current = true;
+              layoutCorrection.current = true;
+            }
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
               layoutCorrection.current = false;
@@ -625,7 +628,6 @@ function Timeline({
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
-      layoutCorrection.current = false;
       // A row refresh can arrive before the first deferred measurement or
       // cancel its correction. Keep restoration until newer reader input.
       if (restore && !follow.current && intent.current === scheduledIntent) {

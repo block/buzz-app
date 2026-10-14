@@ -964,6 +964,42 @@ it("keeps bottom follow when the virtualizer correction scrolls after its height
   expect(h.saved().bottom).toBe(true);
 });
 
+it("a reader drag after a height commit still stops bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.element.scrollHeight += 120;
+  h.measureRows(false);
+  h.element.scrollTop -= 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  h.append();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("keeps bottom follow when a rows change lands between the height commit and its correction scroll", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  h.edit(false);
+  h.element.scrollTop -= 1;
+  h.dispatchScroll();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
 it("honors one cached top-edge gesture when the replacement head becomes verified", () => {
   const h = setup({
     hasMore: true,

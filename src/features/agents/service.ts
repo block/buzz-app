@@ -854,8 +854,6 @@ export class AgentsService extends Service implements Agents {
       session: RelaySession;
       online: ReadonlySet<string>;
       at: number;
-      /** The last send failed, so it is tried again sooner. */
-      failed?: boolean;
       /** The session cannot send presence, so it is not tried again. */
       unable?: boolean;
     }
@@ -2155,12 +2153,9 @@ export class AgentsService extends Service implements Agents {
       if (prior && was.size < prior.online.size)
         this.presence.set(origin, { ...prior, online: was });
       const gone = [...was].filter((pubkey) => !next.has(pubkey));
-      const due =
-        !same || now - prior.at >= (prior.failed ? RETRY_MS : PRESENCE_MS);
+      const due = !same || now - prior.at >= PRESENCE_MS;
       const changed =
         gone.length > 0 || [...next].some((pubkey) => !was.has(pubkey));
-      // After a failure, wait for the retry even if something changed.
-      if (same && prior.failed && !due) continue;
       if (!changed && (!due || !next.size)) continue;
       this.announcing.add(origin);
       const sent = { session: binding.session, online: next, at: now };
@@ -2189,14 +2184,11 @@ export class AgentsService extends Service implements Agents {
         .catch((error) => {
           if (binding.controller.signal.aborted) return;
           console.warn("Agent presence was not sent", error);
-          // Keep the agents not yet said to be offline, and try again sooner
-          // than the minute, but not every tick.
+          // Try again sooner than the minute, but not every tick.
           if (this.presence.get(origin) === sent)
             this.presence.set(origin, {
               ...sent,
-              online: new Set([...next, ...gone]),
-              at: Date.now(),
-              failed: true,
+              at: Date.now() - PRESENCE_MS + RETRY_MS,
             });
         })
         .finally(() => this.announcing.delete(origin));

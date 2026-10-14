@@ -21,12 +21,20 @@ const event = (fields: Partial<BuzzEvent>): BuzzEvent => ({
 });
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
-/** A community with `events` in it, answering filters by kind and a few tags. */
+/** A community with `events` in it, answering filters by kind and a few tags,
+ * newest first and a page at a time, as the relay does. */
 function fake(events: readonly BuzzEvent[] = []) {
   const published: Template[] = [];
   const matches = (filter: Filter, item: BuzzEvent) => {
     const tag = (name: string) =>
       item.tags.filter((t) => t[0] === name).map((t) => t[1]);
+    const { until, before_id } = filter as {
+      until?: number;
+      before_id?: string;
+    };
+    if (until !== undefined && item.created_at > until) return false;
+    if (item.created_at === until && before_id && item.id <= before_id)
+      return false;
     return Object.entries(filter).every(([key, value]) => {
       if (key === "kinds") return (value as number[]).includes(item.kind);
       if (key === "ids") return (value as string[]).includes(item.id);
@@ -38,9 +46,17 @@ function fake(events: readonly BuzzEvent[] = []) {
   };
   const client: BuzzClient = {
     pubkey: me,
-    query: vi.fn(async (filters: readonly Filter[]) =>
-      events.filter((item) => filters.some((filter) => matches(filter, item))),
-    ),
+    query: vi.fn(async (filters: readonly Filter[]) => {
+      const newest = [...events].sort(
+        (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+      );
+      const found = filters.map((filter) =>
+        newest
+          .filter((item) => matches(filter, item))
+          .slice(0, (filter.limit as number | undefined) ?? Infinity),
+      );
+      return newest.filter((item) => found.some((page) => page.includes(item)));
+    }),
     publish: vi.fn(async (template: Template) => {
       published.push(template);
       return event({ ...template, pubkey: me, id: "e".repeat(64) });
@@ -484,6 +500,59 @@ it("lists channels it can join as well as its own", async () => {
   await expect(callTool(client, {}, "channels", {})).resolves.toBe(
     `${room} plans`,
   );
+});
+
+it("finds a channel past the relay's first page, by name and then by ID", async () => {
+  const { client, state, published } = relay();
+  const channel = (n: number, name: string, created_at: number) => {
+    const d = `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const id = (k: number) => (k * 1000 + n).toString(16).padStart(64, "0");
+    state.push(
+      event({
+        id: id(1),
+        kind: 39000,
+        created_at,
+        tags: [["d", d], ["name", name], ["private"]],
+      }),
+      event({
+        id: id(2),
+        kind: 39002,
+        created_at,
+        tags: [
+          ["d", d],
+          ["p", me, "", "bot"],
+        ],
+      }),
+    );
+    return d;
+  };
+  for (let n = 1; n <= 500; n++) channel(n, `busy-${n}`, 1000 + n);
+  const fixers = channel(501, "fixers", 10);
+  const row = `${fixers} fixers (private)`;
+  await expect(callTool(client, {}, "channels", { q: "fixers" })).resolves.toBe(
+    row,
+  );
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "FIXERS" }),
+  ).resolves.toBe(row);
+  await expect(
+    callTool(client, {}, "channel", { channel: fixers }),
+  ).resolves.toBe(`${fixers} fixers (private)\nyou: bot`);
+  await expect(
+    callTool(client, {}, "canvas", { channel: fixers }),
+  ).resolves.toBe("No canvas.");
+  const unseen =
+    "No channel fixers that you can see. channels with q finds a channel's ID by name.";
+  await expect(
+    callTool(client, {}, "channel", { channel: "fixers" }),
+  ).rejects.toThrow(unseen);
+  await expect(
+    callTool(client, {}, "canvas", { channel: "fixers" }),
+  ).rejects.toThrow(unseen);
+  await expect(
+    callTool(client, {}, "canvas", { channel: "fixers", text: "# Plan" }),
+  ).rejects.toThrow(unseen);
+  expect(published).toEqual([]);
 });
 
 it("creates a channel from its owner's template, reporting each agent it could not add", async () => {

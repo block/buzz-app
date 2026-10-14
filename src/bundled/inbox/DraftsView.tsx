@@ -263,7 +263,9 @@ export function DraftsView({
                         size="default"
                         alt=""
                         fallback={label}
-                        src={artwork ? session.media(artwork) : undefined}
+                        src={
+                          artwork ? session.media(artwork, "small") : undefined
+                        }
                         shape={
                           profiles.get(first)?.isAgent ? "squircle" : "circle"
                         }

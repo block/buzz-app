@@ -143,7 +143,7 @@ function PreviewContent({
           shape={message.workflowOwnerId ? "squircle" : "circle"}
           src={
             !message.workflowOwnerId && profile?.picture
-              ? (session.media(profile.picture) ?? null)
+              ? (session.media(profile.picture, "small") ?? null)
               : null
           }
         />

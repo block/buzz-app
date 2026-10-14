@@ -119,7 +119,9 @@ function ActivityRow({
             <Avatar
               name={name}
               src={
-                profile?.picture ? session.media(profile.picture) : undefined
+                profile?.picture
+                  ? session.media(profile.picture, "small")
+                  : undefined
               }
               shape={isAgent ? "squircle" : "circle"}
               className={activityStyles.activityAvatar ?? ""}

@@ -291,10 +291,11 @@ function Members({
               ? []
               : allowedActions(role, member, member.pubkey === viewer);
             const label = name(member.pubkey);
+            const picture = profiles.get(member.pubkey)?.picture;
             return (
               <li key={member.pubkey} className="flex items-center gap-3 py-2">
                 <Avatar
-                  src={profiles.get(member.pubkey)?.picture}
+                  src={picture ? session.media(picture, "small") : undefined}
                   alt=""
                   fallback={label}
                 />

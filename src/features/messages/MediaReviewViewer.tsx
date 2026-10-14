@@ -246,7 +246,7 @@ function ReviewShell({
             author: row.workflowOwnerId ? workflowLabel(name) : name,
             picture:
               !row.workflowOwnerId && profile?.picture
-                ? session.media(profile.picture)
+                ? session.media(profile.picture, "small")
                 : undefined,
           },
         ];

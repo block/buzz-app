@@ -266,7 +266,7 @@ function ActivityBubble({
                 id: entry.agent,
                 name: entry.name,
                 src: entry.picture
-                  ? props.session.media(entry.picture)
+                  ? props.session.media(entry.picture, "small")
                   : undefined,
                 shape: "squircle",
               }))}
@@ -433,7 +433,7 @@ function ActivityAvatar({
 }) {
   return (
     <Avatar
-      src={entry.picture ? session.media(entry.picture) : null}
+      src={entry.picture ? session.media(entry.picture, "small") : null}
       alt={entry.name}
       fallback={entry.name}
       size={size}

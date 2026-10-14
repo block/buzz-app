@@ -37,6 +37,7 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
+import { mediaUrl } from "../../features/relay/transport";
 import {
   decodeReadState,
   signReadState,
@@ -1330,7 +1331,7 @@ function fixture(
             ...(options.archivedChannel ? [["archived", "true"]] : []),
           ]),
     ]),
-    profile(alice, { name: "Alice" }),
+    profile(alice, { name: "Alice", picture: alicePicture }),
     ...roots,
     mention,
     reply,
@@ -1429,7 +1430,10 @@ function fixture(
         }
         return filters.flatMap(answer);
       },
-      media: () => undefined,
+      // The real sizing rewrite behind a pass-through proxy, so rows resolve
+      // relay-hosted pictures to the variant they actually requested.
+      media: (url, size) =>
+        mediaUrl(url, (proxied) => proxied, "https://relay.test", size),
       ...(options.withWriter
         ? {
             writer: {
@@ -1771,6 +1775,8 @@ function fixture(
     },
   };
 }
+/** Relay-hosted, so `media()` decides which variant the row loads. */
+const alicePicture = `https://relay.test/media/${"a".repeat(64)}.png`;
 const rows = () =>
   within(
     screen.getByRole("list", { name: "Inbox conversations" }),
@@ -1948,6 +1954,11 @@ it("excludes archived-channel mentions and threads without hiding active DMs", a
   );
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("A direct reply");
+  // The sender avatar reuses the thumbnail message rows load, not the original.
+  expect(rows()[0]?.querySelector("img")).toHaveAttribute(
+    "src",
+    alicePicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   await chooseFilter("Mentions");
   expect(rows()).toHaveLength(0);
   await chooseFilter("Threads");

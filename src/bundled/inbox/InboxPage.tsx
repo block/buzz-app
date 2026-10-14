@@ -956,7 +956,7 @@ export function InboxView({
                                 }
                                 src={
                                   !item.workflowOwnerId && profile?.picture
-                                    ? session.media(profile.picture)
+                                    ? session.media(profile.picture, "small")
                                     : undefined
                                 }
                                 shape={

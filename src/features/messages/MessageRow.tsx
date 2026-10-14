@@ -42,6 +42,7 @@ import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
+import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import {
@@ -491,12 +492,17 @@ function MessageRowContent({
           </span>
         )}
         <div className={styles.messageBody}>
-          {opened && session && (
+          {opened && session && extensions?.actions && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>
-              <opened.component
-                message={row}
-                session={session}
-                close={() => setOpenAction(undefined)}
+              <WithTargetOpener
+                component={opened.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={opened}
               />
             </ContributionBoundary>
           )}
@@ -952,10 +958,20 @@ function MessageRowContent({
 export const MessageRow = memo(function AudienceMessageRow(
   props: MessageRowProps,
 ) {
-  return props.row.audience === "agents" ? (
-    <AgentsMessageRow {...props} />
-  ) : (
-    <FullMessageRow {...props} />
+  const { onOpenLink, canOpenLink, row } = props;
+  const rootId = row.threadRootId ?? row.id;
+  // Plugin content in this row opens targets as the row's own links do.
+  return (
+    <TargetOpenerProvider
+      canOpen={(target) => canOpenLink?.(target) ?? false}
+      open={(target) => onOpenLink(target, { rootId })}
+    >
+      {row.audience === "agents" ? (
+        <AgentsMessageRow {...props} />
+      ) : (
+        <FullMessageRow {...props} />
+      )}
+    </TargetOpenerProvider>
   );
 });
 

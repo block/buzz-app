@@ -102,6 +102,7 @@ import type {
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
+import { TargetOpenerProvider } from "../conversation/opener";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -246,11 +247,13 @@ export function MessageComposer(props: MessageComposerProps) {
   )}`;
   return (
     <TypingPresentation active key={key}>
-      {props.personalConversation ? (
-        <PersonalComposer {...props} />
-      ) : (
-        <Composer {...props} />
-      )}
+      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
+        {props.personalConversation ? (
+          <PersonalComposer {...props} />
+        ) : (
+          <Composer {...props} />
+        )}
+      </TargetOpenerProvider>
     </TypingPresentation>
   );
 }

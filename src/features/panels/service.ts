@@ -16,7 +16,10 @@ export type PanelContext = Readonly<{
   /** Thread root of the message the panel was opened from, when there is one. */
   rootId?: string;
   canOpen(target: string): boolean;
-  /** Replace this panel through its host. False after this opening is retired. */
+  /**
+   * Open a target through the host. A tab replaces itself; a channel drawer or
+   * side column opens the target as a tab. False after this opening is retired.
+   */
   open(target: string): boolean;
   /** Drill into a child while the channel host retains the previous view. */
   push?(target: string): boolean;
@@ -37,6 +40,11 @@ export type ChannelLauncherProps = {
   toggle(target: string): void;
   /** False after this page binding or exact contribution is retired. */
   available(): boolean;
+  /** Presentation only; the page re-resolves targets when opening. */
+  canOpen(target: string): boolean;
+  /** Open another target, such as a panel URL, as a tab in this channel.
+   * False after this page binding or exact contribution is retired. */
+  open(target: string): boolean;
 };
 export type PanelProps = {
   /** Supplied only by a channel presentation; sessions decide when to capture it. */

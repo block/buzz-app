@@ -269,10 +269,21 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
-  const drawer = useChannelPanels(panels, drawerContext, () => {
-    onOpenDrawer?.();
-    tabState.setPaneOpen(true);
-  });
+  const drawer = useChannelPanels(
+    panels,
+    drawerContext,
+    () => {
+      onOpenDrawer?.();
+      tabState.setPaneOpen(true);
+    },
+    {
+      canOpen: canOpenLink,
+      // Called only after render, once the link handler below exists.
+      open: (target) =>
+        !!drawerContext &&
+        openConversationLink(drawerContext.channelId, target),
+    },
+  );
   const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
   const mainTabs = mainPane
     ? tabState.tabs.filter((tab) => tabPane(tab) === "main")

@@ -2316,3 +2316,145 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
     cleanup();
   }
 });
+
+it("lets message plugins open targets through the row's link handler", async () => {
+  const contribution = <T extends object>(id: string, value: T) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    ...value,
+  });
+  const listeners = new Set<() => void>();
+  const reader = <T,>(get: () => readonly T[]) => ({
+    snapshot: get,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  let retainedOpen: ((target: string) => boolean) | undefined;
+  const renderer = contribution("body", {
+    matches: () => true,
+    component: ({
+      message,
+      open,
+    }: {
+      message: ChannelMessage;
+      open(target: string): boolean;
+    }) => {
+      retainedOpen = open;
+      return (
+        <button type="button" onClick={() => open("panel:body")}>
+          Body {message.content}
+        </button>
+      );
+    },
+  });
+  let messages = [renderer];
+  const inline = contribution("inline", {
+    matches: () => [{ start: 0, end: 4 }],
+    component: ({
+      text,
+      open,
+    }: {
+      text: string;
+      open(target: string): boolean;
+    }) => (
+      <button type="button" onClick={() => open("panel:inline")}>
+        Inline {text}
+      </button>
+    ),
+  });
+  const action = contribution("Open work", {
+    matches: () => true,
+    component: ({
+      open,
+      canOpen,
+      close,
+    }: {
+      open(target: string): boolean;
+      canOpen(target: string): boolean;
+      close(): void;
+    }) => (
+      <button
+        type="button"
+        disabled={!canOpen("panel:action")}
+        onClick={() => {
+          open("panel:action");
+          close();
+        }}
+      >
+        Action open
+      </button>
+    ),
+  });
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const inlines = [inline];
+  const actions = [action];
+  const extensions = {
+    tools: reader(() => none),
+    inline: reader(() => inlines),
+    actions: reader(() => actions),
+    messages: reader(() => messages),
+  };
+  const open = vi.fn(() => true);
+  const rowProps = {
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: open,
+    canOpenLink: (target: string) => target.startsWith("panel:"),
+    day: false,
+    retry: undefined,
+  };
+  try {
+    renderDom(
+      <MessageRow
+        {...rowProps}
+        row={{ ...row, id: "reply", threadRootId: "root", replyCount: 0 }}
+        extensions={extensions}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Body Root" }));
+    expect(open).toHaveBeenLastCalledWith("panel:body", { rootId: "root" });
+    // The whole-body renderer hides inline text; remove it to reach inline.
+    messages = [];
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+    open.mockClear();
+    expect(retainedOpen?.("panel:body")).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Inline Root" }));
+    expect(open).toHaveBeenLastCalledWith("panel:inline", { rootId: "root" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open work" }));
+    const button = await screen.findByRole("button", { name: "Action open" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(open).toHaveBeenLastCalledWith("panel:action", { rootId: "root" });
+  } finally {
+    cleanup();
+  }
+});

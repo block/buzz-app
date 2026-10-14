@@ -126,6 +126,8 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   page,
   app,
 }) => {
+  // Startup autofocus must not read messages before the unread baseline exists.
+  await holdReadingFocus(page);
   await open(page, app);
   await expect
     .poll(() =>
@@ -143,6 +145,7 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   const base = Date.now();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 20_000);
+  await releaseReadingFocus(page);
   await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect((await journal(page)).state.frontiers).toEqual({});
   expect(app.report.readPublications).toEqual([]);

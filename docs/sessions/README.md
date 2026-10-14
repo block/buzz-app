@@ -14,7 +14,7 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   migration, membership revocation, nested creation or transcript copy.
 - Projects are existing Me groups, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
-  draft, channel ID, lifetime, Canvas and group defaults in the existing pending-start
+  draft, channel ID, name, lifetime, Canvas and group defaults in the existing pending-start
   receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
 - New Me conversations add a `personal` line to the session description
@@ -48,8 +48,9 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   activity or start an agent. Proposal documents remain design history, not
   implemented behavior.
 - Me chats and drafts use the full conversation pane. Right-click,
-  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel, Rename, Move to a Me
-  project, Copy and Chat settings (where eligible). Opening a row menu does not select the row.
+  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel,
+  Move to a Me project, Copy and Session settings (where eligible). Opening a row
+  menu does not select the row.
   A chat can also be dragged with a pointer onto another project or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
   rollback notice and Retry. Like Messages' empty Starred, a hidden empty
@@ -129,16 +130,18 @@ Parent-linked sessions do not offer this control.
 The validated `ttlSeconds` is frozen in the local first-attempt receipt before
 asynchronous setup begins and sent as the fourth `workSessions.create` argument.
 Retries reuse the saved creation event ID: no second creation or create-then-edit.
-Local settings now store Canvas and lifetime together; old Canvas-only strings
+Local settings now store name, Canvas and lifetime together; old Canvas-only strings
 still load. Invalid stored durations are visible failures, not implicit Ongoing.
 Setup, Me placement, and first-message ordering retain their existing owners.
 
-**Session settings…** in the session header and personal Me row menus opens one
-scrollable dialog, with **Lifetime** below Workspace/Canvas and one **Save changes**
-action. There is no separate lifetime menu or tab. Changed Canvas confirms first,
-then changed lifetime uses fresh signed channel details. Name, marker, privacy,
-history, membership and Me placement remain unchanged. A no-op closes without
-writing. If lifetime fails after Canvas confirms, the dialog keeps both choices
+**Session settings…** in the session header and saved-session row menus opens one
+scrollable dialog, with **Session name (optional)** above Workspace/Canvas,
+**Lifetime** below it, and one **Save changes** action. The separate Rename editor
+and menu action have been removed. There is no separate lifetime menu or tab.
+Changed Canvas confirms first, then changed name/lifetime use one fresh signed
+channel-details operation. The session marker, privacy, history, membership and
+Me placement remain unchanged. A no-op closes without writing. If details fail
+after Canvas confirms, the dialog keeps the choices
 and retry skips that confirmed Canvas revision. Partial confirmation is explained
 as an error, not presented as two independent normal save states.
 
@@ -157,13 +160,52 @@ internal preparation or already dispatched write. No atomic rollback or composit
 app-restart journal is added. Native GUI, packaged/live-relay and renewed human
 acceptance remain separate gates.
 
-The edit wire command is exact `h,name[,ttl]`: unchanged lifetime omits `ttl`, a
-changed positive canonical decimal (1–2147483647) sets it, and an empty value
-removes it. It omits `about` and visibility entirely. Creation permits positive
+The edit wire command is exact `h,name[,about][,ttl]`; `about` is included only
+when changing naming provenance and contains the validated session marker.
+Unchanged lifetime omits `ttl`; a changed positive canonical decimal
+(1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
+omit `about`; session settings always omit visibility. Creation permits positive
 TTL only for an ordinary channel or the exact standalone session marker, never a
 parent-linked marker; empty creation TTL is rejected. Browser and native signing
 and publish guards enforce this syntax independently. The host grammar cannot
 prove parent ancestry; the shared fresh-details owner remains edit authority.
+
+## Optional naming
+
+New and saved sessions use the same Session settings form. A blank new name retains
+the first-prompt automatic title (80 code points, canonicalized like relay names).
+Explicit names use the shared canonical 1–120-code-point validation. The first
+attempt freezes both the selected title and its automatic fallback before any
+asynchronous setup; retries do not change them when prompt or local settings change.
+Old Canvas-only settings and pending receipts still load without a migration or
+another creation/rename operation.
+
+New session `about` metadata retains the existing marker, optional parent line,
+and one optional canonical `naming:` JSON line. Its `automatic` title is immutable
+through session settings; `explicit` records whether the signed channel name is a
+chosen name. Clear sets that same channel's name to the retained automatic title,
+never an empty wire name. Historical markers have unknown naming provenance:
+renaming records `explicit:true` without inventing an automatic fallback. Clearing
+when that fallback is unavailable fails visibly and preserves the name. Parent-linked
+sessions retain their existing details-write exclusion.
+
+Naming uses the existing fresh signed authority/version check and exact full details
+readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save
+is checked without republishing or implicitly saving newer Canvas drafts. Browser
+and native guards consume a shared naming contract fixture, including legacy markers
+and malformed/contradictory evidence. Relay compatibility is based on local block/buzz
+`4472da6491f7d76ebcffed4b65c341a3278aa25f` source: create/edit preserve the `about`
+description and signed kind-39000 discovery emits it verbatim. This is source
+compatibility evidence, not live-relay or cross-version-client acceptance. Older
+clients that do not recognize the extended marker may present it as an ordinary
+private channel; no membership/access policy changes.
+
+Generated sharing messages and recovery receipts keep their original numeric
+labels and signed bytes. Eligible members see **Session: current explicit name**
+on old and newly posted generated links; automatic/unknown naming keeps the numeric
+label. Signed discovery updates drive rendering without a new details read, repost,
+or navigation. Arbitrary authored labels, raw pasted URLs and message/thread links
+are unchanged; copied selection retains the authored label and link URL.
 
 ## Owners and validation limits
 

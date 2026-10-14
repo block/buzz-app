@@ -151,21 +151,33 @@ export function MessageLink({
       setCopying(false);
     }
   }
-  const sessionChip =
-    !!session &&
+  const generatedSessionLink =
     !!destination &&
     !destination.messageId &&
-    !!session.channels
-      .list()
-      .channels.find(
-        (item) =>
-          item.id === destination.channelId &&
-          item.channelType === "session" &&
-          !item.cached &&
-          !item.readOnly &&
-          item.members?.includes(session.viewer ?? ""),
-      ) &&
+    !destination.threadRootId &&
     label === `Session · ${destination.channelId.slice(0, 8)}`;
+  const sessionLabel = useSyncExternalStore(
+    generatedSessionLink
+      ? (session?.channels.subscribeList ?? subscribe)
+      : subscribe,
+    () => {
+      if (!generatedSessionLink) return "";
+      const item = session?.channels
+        .list()
+        .channels.find((item) => item.id === destination?.channelId);
+      if (
+        item?.channelType !== "session" ||
+        item.cached ||
+        item.readOnly ||
+        !item.members?.includes(session?.viewer ?? "")
+      )
+        return "";
+      return item.sessionNamed ? `Session: ${item.name}` : (label ?? "");
+    },
+    () => "",
+  );
+  const sessionChip = !!sessionLabel;
+  const sessionNamed = sessionLabel.startsWith("Session:");
   const preview =
     session && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
@@ -218,8 +230,14 @@ export function MessageLink({
       sessionChip && destination ? (
         <span className={styles.sessionChip}>
           <FileTextIcon size="1em" aria-hidden="true" />
-          <span className="text-subtle">Session</span>
-          <span>· {destination.channelId.slice(0, 8)}</span>
+          <span className={`text-subtle ${styles.sessionPrefix}`}>
+            {sessionNamed ? "Session:" : "Session"}
+          </span>
+          <span className={styles.sessionName}>
+            {sessionNamed
+              ? sessionLabel.slice("Session: ".length)
+              : `· ${destination.channelId.slice(0, 8)}`}
+          </span>
         </span>
       ) : Content ? (
         <Content url={url} />
@@ -231,7 +249,7 @@ export function MessageLink({
       <a
         ref={trigger}
         href={url}
-        aria-label={display}
+        aria-label={sessionChip ? sessionLabel : display}
         data-link-label={label ?? ""}
         title={
           withheld

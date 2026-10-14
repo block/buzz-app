@@ -1540,3 +1540,73 @@ it("allows changing an unavailable assistant before any remote creation", async 
     ["a".repeat(64)],
   );
 });
+
+it.each(["", "Make contrast accessible"])(
+  "freezes optional name %j and automatic fallback before asynchronous setup",
+  async (name) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    writeView("test", "sessions:settings", { name, ttlSeconds: 600 });
+    writeView("test", "sessions:new-draft", "Original prompt");
+    h.workSessions.create.mockImplementationOnce(() => {
+      throw new Error("Unavailable");
+    });
+    const view = () => (
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={started}
+      />
+    );
+    const mounted = render(view());
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+    mounted.unmount();
+    writeView("test", "sessions:settings", { name: "Later name" });
+    render(view());
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Control>}a{/Control}Replacement prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    for (const call of h.workSessions.create.mock.calls) {
+      expect(call[1]).toBe(name || "Original prompt");
+      expect(call[4]).toEqual({
+        automatic: "Original prompt",
+        explicit: !!name,
+      });
+    }
+    expect(h.messages.send).toHaveBeenCalledOnce();
+  },
+);
+it("draft naming shares the existing Save and persists locally without creation", async () => {
+  const h = setup(),
+    user = userEvent.setup();
+  render(
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  );
+  const input = await screen.findByRole("textbox", {
+    name: "Session name (optional)",
+  });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, "Named draft");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  );
+  expect(
+    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Named draft");
+  expect(h.workSessions.create).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});

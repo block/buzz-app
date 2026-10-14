@@ -688,3 +688,40 @@ it("does not commit a roster read that lands after the list stopped being ready"
     test.store.dispose();
   }
 });
+
+it("projects explicit session names only from signed naming metadata, retaining session routing", async () => {
+  const { store, queries, next } = setup();
+  queries.ensureList();
+  const event = (explicit: boolean, time: number) =>
+    signed(relay, {
+      kind: 39000,
+      created_at: time,
+      content: "",
+      tags: [
+        ["d", "work"],
+        ["name", explicit ? "Named" : "First prompt"],
+        ["t", "stream"],
+        ["private"],
+        [
+          "about",
+          `Buzz session (buzz.sessions/v1)\nnaming:${JSON.stringify({ automatic: "First prompt", explicit })}`,
+        ],
+      ],
+    });
+  next().respond([roster(relay, "work", [viewer.pubkey]), event(true, 10)]);
+  await flush();
+  expect(queries.list().channels[0]).toMatchObject({
+    name: "Named",
+    channelType: "session",
+    sessionNamed: true,
+  });
+  queries.refreshList?.();
+  next().respond([roster(relay, "work", [viewer.pubkey]), event(false, 20)]);
+  await flush();
+  expect(queries.list().channels[0]).toMatchObject({
+    name: "First prompt",
+    channelType: "session",
+  });
+  expect(queries.list().channels[0]).not.toHaveProperty("sessionNamed");
+  store.dispose();
+});

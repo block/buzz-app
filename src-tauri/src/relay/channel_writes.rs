@@ -92,7 +92,17 @@ fn details(event: &EventTemplate) -> bool {
             .trim_end_matches(char::is_whitespace)
             == name
         && about.chars().count() <= 1000
-        && !about.contains("Buzz session (")
+        && (!about.contains("Buzz session (")
+            || session_parts(about).is_some_and(|(parent, _personal, naming)| {
+                parent.is_none()
+                    && naming.is_some_and(|n| {
+                        (n.explicit || n.automatic.as_deref() == Some(name))
+                            && !event
+                                .tags
+                                .iter()
+                                .any(|t| t.first().is_some_and(|k| k == "visibility" || k == "t"))
+                    })
+            }))
 }
 fn lifecycle(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9002 | 9008 | 9021 | 9022 | 41012)
@@ -205,6 +215,62 @@ pub(crate) async fn relay_channel_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_naming_matches_shared_contract_at_sign_and_publish_boundaries() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/sessions/naming-contract.json"
+        ))
+        .unwrap();
+        let host = IdentityHost::fixture();
+        for (group, accepted) in [("accepted", true), ("rejected", false)] {
+            for row in cases[group].as_array().unwrap() {
+                let name = row["name"].as_str().unwrap();
+                let about = row["about"].as_str().unwrap();
+                let event = EventTemplate {
+                    kind: 9002,
+                    created_at: 12,
+                    content: String::new(),
+                    tags: vec![
+                        vec!["h".into(), uuid::Uuid::nil().to_string()],
+                        vec!["name".into(), name.into()],
+                        vec!["about".into(), about.into()],
+                    ],
+                };
+                assert_eq!(valid("channel-details", &event), accepted, "{about}");
+                assert_eq!(
+                    validate(
+                        "channel-details",
+                        &serde_json::to_value(&event).unwrap(),
+                        None
+                    )
+                    .is_ok(),
+                    accepted
+                );
+                let signed = tauri::async_runtime::block_on(
+                    host.sign(template(&serde_json::to_value(&event).unwrap()).unwrap()),
+                )
+                .unwrap();
+                assert_eq!(
+                    validate(
+                        "channel-details",
+                        &signed,
+                        Some(signed["pubkey"].as_str().unwrap())
+                    )
+                    .is_ok(),
+                    accepted
+                );
+                let mut create = event;
+                create.kind = 9007;
+                create
+                    .tags
+                    .insert(2, vec!["visibility".into(), "private".into()]);
+                create
+                    .tags
+                    .insert(3, vec!["channel_type".into(), "stream".into()]);
+                assert_eq!(creation(&create), accepted);
+            }
+        }
+    }
     #[test]
     fn session_rename_only_admits_a_canonical_name() {
         let mut event = EventTemplate {
@@ -445,6 +511,9 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         };
         if about.chars().count() > 1000
             || (about.contains("Buzz session (") && !session_metadata(about))
+            || session_parts(about).is_some_and(|(_, _personal, naming)| {
+                naming.is_some_and(|n| !n.explicit && n.automatic.as_deref() != Some(name))
+            })
         {
             return false;
         }
@@ -897,25 +966,59 @@ pub(super) fn channel_label(label: &str) -> bool {
         && !matches!(label, "stream" | "forum" | "dm" | "workflow" | "system")
 }
 
-/// Mirrors `sessionMetadata` in `src/features/sessions/metadata.ts`: the header,
-/// then an optional `parent:<uuid>` line, then an optional `personal` line.
-fn session_metadata(description: &str) -> bool {
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct SessionNaming {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    automatic: Option<String>,
+    explicit: bool,
+}
+fn session_parts(description: &str) -> Option<(Option<&str>, bool, Option<SessionNaming>)> {
     const PREFIX: &str = "Buzz session (buzz.sessions/v1)";
-    let mut lines = description.split('\n');
-    if lines.next() != Some(PREFIX) {
-        return false;
+    let mut lines = description.split('\n').peekable();
+    if lines.next()? != PREFIX {
+        return None;
     }
-    let mut next = lines.next();
-    if let Some(parent) = next.and_then(|line| line.strip_prefix("parent:")) {
-        if !uuid(parent) {
-            return false;
+    let parent = if lines.peek().is_some_and(|s| s.starts_with("parent:")) {
+        let id = lines.next()?.strip_prefix("parent:")?;
+        if !uuid(id) {
+            return None;
         }
-        next = lines.next();
+        Some(id)
+    } else {
+        None
+    };
+    let personal = lines.peek() == Some(&"personal") && lines.next().is_some();
+    let naming = if let Some(line) = lines.next() {
+        let json = line.strip_prefix("naming:")?;
+        let naming: SessionNaming = serde_json::from_str(json).ok()?;
+        if let Some(name) = &naming.automatic {
+            if name.is_empty()
+                || name.chars().count() > 80
+                || name
+                    .trim_start_matches(|c: char| c == '#' || c.is_whitespace())
+                    .trim_end_matches(char::is_whitespace)
+                    != name
+            {
+                return None;
+            }
+        } else if !naming.explicit {
+            return None;
+        }
+        if serde_json::to_string(&naming).ok()? != json {
+            return None;
+        }
+        Some(naming)
+    } else {
+        None
+    };
+    if lines.next().is_some() {
+        return None;
     }
-    if next == Some("personal") {
-        next = lines.next();
-    }
-    next.is_none()
+    Some((parent, personal, naming))
+}
+fn session_metadata(description: &str) -> bool {
+    session_parts(description).is_some()
 }
 
 #[cfg(test)]

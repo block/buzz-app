@@ -11,6 +11,9 @@ export type PendingStart = {
   creationId?: string;
   messageId?: string;
   ttlSeconds?: number | undefined;
+  name?: string;
+  automaticName?: string;
+  explicitName?: boolean;
   setup?: SessionSetup;
   setupDone?: boolean;
   placementDone?: boolean;

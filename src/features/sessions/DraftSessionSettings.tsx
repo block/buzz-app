@@ -1,12 +1,16 @@
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
-import { detailsDraftErrors } from "../relay/channel-details-protocol";
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+} from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
 import { useEffect, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./WorkspaceSettings.module.css";
 import { WorkspaceFields } from "./WorkspaceFields";
@@ -23,6 +27,7 @@ export function DraftSessionSettings({
   sectionId,
   personal = false,
   canvas,
+  name = "",
   save,
   close,
   ttlSeconds,
@@ -32,11 +37,21 @@ export function DraftSessionSettings({
   sectionId?: string | undefined;
   personal?: boolean;
   canvas?: string | undefined;
+  name?: string | undefined;
   ttlSeconds?: number | undefined;
   parentLinked?: boolean;
-  save(canvas: string, ttlSeconds?: number): void;
+  save(canvas: string, ttlSeconds?: number, name?: string): void;
   close(): void;
 }) {
+  const [value, setValue] = useState(typeof name === "string" ? name : "");
+  const normalized = canonicalDetailsName(value);
+  const nameError = normalized
+    ? detailsDraftErrors({
+        name: normalized,
+        description: "",
+        visibility: "private",
+      }).name
+    : undefined;
   const [ttl, setTtl] = useState(ttlSeconds);
   const [temporaryTtl, setTemporaryTtl] = useState(
     ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
@@ -93,7 +108,9 @@ export function DraftSessionSettings({
           <Button onClick={close}>Cancel</Button>
           <Button
             variant="prominent"
-            disabled={!loaded || (!parentLinked && !!lifetimeError)}
+            disabled={
+              !loaded || !!nameError || (!parentLinked && !!lifetimeError)
+            }
             onClick={() => {
               try {
                 save(
@@ -101,6 +118,7 @@ export function DraftSessionSettings({
                     ? workspaceCanvas(workspace)
                     : workspaceCanvas({ folders: [], canvas: raw }),
                   parentLinked ? undefined : ttl,
+                  normalized,
                 );
                 close();
               } catch (reason) {
@@ -116,6 +134,17 @@ export function DraftSessionSettings({
       }
     >
       <div className={styles.fields}>
+        <Field
+          label="Session name (optional)"
+          description="Leave blank to use the first prompt."
+          error={nameError}
+        >
+          <Input
+            value={value}
+            disabled={!loaded}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
         {loaded ? (
           raw === undefined ? (
             <WorkspaceFields value={workspace} onChange={setWorkspace} />

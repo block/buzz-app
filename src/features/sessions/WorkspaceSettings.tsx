@@ -9,6 +9,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Select } from "../../shared/design-system/ui/Select";
+import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
 import { readView, writeView } from "../../shared/view-state";
@@ -190,7 +191,7 @@ export function WorkspaceSettings({
         if (lifetime.changed && lifetime.blocked)
           throw new Error(
             lifetime.invalid ||
-              "Reload session details before saving lifetime.",
+              "Reload session details before saving name or lifetime.",
           );
         if (
           canvas !== undefined &&
@@ -231,7 +232,7 @@ export function WorkspaceSettings({
               })
             )
               throw new Error(
-                "The confirmed Canvas revision couldn’t be saved on this device. Lifetime was not sent; keep this dialog open to retry.",
+                "The confirmed Canvas revision couldn’t be saved on this device. Name and lifetime were not sent; keep this dialog open to retry.",
               );
           }
         }
@@ -304,6 +305,19 @@ export function WorkspaceSettings({
       }
     >
       <div className={styles.fields} inert={busy}>
+        {lifetime.available && lifetime.base && (
+          <Field
+            label="Session name (optional)"
+            description="Leave blank to restore the automatic name."
+            error={lifetime.nameError}
+          >
+            <Input
+              value={lifetime.name}
+              disabled={busy || lifetime.busy || lifetime.nameBlocked}
+              onChange={(event) => lifetime.changeName(event.target.value)}
+            />
+          </Field>
+        )}
         {loaded && (
           <>
             {target.kind === "section" && templates.length > 0 && (
@@ -386,7 +400,7 @@ export function WorkspaceSettings({
                 temporary={lifetime.ttl !== undefined}
                 ttlSeconds={lifetime.temporaryTtl}
                 disabled={busy || lifetime.busy || lifetime.blocked}
-                error={lifetime.invalid}
+                error={lifetime.lifetimeError}
                 onChange={lifetime.change}
               />
             ) : (

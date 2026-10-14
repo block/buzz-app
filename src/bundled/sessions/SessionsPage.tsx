@@ -27,7 +27,6 @@ import channelStyles from "../channels/Channels.module.css";
 import { SessionShare } from "./SessionShare";
 import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
-import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
 import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
@@ -40,11 +39,7 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import {
-  DotsThreeIcon,
-  GearIcon,
-  PencilSimpleIcon,
-} from "../../shared/design-system/icons";
+import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -349,7 +344,6 @@ function SessionWork({
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
-  const [renameOpen, setRenameOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const shareAttempts = useSessionShareAttempts(session);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
@@ -510,17 +504,6 @@ function SessionWork({
                 )}
                 <MenuItem
                   disabled={
-                    !!channel.readOnly || !session.channelDetails?.available
-                  }
-                  onClick={() => setRenameOpen(true)}
-                >
-                  <MenuIcon>
-                    <PencilSimpleIcon size={16} />
-                  </MenuIcon>
-                  Rename
-                </MenuItem>
-                <MenuItem
-                  disabled={
                     !!channel.readOnly ||
                     (!session.canvas.available &&
                       !canEditSessionLifetime(session, channel))
@@ -570,15 +553,6 @@ function SessionWork({
               onConverted={() => openLink(`buzz://channel/${channel.id}`)}
               close={() => setConvertOpen(false)}
               finalFocus={actionsTrigger}
-            />
-          )}
-          {renameOpen && (
-            <RenameSession
-              key={channel.id}
-              session={session}
-              id={channel.id}
-              name={channel.name}
-              close={() => setRenameOpen(false)}
             />
           )}
           {settingsOpen && (

@@ -1,5 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import {
+  sessionDescription,
+  SESSION_CHANNEL_DESCRIPTION,
+} from "../sessions/metadata";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
 import type { ChannelQueries } from "./contracts";
@@ -1786,5 +1789,39 @@ it("standalone session creation sends validated TTL in its single durable outbox
   expect(() =>
     h.service.create(id, "Work", "22222222-2222-4222-8222-222222222222", 600),
   ).toThrow("standalone");
+  expect(h.outbox.send).toHaveBeenCalledOnce();
+});
+
+it("creates explicit naming and frozen automatic fallback in the original command without rename", () => {
+  const h = setup(),
+    id = "11111111-1111-4111-8111-111111111111";
+  h.service.create(id, "Named", undefined, 600, {
+    automatic: "Original prompt",
+    explicit: true,
+  });
+  expect(h.outbox.send).toHaveBeenCalledOnce();
+  expect(h.outbox.send).toHaveBeenCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Named"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      [
+        "about",
+        sessionDescription(undefined, {
+          naming: { automatic: "Original prompt", explicit: true },
+        }),
+      ],
+      ["ttl", "600"],
+    ],
+  });
+  expect(() =>
+    h.service.create(id, "Different", undefined, undefined, {
+      automatic: "Original prompt",
+      explicit: false,
+    }),
+  ).toThrow("automatic session name");
   expect(h.outbox.send).toHaveBeenCalledOnce();
 });

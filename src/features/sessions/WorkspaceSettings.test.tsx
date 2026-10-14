@@ -240,13 +240,23 @@ it("recreates deleted section defaults using the tombstone revision", async () =
 
 // The combined modal talks to the real signed details owner; Canvas remains its
 // independent revision/receipt boundary, held explicitly for orchestration tests.
-function combined() {
+function combined(naming?: Parameters<typeof sessionDescription>[1]) {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
   let ttl: number | undefined = 600,
     clock = 100,
-    description = sessionDescription();
+    description = sessionDescription(undefined, naming),
+    suppliedNaming =
+      naming && typeof naming === "object" && "explicit" in naming
+        ? naming
+        : naming && typeof naming === "object"
+          ? naming.naming
+          : undefined,
+    name =
+      suppliedNaming?.explicit === false
+        ? (suppliedNaming.automatic ?? "Plan")
+        : "Plan";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -256,7 +266,7 @@ function combined() {
     });
   const read = vi.fn(async () => [
     record(39000, [
-      ["name", "Plan"],
+      ["name", name],
       ["about", description],
       ["t", "stream"],
       ["private"],
@@ -268,10 +278,15 @@ function combined() {
   const sign = vi.fn(async (template: EventTemplate) =>
     signed(viewer, template),
   );
-  const publish = vi.fn(async () => {
-    ttl = undefined;
+  const apply = (event: EventTemplate) => {
+    name = event.tags.find(([key]) => key === "name")?.[1] ?? name;
+    description =
+      event.tags.find(([key]) => key === "about")?.[1] ?? description;
+    const duration = event.tags.find(([key]) => key === "ttl");
+    if (duration) ttl = duration[1] === "" ? undefined : Number(duration[1]);
     clock++;
-  });
+  };
+  const publish = vi.fn(async (event: EventTemplate) => apply(event));
   const details = createChannelDetails({
     reader: { read },
     writer: { sign, publish },
@@ -317,6 +332,11 @@ function combined() {
     visit,
     mounted,
     view,
+    apply,
+    rename: (next: string) => {
+      name = next;
+      clock++;
+    },
     saved: (next: number | undefined) => {
       ttl = next;
       clock++;
@@ -496,7 +516,7 @@ it.each(["before", "rebase", "clear"] as const)(
         stage === "before"
           ? "No new changes were sent"
           : stage === "rebase"
-            ? "Lifetime was not sent"
+            ? "Name and lifetime were not sent"
             : "Changes are confirmed",
       );
       expect(h.close).not.toHaveBeenCalled();
@@ -619,4 +639,213 @@ it("shows independent Canvas and lifetime read failures with both recovery actio
     screen.getByRole("button", { name: "Reload session details" }),
   ).toBeEnabled();
   expect(saveChanges()).toBeDisabled();
+});
+
+it("saves name and lifetime together after Canvas and resets to signed automatic provenance", async () => {
+  const h = combined({ automatic: "First prompt", explicit: true });
+  await editBoth();
+  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
+  fireEvent.change(name, { target: { value: "  Better name  " } });
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "Better name"],
+    ["ttl", ""],
+  ]);
+  expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
+    h.sign.mock.invocationCallOrder[0] ?? 0,
+  );
+  h.mounted.unmount();
+  render(h.view());
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "" } },
+  );
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledTimes(2));
+  expect(h.sign.mock.calls[1]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "First prompt"],
+    [
+      "about",
+      sessionDescription(undefined, {
+        naming: {
+          automatic: "First prompt",
+          explicit: false,
+        },
+      }),
+    ],
+  ]);
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+});
+it("legacy clear fails visibly before Canvas and can be corrected without losing either draft", async () => {
+  const h = combined();
+  await editBoth();
+  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
+  fireEvent.change(name, { target: { value: "" } });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "original automatic name is unavailable",
+  );
+  expect(saveChanges()).toBeDisabled();
+  expect(name).toBeEnabled();
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.canvas.save).not.toHaveBeenCalled();
+  fireEvent.change(name, { target: { value: "New name" } });
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "New name"],
+    ["about", sessionDescription(undefined, { naming: { explicit: true } })],
+    ["ttl", ""],
+  ]);
+});
+it("a conflicted name retains input across explicit reload and rechecks real signed authority", async () => {
+  const h = combined();
+  await editBoth();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "Keep my name" } },
+  );
+  h.rename("Elsewhere");
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent("changed");
+  expect(h.publish).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reload session details" }),
+  );
+  await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Keep my name");
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it("uncertain name survives remount and reconciles without publishing or saving newer Canvas edits", async () => {
+  const h = combined();
+  await editBoth();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "Frozen name" } },
+  );
+  h.publish.mockRejectedValueOnce(new Error("Lost ack"));
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  h.mounted.unmount();
+  render(h.view());
+  const check = await screen.findByRole("button", {
+    name: "Check save status",
+  });
+  await waitFor(() => expect(check).toBeEnabled());
+  expect(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Frozen name");
+  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+    target: { value: "Next Canvas" },
+  });
+  const sent = h.sign.mock.calls[0]?.[0];
+  expect(sent).toBeDefined();
+  if (sent) h.apply(sent);
+  fireEvent.click(check);
+  await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(h.close).not.toHaveBeenCalled();
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+});
+
+it("explicit-to-explicit uncertain rename is still the same settings receipt", async () => {
+  const h = combined({ automatic: "Original prompt", explicit: true });
+  await editBoth();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "Second explicit name" } },
+  );
+  h.publish.mockRejectedValueOnce(new Error("Lost ack"));
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  h.mounted.unmount();
+  render(h.view());
+  const check = await screen.findByRole("button", {
+    name: "Check save status",
+  });
+  await waitFor(() => expect(check).toBeEnabled());
+  const sent = h.sign.mock.calls[0]?.[0];
+  if (sent) h.apply(sent);
+  fireEvent.click(check);
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+});
+it("shared name validation blocks oversized names before either owner publishes", async () => {
+  const h = combined();
+  await editBoth();
+  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
+  fireEvent.change(name, { target: { value: "🙂".repeat(121) } });
+  expect(saveChanges()).toBeDisabled();
+  expect(name).toBeEnabled();
+  expect(h.canvas.save).not.toHaveBeenCalled();
+  expect(h.sign).not.toHaveBeenCalled();
+});
+
+it("failed initial read then Reload keeps the uncertain name through check and Canvas-only save", async () => {
+  const h = combined();
+  await editBoth();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "Retained name" } },
+  );
+  h.publish.mockRejectedValueOnce(new Error("Lost ack"));
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  h.mounted.unmount();
+  h.read.mockRejectedValueOnce(new Error("Details unavailable"));
+  render(h.view());
+  expect(await screen.findByText("Details unavailable")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reload session details" }),
+  );
+  const check = await screen.findByRole("button", {
+    name: "Check save status",
+  });
+  await waitFor(() => expect(check).toBeEnabled());
+  expect(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Retained name");
+  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+    target: { value: "Next Canvas" },
+  });
+  const sent = h.sign.mock.calls[0]?.[0];
+  if (sent) h.apply(sent);
+  fireEvent.click(check);
+  await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Retained name");
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.canvas.save).toHaveBeenCalledTimes(2);
+});
+it("automatic sessions can change only lifetime while the name field stays blank", async () => {
+  const h = combined({ automatic: "First prompt", explicit: false } });
+  await editBoth();
+  expect(
+    screen.getByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("");
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "First prompt"],
+    ["ttl", ""],
+  ]);
 });

@@ -1,0 +1,54 @@
+{
+  "accepted": [
+    {
+      "name": "First prompt",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"First prompt\",\"explicit\":false}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"First prompt\",\"explicit\":true}"
+    },
+    {
+      "name": "Named legacy",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"explicit\":true}"
+    },
+    {
+      "name": "Quoted",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"A \\\"quoted\\\" prompt\",\"explicit\":true}"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "Mismatch",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"First prompt\",\"explicit\":false}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"explicit\":false}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":null,\"explicit\":true}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"explicit\":true,\"extra\":1}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"Name\",\"explicit\":true,\"explicit\":false}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\" Name\",\"explicit\":true}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"#Name\",\"explicit\":true}"
+    },
+    {
+      "name": "Named",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"explicit\":true}\nextra"
+    }
+  ]
+}

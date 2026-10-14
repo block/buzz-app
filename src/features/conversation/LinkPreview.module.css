@@ -19,9 +19,17 @@ html[data-keyboard-navigation] .sessionLink:focus-visible {
 .sessionChip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  white-space: nowrap;
+  gap: var(--space-half);
+  min-width: 0;
   font-size: var(--text-body-sm);
+}
+.sessionChip > .sessionName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.sessionChip > .sessionPrefix {
+  white-space: nowrap;
 }
 .sessionChip svg {
   flex-shrink: 0;

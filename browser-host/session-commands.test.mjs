@@ -1,3 +1,7 @@
+import cases from "../src/features/sessions/naming-contract.json" with {
+  type: "json",
+};
+import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { expect, it } from "vitest";
 import { validChannelCommand } from "./session-commands.mjs";
 const id = "11111111-1111-4111-8111-111111111111";
@@ -295,4 +299,51 @@ it("admits NIP-CL labels at the end of a channel creation, before the client id"
     Array.from({ length: 9 }, (_, n) => ["t", `l${n}`]),
   ])
     expect(validChannelCommand(create(labels))).toBe(false);
+});
+
+it("uses the shared naming grammar for creation and signed-details commands", () => {
+  for (const [key, accepted] of [
+    ["accepted", true],
+    ["rejected", false],
+  ])
+    for (const row of cases[key]) {
+      const create = {
+        kind: 9007,
+        created_at: 1,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", row.name],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          ["about", row.about],
+        ],
+      };
+      expect(validChannelCommand(create), row.about).toBe(accepted);
+      const edit = {
+        ...create,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["name", row.name],
+          ["about", row.about],
+        ],
+      };
+      if (accepted) expect(() => validateDetailsTemplate(edit)).not.toThrow();
+      else expect(() => validateDetailsTemplate(edit)).toThrow();
+      if (accepted) {
+        expect(() =>
+          validateDetailsTemplate({
+            ...edit,
+            tags: [...edit.tags, ["visibility", "open"]],
+          }),
+        ).toThrow();
+        expect(() =>
+          validateDetailsTemplate({
+            ...edit,
+            tags: [...edit.tags, ["ttl", ""]],
+          }),
+        ).not.toThrow();
+      }
+    }
 });

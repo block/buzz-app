@@ -272,7 +272,7 @@ it.each(["visit", "unmount"])(
   },
 );
 
-it("an unrelated unconfirmed name edit cannot be checked as a lifetime save", async () => {
+it("a retained legacy rename receipt can be checked through unified settings", async () => {
   const h = setup();
   await ready();
   const base = await h.details.capability.load(id);
@@ -283,8 +283,7 @@ it("an unrelated unconfirmed name edit cannot be checked as a lifetime save", as
       .catch(() => {});
   });
   expect(
-    screen.queryByRole("button", { name: "Check save status" }),
-  ).toBeNull();
-  expect(confirm()).toBeDisabled();
-  expect(screen.getByText(/Finish the existing/)).toBeVisible();
+    screen.getByRole("button", { name: "Check save status" }),
+  ).toBeEnabled();
+  expect(h.publish).toHaveBeenCalledOnce();
 });

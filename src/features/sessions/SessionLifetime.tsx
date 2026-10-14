@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import {
+  canonicalDetailsName,
   detailsDraftErrors,
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
-import { sessionMetadata } from "./metadata";
+import { sessionDescription, sessionMetadata } from "./metadata";
 
 /** Presentation only: the details owner rechecks fresh signed edit authority. */
 export function canEditSessionLifetime(
@@ -39,6 +40,8 @@ export function useSessionLifetime({
     enabled ? details?.snapshot(id) : undefined,
   );
   const [base, setBase] = useState<ChannelDetails>();
+  const [name, setName] = useState("");
+  const confirmedName = useRef("");
   const [ttl, setTtl] = useState<number | undefined>(attempt?.draft.ttlSeconds);
   const [temporaryTtl, setTemporaryTtl] = useState(
     DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
@@ -51,17 +54,19 @@ export function useSessionLifetime({
   const refreshBeforeSave = useRef(false);
   const metadata = base && sessionMetadata(base.description);
   const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
-  const matchingAttempt = !!(
+  const matchingAttempt = !!base && matchesLifetime(base, attempt?.draft);
+  const normalized = canonicalDetailsName(name);
+  const nameChanged = normalized !== confirmedName.current;
+  const nameError =
     base &&
-    attempt &&
-    metadata &&
-    !metadata.parentId &&
-    attempt.draft.description === base.description &&
-    attempt.draft.name === base.name &&
-    attempt.draft.visibility === base.visibility
-  );
+    (normalized
+      ? detailsDraftErrors({ ...base, name: normalized }).name
+      : nameChanged && !metadata?.naming?.automatic
+        ? "The original automatic name is unavailable. Keep this name or enter another."
+        : undefined);
   const invalid =
-    base && detailsDraftErrors({ ...base, ttlSeconds: ttl }).lifetime;
+    nameError ||
+    (base && detailsDraftErrors({ ...base, ttlSeconds: ttl }).lifetime);
 
   useEffect(() => {
     if (!enabled) return;
@@ -82,6 +87,14 @@ export function useSessionLifetime({
           setBase(next);
           const saved = details.snapshot(id);
           confirmedTtl.current = next.ttlSeconds;
+          confirmedName.current = adoptName(next);
+          setName(
+            adoptName(
+              matchesLifetime(next, saved?.draft)
+                ? { ...next, ...saved?.draft }
+                : next,
+            ),
+          );
           const ttl = matchesLifetime(next, saved?.draft)
             ? saved?.draft.ttlSeconds
             : next.ttlSeconds;
@@ -122,9 +135,19 @@ export function useSessionLifetime({
               ? saved?.draft.ttlSeconds
               : next.ttlSeconds;
             setTtl(ttl);
+            setName(
+              adoptName(
+                matchesLifetime(next, saved?.draft)
+                  ? { ...next, ...saved?.draft }
+                  : next,
+              ),
+            );
             setTemporaryTtl(ttl ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS);
           }
           confirmedTtl.current = next.ttlSeconds;
+          if (base && normalized === confirmedName.current)
+            setName(adoptName(next));
+          confirmedName.current = adoptName(next);
           refreshBeforeSave.current = false;
           setBase(next); // Retain the person's lifetime choice on conflict.
         }
@@ -134,7 +157,7 @@ export function useSessionLifetime({
           await details.check(id, active);
         } else {
           if (!base || !eligible || attempt || invalid) return;
-          if (ttl !== confirmedTtl.current) {
+          if (ttl !== confirmedTtl.current || nameChanged) {
             const current = refreshBeforeSave.current
               ? await details.load(id, active)
               : base;
@@ -144,9 +167,29 @@ export function useSessionLifetime({
               throw new Error(
                 "This conversation is no longer an editable standalone session. Reload session details before changing its lifetime.",
               );
+            const naming = metadata.naming;
+            if (nameChanged && !normalized && !naming?.automatic)
+              throw new Error(
+                "The original automatic name is unavailable. Keep this name or enter another.",
+              );
+            const description = nameChanged
+              ? sessionDescription(undefined, {
+                  naming: {
+                    ...(naming?.automatic ? { automatic: naming.automatic } : {}),
+                    explicit: !!normalized,
+                  },
+                })
+              : current.description;
             await details.save(
               current,
-              { ...current, ttlSeconds: ttl },
+              {
+                ...current,
+                name: nameChanged
+                  ? normalized || naming?.automatic || current.name
+                  : current.name,
+                description,
+                ttlSeconds: ttl,
+              },
               active,
             );
           }
@@ -154,6 +197,10 @@ export function useSessionLifetime({
         active.throwIfAborted();
         confirmedTtl.current =
           action === "check" ? attempt?.draft.ttlSeconds : ttl;
+        confirmedName.current =
+          action === "check" && attempt && base
+            ? adoptName({ ...base, ...attempt.draft })
+            : normalized;
         refreshBeforeSave.current = true;
       }
     } catch (reason) {
@@ -170,13 +217,19 @@ export function useSessionLifetime({
   return {
     available: enabled && !metadata?.parentId,
     base,
+    name,
+    nameError,
+    lifetimeError:
+      base && detailsDraftErrors({ ...base, ttlSeconds: ttl }).lifetime,
+    nameBlocked: !!attempt || !eligible || !!signal?.aborted,
+    changeName: setName,
     ttl,
     temporaryTtl,
     busy,
     error,
     invalid,
     eligible,
-    changed: !!base && ttl !== confirmedTtl.current,
+    changed: !!base && (ttl !== confirmedTtl.current || nameChanged),
     checkOnly: matchingAttempt && attempt?.status === "unconfirmed",
     blocked: !!attempt || !eligible || !!invalid || !!signal?.aborted,
     unrelatedAttempt: !!attempt && !matchingAttempt,
@@ -193,11 +246,22 @@ function matchesLifetime(
   base: ChannelDetails,
   draft?: Pick<ChannelDetails, "name" | "description" | "visibility">,
 ) {
+  const metadata = sessionMetadata(base.description);
+  const next = sessionMetadata(draft?.description);
   return (
     !!draft &&
-    draft.description === base.description &&
-    draft.name === base.name &&
+    !!metadata &&
+    !metadata.parentId &&
+    !!next &&
+    !next.parentId &&
     draft.visibility === base.visibility &&
-    !sessionMetadata(base.description)?.parentId
+    (draft.description === base.description ||
+      (!!next.naming && next.naming.automatic === metadata.naming?.automatic))
   );
+}
+
+function adoptName(next: Pick<ChannelDetails, "name" | "description">) {
+  return sessionMetadata(next.description)?.naming?.explicit === false
+    ? ""
+    : next.name;
 }

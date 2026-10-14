@@ -1122,6 +1122,9 @@ test("Me and Messages share one resizable sidebar width", async ({
   await expect.poll(() => width("Solo sidebar")).toBe(220);
 
 test("session lifetime and draft settings retain host focus and save only explicit lifetime", async ({
+});
+
+test("unified session naming and lifetime retain host focus and save only explicit changes", async ({
   page,
   app,
 }) => {
@@ -1155,6 +1158,11 @@ test("session lifetime and draft settings retain host focus and save only explic
   const canvas = settings.getByRole("textbox", { name: "Canvas", exact: true });
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
+  const draftName = settings.getByRole("textbox", {
+    name: "Session name (optional)",
+    exact: true,
+  });
+  await draftName.fill("Make contrast meet accessibility standards");
   const draftTemporary = settings.getByRole("radio", {
     name: "Temporary",
     exact: true,
@@ -1185,6 +1193,23 @@ test("session lifetime and draft settings retain host focus and save only explic
       }, mode);
       for (const width of [390, 950, 1280]) {
         await page.setViewportSize({ width, height: 850 });
+        const name = dialog.getByRole("textbox", {
+          name: "Session name (optional)",
+          exact: true,
+        });
+        await name.scrollIntoViewIfNeeded();
+        await expect(name).toBeInViewport();
+        await expect(name).toBeEnabled();
+        await page.screenshot({
+          path: test.info().outputPath(`${prefix}-name-${mode}-${width}.png`),
+        });
+        const bounds = await name.evaluate((el) => ({
+          width: el.getBoundingClientRect().width,
+          right: el.getBoundingClientRect().right,
+          viewport: innerWidth,
+        }));
+        expect(bounds.width).toBeGreaterThan(100);
+        expect(bounds.right).toBeLessThanOrEqual(bounds.viewport);
         await expect(save).toBeInViewport();
         // The settings footer reserves space above actions even while the body scrolls.
         await expect
@@ -1308,6 +1333,9 @@ test("session lifetime and draft settings retain host focus and save only explic
     .getByRole("menuitem", { name: "Session settings…", exact: true })
     .click();
   await expect(canvas).toHaveValue("Keep this local draft");
+  await expect(draftName).toHaveValue(
+    "Make contrast meet accessibility standards",
+  );
   await expect(draftTemporary).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -1364,17 +1392,25 @@ test("session lifetime and draft settings retain host focus and save only explic
     })
     .click();
   await lifetime.getByRole("button", { name: "Increase duration" }).click();
+  await lifetime
+    .getByRole("textbox", { name: "Session name (optional)", exact: true })
+    .fill("Make contrast meet accessibility standards");
   await save.click();
   await expect(lifetime).not.toBeVisible();
-  await expect(row).toBeFocused();
-  await expect(row).toBeVisible();
+  const renamedRow = sidebar.getByRole("button", {
+    name: "Make contrast meet accessibility standards",
+    exact: true,
+  });
+  await expect(renamedRow).toBeFocused();
+  await expect(renamedRow).toBeVisible();
   expect(app.report.detailsPublications).toHaveLength(1);
   const event = app.report.detailsPublications[0];
   expect(verifyEvent(event)).toBe(true);
   expect(event.kind).toBe(9002);
   expect(event.tags).toEqual([
     ["h", id],
-    ["name", "Alpha"],
+    ["name", "Make contrast meet accessibility standards"],
+    ["about", 'Buzz session (buzz.sessions/v1)\nnaming:{"explicit":true}'],
     ["ttl", "1209600"],
   ]);
   const saved = readbacks.find((entry) =>
@@ -1384,7 +1420,7 @@ test("session lifetime and draft settings retain host focus and save only explic
   expect(verifyEvent(saved)).toBe(true);
   expect(saved.tags).toContainEqual([
     "about",
-    "Buzz session (buzz.sessions/v1)",
+    'Buzz session (buzz.sessions/v1)\nnaming:{"explicit":true}',
   ]);
   expect(saved.tags).toContainEqual(["private"]);
   expect(saved.tags).not.toContainEqual(["public"]);
@@ -1398,8 +1434,8 @@ test("session lifetime and draft settings retain host focus and save only explic
       [9, 9000, 9007, 30315].includes(event.kind),
     ),
   ).toHaveLength(0);
-  await row.focus();
-  await row.press("Shift+F10");
+  await renamedRow.focus();
+  await renamedRow.press("Shift+F10");
   await page
     .getByRole("menuitem", { name: "Session settings…", exact: true })
     .click();
@@ -1408,4 +1444,6 @@ test("session lifetime and draft settings retain host focus and save only explic
     "Archives after 2 weeks without activity.",
   );
   await page.keyboard.press("Escape");
-  await expect(row).toBeFocused();});
+
+  await expect(renamedRow).toBeFocused();
+});

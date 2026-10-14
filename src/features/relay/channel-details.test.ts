@@ -681,7 +681,7 @@ it.each([false, true])(
   "renames standalone sessions with a name-only command and confirmed relay readback (personal=%s)",
   async (personal) => {
     const h = harness();
-    const about = sessionDescription(undefined, personal);
+    const about = sessionDescription(undefined, { personal });
     h.set([h.metadata("Old title", about, "private"), ...h.events().slice(1)]);
     const base = await h.owner.capability.load(id);
     expect(base.canEdit).toBe(true);
@@ -906,3 +906,61 @@ it.each([
     expect(saved.ttlSeconds).toBe(after);
   },
 );
+
+it("one signed session naming edit preserves fallback and confirms the full metadata", async () => {
+  const h = harness();
+  const before = sessionDescription(undefined, {
+    naming: { automatic: "First prompt", explicit: false },
+  });
+  h.set([
+    h.metadata("First prompt", before, "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  const description = sessionDescription(undefined, {
+    naming: { automatic: "First prompt", explicit: true },
+  });
+  h.publish.mockImplementationOnce(async () =>
+    h.set([
+      h.metadata("Named", description, "private"),
+      ...h.events().slice(1),
+    ]),
+  );
+  await h.owner.capability.save(base, { ...base, name: "Named", description });
+  const command = h.sign.mock.calls[0]?.[0];
+  assert(command);
+  expect(command.tags).toEqual([
+    ["h", id],
+    ["name", "Named"],
+    ["about", description],
+  ]);
+  expect(() => validateDetailsTemplate(command)).not.toThrow();
+  await expect(
+    h.owner.capability.save(await h.owner.capability.load(id), {
+      ...base,
+      name: "Invented",
+      description: sessionDescription(undefined, {
+        naming: {
+          automatic: "Invented",
+          explicit: false,
+        },
+      }),
+    }),
+  ).rejects.toThrow("Only the name and lifetime");
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it("a name-only writer cannot erase explicit provenance accidentally", async () => {
+  const h = harness();
+  const description = sessionDescription(undefined, {
+    naming: { automatic: "First prompt", explicit: false },
+  });
+  h.set([
+    h.metadata("First prompt", description, "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  await expect(
+    h.owner.capability.save(base, { ...base, name: "Different" }),
+  ).rejects.toThrow("automatic session name");
+  expect(h.sign).not.toHaveBeenCalled();
+});

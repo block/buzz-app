@@ -16,6 +16,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
+import { createRelaySession } from "../relay/session";
+import { matchesEvent } from "../relay/projection";
+import { keypair, signed } from "../relay/testing";
+import { sessionDescription } from "../sessions/metadata";
+import type { RelaySession } from "../relay/session";
+import type { ChannelList } from "../relay/contracts";
 import { ConversationPresentation } from "./ConversationPresentation";
 import { LinkThreadTabContext } from "./LinkLabelContext";
 
@@ -332,4 +338,186 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
   view.rerender(tree(true));
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+});
+
+it("old and new generated session links react to names without changing authored bytes or navigation", () => {
+  const id = "11111111-1111-4111-8111-111111111111",
+    viewer = "a".repeat(64);
+  const original = `Session · ${id.slice(0, 8)}`;
+  let list: ChannelList = {
+    status: "ready",
+    channels: [
+      { id, name: "First prompt", channelType: "session", members: [viewer] },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  const session = {
+    viewer,
+    channels: {
+      list: () => list,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  } as unknown as RelaySession;
+  const open = vi.fn(() => true);
+  const link = (label: string) => (
+    <MessageLink
+      url={`buzz://channel/${id}`}
+      session={session}
+      registry={undefined}
+      onOpenLink={open}
+      label={label}
+    >
+      {label}
+    </MessageLink>
+  );
+  const mounted = render(
+    <>
+      {link(original)}
+      {link("Authored label")}
+    </>,
+  );
+  const old = screen.getByRole("link", { name: original });
+  old.focus();
+  const update = (patch: Partial<ChannelList["channels"][number]>) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) => ({ ...channel, ...patch })),
+      };
+      for (const notify of listeners) notify();
+    });
+  update({
+    name: "Make contrast meet accessibility standards",
+    sessionNamed: true,
+  });
+  expect(
+    screen.getByRole("link", {
+      name: "Session: Make contrast meet accessibility standards",
+    }),
+  ).toBe(old);
+  expect(old).toHaveFocus();
+  expect(old).toHaveAttribute("data-link-label", original);
+  expect(old).toHaveAttribute("href", `buzz://channel/${id}`);
+  expect(
+    screen.getByRole("link", { name: "Authored label" }),
+  ).toHaveTextContent("Authored label");
+  mounted.rerender(
+    <>
+      {link(original)}
+      {link(original)}
+    </>,
+  );
+  expect(
+    screen.getAllByRole("link", {
+      name: "Session: Make contrast meet accessibility standards",
+    }),
+  ).toHaveLength(2);
+  update({ cached: true });
+  expect(screen.queryByRole("link", { name: /Session:/ })).toBeNull();
+  act(() => {
+    list = {
+      ...list,
+      channels: [
+        { id, name: "First prompt", channelType: "session", members: [viewer] },
+      ],
+    };
+    for (const notify of listeners) notify();
+  });
+  expect(screen.getAllByRole("link", { name: original })).toHaveLength(2);
+  expect(open).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getAllByRole("link", { name: original })[0] as HTMLElement,
+  );
+  expect(open).toHaveBeenCalledOnce();
+});
+
+it("a signed details rename updates an already-mounted generated link through the actual session projection", async () => {
+  const id = "11111111-1111-4111-8111-111111111111",
+    viewer = keypair(),
+    relay = keypair();
+  let clock = 100,
+    name = "First prompt",
+    about = sessionDescription(undefined, {
+      naming: { automatic: "First prompt", explicit: false },
+    });
+  const record = (kind: number, tags: string[][]) =>
+    signed(relay, {
+      kind,
+      created_at: clock,
+      content: "",
+      tags: [["d", id], ...tags],
+    });
+  const events = () => [
+    record(39000, [
+      ["name", name],
+      ["t", "stream"],
+      ["private"],
+      ["about", about],
+    ]),
+    record(39001, [["p", viewer.pubkey, "owner"]]),
+    record(39002, [["p", viewer.pubkey, "", "owner"]]),
+  ];
+  const publish = vi.fn(async () => {});
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      events().filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
+    channelDetails: {
+      sign: async (template) => signed(viewer, template),
+      publish: async (event) => {
+        name = event.tags.find(([key]) => key === "name")?.[1] ?? name;
+        about = event.tags.find(([key]) => key === "about")?.[1] ?? about;
+        clock++;
+      },
+    },
+    writer: {
+      kinds: [9, 9007],
+      sign: async (template) => signed(viewer, template),
+      publish,
+    },
+  });
+  try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    const label = `Session · ${id.slice(0, 8)}`;
+    render(
+      <MessageLink
+        session={owner.session}
+        url={`buzz://channel/${id}`}
+        registry={undefined}
+        onOpenLink={() => true}
+        label={label}
+      >
+        {label}
+      </MessageLink>,
+    );
+    const anchor = screen.getByRole("link", { name: label });
+    const base = await owner.session.channelDetails.load(id);
+    await act(async () =>
+      owner.session.channelDetails.save(base, {
+        ...base,
+        name: "Accessible contrast",
+        description: sessionDescription(undefined, {
+          naming: { automatic: "First prompt", explicit: true },
+        }),
+      }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Session: Accessible contrast" }),
+    ).toBe(anchor);
+    expect(anchor).toHaveAttribute("data-link-label", label);
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
 });

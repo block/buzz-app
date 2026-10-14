@@ -1,6 +1,10 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelLabelTags } from "./channel-labels";
-import { sessionDescription } from "../sessions/metadata";
+import {
+  sessionDescription,
+  sessionMetadata,
+  type SessionNaming,
+} from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayReader } from "./reader";
@@ -544,7 +548,13 @@ export function createWorkSessions(
         active,
       );
     },
-    create(id: string, title: string, parentId?: string, ttlSeconds?: number) {
+    create(
+      id: string,
+      title: string,
+      parentId?: string,
+      ttlSeconds?: number,
+      naming?: SessionNaming,
+    ) {
       writer();
       identifier(id);
       if (parentId) identifier(parentId);
@@ -558,6 +568,13 @@ export function createWorkSessions(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid standalone session duration.");
+      if (
+        naming &&
+        (!sessionMetadata(sessionDescription(parentId, { naming })) ||
+          !naming.automatic ||
+          (!naming.explicit && title !== naming.automatic))
+      )
+        throw new Error("The automatic session name could not be verified.");
       if (parentId === id)
         throw new Error("A session cannot be its own parent.");
       return writer().send({
@@ -568,7 +585,7 @@ export function createWorkSessions(
           ["name", title],
           ["visibility", "private"],
           ["channel_type", "stream"],
-          ["about", sessionDescription(parentId)],
+          ["about", sessionDescription(parentId, { naming })],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
         ],
       });

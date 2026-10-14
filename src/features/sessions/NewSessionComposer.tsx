@@ -1,4 +1,7 @@
-import { detailsDraftErrors } from "../relay/channel-details-protocol";
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+} from "../relay/channel-details-protocol";
 import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
@@ -86,9 +89,10 @@ export function NewSessionComposer({
   });
   const [draftSettings, setDraftSettings] = useState(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
-    if (typeof saved === "string") return { canvas: saved };
+    if (typeof saved === "string") return { canvas: saved, name: "" };
     const settings = saved && typeof saved === "object" ? saved : {};
     return {
+      name: "name" in settings ? (settings.name as string) : "",
       canvas:
         "canvas" in settings && typeof settings.canvas === "string"
           ? settings.canvas
@@ -153,6 +157,20 @@ export function NewSessionComposer({
       : {
           id: channelId,
           ttlSeconds: draftSettings.ttlSeconds,
+          automaticName:
+            canonicalDetailsName(
+              [...composerMarkdown(draft).trim().replace(/\s+/g, " ")]
+                .slice(0, 80)
+                .join(""),
+            ) || "Session",
+          name:
+            typeof draftSettings.name === "string"
+              ? canonicalDetailsName(draftSettings.name)
+              : draftSettings.name,
+          explicitName:
+            typeof draftSettings.name === "string"
+              ? !!canonicalDetailsName(draftSettings.name)
+              : true,
           text: composerMarkdown(draft),
           draft,
         };
@@ -170,17 +188,34 @@ export function NewSessionComposer({
       ),
     ];
     try {
-      const lifetimeError = detailsDraftErrors({
-        name: "Session",
+      if (current.name !== undefined && typeof current.name !== "string")
+        throw new Error("The saved session name could not be verified.");
+      if (current.name === "" && current.automaticName !== undefined)
+        current.name = current.automaticName;
+      const errors = detailsDraftErrors({
+        name: current.name ?? "Session",
         description: "",
         visibility: "private",
         ttlSeconds: current.ttlSeconds,
-      }).lifetime;
+      });
+      if (current.name !== undefined && errors.name)
+        throw new Error(errors.name);
+      if (
+        current.automaticName !== undefined &&
+        (typeof current.automaticName !== "string" ||
+          !current.automaticName ||
+          [...current.automaticName].length > 80 ||
+          current.automaticName !==
+            canonicalDetailsName(current.automaticName) ||
+          typeof current.explicitName !== "boolean")
+      )
+        throw new Error("The saved session name could not be verified.");
+      const lifetimeError = errors.lifetime;
       if (lifetimeError || (parent && current.ttlSeconds !== undefined))
         throw new Error(
           lifetimeError ?? "Parent-linked sessions cannot set a lifetime.",
         );
-      save(current); // Freeze validated lifetime before the first asynchronous start operation.
+      save(current); // Freeze validated name and lifetime before the first asynchronous start operation.
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
         if (
@@ -251,9 +286,18 @@ export function NewSessionComposer({
         }
         current.creationId = session.workSessions.create(
           current.id,
-          [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
+          current.name ??
+            [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
           parent?.id,
           current.ttlSeconds,
+          ...(current.automaticName !== undefined
+            ? [
+                {
+                  automatic: current.automaticName,
+                  explicit: current.explicitName ?? false,
+                },
+              ]
+            : []),
         );
         save({ ...current });
       }
@@ -551,11 +595,12 @@ export function NewSessionComposer({
           session={session}
           sectionId={selectedProject || undefined}
           canvas={draftCanvas}
+          name={draftSettings.name}
           ttlSeconds={draftSettings.ttlSeconds}
           parentLinked={!!parent}
           close={() => setSettingsOpen(false)}
-          save={(canvas, ttlSeconds) => {
-            const next = { canvas, ttlSeconds };
+          save={(canvas, ttlSeconds, name) => {
+            const next = { canvas, ttlSeconds, name: name ?? "" };
             if (!writeView(scope, `${draftKey}:settings`, next))
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",

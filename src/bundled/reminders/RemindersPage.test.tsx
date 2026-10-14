@@ -383,6 +383,16 @@ function page(source: Reminder[] | Reminders) {
   );
 }
 
+it("renders a reminder due past JavaScript's Date range without its due label", () => {
+  // The relay accepts any safe-integer not_before; this one has no Date.
+  page([reminder("far future", "pending", 1, 8_640_000_000_001)]);
+  const row = screen.getByRole("listitem");
+  expect(within(row).getByText("far future")).toBeVisible();
+  expect(
+    within(row).getByRole("button", { name: "Open message from Ada" }),
+  ).toHaveAccessibleDescription("far future");
+});
+
 const hint =
   "Choose Remind me from any message's menu to bring it back here when it matters.";
 

@@ -53,6 +53,7 @@ import {
   endOfToday,
   formatDue,
   groupReminders,
+  isDisplayable,
   navigableTarget,
   presetHint,
 } from "./model";
@@ -365,7 +366,9 @@ function ReminderRow({
     : reminder.note;
   const note = reminder.target?.preview ? reminder.note : undefined;
   const due =
-    pending && reminder.notBefore !== undefined ? (
+    pending &&
+    reminder.notBefore !== undefined &&
+    isDisplayable(reminder.notBefore) ? (
       <time
         id={`${id}-due`}
         className={`text-caption ${styles.due}`}

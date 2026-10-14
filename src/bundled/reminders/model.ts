@@ -133,6 +133,10 @@ export function parseCustomDateTime(date: string, time: string) {
 export const shiftedFrom = (time: string, at: number) =>
   new Date(at * 1000).toTimeString().slice(0, 5) !== time.slice(0, 5);
 
+/** Relay-valid not_before values can exceed JavaScript's Date range. */
+export const isDisplayable = (at: number) =>
+  !Number.isNaN(new Date(at * 1000).getTime());
+
 export const formatDue = (at: number) =>
   new Date(at * 1000).toLocaleString([], {
     dateStyle: "medium",

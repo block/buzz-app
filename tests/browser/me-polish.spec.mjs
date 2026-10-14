@@ -1,23 +1,49 @@
 import { test, expect } from "./fixture.mjs";
+import { generateSecretKey, verifyEvent } from "nostr-tools";
 import { openPage } from "./navigation.mjs";
 
 const id = "33333333-3333-4333-8333-333333333333";
+const destination = "55555555-5555-4555-8555-555555555555";
 const other = "44444444-4444-4444-8444-444444444444";
 // Real pointer/keyboard menu behavior, dialog focus and pane geometry require a browser.
 test.use({
   pluginFixtures: true,
   productionBroker: true,
-  channelIds: [id, other],
-  channelNames: { [id]: "Alpha", [other]: "Beta" },
+  channelIds: [id, other, destination],
+  channelNames: { [id]: "Alpha", [other]: "Beta", [destination]: "Team" },
   sessionChannels: [id, other],
   meChannels: [id, other],
-  historyCounts: { [id]: 2, [other]: 1 },
+  historyCounts: { [id]: 2, [other]: 1, [destination]: 0 },
 });
 
 test("Me has full-width chat and matching context/overflow actions without navigating", async ({
   page,
   app,
 }) => {
+  const agents = ["Blossom", "Bubbles"].map((name) =>
+    app.serveProfile(generateSecretKey(), { name, is_agent: true }),
+  );
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (!filters.some((filter) => filter.kinds?.includes(39002)))
+      return route.continue();
+    const response = await route.fetch();
+    const events = await response.json();
+    await route.fulfill({
+      json: events.map((event) =>
+        event.kind === 39002 &&
+        event.tags.some(([key, value]) => key === "d" && value === id)
+          ? app.signRelay({
+              ...event,
+              tags: [
+                ...event.tags,
+                ...agents.map((agent) => ["p", agent.pubkey, "", "bot"]),
+              ],
+            })
+          : event,
+      ),
+    });
+  });
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Me conversations" });
@@ -74,18 +100,27 @@ test("Me has full-width chat and matching context/overflow actions without navig
   await expect(menu).toBeVisible();
   await menu.getByRole("menuitem", { name: "Share…", exact: true }).click();
   const dialog = page.getByRole("dialog", {
-    name: "Share conversation",
+    name: "Share session",
     exact: true,
   });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveValue("Alpha");
+    dialog.getByRole("combobox", { name: "People or channel" }),
+  ).toBeFocused();
+  const individual = dialog.getByRole("region", { name: "Individual access" });
+  await expect(individual.getByText("Blossom", { exact: true })).toBeVisible();
+  await expect(individual.getByText("Bubbles", { exact: true })).toBeVisible();
   await expect(
-    dialog.getByRole("switch", { name: "Private", exact: true }),
-  ).toHaveAttribute("aria-checked", "true");
+    dialog.getByRole("button", { name: /Other access/ }),
+  ).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", { name: "Share", exact: true }),
+    dialog.getByText(/^The original sharing destination/),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByText("Session participants", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Done", exact: true }),
   ).toBeEnabled();
   await page.screenshot({ path: test.info().outputPath("me-share.png") });
   await page.keyboard.press("Escape");
@@ -159,41 +194,346 @@ test("moving a conversation expands unfiled Conversations and keeps keyboard foc
   ).toBeVisible();
 });
 
-test("Share promotes the same conversation and opens its preserved history in Messages", async ({
+// App wiring proof: grants and the normal link publication preserve Me placement,
+// identity/history and navigation, with a held signed grant readback barrier.
+test("Share grants access and posts a link without promoting or moving Me", async ({
+  page,
+  app,
+}) => {
+  const person = app.serveProfile(generateSecretKey(), { name: "Aria" });
+  const grants = [];
+  const evidence = [];
+  let signalReadback;
+  const requestedReadback = new Promise((resolve) => {
+    signalReadback = resolve;
+  });
+  let releaseReadback;
+  const heldReadback = new Promise((resolve) => {
+    releaseReadback = resolve;
+  });
+  let readbackHeld = false;
+  let rosterTime = Math.floor(Date.now() / 1000);
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.some(
+        (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
+      )
+    ) {
+      return route.fulfill({ json: [person] });
+    }
+    const response = await route.fetch();
+    const events = await response.json();
+    if (filters.some((filter) => filter.kinds?.includes(39002))) {
+      if (
+        !readbackHeld &&
+        grants.length &&
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(39002) &&
+            filter["#d"]?.includes(id) &&
+            filter.consistency === "strong",
+        ) &&
+        events.some(
+          (event) =>
+            event.kind === 39002 &&
+            event.tags.some(([key, value]) => key === "d" && value === id),
+        )
+      ) {
+        readbackHeld = true;
+        evidence.push("readback-requested");
+        signalReadback();
+        await heldReadback;
+        evidence.push("readback-released");
+      }
+      return route.fulfill({
+        json: events.map((event) => {
+          if (
+            event.kind !== 39002 ||
+            event.tags.find(([key]) => key === "d")?.[1] !== id
+          )
+            return event;
+          return app.signRelay({
+            kind: 39002,
+            content: "",
+            created_at: ++rosterTime,
+            tags: [
+              ...event.tags,
+              ...grants.map((grant) => [
+                "p",
+                grant.tags.find(([key]) => key === "p")[1],
+                "",
+                "member",
+              ]),
+            ],
+          });
+        }),
+      });
+    }
+    return route.fulfill({ response });
+  });
+  await page.route("**/api/relay/**/publish", async (route) => {
+    const event = route.request().postDataJSON();
+    if (event.kind === 9) evidence.push("link");
+    if (event.kind !== 9000) return route.continue();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.pubkey).toBe(app.viewer);
+    grants.push(event);
+    evidence.push("grant");
+    await route.fulfill({ json: { accepted: true, event_id: event.id } });
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  await row.click();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Share session" });
+  const search = dialog.getByRole("combobox", { name: "People or channel" });
+  await search.fill("Aria");
+  await page.getByRole("option", { name: /Aria/ }).click();
+  await search.fill("Team");
+  await page.getByRole("option", { name: "Team", exact: true }).click();
+  try {
+    await dialog
+      .getByRole("button", { name: "Share & post link", exact: true })
+      .click();
+    await requestedReadback;
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: "People or channel" }),
+    ).toBeDisabled();
+    await expect(
+      dialog.getByRole("button", { name: "Close", exact: true }),
+    ).toBeDisabled();
+    expect(evidence).toEqual(["grant", "readback-requested"]);
+    expect(
+      app.report.publications.filter(({ event }) => event.kind === 9),
+    ).toHaveLength(0);
+    releaseReadback();
+    await expect(dialog).not.toBeVisible();
+    expect(evidence).toEqual([
+      "grant",
+      "readback-requested",
+      "readback-released",
+      "link",
+    ]);
+  } finally {
+    releaseReadback();
+  }
+  await expect(row).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  expect(grants).toHaveLength(1);
+  expect(grants[0].tags).toContainEqual(["h", id]);
+  expect(grants[0].tags).toContainEqual(["p", person.pubkey]);
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
+  const links = app.report.publications.filter(({ event }) => event.kind === 9);
+  expect(links).toHaveLength(1);
+  expect(links[0].event.tags).toContainEqual(["h", destination]);
+  expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
+  expect(links[0].event.content).toBe(
+    `[Session · 33333333](buzz://channel/${id})`,
+  );
+});
+
+// App composition boundary: signed metadata switches Messages discoverability
+// without a route handoff, a new conversation, or a Me preference write.
+test("explicit conversion exposes the same conversation in Messages and keeps Me and history", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Me conversations" });
-  await sidebar
-    .getByRole("button", { name: "Alpha", exact: true })
-    .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Share conversation" });
-  await dialog
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill("Shared Alpha");
-  await dialog.getByRole("button", { name: "Share", exact: true }).click();
+  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  await row.click();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  const shareTrigger = page.getByRole("button", { name: "Share", exact: true });
+  await shareTrigger.click();
+  const share = page.getByRole("dialog", { name: "Share session" });
+  const shareConvert = share.getByRole("button", {
+    name: "Convert to channel",
+    exact: true,
+  });
+  await expect(shareConvert).toBeEnabled();
+  for (const width of [390, 950, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    await expect(shareConvert).toBeInViewport();
+    await expect(
+      share.getByRole("button", { name: "Done", exact: true }),
+    ).toBeInViewport();
+    await expect
+      .poll(() =>
+        shareConvert.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return element.contains(
+            document.elementFromPoint(
+              rect.x + rect.width / 2,
+              rect.y + rect.height / 2,
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 850 });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  await share.getByRole("combobox", { name: "People or channel" }).focus();
+  let tabs = 0;
+  while (
+    tabs < 20 &&
+    !(await shareConvert.evaluate((el) => el === document.activeElement))
+  ) {
+    await page.keyboard.press("Tab");
+    tabs++;
+  }
+  await expect(shareConvert).toBeFocused();
+  await expect(shareConvert).toBeInViewport();
+  await expect
+    .poll(() =>
+      shareConvert.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+          ),
+        );
+      }),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("share-convert-enlarged-390.png"),
+  });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await shareConvert.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", {
+    name: "Convert to channel",
+    exact: true,
+  });
+  await expect(share).not.toBeVisible();
+  await expect(
+    dialog.getByRole("radio", { name: "Private", exact: true }),
+  ).toBeChecked();
+  await expect(
+    dialog.getByRole("radio", { name: "Public", exact: true }),
+  ).toHaveAccessibleDescription(
+    "Everyone in this community will be able to view this channel’s full history.",
+  );
+  const convert = dialog.getByRole("button", {
+    name: "Convert to channel",
+    exact: true,
+  });
+  await expect(convert).toBeEnabled();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    for (const width of [390, 950, 1280]) {
+      await page.setViewportSize({ width, height: 850 });
+      await expect(convert).toBeEnabled();
+      await expect(convert).toBeInViewport();
+      await page.screenshot({
+        path: test.info().outputPath(`convert-${mode}-${width}.png`),
+      });
+    }
+  }
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  await expect(convert).toBeEnabled();
+  await page.screenshot({
+    path: test.info().outputPath("convert-enlarged.png"),
+  });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(convert).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await expect(dialog).not.toBeVisible();
+  await expect(shareTrigger).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await row.focus();
+  await row.press("Shift+F10");
+  await page
+    .getByRole("menuitem", { name: "Convert to channel", exact: true })
+    .click();
+  await expect(convert).toBeEnabled();
+  const publicChoice = dialog.getByRole("radio", {
+    name: "Public",
+    exact: true,
+  });
+  await publicChoice.click();
+  await expect(publicChoice).toBeChecked();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await convert.click();
   await expect(dialog).not.toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Message #Shared Alpha", exact: true }),
+    page.getByText("Now a channel. Find it in Messages.", { exact: true }),
+  ).toBeVisible();
+  await expect(row).toBeVisible();
+  await expect(row).toBeFocused();
+  await expect(
+    page.getByRole("heading", { name: "Alpha", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   expect(app.report.detailsPublications).toHaveLength(1);
-  expect(app.report.detailsPublications[0].tags).toEqual([
+  const event = app.report.detailsPublications[0];
+  expect(verifyEvent(event)).toBe(true);
+  expect(event.kind).toBe(9002);
+  expect(event.tags).toEqual([
     ["h", id],
-    ["name", "Shared Alpha"],
+    ["name", "Alpha"],
     ["about", ""],
+    ["visibility", "open"],
   ]);
-  expect(app.report.publications).toHaveLength(0);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
+  expect(
+    app.report.publications.filter(({ event }) =>
+      [9, 9000, 9007, 30315].includes(event.kind),
+    ),
+  ).toHaveLength(0);
+  await openPage(page, "Messages");
+  const messages = page.getByRole("button", { name: "Alpha", exact: true });
+  await expect(messages).toBeVisible();
+  await messages.click();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
   await openPage(page, "Me");
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(
-    sidebar.getByRole("button", { name: "Shared Alpha", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    sidebar.getByRole("button", { name: "Beta", exact: true }),
+    page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
 });

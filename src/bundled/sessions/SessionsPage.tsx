@@ -1,3 +1,7 @@
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
@@ -283,6 +287,8 @@ function SessionWork({
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
@@ -392,31 +398,26 @@ function SessionWork({
             <SessionShare
               session={session}
               channel={channel}
-              direct
               signal={navigation?.signal}
-              onShared={() => {
-                if (navigation?.signal.aborted) return;
-                const target = sessionLinkTarget(
-                  `buzz://channel/${channel.id}`,
-                  scope,
-                  session.viewer,
-                );
-                if (target) void navigator?.open(target);
-              }}
             />
             <MenuRoot>
               <MenuTrigger
-                render={(props) => (
+                render={
                   <IconButton
-                    {...props}
+                    ref={actionsTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
                     icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
                   />
-                )}
+                }
               />
               <MenuPopup aria-label="Session actions" align="end">
+                {canConvertSession(session, channel) && (
+                  <MenuItem onClick={() => setConvertOpen(true)}>
+                    Convert to channel
+                  </MenuItem>
+                )}
                 <MenuItem
                   disabled={
                     !!channel.readOnly || !session.channelDetails?.available
@@ -456,6 +457,16 @@ function SessionWork({
               </span>
             )}
           </SessionHeading>
+          {convertOpen && (
+            <ConvertSession
+              key={channel.id}
+              session={session}
+              id={channel.id}
+              signal={navigation?.signal}
+              close={() => setConvertOpen(false)}
+              finalFocus={actionsTrigger}
+            />
+          )}
           {renameOpen && (
             <RenameSession
               key={channel.id}

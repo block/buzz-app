@@ -112,14 +112,6 @@ function PersonalHistory({
           id: item.id,
           title: item.name,
         }))}
-        onShared={(id) => {
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            scope,
-            session.viewer,
-          );
-          if (destination) void navigator.open(destination);
-        }}
         onNew={(sectionId) =>
           void navigator.open(meTarget(scope, "new", sectionId))
         }

@@ -53,7 +53,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
       media: () => undefined,
       query: async () => [],
       writer: {
-        kinds: [9],
+        kinds: [9, 9000],
         sign: async (event) => signed(viewer, event),
         publish: async () => {},
       },
@@ -72,6 +72,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     id,
     name: "Planning",
     channelType: "session" as const,
+    private: true as const,
     members: [viewer.pubkey],
   };
   const list = {
@@ -90,6 +91,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
       ...owner.session.channels,
       list: () => list,
       ensureList() {},
+      refreshRoster: vi.fn(async () => true),
       window: () => window,
       ensure() {},
     },
@@ -202,25 +204,34 @@ it.each([false, true])(
       reject = no;
     });
     const held = { promise, resolve, reject };
-    f.set.mockImplementation(() => held.promise);
-    f.mount();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    const dialog = screen.getByRole("dialog", { name: "Share conversation" });
-    const share = within(dialog).getByRole("button", {
-      name: "Share",
+    f.session.channels.refreshRoster.mockImplementation(async () => {
+      await held.promise;
+      return true;
     });
-    await waitFor(() => expect(share).toBeEnabled());
-    await user.click(share);
-    await waitFor(() => expect(f.set).toHaveBeenCalledOnce());
-    f.abort.abort();
-    await act(async () => {
-      if (failure) held.reject(new Error("Late failure"));
-      else held.resolve();
-      await held.promise.catch(() => {});
-    });
-    expect(f.open).not.toHaveBeenCalled();
-    expect(screen.queryByText("Late failure")).toBeNull();
+    try {
+      f.mount();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Share" }));
+      const dialog = screen.getByRole("dialog", { name: "Share session" });
+      await waitFor(() =>
+        expect(f.session.channels.refreshRoster).toHaveBeenCalledOnce(),
+      );
+      expect(within(dialog).getByRole("status")).toHaveTextContent(
+        "Loading current access",
+      );
+      f.abort.abort();
+      await act(async () => {
+        if (failure) held.reject(new Error("Late failure"));
+        else held.resolve();
+        await held.promise.catch(() => {});
+      });
+      expect(f.open).not.toHaveBeenCalled();
+      expect(f.set).not.toHaveBeenCalled();
+      expect(f.session.channelDetails.load).not.toHaveBeenCalled();
+      expect(screen.queryByText("Late failure")).toBeNull();
+    } finally {
+      held.resolve();
+    }
   },
 );
 it("opens a pending Me start through its original receipt after its section was deleted", () => {
@@ -236,6 +247,41 @@ it("opens a pending Me start through its original receipt after its section was 
     screen.getByRole("region", { name: "New conversation" }),
   ).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
+});
+
+it("preserves the Session actions menu trigger relationship and keyboard focus", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session actions" });
+  trigger.focus();
+  await user.keyboard("{ArrowDown}");
+  const menu = await screen.findByRole("menu", { name: "Session actions" });
+  expect(trigger.id).not.toBe("");
+  await waitFor(() =>
+    expect(menu).toHaveAttribute("aria-labelledby", trigger.id),
+  );
+  await waitFor(() =>
+    expect(
+      within(menu).getByRole("menuitem", { name: "Convert to channel" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+
+  await user.keyboard("{ArrowDown}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Convert to channel" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Convert to channel",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
 });
 
 it("opens an already-moved Me route in Messages without a placement or settings write", async () => {

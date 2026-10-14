@@ -8,7 +8,7 @@ import type { MemberAdditionIntent } from "../channel-members/members";
 
 export type ShareIntent = Readonly<{
   destination: string;
-  audience: "everyone" | "selected";
+  audience: "everyone" | "selected" | "combined";
   name?: string;
   visibility?: "private" | "open";
   details?: ChannelDetailsDraft;
@@ -25,6 +25,8 @@ export type ShareAttempt = {
   grants: Map<string, MemberAdditionIntent>;
   /** Frozen after a fresh destination roster read, before any session grants. */
   audienceKeys?: readonly string[];
+  /** Original destination evidence for device-local display, never retry authority. */
+  channelSnapshot?: { id: string; name: string; members: readonly string[] };
   /** Two mounted entry points must never enqueue competing link operations. */
   running?: boolean;
   stopReceipts?: (() => void) | undefined;

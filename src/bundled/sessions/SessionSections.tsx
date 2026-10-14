@@ -1,4 +1,8 @@
-import { SessionShare } from "./SessionShare";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import { SessionShare, SessionAccessIndicator } from "./SessionShare";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
@@ -51,11 +55,9 @@ export function SessionSections({
   renderSession,
   onNew,
   personal = false,
-  onShared,
   visit,
 }: {
   personal?: boolean;
-  onShared?: (id: string) => void;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -113,10 +115,12 @@ export function SessionSections({
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
   );
-  const currentVisit = useRef(visit);
-  currentVisit.current = visit;
   const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
   const [renaming, setRenaming] = useState<SessionListItem>();
+  const [converting, setConverting] = useState<{
+    id: string;
+    visit: AbortSignal | undefined;
+  }>();
   const [deleting, setDeleting] = useState<string>();
   const [deleteError, setDeleteError] = useState("");
   const [animate, setAnimate] = useState(false);
@@ -296,6 +300,17 @@ export function SessionSections({
                   key={item.id}
                   id={item.id}
                   title={item.title}
+                  indicator={
+                    personal ? (
+                      <SessionAccessIndicator
+                        session={session}
+                        channel={channels.channels.find(
+                          (channel) => channel.id === item.id,
+                        )}
+                        onClick={() => setSharing({ id: item.id, visit })}
+                      />
+                    ) : undefined
+                  }
                   className={styles.organizedRow}
                   content={
                     <>
@@ -306,6 +321,21 @@ export function SessionSections({
                           Share…
                         </MenuItem>
                       )}
+                      {personal &&
+                        canConvertSession(
+                          session,
+                          channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          ),
+                        ) && (
+                          <MenuItem
+                            onClick={() =>
+                              setConverting({ id: item.id, visit })
+                            }
+                          >
+                            Convert to channel
+                          </MenuItem>
+                        )}
                       <MenuItem
                         disabled={
                           !session.channelDetails?.available ||
@@ -409,27 +439,34 @@ export function SessionSections({
             </Collapsible.Panel>
           </Collapsible.Root>
         ))}
+      {converting && (
+        <ConvertSession
+          key={converting.id}
+          session={session}
+          id={converting.id}
+          signal={converting.visit}
+          close={() => setConverting(undefined)}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${converting.id}"] button`,
+            ) ?? false
+          }
+        />
+      )}
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}
           session={session}
           channel={sharingChannel}
+          signal={sharing.visit}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
               `[data-session-menu-id="${sharing.id}"] button`,
             ) ?? false
           }
-          direct
           initialOpen
           renderTrigger={() => null}
           onClose={() => setSharing(undefined)}
-          onShared={() => {
-            const id = sharing.id;
-            const sameVisit =
-              sharing.visit === currentVisit.current && !sharing.visit?.aborted;
-            setSharing(undefined);
-            if (sameVisit) onShared?.(id);
-          }}
         />
       )}
       {sessionSettings && (
@@ -585,6 +622,7 @@ function SessionActionsMenu({
   className,
   children,
   content,
+  indicator,
   enabled = true,
 }: {
   id: string;
@@ -592,6 +630,7 @@ function SessionActionsMenu({
   className: string | undefined;
   children: ReactNode;
   content: ReactNode;
+  indicator?: ReactNode;
   enabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -624,6 +663,7 @@ function SessionActionsMenu({
         }}
       >
         {children}
+        {indicator}
         <MenuRoot>
           <MenuTrigger
             render={(props) => (

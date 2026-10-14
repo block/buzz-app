@@ -290,7 +290,9 @@ function ReadySidebar({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      (!meEnabled || !placement.ids.includes(channel.id)) &&
+      (!meEnabled ||
+        !placement.ids.includes(channel.id) ||
+        (!channel.cached && channel.channelType === "stream")) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||

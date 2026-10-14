@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
-import { activityTarget } from "../agents/activity-target";
+import { profileActivityViewTarget } from "../profiles/target";
 import { TypingIndicator } from "./TypingIndicator";
 
 afterEach(cleanup);
@@ -108,7 +108,7 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel", root));
+  expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent));
   trigger.focus();
   await user.keyboard("{Enter}");
   dialog = await screen.findByRole("dialog", { name: "Working now" });
@@ -289,7 +289,7 @@ it("never chooses one thread from simultaneous work and deduplicates public and 
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+  expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent));
 });
 
 it("retains one explicit live region from idle through work and back to idle", () => {
@@ -371,7 +371,7 @@ it.each([null, undefined])(
     await user.click(
       screen.getByRole("button", { name: "View Agent activity" }),
     );
-    expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+    expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent));
     await user.click(
       screen.getByRole("button", { name: "Activity: Agent working" }),
     );
@@ -410,7 +410,7 @@ it("opens the sole known conversation without attributing unknown telemetry to t
   );
   expect(screen.getByText(/Work with unconfirmed thread/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View Agent activity" }));
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+  expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent));
   await user.click(
     screen.getByRole("button", { name: "Activity: Agent working" }),
   );
@@ -514,7 +514,7 @@ it.each(["click", "Enter", "Space"])(
       await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
     }
     expect(open).toHaveBeenCalledExactlyOnceWith(
-      activityTarget(agent, "channel", root),
+      profileActivityViewTarget(agent),
     );
     expect(
       screen.queryByRole("dialog", { name: "Working now" }),

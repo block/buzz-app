@@ -40,13 +40,13 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   enables sending; an unavailable preference read is not evidence of Messages.
 - Me reuses Messages' sidebar working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
-  Agent activity details open in Me's existing per-conversation panel workspace;
+  Agent activity opens the agent's profile in Me's per-conversation panel workspace;
   exact-message/thread actions use the canonical channel reader, as other Me links do.
   Me grouping and row menus remain independent of Messages organization.
 - Me reuses Messages' secondary conversation/tool/panel tabs and pane geometry,
   with separate per-conversation Me persistence. Its main timeline remains flat.
-  A single working agent's Activity indicator opens its Activity panel locally;
-  multiple agents or an unavailable panel retain the chooser. Hover previews are
+  A single working agent's Activity indicator opens its profile's Activity tab
+  locally; multiple agents or an unavailable profile retain the chooser. Hover previews are
   retained; Down Arrow on a single-agent indicator opens the chooser for keyboard
   access to its conversation actions. Secondary conversations placed in Me keep
   owner-scoped explicit recipients and wait for placement readiness before sending.

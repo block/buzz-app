@@ -196,8 +196,9 @@ export type AgentCreateModelMenuProps<Config = unknown> =
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
-  /** Lets the Agents build view place host-owned Type controls in this tab. */
-  role?: "settings";
+  /** `settings` lets the Agents build view place host-owned Type controls in
+   * this tab; `activity` makes it the agent's Activity tab in its profile. */
+  role?: "settings" | "activity";
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */

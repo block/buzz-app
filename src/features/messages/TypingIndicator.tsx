@@ -10,7 +10,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { activityTarget } from "../agents/activity-target";
+import { profileActivityViewTarget } from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -128,23 +128,15 @@ export function TypingIndicator({
       ...(roots.length > 2 ? [`+${roots.length - 2} more`] : []),
     ].join(" / ");
   };
-  const targetForAgent = (pubkey: string) => {
-    const roots = details.get(pubkey)?.roots ?? [];
-    const root = threadRootId ?? (roots.length === 1 ? roots[0] : undefined);
-    return activityTarget(pubkey, channelId, root ?? undefined);
-  };
   const directTarget =
     clickOpensPanel && agents.length === 1 && firstAgent
-      ? targetForAgent(firstAgent)
+      ? profileActivityViewTarget(firstAgent)
       : undefined;
   const agentStatus = (pubkey: string, navigate: (target: string) => void) => {
     const detail = details.get(pubkey);
     if (!detail) return null;
-    // Unknown or multiple scopes open channel activity, never an inferred transcript.
-    const root =
-      threadRootId ?? (detail.roots.length === 1 ? detail.roots[0] : undefined);
-    const target = activityTarget(pubkey, channelId, root ?? undefined);
-    const canOpen = !!openActivity && !!canOpenActivity?.(target);
+    const target = profileActivityViewTarget(pubkey);
+    const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
     const knownRoots = detail.roots.filter(
       (value) => typeof value === "string",
     );
@@ -162,7 +154,7 @@ export function TypingIndicator({
         scope={scopeLabel(pubkey)}
         openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
         onOpen={openActivity ? () => navigate(conversation) : undefined}
-        onOpenActivity={canOpen ? () => navigate(target) : undefined}
+        onOpenActivity={canOpen && target ? () => navigate(target) : undefined}
       />
     );
   };

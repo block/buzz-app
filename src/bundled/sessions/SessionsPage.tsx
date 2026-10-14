@@ -1,5 +1,5 @@
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
@@ -332,9 +332,9 @@ function SessionWork({
       navigation?.signal.aborted
     )
       return;
-    const target = activityTarget(intent.agent, intent.channelId);
-    const panel = panels.resolve(target);
-    if (panel) {
+    const target = profileActivityViewTarget(intent.agent);
+    const panel = target && panels.resolve(target);
+    if (target && panel) {
       panelTrigger.current = intent.trigger;
       open({ channelId: intent.channelId, panel, target }, true);
     }

@@ -63,6 +63,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
     id: "codex",
@@ -121,6 +122,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     models: (agent) => runtime.preview(agent),

@@ -71,6 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   } = createTabs({ setup, defaults: providerDefaults, runtime });
   agents.register<Config>({
     id: TYPE_ID,
@@ -129,6 +130,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     models: (agent) => runtime.models(agent.pubkey),

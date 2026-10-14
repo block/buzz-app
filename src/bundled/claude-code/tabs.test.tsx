@@ -276,22 +276,18 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
       message: { content: [{ type: "text", text: "Two files." }] },
     }),
   ].join("\n");
-  const Claude = tab(
+  const Activity = tab(
     installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
-    0,
+    1,
   );
   const save = vi.fn();
-  render(<Claude agent={agent()} save={save} />);
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  render(<Activity agent={agent()} save={save} />);
   const user = userEvent.setup();
   const rows = screen.getAllByRole("listitem");
   expect(rows.map((row) => row.textContent)).toEqual([
     expect.stringContaining("channel · thread eeeeeeee"),
     expect.stringContaining("channel · channel"),
   ]);
-  fireEvent.change(screen.getByLabelText("Workspace"), {
-    target: { value: "/draft" },
-  });
   const viewButton = (index: number) =>
     screen.getAllByRole("button", { name: "View transcript" })[
       index
@@ -312,7 +308,6 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
     await screen.findByText(/no transcript for this conversation/),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByLabelText("Workspace")).toHaveValue("/draft");
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -327,15 +322,14 @@ it("sets the conversation the profile was opened from apart from recent conversa
       },
     }),
   );
-  const Claude = tab(installed().type, 0);
+  const Activity = tab(installed().type, 1);
   render(
-    <Claude
+    <Activity
       agent={agent()}
       save={vi.fn()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
     within(opened).getByRole("button", { name: "View transcript" }),
@@ -354,18 +348,17 @@ it("finds the thread's Claude session another build started", async () => {
       content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
     },
   });
-  const Claude = tab(
+  const Activity = tab(
     installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
-    0,
+    1,
   );
   render(
-    <Claude
+    <Activity
       agent={agent()}
       save={vi.fn()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
     await within(opened).findByRole("button", { name: "View transcript" }),
@@ -430,7 +423,10 @@ it("is an agent type on the desktop app", () => {
     "opus",
   );
   expect(type.provider).toBeDefined();
-  expect(type.tabs?.map((tab) => tab.title)).toEqual(["Settings"]);
+  expect(type.tabs?.map(({ title, role }) => [title, role])).toEqual([
+    ["Settings", "settings"],
+    ["Activity", "activity"],
+  ]);
 });
 
 it("registers only where setup's bash and base64 exist", () => {
@@ -443,7 +439,7 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("keeps provider readiness quiet and agent diagnostics collapsed", async () => {
+it("keeps provider readiness quiet and agent sessions out of Settings", async () => {
   const installedType = installed().type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
@@ -457,9 +453,11 @@ it("keeps provider readiness quiet and agent diagnostics collapsed", async () =>
   cleanup();
   const Settings = tab(installedType, 0);
   render(<Settings agent={agent()} save={vi.fn()} />);
-  expect(
-    screen.getByText("Runtime diagnostics").closest("details"),
-  ).not.toHaveAttribute("open");
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.queryByText("Recent conversations")).not.toBeInTheDocument();
+  cleanup();
+  const Activity = tab(installedType, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
   expect(
     screen.getByText(/None\. A conversation's session starts/),
   ).toBeInTheDocument();

@@ -229,10 +229,9 @@ test.describe("Berd-style Me organization", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Me");
-    const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
-    });
-    const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+    const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+    // Stable identity: after reload an unread count joins the accessible label.
+    const row = sidebar.locator(`[data-me-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
     await page.getByRole("menuitem", { name: "New project…" }).click();

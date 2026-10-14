@@ -12,6 +12,11 @@ import {
 } from "../src/features/relay/video-preparation.ts";
 import { UploadError, UPLOAD_MAX_BYTES } from "./attachment-upload.mjs";
 
+// Fit the relay's 3840x2160 envelope in either orientation (Retina screen
+// recordings exceed it), never upscale, then pad odd edges for yuv420p.
+const VIDEO_FILTER =
+  "scale=w='trunc(iw*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))':h='trunc(ih*min(1,min(3840/max(iw,ih),2160/min(iw,ih))))',pad=ceil(iw/2)*2:ceil(ih/2)*2";
+
 // Wait for close even after abort: cleanup must not race a still-writing process.
 function run(args, signal, timeout = VIDEO_PREPARATION_MS) {
   return new Promise((resolve, reject) => {
@@ -166,7 +171,7 @@ export async function prepareMedia(req, callerSignal, deliver) {
                 "-pix_fmt",
                 "yuv420p",
                 "-vf",
-                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                VIDEO_FILTER,
                 "-c:a",
                 "aac",
                 "-b:a",

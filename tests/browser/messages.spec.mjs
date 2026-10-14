@@ -435,8 +435,17 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       "data-avatar-shape",
       "squircle",
     );
-    const threadHumanAvatar = history
+    const threadRoot = history
       .getByText("First root", { exact: true })
+      .locator("xpath=ancestor::*[@data-message-id][1]");
+    await expect(threadRoot.locator("[data-layout]")).toHaveAttribute(
+      "data-stack-next",
+      "true",
+    );
+    await expect(threadRoot.locator("[data-avatar-shape]")).toHaveCount(0);
+    // The human avatar belongs to the final row of the same-author group.
+    const threadHumanAvatar = history
+      .getByRole("heading", { name: "Markdown reply", level: 2 })
       .locator("xpath=ancestor::*[@data-message-id][1]")
       .locator("[data-avatar-shape]")
       .first();
@@ -563,7 +572,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await stopObserving.dispose();
     }
     await history.evaluate((element) => {
-      for (const selector of ["pre", "table"]) {
+      for (const selector of ["pre code", "table"]) {
         const item = element.querySelector(selector);
         if (!(item instanceof HTMLElement))
           throw new Error(`Missing ${selector}`);

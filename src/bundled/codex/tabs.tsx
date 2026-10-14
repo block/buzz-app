@@ -16,10 +16,8 @@ import type {
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
-import { CheckIcon, CopyIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
@@ -31,6 +29,7 @@ import {
 } from "./config";
 import { AppServer, listModels, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
+import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
@@ -51,6 +50,7 @@ type ProviderState = AgentProviderSnapshot &
   }>;
 const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
+const NOT_INSTALLED = "Codex is not installed.";
 const CONVERSATION_LIMIT = 30;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
@@ -81,10 +81,12 @@ export class CodexProvider {
   private readonly listeners = new Set<() => void>();
   private abort: AbortController | undefined;
   private pending: Promise<void> | undefined;
+  private readonly offSetup: (() => void) | undefined;
 
   constructor(
     private readonly spawn: Spawn,
     private readonly storage: Storage = localStorage,
+    private readonly setup?: CodexSetup,
   ) {
     this.state = Object.freeze({
       readiness: "checking",
@@ -92,6 +94,15 @@ export class CodexProvider {
       data: undefined,
       error: "",
       defaults: this.readDefaults(),
+    });
+    // An install or sign-in holds the dialog open, then Codex is checked again.
+    this.offSetup = setup?.subscribe(() => {
+      const running = Boolean(setup.snapshot().running);
+      if (running === Boolean(this.state.blocking)) return;
+      const { blocking: _, ...rest } = this.state;
+      this.state = Object.freeze(running ? { ...rest, blocking: true } : rest);
+      for (const listener of this.listeners) listener();
+      if (!running) void this.check();
     });
   }
 
@@ -122,6 +133,15 @@ export class CodexProvider {
       error: "",
     });
     try {
+      const status = await this.setup?.check();
+      if (status && status.state !== "ready")
+        throw new Error(
+          status.state === "missing"
+            ? NOT_INSTALLED
+            : status.state === "signed-out"
+              ? SIGN_IN_ERROR
+              : status.message,
+        );
       const data = await catalog(this.spawn, abort.signal);
       if (this.abort === abort) {
         this.set({
@@ -137,9 +157,11 @@ export class CodexProvider {
         this.set({
           readiness: "attention",
           attentionLabel:
-            reason === SIGN_IN_ERROR
-              ? "Log in to Codex"
-              : "Codex needs attention",
+            reason === NOT_INSTALLED
+              ? "Install Codex"
+              : reason === SIGN_IN_ERROR
+                ? "Log in to Codex"
+                : "Codex needs attention",
           checking: false,
           data: undefined,
           error: reason,
@@ -184,6 +206,7 @@ export class CodexProvider {
     return { ...explicit, model, effort };
   }
   dispose() {
+    this.offSetup?.();
     this.abort?.abort();
     this.abort = undefined;
   }
@@ -265,72 +288,11 @@ const modelChange = (model: string, data?: Catalog) => ({
       ?.defaultReasoningEffort ?? "",
 });
 
-class CodexLogin {
-  private state = { running: false, output: "" };
-  private listeners = new Set<() => void>();
-  private active:
-    | { cancelled: boolean; process?: Awaited<ReturnType<Spawn>> }
-    | undefined;
-  constructor(
-    private readonly spawn: Spawn,
-    private readonly signedIn: () => void,
-  ) {}
-  snapshot = () => this.state;
-  subscribe = (listener: () => void) => {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-      queueMicrotask(() => {
-        if (!this.listeners.size) this.cancel();
-      });
-    };
-  };
-  private set(change: Partial<typeof this.state>) {
-    this.state = { ...this.state, ...change };
-    for (const listener of this.listeners) listener();
-  }
-  cancel = () => {
-    if (!this.active) return;
-    this.active.cancelled = true;
-    void this.active.process?.kill();
-    this.set({ running: false });
-  };
-  run = async () => {
-    if (this.active) return;
-    const job: { cancelled: boolean; process?: Awaited<ReturnType<Spawn>> } = {
-      cancelled: false,
-    };
-    this.active = job;
-    this.set({ running: true, output: "" });
-    const append = (text: string) => {
-      if (!job.cancelled)
-        this.set({ output: (this.state.output + text).slice(-20000) });
-    };
-    try {
-      job.process = await this.spawn("login", {
-        onStdout: append,
-        onStderr: append,
-      });
-      if (job.cancelled) await job.process.kill();
-      const code = await job.process.exited;
-      if (!job.cancelled) {
-        if (code === 0) this.signedIn();
-        else append("\nSign-in did not finish. Try again.");
-      }
-    } catch (reason) {
-      append(message(reason));
-    } finally {
-      this.active = undefined;
-      this.set({ running: false });
-    }
-  };
-}
-
 function CodexSignIn({
   login,
   disabled,
 }: {
-  login: CodexLogin;
+  login: CodexSetup;
   disabled: boolean;
 }) {
   const { running, output } = useSyncExternalStore(
@@ -344,8 +306,8 @@ function CodexSignIn({
           variant="prominent"
           size="sm"
           disabled={disabled}
-          loading={running}
-          onClick={() => void login.run()}
+          loading={Boolean(running)}
+          onClick={() => void login.run("login")}
         >
           Sign in
         </Button>
@@ -372,8 +334,9 @@ export function createTabs(
   provider: CodexProvider,
   runtime: CodexRuntime,
   spawn: Spawn,
+  setup: CodexSetup,
 ) {
-  const login = new CodexLogin(spawn, () => void provider.check());
+  const login = setup;
 
   function useProvider() {
     const state = useSyncExternalStore(
@@ -415,49 +378,22 @@ export function createTabs(
     );
   }
 
-  function CopyCommand({ command }: { command: string }) {
-    const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-      "idle",
-    );
-    return (
-      <div className="flex items-center gap-2">
-        <Input value={command} readOnly aria-label="Terminal command" />
-        <IconButton
-          aria-label={
-            copyState === "copied"
-              ? "Copied terminal command"
-              : "Copy terminal command"
-          }
-          icon={
-            copyState === "copied" ? (
-              <CheckIcon size={16} aria-hidden="true" />
-            ) : (
-              <CopyIcon size={16} aria-hidden="true" />
-            )
-          }
-          onClick={() => {
-            setCopyState("idle");
-            void navigator.clipboard.writeText(command).then(
-              () => setCopyState("copied"),
-              () => setCopyState("failed"),
-            );
-          }}
-        />
-        {copyState === "failed" && (
-          <p role="alert" className="buzz-field-error">
-            Couldn’t copy the command.
-          </p>
-        )}
-      </div>
-    );
-  }
-
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const state = useProvider();
     const { data, error, checking } = state;
+    const installing = useSyncExternalStore(
+      setup.subscribe,
+      setup.snapshot,
+      setup.snapshot,
+    );
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
-    const signedOut = error === SIGN_IN_ERROR;
+    const action =
+      error === NOT_INSTALLED
+        ? ({ step: "install", label: "Install Codex" } as const)
+        : error === SIGN_IN_ERROR
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
     useEffect(() => setDraft(state.defaults), [state.defaults]);
     const nativeModel = data?.models.find((model) => model.isDefault);
     const selected = draft.model
@@ -483,8 +419,22 @@ export function createTabs(
     ];
     return (
       <div className="grid gap-6">
+        {installing.notice && (
+          <p role="status" className="m-0 text-body-sm">
+            {installing.notice}
+          </p>
+        )}
         <div className="grid gap-2" hidden={state.readiness === "ready"}>
-          {checking ? (
+          {installing.running ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="status" className="m-0 text-body-sm">
+                {installing.running === "login"
+                  ? "Waiting for Codex sign-in…"
+                  : "Installing Codex…"}
+              </p>
+              <Button onClick={() => void setup.cancel()}>Cancel</Button>
+            </div>
+          ) : checking ? (
             <p role="status" className="m-0">
               Checking Codex…
             </p>
@@ -493,15 +443,33 @@ export function createTabs(
               <strong>{error}</strong>
             </p>
           ) : null}
-          {state.readiness === "attention" && (
-            <>
-              <p className="m-0 text-body-sm text-subtle">
-                {signedOut
-                  ? "Run this command in a terminal, then please try again."
-                  : "Open Codex in a terminal for more details, then please try again."}
-              </p>
-              {signedOut && <CopyCommand command="codex login" />}
-            </>
+          {action && !installing.running && !checking && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                autoFocus
+                variant="prominent"
+                onClick={() => void setup.run(action.step)}
+              >
+                {action.label}
+              </Button>
+            </div>
+          )}
+          {action?.step === "install" && !installing.running && (
+            <p className="m-0 text-body-sm text-subtle">
+              Downloads Buzz's own copy of Codex (about 130 MB) from
+              releases.openai.com and keeps it on the latest release. It does
+              not change the <code>codex</code> in your terminal, and uses the
+              same sign-in and settings.
+            </p>
+          )}
+          {installing.output && (
+            <div
+              role="log"
+              aria-label="Setup output"
+              className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-body-sm text-subtle"
+            >
+              {installing.output}
+            </div>
           )}
         </div>
         <form

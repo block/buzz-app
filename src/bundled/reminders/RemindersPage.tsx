@@ -405,6 +405,7 @@ function ReminderRow({
         <span
           id={`${id}-preview`}
           className={`text-body ${pending ? "text-standard" : "text-subtle"} ${styles.preview}`}
+          data-message={reminder.target?.preview ? "" : undefined}
         >
           {preview}
         </span>

@@ -291,6 +291,70 @@ it("recovers a failed first history read through Retry, then notifies", async ()
   }
 });
 
+it("ages due labels while open, with no reminder or live events", async () => {
+  // 11:55 PM local, so the run crosses an overdue boundary and midnight.
+  const start = new Date(2026, 0, 5, 23, 55).getTime();
+  vi.useFakeTimers({ now: start });
+  try {
+    const at = Math.floor(start / 1000);
+    const state = {
+      status: "ready" as const,
+      hydrated: true,
+      reminders: [
+        reminder("came due", "pending", 1, at - 30),
+        reminder("morning", "pending", 1, at + 9 * 3600 + 5 * 60),
+      ],
+    };
+    const connection = {
+      status: "ready",
+      scope: `https://community.example:${viewer}`,
+      viewer,
+      session: {
+        reminders: {
+          snapshot: () => state,
+          subscribe: () => () => {},
+          refresh: () => Promise.resolve(),
+        },
+        ...sessionParts,
+        live: {
+          subscribe: () => () => {},
+          snapshot: () => ({ roster: { state: "verified" } }),
+        },
+      },
+    };
+    let Page: () => ReactNode = () => null;
+    apply({
+      relay: { snapshot: () => connection, subscribe: () => () => {} },
+      notifications: { register: () => ({ submit: () => Promise.resolve() }) },
+      pages: {
+        register: (page: { component: () => ReactNode }) => {
+          Page = page.component;
+        },
+      },
+      navigation: {},
+      conversation: { registerMessageAction: vi.fn() },
+      effect: (body: () => void) => body(),
+    } as unknown as Parameters<typeof apply>[0]);
+    render(<Page />);
+    // Rows move between day groups as the clock crosses midnight.
+    const labels = () =>
+      screen
+        .getAllByRole("listitem")
+        .map((row) => row.querySelector("time")?.textContent);
+    expect(labels()).toEqual([
+      "Overdue · just now",
+      expect.stringMatching(/^Tomorrow at /),
+    ]);
+    await act(() => vi.advanceTimersByTimeAsync(11 * 60_000));
+    expect(labels()).toEqual([
+      "Overdue · 11 minutes ago",
+      expect.stringMatching(/^Today at /),
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 function page(source: Reminder[] | Reminders) {
   const state = { status: "ready" as const, reminders: source };
   const reminders = Array.isArray(source)

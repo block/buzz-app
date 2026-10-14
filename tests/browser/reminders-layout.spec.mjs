@@ -77,6 +77,13 @@ for (const width of [480, 390]) {
       Number.parseFloat(getComputedStyle(el).lineHeight),
     );
     expect((await due.boundingBox()).height).toBeLessThan(lineHeight * 1.5);
+    // A note is read only here, so it wraps in full rather than clamping.
+    const note = page.getByText("x".repeat(2000), { exact: true });
+    expect(
+      await note.evaluate((el) => el.scrollHeight - el.clientHeight),
+      "the whole note is visible",
+    ).toBe(0);
+    expect((await note.boundingBox()).height).toBeGreaterThan(lineHeight * 3);
     expect(errors).toEqual([]);
   });
 }

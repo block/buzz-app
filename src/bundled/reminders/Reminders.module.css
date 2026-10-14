@@ -140,11 +140,16 @@
 
 .preview,
 .note {
+  overflow-wrap: anywhere;
+}
+
+/* Only a message preview clamps: the row opens the full message. Notes have
+   nowhere else to be read, so they always wrap in full. */
+.preview[data-message] {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  overflow-wrap: anywhere;
 }
 
 .note {

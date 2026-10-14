@@ -286,8 +286,3 @@
 .identity:not([data-avatar-active]) {
   background: var(--interaction-row-hover);
 }
-
-/* The editable name keeps its title treatment while the caret shows focus. */
-.title input:focus {
-  --border: transparent;
-}

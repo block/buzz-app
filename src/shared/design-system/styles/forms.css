@@ -186,9 +186,6 @@
     min-width: 0;
   }
   .buzz-select-trigger {
-    --border: var(--border-standard);
-    background: transparent;
-    border-radius: var(--radius-control);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -398,7 +395,6 @@
     @apply text-heading;
     min-height: 0;
     padding: 0;
-    border: 0;
     border-radius: 0;
     background: transparent;
     text-align: inherit;
@@ -500,7 +496,6 @@
   .buzz-textarea[data-appearance="content"] {
     display: block;
     background: transparent;
-    --border: transparent;
     padding-inline: 0;
   }
   .buzz-textarea[data-appearance="content"]:not(:focus) {

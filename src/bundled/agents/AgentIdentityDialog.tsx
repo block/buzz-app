@@ -118,11 +118,11 @@ export function AgentIdentityDialog({
         if (!open) onClose();
       }}
       onEscape={() => {
-        if (back) {
-          back();
+        if (back || (initialAvatarPicker && avatarCanGoBack)) {
+          avatarNavigation.current?.back();
           return true;
         }
-        return pending || avatarBusy;
+        return pending || avatarBusy || (initialAvatarPicker && pictureChanged);
       }}
       leadingActions={
         back && (

@@ -147,6 +147,7 @@ export function MemoryPanel({
             title="Core memories"
             description="Automatically included when the agent works."
             entries={core ? [core] : []}
+            actions={refreshButton}
             emptyIcon={<ThinkingHighIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
           />
@@ -195,12 +196,14 @@ function MemorySection({
   entries,
   emptyIcon,
   refreshing = false,
+  actions,
 }: {
   title: string;
   description: string;
   entries: readonly MemoryEntry[];
   emptyIcon: ReactNode;
   refreshing?: boolean;
+  actions?: ReactNode;
 }) {
   const ordered = [...entries].sort(
     (left, right) =>
@@ -209,7 +212,12 @@ function MemorySection({
   return (
     <section className="grid gap-2" aria-label={title}>
       <div className={`group ${styles.sectionHeader}`}>
-        <Header level={4} title={title} subtitle={description} />
+        <Header
+          level={4}
+          title={title}
+          subtitle={description}
+          actions={actions}
+        />
       </div>
       <div
         className={`grid gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}

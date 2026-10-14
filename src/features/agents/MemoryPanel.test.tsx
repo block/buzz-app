@@ -59,8 +59,8 @@ it("shows core first, then other memories in Markdown accordions", async () => {
     ),
   ).toBeInTheDocument();
   expect(
-    within(core).queryByRole("button", { name: "Refresh" }),
-  ).not.toBeInTheDocument();
+    within(core).getByRole("button", { name: "Refresh" }),
+  ).toBeInTheDocument();
   const coreTrigger = within(core).getByRole("button", { name: "core" });
   expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
   await user.click(within(core).getByText("core"));
@@ -260,4 +260,46 @@ it("holds one revocable memory view until the panel unmounts", async () => {
   for (const view of views) view.dispose();
   unmount();
   expect(() => memories.open(pubkey)).not.toThrow();
+});
+
+it("keeps the core-memory actions visible while refreshing", async () => {
+  const user = userEvent.setup();
+  let reads = 0;
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  setup(async () => {
+    reads += 1;
+    if (reads > 1) await pending;
+    return {
+      entries: [
+        entry("core", reads > 1 ? "Updated memory." : "Remember."),
+        entry("mem/alpha", "Alpha."),
+        entry("mem/beta", "Beta."),
+      ],
+      partial: reads === 1,
+    };
+  });
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  await user.click(within(core).getByRole("button", { name: "Refresh" }));
+  expect(reads).toBe(2);
+  expect(
+    within(core).getByRole("button", { name: "Refresh" }),
+  ).toBeInTheDocument();
+  expect(within(core).getByRole("button", { name: "Refresh" })).toHaveAttribute(
+    "data-refreshing",
+    "true",
+  );
+  expect(
+    within(core).getByRole("button", { name: "Refresh" }).querySelector("svg"),
+  ).toHaveClass("animate-spin");
+  expect(
+    core.querySelector("[data-memory-list][data-refreshing='true']"),
+  ).toHaveClass("opacity-50");
+  release();
+  expect(await screen.findByText("Updated memory.")).toBeInTheDocument();
+  expect(
+    screen.queryByText("Some memories couldn't be shown."),
+  ).not.toBeInTheDocument();
 });

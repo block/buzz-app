@@ -1355,6 +1355,18 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
     within(dialog).queryByRole("button", { name: "Back" }),
   ).not.toBeInTheDocument();
   expect(agents.save).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(
+    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Gloopies 1" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   dialog = await open();

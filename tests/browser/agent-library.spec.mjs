@@ -37,7 +37,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
         .poll(() =>
           name.evaluate((field) => getComputedStyle(field).borderBottomColor),
         )
-        .toBe("rgba(0, 0, 0, 0)");
+        .not.toBe("rgba(0, 0, 0, 0)");
       await expect(name).toBeInViewport();
       const label = dialog
         .locator(".buzz-preference-row-label")
@@ -53,6 +53,18 @@ test("agent cards expose selection and creation preserves focus and selected bor
           }),
         )
         .toBeLessThan(1.5);
+      const instructions = dialog.getByRole("textbox", {
+        name: "Instructions",
+        exact: true,
+      });
+      await instructions.focus();
+      await expect
+        .poll(() =>
+          instructions.evaluate(
+            (element) => getComputedStyle(element).borderBottomColor,
+          ),
+        )
+        .not.toBe("rgba(0, 0, 0, 0)");
       await page.screenshot({
         path: info.outputPath(`creation-${theme}-${width}.png`),
       });
@@ -86,6 +98,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
 test("owner profile keeps its pane and caret stable during inline name editing", async ({
   page,
 }, info) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/tests/fixtures/agent-library.html");
   await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
   const profile = page.getByRole("region", {
@@ -96,12 +109,16 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   expect((await profile.boundingBox()).y).toBe((await agents.boundingBox()).y);
   await page.getByRole("tab", { name: "Attention", exact: true }).click();
   const before = await profile.boundingBox();
-  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.screenshot({ path: info.outputPath("agent-profile.png") });
   await profile.getByRole("button", { name: "Agent profile actions" }).click();
   await page.getByRole("menuitem", { name: "Change name" }).click();
   const input = profile.getByRole("textbox", { name: "Agent name" });
   await expect(input).toBeFocused();
+  await expect
+    .poll(() =>
+      input.evaluate((element) => getComputedStyle(element).borderBottomColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
   await expect
     .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
     .toEqual([3, 3]);

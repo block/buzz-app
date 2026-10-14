@@ -187,6 +187,9 @@ export function useFloatingActionBar(
       delete bar.dataset.placement;
     };
     const position = () => {
+      // A frame can outlive the document that held the bar (for example after
+      // the page content is replaced). showPopover throws on detached elements.
+      if (!bar.isConnected) return;
       // Resolve the painted message again when edits replace text with media.
       const visual =
         row.querySelector<HTMLElement>("[data-message-action-anchor]") ??

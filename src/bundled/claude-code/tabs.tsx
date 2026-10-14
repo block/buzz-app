@@ -103,6 +103,7 @@ function ClaudeSignIn({
   const [open, setOpen] = useState(false);
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
   const missing = state.status?.state === "missing";
+  const outdated = state.status?.state === "outdated";
   return (
     <>
       <Button
@@ -112,14 +113,14 @@ function ClaudeSignIn({
         onClick={() => {
           if (setup.snapshot().running) return;
           setOpen(true);
-          void setup.run(missing ? "install" : "login");
+          void setup.run(missing || outdated ? "install" : "login");
         }}
       >
-        {missing ? "Install Claude" : "Sign in"}
+        {missing ? "Install Claude" : outdated ? "Update Claude" : "Sign in"}
       </Button>
       <Dialog
         open={open}
-        title={missing ? "Set up Claude" : "Sign in to Claude"}
+        title={missing || outdated ? "Set up Claude" : "Sign in to Claude"}
         description="Continue in your browser. If it gives you a code to paste, choose Enter a code below."
         onOpenChange={(next) => {
           setOpen(next);
@@ -152,19 +153,23 @@ function ClaudeSetupPanel({
       ? "Checking Claude…"
       : status.state === "missing"
         ? "Claude is not installed."
-        : status.state === "signed-out"
-          ? `Claude ${status.version} needs you to sign in.`
-          : status.state === "ready"
-            ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
-            : status.message;
+        : status.state === "outdated"
+          ? `Claude ${status.version} is older than Buzz needs.`
+          : status.state === "signed-out"
+            ? `Claude ${status.version} needs you to sign in.`
+            : status.state === "ready"
+              ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
+              : status.message;
   // One button per slot, so focus stays put as Install becomes Sign in and
   // Cancel becomes Check again.
   const action =
     status?.state === "missing"
       ? ({ step: "install", label: "Install Claude" } as const)
-      : status?.state === "signed-out"
-        ? ({ step: "login", label: "Sign in" } as const)
-        : undefined;
+      : status?.state === "outdated"
+        ? ({ step: "install", label: "Update Claude" } as const)
+        : status?.state === "signed-out"
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
   return (
     <section className="grid gap-2">
       {!(variant === "compact" && status?.state === "signed-out") && (
@@ -194,7 +199,7 @@ function ClaudeSetupPanel({
             disabled={!state.running && state.checking}
             focusableWhenDisabled
             onClick={() =>
-              void (state.running ? setup.cancel() : setup.check())
+              void (state.running ? setup.cancel() : setup.check(true))
             }
           >
             {state.running ? "Cancel" : "Check again"}
@@ -203,9 +208,10 @@ function ClaudeSetupPanel({
       </div>
       {status?.state === "missing" && (
         <p className="m-0 text-body-sm text-subtle">
-          Runs the official installer,{" "}
-          <code>curl -fsSL https://claude.ai/install.sh | bash</code>, which
-          puts <code>claude</code> in <code>~/.local/bin</code>.
+          Downloads Buzz's own copy of Claude (about 250 MB) from
+          downloads.claude.ai and keeps it on the latest release. It does not
+          change the <code>claude</code> in your terminal, and uses the same
+          sign-in and settings.
         </p>
       )}
       {state.output && (
@@ -290,9 +296,13 @@ export function createTabs({
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
     useEffect(() => {
-      if (state.status?.state === "ready" && state.models.length === 0)
+      if (
+        !state.checking &&
+        state.status?.state === "ready" &&
+        state.models.length === 0
+      )
         void setup.loadModels();
-    }, [state.status, state.models.length]);
+    }, [state.status, state.checking, state.models.length]);
     return state;
   }
 
@@ -307,7 +317,7 @@ export function createTabs({
       defaults.subscribe,
       defaults.snapshot,
     );
-    if (!state.status || state.checking)
+    if (!state.status)
       return (
         <span role="status" className="text-body-sm text-secondary">
           Checking sign-in…

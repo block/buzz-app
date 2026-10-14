@@ -558,9 +558,13 @@ it("imports a shared agent as a new identity with its name and picture, adopting
   ).rejects.toThrow("Name the agent");
 });
 
-/** The imported copy of old Buzz team `id` in `community`. */
-const betaTeam = (id: string, community = "https://relay.example.test") =>
-  `beta-${createHash("sha256").update(`${id}\n${community}`).digest("hex")}`;
+/** The imported copy of old Buzz team `id` for `owner` in `community`. */
+const betaTeam = (
+  id: string,
+  community = "https://relay.example.test",
+  owner = viewer,
+) =>
+  `beta-${createHash("sha256").update(`${id}\n${community}:${owner}`).digest("hex")}`;
 const [alder, birch, carrow] = [bot, sibling, "e".repeat(64)];
 const NAMES: Record<string, string> = {
   [alder]: "Alder",
@@ -955,6 +959,32 @@ it("drops another account's agents from a saved team even when no member imports
   ]);
   expect(service.snapshot().teams).toEqual([team]);
   expect(readTeams(storage)).toEqual([team]);
+});
+
+it("keeps each account's import of the same old team apart on one device", async () => {
+  const { service, native, signIn } = await setup();
+  const other = "f".repeat(64);
+  const importAs = async (owner: string, member: string) => {
+    signIn(owner);
+    listsTeam(native, nightShift([member]));
+    const { team } = await importTeam(service);
+    if (!team) throw new Error("The team was not saved");
+    return team;
+  };
+  const first = await importAs(viewer, alder);
+  const mine = await service.saveTeam({
+    ...first,
+    name: "Renamed",
+    instructions: "Mine.",
+  });
+  const theirs = await importAs(other, birch);
+  expect(theirs).toEqual({
+    ...savedShift([birch]),
+    id: betaTeam("old-night-shift", undefined, other),
+  });
+  expect(service.snapshot().teams).toEqual([mine, theirs]);
+  expect(await importAs(viewer, alder)).toEqual(mine);
+  expect(service.snapshot().teams).toEqual([mine, theirs]);
 });
 
 it("creates no team when no member imports and none was saved", async () => {

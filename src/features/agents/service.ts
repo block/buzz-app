@@ -1122,7 +1122,7 @@ export class AgentsService extends Service implements Agents {
     const elsewhere: string[] = [];
     const foreign: string[] = [];
     const listed = new Set(found.agents.map((agent) => agent.pubkey));
-    const teamId = await importedTeamId(old, relayOrigin(binding.origin));
+    const teamId = await importedTeamId(old, binding.scope);
     const labels = publicKeyLabels(old.members.map(({ pubkey }) => pubkey));
     /** Whether an agent already here may be on the team, noting why not. */
     const fits = (here: AgentIdentity, name: string) => {
@@ -2234,11 +2234,12 @@ export class AgentsService extends Service implements Agents {
   }
 }
 
-/** An old Buzz team's copy in `community`, the same from every import. */
-async function importedTeamId(team: OldTeam, community: string) {
+/** An old Buzz team's copy for one owner in one community (`scope`), the same
+ * from every import. */
+async function importedTeamId(team: OldTeam, scope: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${team.id}\n${community}`),
+    new TextEncoder().encode(`${team.id}\n${scope}`),
   );
   return `beta-${bytesToHex(new Uint8Array(digest))}`;
 }

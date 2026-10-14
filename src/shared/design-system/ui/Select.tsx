@@ -45,7 +45,7 @@ export function Select({
   readOnly?: boolean;
   placeholder?: string;
   /** Compact display text; option labels retain their full meaning. */
-  valueLabel?: string;
+  valueLabel?: string | undefined;
   valueTitle?: string;
   /** Decorative identity artwork shown before the selected value. */
   leading?: ReactNode;

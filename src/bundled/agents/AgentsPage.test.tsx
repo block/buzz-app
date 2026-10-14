@@ -1,9 +1,3 @@
-import type {
-  Panels,
-  PanelProps,
-  RegisteredPanel,
-} from "../../features/panels/service";
-import { activityTarget } from "../../features/agents/activity-target";
 import { ProfilePanel } from "../profiles/ProfilePanel";
 import { createRelaySession } from "../../features/relay/session";
 import {
@@ -1388,7 +1382,7 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
   });
 });
 
-it("opens owned-agent activity for the originating conversation and honors admission", async () => {
+it("opens the owned agent provider Activity tab for the originating conversation", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const owner = createRelaySession(null);
@@ -1399,28 +1393,27 @@ it("opens owned-agent activity for the originating conversation and honors admis
     session: owner.session,
   };
   const relay = { ...view.relay, snapshot: () => snapshot };
-  const activity = activityTarget(ada.pubkey, "channel-a");
-  const renderActivity = vi.fn(({ target, context }: PanelProps) => (
+  const renderActivity = vi.fn(({ agent, conversation }: AgentViewProps) => (
     <p>
-      Transcript: {target} / {context?.channelId}
+      Transcript: {agent.pubkey} / {conversation?.channelId}
     </p>
   ));
-  const panel = {
-    key: "test/activity",
-    revision: "1",
-    pluginId: "test",
-    id: "activity",
-    title: "Activity",
-    matches: (target: string) => target === activity,
-    component: renderActivity,
-  } as RegisteredPanel;
-  const available = [panel];
-  const panels: Panels = {
-    register: vi.fn(),
-    resolve: (target) => (target === activity ? panel : undefined),
-    snapshot: () => available,
-    subscribe: () => () => {},
+  const originalType = view.agents.types()[0];
+  if (!originalType) throw new Error("Missing fixture type");
+  const activityType: RegisteredAgentType = {
+    ...originalType,
+    tabs: [
+      ...(originalType.tabs ?? []),
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: renderActivity,
+      },
+    ],
   };
+  const types = [activityType];
+  view.agents.types = () => types;
   const context = {
     channelId: "channel-a",
     canOpen: vi.fn(() => true),
@@ -1432,7 +1425,6 @@ it("opens owned-agent activity for the originating conversation and honors admis
       <ProfilePanel
         agents={view.agents}
         relay={relay}
-        panels={panels}
         target={profileTarget(ada.pubkey) ?? ""}
         context={context}
         close={close}
@@ -1446,7 +1438,6 @@ it("opens owned-agent activity for the originating conversation and honors admis
       <ProfilePanel
         agents={view.agents}
         relay={relay}
-        panels={panels}
         target={profileActivityViewTarget(ada.pubkey) ?? ""}
         context={context}
         close={close}
@@ -1457,9 +1448,8 @@ it("opens owned-agent activity for the originating conversation and honors admis
       "true",
     );
     expect(
-      screen.getByText(`Transcript: ${activity} / channel-a`),
+      screen.getByText(`Transcript: ${ada.pubkey} / channel-a`),
     ).toBeVisible();
-    expect(context.canOpen).toHaveBeenCalledWith(activity);
     await userEvent
       .setup()
       .click(screen.getByRole("tab", { name: "Identity" }));
@@ -1467,13 +1457,13 @@ it("opens owned-agent activity for the originating conversation and honors admis
       "aria-selected",
       "true",
     );
+    types[0] = originalType;
     view.rerender(
       <ProfilePanel
         agents={view.agents}
         relay={relay}
-        panels={panels}
         target={profileActivityViewTarget(ada.pubkey) ?? ""}
-        context={{ ...context, canOpen: () => false }}
+        context={context}
         close={close}
       />,
     );

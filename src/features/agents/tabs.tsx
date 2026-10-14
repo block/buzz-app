@@ -16,7 +16,8 @@ import type {
 import { AgentSaveButton } from "./AgentSaveButton";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:attention` or `agent:memory`; never collides with a host tab. */
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
+   * or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
   render(): ReactNode;
@@ -53,9 +54,7 @@ export function agentSections({
     ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
     : typeTabs;
   const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
-    value: (role === "settings"
-      ? "agent:settings"
-      : `agent:type:${id}`) as `agent:${string}`,
+    value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
     render: () => (
       <Component

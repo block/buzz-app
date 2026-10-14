@@ -22,6 +22,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import { channelTemplates, templateAgents } from "../channel-templates/local";
 import type { LocalAgentsSnapshot } from "./local";
 import {
   deleteAgentRecord,
@@ -166,7 +167,7 @@ export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
   /** Lets the Agents build view place host-owned Type controls in this tab. */
-  role?: "settings";
+  role?: "settings" | "activity";
   /** Supports separate identity and runtime settings presentations. */
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
@@ -187,6 +188,13 @@ export type AgentHandle = Readonly<{
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
+  /** The owner's channel templates on this device, each with the agents it
+   * adds that are the owner's agents in this agent's community. */
+  templates(): readonly Readonly<{
+    name: string;
+    canvas: string;
+    agents: readonly string[];
+  }>[];
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -737,6 +745,24 @@ export class AgentsService extends Service implements Agents {
           this.identities.filter((identity) => !identity.deleted),
           pubkey,
         ),
+      templates: (agent) => {
+        // The agents Agents shows for this community, as the create dialog
+        // offers a template's.
+        const origin = originOf(agent.relay);
+        const here = new Set(
+          [
+            ...this.state.running.filter(
+              (a) => originOf(a.relay) === origin && this.bindingOf(a),
+            ),
+            ...this.listedAgents(origin),
+          ].map((a) => a.pubkey),
+        );
+        return channelTemplates.snapshot().map((template) => ({
+          name: template.name,
+          canvas: template.canvas,
+          agents: templateAgents(template, this.teamList, here),
+        }));
+      },
       classifier: () => this.classifier(),
       custody: native,
       activity: localActivity,

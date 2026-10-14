@@ -59,12 +59,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.dispose();
     setup.dispose();
   });
-  const { Create, CreateModel, ProviderDialogBody, SettingsTab } = createTabs(
-    providerController,
-    runtime,
-    start,
-    setup,
-  );
+  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
+    createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
     id: TYPE_ID,
     title: "Codex",
@@ -122,6 +118,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         role: "settings",
         splitSettings: true,
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     // A mention during the first download waits for it, within its deadline.

@@ -665,7 +665,9 @@ export function createTabs(
     );
   }
 
-  function Conversations({
+  /** The agent's sessions: the one it was opened from, recent ones, and their
+   * transcripts. */
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -776,7 +778,6 @@ export function createTabs(
     agent,
     save,
     settingsHost,
-    conversation,
     settingsSection,
     settingsContent,
   }: AgentViewProps<Config>) {
@@ -940,14 +941,6 @@ export function createTabs(
         )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />
         {settingsSection !== "identity" && settingsContent}
-        {settingsSection !== "identity" && (
-          <details className="grid gap-2">
-            <summary>Runtime diagnostics</summary>
-            <div className="mt-2">
-              <Conversations agent={agent} conversation={conversation} />
-            </div>
-          </details>
-        )}
       </form>
     );
   }
@@ -957,5 +950,6 @@ export function createTabs(
     Create,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   };
 }

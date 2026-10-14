@@ -246,16 +246,12 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
           },
   });
   const save = vi.fn();
-  render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
+  render(<f.tabs.ActivityTab {...f.props(defaults, save)} />);
   const viewButton = (index: number) =>
     screen.getAllByRole("button", { name: "View transcript" })[
       index
     ] as HTMLElement;
   expect(screen.getByText(/#general · thread eeeeeeee/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Workspace"), {
-    target: { value: "/draft" },
-  });
   fireEvent.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
@@ -272,7 +268,6 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     await screen.findByText(/Codex has no history for this conversation/),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByLabelText("Workspace")).toHaveValue("/draft");
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -293,12 +288,11 @@ it("sets the conversation the profile was opened from apart from recent conversa
     },
   });
   render(
-    <f.tabs.SettingsTab
+    <f.tabs.ActivityTab
       {...f.props()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   expect(
     within(opened).getByRole("button", { name: "View transcript" }),
@@ -332,7 +326,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
           label: "Sol",
           close: () => undefined,
           content: (
-            <f.tabs.SettingsTab {...f.props()} conversation={conversation} />
+            <f.tabs.ActivityTab {...f.props()} conversation={conversation} />
           ),
         },
       ]}
@@ -406,12 +400,11 @@ it("finds the thread's Codex session another build started", async () => {
     ],
   });
   render(
-    <f.tabs.SettingsTab
+    <f.tabs.ActivityTab
       {...f.props()}
       conversation={{ channelId: "channel", rootId: root }}
     />,
   );
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
   const opened = screen.getByRole("region", { name: "This thread" });
   fireEvent.click(
     await within(opened).findByRole("button", { name: "View transcript" }),
@@ -422,7 +415,7 @@ it("finds the thread's Codex session another build started", async () => {
 it("reports when looking for another build's Codex session fails", async () => {
   const f = fixture({ threads: "database is locked" });
   render(
-    <f.tabs.SettingsTab
+    <f.tabs.ActivityTab
       {...f.props()}
       conversation={{ channelId: "channel" }}
     />,
@@ -462,7 +455,7 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
     effort: "",
   });
   expect(onClose).toHaveBeenCalledOnce();
-  expect(screen.queryByText("Runtime diagnostics")).toBeNull();
+  expect(screen.queryByText("Recent conversations")).toBeNull();
 
   const storageFailure = vi
     .spyOn(Storage.prototype, "setItem")
@@ -612,14 +605,6 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   const saving = deferred<void>();
   const save = vi.fn(() => saving.promise);
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
-  expect(
-    screen.getByText("Runtime diagnostics").closest("details"),
-  ).not.toHaveAttribute("open");
-  expect(
-    screen.getByText(
-      "None. A conversation's session starts when the agent is mentioned.",
-    ),
-  ).toBeInTheDocument();
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Thinking")).toHaveTextContent(
@@ -1088,7 +1073,7 @@ it("separates identity fields from runtime settings without changing the stored 
   view.rerender(<Settings {...props} settingsSection="runtime" />);
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
   expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
-  expect(screen.getByText("Runtime diagnostics")).toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
   expect(props.save).not.toHaveBeenCalled();

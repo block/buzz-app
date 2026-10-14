@@ -24,6 +24,7 @@ import {
   developerInstructions,
   rootOf,
   sessionName,
+  turnContext,
   turnInput,
   type Conversation,
 } from "./prompt";
@@ -401,8 +402,8 @@ export class CodexRuntime {
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
-    // tool change starts fresh. v4 added media_get.
-    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
+    // tool change starts fresh. v5 added channel and member management.
+    return `buzz.codex.sessions.v5:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -982,12 +983,7 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: {
-          "buzz.instructions": {
-            kind: "application",
-            value: developerInstructions(agent, settings, request.team, memory),
-          },
-        },
+        additionalContext: turnContext(agent, settings, request.team, memory),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

@@ -21,7 +21,6 @@ export function AgentTabs(props: {
   memories: AgentMemories | undefined;
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
-  activity?: ReactNode;
   initialActivity?: boolean | undefined;
 }) {
   const split = props.type?.tabs?.some(
@@ -39,24 +38,19 @@ export function AgentTabs(props: {
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
     ...supplied.filter((section) => section.value === "agent:attention"),
+    ...supplied.filter((section) => section.value === "agent:activity"),
     {
       value: "agent:management",
       label: "Settings",
       render: () => props.settingsContent,
     },
   ];
-  if (props.activity)
-    sections.push({
-      value: "agent:activity",
-      label: "Activity",
-      render: () => props.activity,
-    });
   const [tab, setTab] = useState<string>(
     props.initialActivity ? "agent:activity" : (sections[0]?.value ?? ""),
   );
   const panelPrefix = useId();
   const selected =
-    sections.find((section) => section.value === tab) ?? sections.at(-1);
+    sections.find((section) => section.value === tab) ?? sections[0];
   const settingsSelected =
     selected?.value === "agent:settings" ||
     selected?.value === "agent:management";

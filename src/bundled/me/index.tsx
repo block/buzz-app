@@ -1,6 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import { SessionsPage } from "../sessions/SessionsPage";
-import { isMeRoute } from "./routes";
+import { isMeRoute, meTarget } from "./routes";
 
 export const inject = [
   "pages",
@@ -8,11 +8,24 @@ export const inject = [
   "conversation",
   "navigation",
   "panels",
+  "shortcuts",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const extensions = ctx.conversation;
   const navigator = ctx.navigation;
+  ctx.shortcuts.register({
+    id: "new-conversation",
+    title: "New conversation",
+    binding: { key: "n", mod: true },
+    order: 10,
+    allowInEditable: true,
+    when: () => !!relay.snapshot().scope,
+    run: () => {
+      const { scope } = relay.snapshot();
+      if (scope) void navigator.open(meTarget(scope));
+    },
+  });
   ctx.pages.register({
     id: "me",
     title: "Me",

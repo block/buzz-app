@@ -40,8 +40,14 @@ repair run exposed that previously masked ambiguous-selector failure in both
 engines; explicit tab scoping fixed it without changing any recipient assertion.
 No browser case was added/removed. Seven unused direct-promotion type/import lines
 were removed; redundant historical prose was condensed, not production recovery.
-Main `f44102078` merged cleanly. Final hooks, review and hosted status belong to
-the cleanup commit/PR; the earlier CI failure is not claimed green until rerun.
+Main `f44102078` merged cleanly. A later clean merge of `cfc512868` restored
+Retry Me in the retained page; removing our now-redundant sidebar fixture wrapper
+fixed the resulting duplicate-button assertion. All 15 page/sidebar/share-attempt
+tests then passed (3.22s wall; 1.36s summed). Loading/transient, rejection and recovery
+assertions remain. The full 30 browser cases passed again after this integration:
+51.27s wall, 82.43s summed, slowest 5.28s. Both bounded cleanup reviews found no
+blocker. Final hooks and hosted status belong to the cleanup commit/PR; the
+earlier CI failure is not claimed green until rerun.
 
 ## Regression and test-layer accounting
 

@@ -25,7 +25,6 @@ import {
   beginSessionShare,
   finishSessionShare,
 } from "../../features/sessions/share-attempt";
-import { MeSidebar } from "../me/MeSidebar";
 import { SessionsPage } from "./SessionsPage";
 
 composerDOMFixture();
@@ -150,28 +149,15 @@ function fixture(
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const navigator = {
-    open,
-    snapshot: () => ({ attempt: { signal: abort.signal } }),
-  } as unknown as Navigation;
-  const mount = (withSidebar = false) =>
+  const mount = () =>
     render(
-      <>
-        {withSidebar && (
-          <MeSidebar
-            relay={relay}
-            navigator={navigator}
-            target={navigation.target}
-          />
-        )}
-        <SessionsPage
-          relay={relay}
-          panels={{ ...contribution, register() {}, resolve: () => undefined }}
-          extensions={extensions}
-          navigation={navigation}
-          navigator={navigator}
-        />
-      </>,
+      <SessionsPage
+        relay={relay}
+        panels={{ ...contribution, register() {}, resolve: () => undefined }}
+        extensions={extensions}
+        navigation={navigation}
+        navigator={{ open } as unknown as Navigation}
+      />,
     );
   return {
     mount,
@@ -207,7 +193,7 @@ it.each([false, true])(
 it("keeps failed placement read-only and restores sending after confirmed preferences", async () => {
   const f = fixture("loading");
   writeView(f.scope, `draft:${id}`, "Saved thought");
-  f.mount(true);
+  f.mount();
   act(() =>
     f.update({
       ...f.state,
@@ -222,8 +208,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   act(() =>
     f.update({ ...f.state, status: "error", error: "Preferences offline" }),
   );
-  for (const notice of screen.getAllByText("Preferences offline"))
-    expect(notice).toBeVisible();
+  expect(screen.getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
   expect(f.refresh).toHaveBeenCalledOnce();

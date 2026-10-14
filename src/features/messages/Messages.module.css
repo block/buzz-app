@@ -1426,9 +1426,28 @@ button.mediaPreview {
   margin-bottom: var(--space-1);
 }
 .text blockquote {
+  position: relative;
   padding: var(--space-half) 0 var(--space-half) var(--space-3);
-  border-left: 1px solid var(--border-prominent);
-  color: var(--text-subtle);
+  border-left: 3px solid transparent;
+}
+.text blockquote::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: -3px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: color-mix(
+    in srgb,
+    var(--border-prominent),
+    var(--border-standard)
+  );
+}
+.text blockquote > :first-child {
+  margin-top: 0;
+}
+.text blockquote > :last-child {
+  margin-bottom: 0;
 }
 .text code {
   border-radius: var(--radius-chip);

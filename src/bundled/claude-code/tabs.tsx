@@ -108,10 +108,12 @@ export function createTabs({
     useEffect(() => {
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
+    // Once per change of readiness: a failed load waits for Try again.
+    const readiness = state.status?.state;
     useEffect(() => {
-      if (state.status?.state === "ready" && state.models.length === 0)
+      if (readiness === "ready" && state.models.length === 0)
         void setup.loadModels();
-    }, [state.status, state.models.length]);
+    }, [readiness, state.models.length]);
     return state;
   }
 
@@ -343,8 +345,21 @@ export function createTabs({
               },
             ]}
             {...(draftDefault === "" ? { valueLabel: nativeLabel } : {})}
+            {...(state.loadingModels
+              ? { description: "Loading Claude's models…" }
+              : {})}
+            {...(state.modelsError
+              ? { error: `Couldn't load Claude's models: ${state.modelsError}` }
+              : {})}
             onValueChange={setDraftDefault}
           />
+          {state.modelsError && (
+            <div>
+              <Button variant="ghost" onClick={() => void setup.loadModels()}>
+                Try again
+              </Button>
+            </div>
+          )}
           {defaultError && (
             <p role="alert" className="buzz-field-error">
               {defaultError}

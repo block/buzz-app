@@ -61,15 +61,52 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 // jsdom leaves focus on a button that becomes natively disabled, where a
 // browser drops it, so the focus tests also check for no `disabled`.
 
+/** The models Claude lists in its answer to `initialize`. */
+const CATALOG = [
+  {
+    value: "default",
+    resolvedModel: "claude-opus-5-5",
+    displayName: "Default (recommended)",
+    description: "Opus 5.5 · Best for everyday, complex tasks",
+  },
+  {
+    value: "opus",
+    resolvedModel: "claude-opus-5-5",
+    displayName: "Opus",
+    description: "Opus 5.5 · Best for everyday, complex tasks",
+  },
+  {
+    value: "claude-fable-5-1[1m]",
+    resolvedModel: "claude-fable-5-1",
+    displayName: "Fable",
+    description: "Fable 5.1 · Most capable for your hardest tasks",
+  },
+  {
+    value: "sonnet",
+    resolvedModel: "claude-sonnet-5-5",
+    displayName: "Sonnet",
+    description: "Sonnet 5.5 · Efficient for routine tasks",
+  },
+  {
+    value: "haiku",
+    resolvedModel: "claude-haiku-4-5",
+    displayName: "Haiku",
+    description: "Haiku 4.5 · Fastest for quick answers",
+  },
+];
+
 /** Applies the plugin to a stand-in context; setup steps run until killed. */
 function applied({
   loggedIn = true,
   available = true,
   files = {},
+  catalog = { listed: true },
 }: {
   loggedIn?: boolean;
   available?: boolean;
   files?: Record<string, string>;
+  /** Whether Claude lists its models when asked. */
+  catalog?: { listed: boolean };
 } = {}) {
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
@@ -161,41 +198,7 @@ function applied({
                 subtype: "success",
                 request_id: message.request_id,
                 response: {
-                  models: [
-                    {
-                      value: "default",
-                      resolvedModel: "claude-opus-5-5",
-                      displayName: "Default (recommended)",
-                      description:
-                        "Opus 5.5 · Best for everyday, complex tasks",
-                    },
-                    {
-                      value: "opus",
-                      resolvedModel: "claude-opus-5-5",
-                      displayName: "Opus",
-                      description:
-                        "Opus 5.5 · Best for everyday, complex tasks",
-                    },
-                    {
-                      value: "claude-fable-5-1[1m]",
-                      resolvedModel: "claude-fable-5-1",
-                      displayName: "Fable",
-                      description:
-                        "Fable 5.1 · Most capable for your hardest tasks",
-                    },
-                    {
-                      value: "sonnet",
-                      resolvedModel: "claude-sonnet-5-5",
-                      displayName: "Sonnet",
-                      description: "Sonnet 5.5 · Efficient for routine tasks",
-                    },
-                    {
-                      value: "haiku",
-                      resolvedModel: "claude-haiku-4-5",
-                      displayName: "Haiku",
-                      description: "Haiku 4.5 · Fastest for quick answers",
-                    },
-                  ],
+                  models: catalog.listed ? CATALOG : [],
                 },
               },
             })}\n`,
@@ -510,6 +513,29 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     ),
   );
   expect(save).not.toHaveBeenCalled();
+});
+
+it("says when Claude's models could not be loaded and tries again", async () => {
+  const catalog = { listed: false };
+  const Provider = providerSetup(installed({ catalog }).type);
+  render(<Provider onClose={() => undefined} />);
+  const defaultModel = await screen.findByRole("combobox", {
+    name: "Default model",
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't load Claude's models: Claude did not list its models",
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  catalog.listed = true;
+  const user = userEvent.setup();
+  await user.click(retry);
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  await user.click(defaultModel);
+  expect(
+    await screen.findByRole("option", { name: "Fable 5.1" }),
+  ).toBeInTheDocument();
 });
 
 it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {

@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
+import {
+  backgroundTasks,
+  fakeSpawn,
+  flush,
+  sessionState,
+} from "./claude-testing";
 import type { ToolServer } from "./claude";
 import {
   AgentSessions,
@@ -330,32 +335,18 @@ it("saves when a session takes in a message or ends a turn, not while a long tur
   expect(at()).toBeGreaterThan(started);
 });
 
-const background = (process: FakeClaude | undefined, ...tasks: object[]) =>
-  process?.emit({
-    type: "system",
-    subtype: "background_tasks_changed",
-    tasks: tasks.map((task, index) => ({
-      task_id: `task-${index}`,
-      task_type: "local_bash",
-      description: "sleep",
-      ...task,
-    })),
-  });
-const state = (process: FakeClaude | undefined, state: string) =>
-  process?.emit({ type: "system", subtype: "session_state_changed", state });
-
 it("keeps a conversation's process while its background work runs", async () => {
   vi.useFakeTimers();
   const { pool, claudes } = sessions();
   await pool.deliver("c/root", "start a build", 1);
   const [process] = claudes();
-  background(process, {});
-  vi.advanceTimersByTime(IDLE_MS * 3);
+  backgroundTasks(process, {});
+  vi.advanceTimersByTime(IDLE_MS * 3 - 1000);
   expect(process?.killed).toBe(false);
   // The build ends, and Claude reports it in a turn of its own.
-  state(process, "running");
-  background(process);
-  state(process, "idle");
+  backgroundTasks(process);
+  sessionState(process, "running");
+  sessionState(process, "idle");
   vi.advanceTimersByTime(IDLE_MS - 1);
   expect(process?.killed).toBe(false);
   vi.advanceTimersByTime(1);
@@ -367,36 +358,34 @@ it("keeps a conversation's process through a turn Claude starts itself", async (
   const { pool, claudes } = sessions();
   await pool.deliver("c/root", "hi", 1);
   const [process] = claudes();
-  state(process, "running");
-  vi.advanceTimersByTime(IDLE_MS * 2);
+  sessionState(process, "running");
+  vi.advanceTimersByTime(IDLE_MS * 2 - 1000);
+  sessionState(process, "idle");
+  vi.advanceTimersByTime(IDLE_MS - 1);
   expect(process?.killed).toBe(false);
-  state(process, "idle");
-  vi.advanceTimersByTime(IDLE_MS);
+  vi.advanceTimersByTime(1);
   expect(process?.killed).toBe(true);
 });
 
-it("does not keep a conversation's process for ambient tasks", async () => {
-  vi.useFakeTimers();
-  const { pool, claudes } = sessions();
-  await pool.deliver("c/root", "hi", 1);
-  const [process] = claudes();
-  background(process, { ambient: true });
-  vi.advanceTimersByTime(IDLE_MS);
-  expect(process?.killed).toBe(true);
-});
-
-it("restarts a process with old settings once its background work ends", async () => {
+it("keeps old settings for background work, and restarts on the next message after it", async () => {
   const { pool, claudes, setModel } = sessions();
   await pool.deliver("c/root", "start a build", 1);
   const [process] = claudes();
-  background(process, {});
+  backgroundTasks(process, {});
   setModel("sonnet");
   pool.reconfigure();
+  await pool.deliver("c/root", "how is it going?", 2);
+  expect(process?.killed).toBe(false);
+  expect(process?.prompts).toEqual(["start a build", "how is it going?"]);
+  // Not between the work ending and the turn that reports it.
+  backgroundTasks(process);
   await flush();
   expect(process?.killed).toBe(false);
-  background(process);
-  await flush();
+  await pool.deliver("c/root", "again", 3);
   expect(process?.killed).toBe(true);
+  expect(claudes().at(-1)?.options.args).toEqual(
+    expect.arrayContaining(["--resume", "new-1", "--model", "sonnet"]),
+  );
 });
 
 it("starts over when a saved session no longer loads", async () => {

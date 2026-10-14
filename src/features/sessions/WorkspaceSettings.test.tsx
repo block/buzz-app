@@ -247,16 +247,7 @@ function combined(naming?: Parameters<typeof sessionDescription>[1]) {
   let ttl: number | undefined = 600,
     clock = 100,
     description = sessionDescription(undefined, naming),
-    suppliedNaming =
-      naming && typeof naming === "object" && "explicit" in naming
-        ? naming
-        : naming && typeof naming === "object"
-          ? naming.naming
-          : undefined,
-    name =
-      suppliedNaming?.explicit === false
-        ? (suppliedNaming.automatic ?? "Plan")
-        : "Plan";
+    name = naming?.explicit === false ? (naming.automatic ?? "Plan") : "Plan";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -670,37 +661,85 @@ it("saves name and lifetime together after Canvas and resets to signed automatic
     [
       "about",
       sessionDescription(undefined, {
-        naming: {
-          automatic: "First prompt",
-          explicit: false,
-        },
+        automatic: "First prompt",
+        explicit: false,
       }),
     ],
   ]);
   expect(h.canvas.save).toHaveBeenCalledOnce();
 });
-it("legacy clear fails visibly before Canvas and can be corrected without losing either draft", async () => {
-  const h = combined();
-  await editBoth();
-  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
-  fireEvent.change(name, { target: { value: "" } });
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "original automatic name is unavailable",
-  );
-  expect(saveChanges()).toBeDisabled();
-  expect(name).toBeEnabled();
-  expect(h.sign).not.toHaveBeenCalled();
-  expect(h.canvas.save).not.toHaveBeenCalled();
-  fireEvent.change(name, { target: { value: "New name" } });
-  fireEvent.click(saveChanges());
-  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
-    ["h", h.id],
-    ["name", "New name"],
-    ["about", sessionDescription(undefined, { naming: { explicit: true } })],
-    ["ttl", ""],
-  ]);
-});
+it.each([undefined, { explicit: true }])(
+  "historical blank name preserves the saved title and provenance (%j)",
+  async (naming) => {
+    const h = combined(naming);
+    const name = await screen.findByRole("textbox", {
+      name: "Session name (optional)",
+    });
+    expect(name).toHaveValue("Plan");
+    expect(name).not.toHaveAccessibleDescription();
+    fireEvent.change(name, { target: { value: "  " } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(saveChanges()).toBeEnabled();
+    fireEvent.click(saveChanges());
+    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.canvas.save).not.toHaveBeenCalled();
+    expect(await h.details.capability.load(h.id)).toMatchObject({
+      name: "Plan",
+      description: sessionDescription(undefined, naming),
+    });
+    h.mounted.unmount();
+    render(h.view());
+    expect(
+      await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    ).toHaveValue("Plan");
+  },
+);
+it.each([undefined, { explicit: true }])(
+  "historical blank name allows Canvas and lifetime saves without changing provenance, including retry (%j)",
+  async (naming) => {
+    const h = combined(naming);
+    await editBoth();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Session name (optional)" }),
+      { target: { value: "" } },
+    );
+    const original = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (value === "null") throw new Error("Device full");
+        original.call(this, key, value);
+      });
+    try {
+      fireEvent.click(saveChanges());
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Changes are confirmed",
+      );
+      expect(h.close).not.toHaveBeenCalled();
+    } finally {
+      storage.mockRestore();
+    }
+    expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+      ["h", h.id],
+      ["name", "Plan"],
+      ["ttl", ""],
+    ]);
+    expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sign.mock.invocationCallOrder[0] ?? 0,
+    );
+    fireEvent.click(saveChanges());
+    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+    expect(h.canvas.save).toHaveBeenCalledOnce();
+    expect(h.publish).toHaveBeenCalledOnce();
+    const saved = await h.details.capability.load(h.id);
+    expect(saved).toMatchObject({
+      name: "Plan",
+      description: sessionDescription(undefined, naming),
+    });
+    expect(saved.ttlSeconds).toBeUndefined();
+  },
+);
 it("a conflicted name retains input across explicit reload and rechecks real signed authority", async () => {
   const h = combined();
   await editBoth();
@@ -836,7 +875,7 @@ it("failed initial read then Reload keeps the uncertain name through check and C
   expect(h.canvas.save).toHaveBeenCalledTimes(2);
 });
 it("automatic sessions can change only lifetime while the name field stays blank", async () => {
-  const h = combined({ automatic: "First prompt", explicit: false } });
+  const h = combined({ automatic: "First prompt", explicit: false });
   await editBoth();
   expect(
     screen.getByRole("textbox", { name: "Session name (optional)" }),

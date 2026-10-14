@@ -419,33 +419,17 @@ it("opens a pending Me start through its original receipt after its section was 
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 
-it("preserves the Session actions menu trigger relationship and keyboard focus", async () => {
+it("opens settings directly from the header and restores keyboard focus without navigating", async () => {
   const f = fixture();
   f.mount();
   const user = userEvent.setup();
-  const trigger = screen.getByRole("button", { name: "Session actions" });
+  const trigger = screen.getByRole("button", { name: "Session settings" });
+  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
   trigger.focus();
-  await user.keyboard("{ArrowDown}");
-  const menu = await screen.findByRole("menu", { name: "Session actions" });
-  expect(trigger.id).not.toBe("");
-  await waitFor(() =>
-    expect(menu).toHaveAttribute("aria-labelledby", trigger.id),
-  );
-  await waitFor(() =>
-    expect(
-      within(menu).getByRole("menuitem", { name: "Convert to channel" }),
-    ).toHaveFocus(),
-  );
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
-
-  await user.keyboard("{ArrowDown}");
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Convert to channel" }),
-  );
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("menu")).toBeNull();
   const dialog = await screen.findByRole("dialog", {
-    name: "Convert to channel",
+    name: "Session settings",
   });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

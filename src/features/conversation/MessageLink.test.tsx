@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -18,7 +18,13 @@ import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
-import { keypair, signed } from "../relay/testing";
+import {
+  flush,
+  keypair,
+  roster,
+  scriptedTransport,
+  signed,
+} from "../relay/testing";
 import { sessionDescription } from "../sessions/metadata";
 import type { RelaySession } from "../relay/session";
 import type { ChannelList } from "../relay/contracts";
@@ -515,6 +521,89 @@ it("a signed details rename updates an already-mounted generated link through th
       await screen.findByRole("link", { name: "Session: Accessible contrast" }),
     ).toBe(anchor);
     expect(anchor).toHaveAttribute("data-link-label", label);
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("updates a mounted generated link when signed naming provenance alone wins a same-second replacement", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const viewer = keypair(),
+    relay = keypair();
+  const metadata = (explicit: boolean) =>
+    signed(relay, {
+      kind: 39000,
+      created_at: 100,
+      content: "",
+      tags: [
+        ["d", id],
+        ["name", "Same title"],
+        ["t", "stream"],
+        ["private"],
+        [
+          "about",
+          sessionDescription(undefined, { automatic: "Same title", explicit }),
+        ],
+      ],
+    });
+  // Install the higher ID first so the second
+  // event wins the actual replaceable-event tie-break, without changing time/name.
+  const replacements = [metadata(true), metadata(false)].sort((a, b) =>
+    b.id.localeCompare(a.id),
+  );
+  const [before, after] = replacements;
+  assert(before && after);
+  const script = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const publish = vi.fn(async () => {});
+  const owner = createRelaySession({
+    ...script.transport,
+    writer: {
+      kinds: [9],
+      sign: async (template) => signed(viewer, template),
+      publish,
+    },
+  });
+  const original = `Session · ${id.slice(0, 8)}`;
+  const label = (event: (typeof replacements)[number]) =>
+    event.tags.some(
+      ([key, value]) => key === "about" && value?.includes('"explicit":true'),
+    )
+      ? "Session: Same title"
+      : original;
+  try {
+    owner.session.channels.ensureList();
+    script.next().respond([roster(relay, id, [viewer.pubkey]), before]);
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    const summary = owner.session.channels.list().channels[0];
+    render(
+      <MessageLink
+        session={owner.session}
+        url={`buzz://channel/${id}`}
+        registry={undefined}
+        onOpenLink={() => true}
+        label={original}
+      >
+        {original}
+      </MessageLink>,
+    );
+    const anchor = screen.getByRole("link", { name: label(before) });
+    await act(async () => {
+      owner.session.channels.refreshList?.();
+      script.next().respond([roster(relay, id, [viewer.pubkey]), after]);
+      await flush();
+    });
+    expect(owner.session.channels.list().channels[0]).not.toBe(summary);
+    expect(owner.session.channels.list().channels[0]).toMatchObject({
+      name: "Same title",
+      updatedAt: 100,
+    });
+    expect(screen.getByRole("link", { name: label(after) })).toBe(anchor);
+    expect(anchor).toHaveAttribute("data-link-label", original);
+    expect(anchor).toHaveAttribute("href", `buzz://channel/${id}`);
     expect(publish).not.toHaveBeenCalled();
   } finally {
     cleanup();

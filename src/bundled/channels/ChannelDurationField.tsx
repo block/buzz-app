@@ -13,12 +13,14 @@ export function ChannelDurationField({
   ttlSeconds,
   disabled = false,
   error,
+  label: fieldLabel,
   onChange,
 }: {
   temporary: boolean;
   ttlSeconds: number;
   disabled?: boolean;
   error?: string | undefined;
+  label?: string;
   onChange(ttlSeconds: number | undefined): void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -44,7 +46,11 @@ export function ChannelDurationField({
             : [ttlSeconds, "second"];
   const label = `${duration} ${unit}${duration === 1 ? "" : "s"}`;
   return (
-    <Field label={<span className="sr-only">Duration</span>} error={error}>
+    <Field
+      label={fieldLabel ?? "Duration"}
+      labelVisibility={fieldLabel ? "visible" : "hidden"}
+      error={error}
+    >
       <RadioGroup
         value={temporary ? "temporary" : "ongoing"}
         disabled={disabled}

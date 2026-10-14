@@ -697,16 +697,19 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   );
   writeView("test", "sessions:settings", "Legacy Canvas");
   let mounted = render(view());
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
   const canvas = await screen.findByRole("textbox", { name: "Canvas" });
   expect(canvas).toHaveValue("Legacy Canvas");
   await user.clear(canvas);
   await user.type(canvas, "Keep the change small");
   await user.click(screen.getByRole("radio", { name: /^Temporary/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Session settings" }),
+    ).toHaveFocus(),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
   expect(test.workSessions.create).not.toHaveBeenCalled();
   expect(saveCanvas).not.toHaveBeenCalled();
   mounted.unmount();
@@ -715,7 +718,7 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     name: "Message this session",
   });
   expect(composer).toHaveFocus();
-  const actions = screen.getByRole("button", { name: "Session actions" });
+  const actions = screen.getByRole("button", { name: "Session settings" });
   actions.focus();
   expect(actions).toHaveFocus();
   mounted.rerender(view(new AbortController().signal));
@@ -1029,10 +1032,7 @@ it.each([false, true])(
       const mounted = render(view());
       const open = async () => {
         await user.click(
-          screen.getByRole("button", { name: "Session actions" }),
-        );
-        await user.click(
-          await screen.findByRole("menuitem", { name: "Session settings…" }),
+          screen.getByRole("button", { name: "Session settings" }),
         );
       };
       await open();
@@ -1144,10 +1144,7 @@ it("freezes lifetime even when the first create fails before receiving an event 
     />
   );
   const mounted = render(view());
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
   const temporary = await screen.findByRole("radio", { name: /^Temporary/ });
   await user.click(screen.getByRole("radio", { name: /^Ongoing/ }));
   await user.click(temporary);
@@ -1201,10 +1198,7 @@ it.each([-1, "broken"])(
       "duration could not be verified",
     );
     expect(h.workSessions.create).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Session actions" }));
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Session settings…" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Session settings" }));
     expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
       "Keep parent Canvas",
     );
@@ -1235,10 +1229,7 @@ it("invalid stored Canvas is safely editable without dropping a malformed lifeti
       onStarted={() => {}}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
   const canvas = await screen.findByRole("textbox", { name: "Canvas" });
   expect(canvas).toHaveValue("");
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
@@ -1590,23 +1581,96 @@ it("draft naming shares the existing Save and persists locally without creation"
       onStarted={() => {}}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
   const input = await screen.findByRole("textbox", {
     name: "Session name (optional)",
   });
   await waitFor(() => expect(input).toBeEnabled());
   await user.type(input, "Named draft");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
   expect(
     await screen.findByRole("textbox", { name: "Session name (optional)" }),
   ).toHaveValue("Named draft");
   expect(h.workSessions.create).not.toHaveBeenCalled();
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it.each([
+  { source: "draft", fields: { name: null } },
+  { source: "draft", fields: { name: 7 } },
+  { source: "draft", fields: { name: { invalid: true } } },
+  { source: "draft", fields: { name: "x".repeat(121) } },
+  { source: "receipt", fields: { name: { invalid: true } } },
+  { source: "receipt", fields: { automaticName: null } },
+  { source: "receipt", fields: { automaticName: 7 } },
+  { source: "receipt", fields: { automaticName: "x".repeat(81) } },
+  { source: "receipt", fields: { automaticName: " untrimmed " } },
+  { source: "receipt", fields: { explicitName: "true" } },
+  { source: "receipt", fields: { explicitName: undefined } },
+])(
+  "rejects malformed persisted naming before start side effects: $source $fields",
+  async ({ source, fields }) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    const refreshPreferences = vi.fn(async () => {});
+    const refreshSetup = vi.fn(async () => {});
+    const readCanvas = vi.fn(async () => undefined);
+    const saveCanvas = vi.fn(async () => {});
+    const refreshAgents = vi.fn(async () => {});
+    Object.assign(h.session, {
+      channelKit: { refresh: refreshSetup },
+      mePreferences: {
+        refresh: refreshPreferences,
+        snapshot: () => ({
+          data: { sections: [{ id: "work", name: "Work" }] },
+        }),
+      },
+      canvas: { read: readCanvas, save: saveCanvas },
+      agentChoices: { ...h.session.agentChoices, refresh: refreshAgents },
+    });
+    const key = "me:section:work";
+    writeView("test", `${key}:new-draft`, "Keep this draft");
+    if (source === "draft") writeView("test", `${key}:settings`, fields);
+    else
+      writeView("test", `${key}:pending`, {
+        id: parent.id,
+        text: "Keep this draft",
+        name: "Named",
+        automaticName: "Keep this draft",
+        explicitName: true,
+        ...fields,
+      });
+    render(
+      <NewSessionComposer
+        personal
+        session={h.session}
+        scope="test"
+        sectionId="work"
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/name/i);
+    for (const operation of [
+      refreshPreferences,
+      refreshSetup,
+      readCanvas,
+      saveCanvas,
+      refreshAgents,
+      h.mePlacement.admit,
+      h.mePlacement.set,
+      h.mePlacement.refresh,
+      h.workSessions.create,
+      h.workSessions.delivered,
+      h.workSessions.refresh,
+      h.workSessions.invite,
+      h.workSessions.addAgents,
+      h.messages.send,
+      started,
+    ]) {
+      expect(operation).not.toHaveBeenCalled();
+    }
+  },
+);

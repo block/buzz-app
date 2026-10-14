@@ -6,14 +6,7 @@ import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-  MenuIcon,
-} from "../../shared/design-system/ui/Menu";
+import { GearIcon } from "../../shared/design-system/icons";
 import {
   applySessionSetup,
   removedSectionMessage,
@@ -87,6 +80,7 @@ export function NewSessionComposer({
     );
     return typeof saved === "string" ? saved : (sectionId ?? "");
   });
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [draftSettings, setDraftSettings] = useState(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
     if (typeof saved === "string") return { canvas: saved, name: "" };
@@ -562,35 +556,21 @@ export function NewSessionComposer({
     <NewSessionView
       personal={personal}
       actions={
-        <MenuRoot>
-          <MenuTrigger
-            render={(props) => (
-              <IconButton
-                {...props}
-                size="toolbar"
-                aria-label="Session actions"
-                title="Session actions"
-                icon={<DotsThreeIcon size="1rem" />}
-              />
-            )}
-          />
-          <MenuPopup aria-label="Session actions" align="end">
-            <MenuItem
-              disabled={busy || !!pending}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <MenuIcon>
-                <GearIcon size={16} />
-              </MenuIcon>
-              {personal ? "Chat settings…" : "Session settings…"}
-            </MenuItem>
-          </MenuPopup>
-        </MenuRoot>
+        <IconButton
+          ref={settingsTrigger}
+          size="toolbar"
+          aria-label="Session settings"
+          title="Session settings"
+          icon={<GearIcon size="1rem" aria-hidden="true" />}
+          disabled={busy || !!pending}
+          onClick={() => setSettingsOpen(true)}
+        />
       }
     >
       {composer}
       {settingsOpen && (
         <DraftSessionSettings
+          finalFocus={settingsTrigger}
           personal={personal}
           session={session}
           sectionId={selectedProject || undefined}

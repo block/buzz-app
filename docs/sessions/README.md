@@ -134,7 +134,8 @@ Local settings now store name, Canvas and lifetime together; old Canvas-only str
 still load. Invalid stored durations are visible failures, not implicit Ongoing.
 Setup, Me placement, and first-message ordering retain their existing owners.
 
-**Session settings…** in the session header and saved-session row menus opens one
+The **Session settings** gear in the header opens the form directly; saved-session
+row menus retain **Session settings…** alongside their other actions. Both open one
 scrollable dialog, with **Session name (optional)** above Workspace/Canvas,
 **Lifetime** below it, and one **Save changes** action. The separate Rename editor
 and menu action have been removed. There is no separate lifetime menu or tab.
@@ -186,8 +187,14 @@ through session settings; `explicit` records whether the signed channel name is 
 chosen name. Clear sets that same channel's name to the retained automatic title,
 never an empty wire name. Historical markers have unknown naming provenance:
 renaming records `explicit:true` without inventing an automatic fallback. Clearing
-when that fallback is unavailable fails visibly and preserves the name. Parent-linked
-sessions retain their existing details-write exclusion.
+when that fallback is unavailable keeps the last confirmed title and its existing
+provenance without a name write or validation error. Other settings can still save.
+The form uses the shared content-sized dialog and its normal footer spacing, with
+one body scrollport and no reserved bottom area. The title and actions stay visible
+in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
+scrolls, retaining space for a complete body control and pointer access to actions. Name, Project folders, Canvas and Lifetime use consistent 32px
+section spacing; labels sit 8px above their controls. Parent-linked sessions retain their
+existing details-write exclusion.
 
 Naming uses the existing fresh signed authority/version check and exact full details
 readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save

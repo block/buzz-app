@@ -1,11 +1,10 @@
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -32,6 +31,7 @@ export function DraftSessionSettings({
   close,
   ttlSeconds,
   parentLinked = false,
+  finalFocus,
 }: {
   session: RelaySession;
   sectionId?: string | undefined;
@@ -40,6 +40,7 @@ export function DraftSessionSettings({
   name?: string | undefined;
   ttlSeconds?: number | undefined;
   parentLinked?: boolean;
+  finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
   save(canvas: string, ttlSeconds?: number, name?: string): void;
   close(): void;
 }) {
@@ -97,8 +98,7 @@ export function DraftSessionSettings({
   return (
     <Dialog
       open
-      height="stable"
-      footerGap="roomy"
+      finalFocus={finalFocus}
       title="Session settings"
       onOpenChange={(open) => {
         if (!open) close();
@@ -133,12 +133,8 @@ export function DraftSessionSettings({
         </>
       }
     >
-      <div className={styles.fields}>
-        <Field
-          label="Session name (optional)"
-          description="Leave blank to use the first prompt."
-          error={nameError}
-        >
+      <div className={styles.sections}>
+        <Field label="Session name (optional)" error={nameError}>
           <Input
             value={value}
             disabled={!loaded}
@@ -161,19 +157,17 @@ export function DraftSessionSettings({
           !error && <p role="status">Loading settings…</p>
         )}
         {!parentLinked && (
-          <>
-            <InlineHeader title="Lifetime" />
-            <ChannelDurationField
-              temporary={ttl !== undefined}
-              ttlSeconds={temporaryTtl}
-              disabled={!loaded}
-              error={lifetimeError}
-              onChange={(next) => {
-                setTtl(next);
-                if (next !== undefined) setTemporaryTtl(next);
-              }}
-            />
-          </>
+          <ChannelDurationField
+            label="Lifetime"
+            temporary={ttl !== undefined}
+            ttlSeconds={temporaryTtl}
+            disabled={!loaded}
+            error={lifetimeError}
+            onChange={(next) => {
+              setTtl(next);
+              if (next !== undefined) setTemporaryTtl(next);
+            }}
+          />
         )}
         {error && <p role="alert">{error}</p>}
         {!loaded && error && (

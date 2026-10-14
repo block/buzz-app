@@ -725,3 +725,46 @@ it("projects explicit session names only from signed naming metadata, retaining 
   expect(queries.list().channels[0]).not.toHaveProperty("sessionNamed");
   store.dispose();
 });
+
+it("replaces a summary when only signed naming provenance changes at the same timestamp", async () => {
+  const { store, queries, next } = setup();
+  const events = [true, false]
+    .map((explicit) =>
+      signed(relay, {
+        kind: 39000,
+        created_at: 100,
+        content: "",
+        tags: [
+          ["d", "work"],
+          ["name", "First prompt"],
+          ["t", "stream"],
+          ["private"],
+          [
+            "about",
+            `Buzz session (buzz.sessions/v1)\nnaming:${JSON.stringify({ automatic: "First prompt", explicit })}`,
+          ],
+        ],
+      }),
+    )
+    .sort((a, b) => b.id.localeCompare(a.id));
+  const [initial, replacement] = events;
+  assert(initial && replacement);
+  try {
+    queries.ensureList();
+    next().respond([roster(relay, "work", [viewer.pubkey]), initial]);
+    await flush();
+    const before = queries.list().channels[0];
+    queries.refreshList?.();
+    next().respond([roster(relay, "work", [viewer.pubkey]), replacement]);
+    await flush();
+    const after = queries.list().channels[0];
+    expect(after).not.toBe(before);
+    expect(after).toMatchObject({
+      name: before?.name,
+      updatedAt: before?.updatedAt,
+    });
+    expect(after?.sessionNamed === true).toBe(before?.sessionNamed !== true);
+  } finally {
+    store.dispose();
+  }
+});

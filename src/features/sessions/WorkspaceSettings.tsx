@@ -24,7 +24,6 @@ import {
 import { WorkspaceFields } from "./WorkspaceFields";
 import { useSessionLifetime } from "./SessionLifetime";
 import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import styles from "./WorkspaceSettings.module.css";
 
 type Target =
@@ -269,8 +268,6 @@ export function WorkspaceSettings({
   return (
     <Dialog
       open
-      height="stable"
-      footerGap="roomy"
       finalFocus={finalFocus}
       onOpenChange={(open) => {
         if (!open) close();
@@ -304,13 +301,9 @@ export function WorkspaceSettings({
         </>
       }
     >
-      <div className={styles.fields} inert={busy}>
+      <div className={styles.sections} inert={busy}>
         {lifetime.available && lifetime.base && (
-          <Field
-            label="Session name (optional)"
-            description="Leave blank to restore the automatic name."
-            error={lifetime.nameError}
-          >
+          <Field label="Session name (optional)" error={lifetime.nameError}>
             <Input
               value={lifetime.name}
               disabled={busy || lifetime.busy || lifetime.nameBlocked}
@@ -394,9 +387,9 @@ export function WorkspaceSettings({
         )}
         {lifetime.available && (
           <>
-            <InlineHeader title="Lifetime" />
             {lifetime.base ? (
               <ChannelDurationField
+                label="Lifetime"
                 temporary={lifetime.ttl !== undefined}
                 ttlSeconds={lifetime.temporaryTtl}
                 disabled={busy || lifetime.busy || lifetime.blocked}

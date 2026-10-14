@@ -55,15 +55,16 @@ export function useSessionLifetime({
   const metadata = base && sessionMetadata(base.description);
   const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
   const matchingAttempt = !!base && matchesLifetime(base, attempt?.draft);
-  const normalized = canonicalDetailsName(name);
+  // A historical title has no proven automatic fallback. Blank keeps its
+  // confirmed name and provenance rather than inventing either.
+  const normalized =
+    canonicalDetailsName(name) ||
+    (metadata?.naming?.automatic ? "" : confirmedName.current);
   const nameChanged = normalized !== confirmedName.current;
   const nameError =
-    base &&
-    (normalized
+    base && normalized
       ? detailsDraftErrors({ ...base, name: normalized }).name
-      : nameChanged && !metadata?.naming?.automatic
-        ? "The original automatic name is unavailable. Keep this name or enter another."
-        : undefined);
+      : undefined;
   const invalid =
     nameError ||
     (base && detailsDraftErrors({ ...base, ttlSeconds: ttl }).lifetime);
@@ -168,10 +169,6 @@ export function useSessionLifetime({
                 "This conversation is no longer an editable standalone session. Reload session details before changing its lifetime.",
               );
             const naming = metadata.naming;
-            if (nameChanged && !normalized && !naming?.automatic)
-              throw new Error(
-                "The original automatic name is unavailable. Keep this name or enter another.",
-              );
             const description = nameChanged
               ? sessionDescription(undefined, {
                   naming: {

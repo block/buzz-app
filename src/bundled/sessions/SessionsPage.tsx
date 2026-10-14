@@ -16,6 +16,7 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -478,44 +479,35 @@ function SessionWork({
               signal={navigation?.signal}
               onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
-            <MenuRoot>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    ref={actionsTrigger}
-                    size="toolbar"
-                    aria-label="Session actions"
-                    title="Session actions"
-                    icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-                  />
-                }
-              />
-              <MenuPopup aria-label="Session actions" align="end">
-                {canConvertSession(session, channel) && (
-                  <MenuItem
-                    disabled={shareAttempts.has(channel.id)}
-                    onClick={() => {
-                      if (!sessionShareAttempt(session, channel.id))
-                        setConvertOpen(true);
-                    }}
-                  >
-                    {conversionLabel(session, channel.id)}
-                  </MenuItem>
-                )}
-                <MenuItem
-                  disabled={
-                    !!channel.readOnly ||
-                    (!session.canvas.available &&
-                      !canEditSessionLifetime(session, channel))
+            {!channel.readOnly && !channel.cached && !channel.archived ? (
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      ref={actionsTrigger}
+                      size="toolbar"
+                      aria-label="Session actions"
+                      title="Session actions"
+                      icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                    />
                   }
-                  onClick={() => setSettingsOpen({ visit: navigation?.signal })}
-                >
-                  <MenuIcon>
-                    <GearIcon size={16} />
-                  </MenuIcon>
-                  {inMe ? "Chat settings…" : "Session settings…"}
-                </MenuItem>
-                {!channel.readOnly && !channel.cached && !channel.archived && (
+                />
+                <MenuPopup aria-label="Session actions" align="end">
+                  <MenuItem
+                    disabled={
+                      !!channel.readOnly ||
+                      (!session.canvas.available &&
+                        !canEditSessionLifetime(session, channel))
+                    }
+                    onClick={() =>
+                      setSettingsOpen({ visit: navigation?.signal })
+                    }
+                  >
+                    <MenuIcon>
+                      <GearIcon size={16} />
+                    </MenuIcon>
+                    {inMe ? "Chat settings…" : "Session settings…"}
+                  </MenuItem>
                   <ChannelLifecycleMenu
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
@@ -528,21 +520,38 @@ function SessionWork({
                       )
                     }
                   />
-                )}
-              </MenuPopup>
-            </MenuRoot>
-            {hasLocalPanel && !showingPanel && (
+                </MenuPopup>
+              </MenuRoot>
+            ) : (
               <IconButton
-                ref={splitTrigger}
-                data-tab-pane-toggle=""
+                ref={actionsTrigger}
                 size="toolbar"
-                aria-label="Toggle tab pane"
-                title="Open tab pane"
-                aria-expanded={false}
-                icon={<SidebarRightIcon size="1rem" />}
-                onClick={() => tabState.setPaneOpen(true)}
+                aria-label="Session settings"
+                title="Session settings"
+                icon={<GearIcon size="1rem" aria-hidden="true" />}
+                disabled={
+                  !!channel.readOnly ||
+                  (!session.canvas.available &&
+                    !canEditSessionLifetime(session, channel))
+                }
+                onClick={() => setSettingsOpen({ visit: navigation?.signal })}
               />
             )}
+            {!showingPanel && (
+              <span className={panelStyles.paneToggle}>
+                <IconButton
+                  ref={splitTrigger}
+                  data-tab-pane-toggle=""
+                  size="toolbar"
+                  aria-label="Toggle tab pane"
+                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
+                  aria-expanded={!!showingPanel}
+                  icon={<SidebarRightIcon size="1rem" />}
+                  disabled={!hasLocalPanel}
+                  focusableWhenDisabled
+                  onClick={() => tabState.setPaneOpen(!showingPanel)}
+                />
+              </span>            )}
           </SessionHeading>
           {convertOpen && (
             <ConvertSession

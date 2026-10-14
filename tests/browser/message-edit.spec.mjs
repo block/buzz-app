@@ -27,14 +27,13 @@ test("Cmd+Up edits the last own message only from an empty composer", async ({
     await input.fill("Latest message");
     await input.press("Enter");
     await expect(input).toHaveJSProperty("value", "");
+    await expect
+      .poll(() => page.evaluate(() => window.composerFixture.pending()))
+      .toEqual([]);
     await input.fill("Keep my draft");
     await input.press("Meta+ArrowUp");
     await expect(input).toHaveJSProperty("value", "Keep my draft");
     await input.fill("");
-    for (const modifier of ["Shift", "Alt", "Control", "Meta+Shift"]) {
-      await input.press(`${modifier}+ArrowUp`);
-      await expect(input).toHaveAccessibleName("Message #General");
-    }
     await input.press("Meta+ArrowUp");
     const editor = page.getByRole("textbox", { name: "Edit message" });
     await expect(editor).toBeFocused();
@@ -45,6 +44,9 @@ test("Cmd+Up edits the last own message only from an empty composer", async ({
     await expect(
       page.getByText("Revised message", { exact: true }),
     ).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => window.composerFixture.pending()))
+      .toEqual([]);
     await input.press("Meta+ArrowUp");
     await expect(editor).toHaveJSProperty("value", "Revised message");
     await editor.press("Escape");

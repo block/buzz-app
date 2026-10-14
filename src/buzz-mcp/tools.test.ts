@@ -542,7 +542,7 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
     callTool(client, {}, "canvas", { channel: fixers }),
   ).resolves.toBe("No canvas.");
   const unseen =
-    "No channel fixers that you can see. channels with q finds a channel's ID by name.";
+    "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.";
   await expect(
     callTool(client, {}, "channel", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
@@ -555,23 +555,285 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
   expect(published).toEqual([]);
 });
 
-it.each([
-  [9_999, 9_999],
-  [10_000, 10_000],
-  [10_001, "More than 10000 to read."],
-])("lists %i channels a page at a time, up to 10000", async (count, listed) => {
-  const channels = Array.from({ length: count }, (_, n) =>
+/** Large tied-timestamp datasets without the general fake's quadratic matching. */
+function channelListing(count: number, joined: boolean) {
+  const metadata = Array.from({ length: count }, (_, n) =>
     event({
       id: n.toString(16).padStart(64, "0"),
       kind: 39000,
-      tags: [["d", `room-${n}`]],
+      tags: [
+        ["d", `room-${n}`],
+        ["name", n === 0 || n === count - 1 ? "needle" : "busy"],
+      ],
     }),
   );
-  const listing = callTool(fake(channels).client, {}, "channels", {
-    all: true,
-  }).then((rows) => (rows as string).split("\n").length);
-  if (typeof listed === "number") await expect(listing).resolves.toBe(listed);
-  else await expect(listing).rejects.toThrow(listed);
+  const memberships = joined
+    ? metadata.map((item) =>
+        event({
+          id: item.id,
+          kind: 39002,
+          tags: [
+            ["d", item.tags[0]?.[1] ?? ""],
+            ["p", me],
+          ],
+        }),
+      )
+    : [];
+  const { client } = fake();
+  const cursors = new Map<number, string | undefined>();
+  client.query = vi.fn(async ([filter]: readonly Filter[]) => {
+    if (!filter) throw new Error("Expected one filter");
+    expect(filter.limit).toBeLessThanOrEqual(500);
+    const kind = (filter.kinds as number[])[0] as number;
+    expect(filter.before_id).toBe(cursors.get(kind));
+    const membership = (filter.kinds as number[])[0] === 39002;
+    if (membership) expect(filter["#p"]).toEqual([me]);
+    const ids = filter["#d"] as string[] | undefined;
+    const scope = ids && new Set(ids);
+    const source = membership ? memberships : metadata;
+    const before = filter.before_id as string | undefined;
+    if (before) expect(filter.until).toBe(100);
+    const page = source
+      .filter(
+        (item) =>
+          (!before || item.id > before) &&
+          (!scope || scope.has(item.tags[0]?.[1] ?? "")),
+      )
+      .slice(0, filter.limit as number);
+    cursors.set(kind, page.at(-1)?.id);
+    return page;
+  });
+  return { client, metadata, memberships };
+}
+
+it.each([9_999, 10_000, 10_001])(
+  "searches %i metadata events without an oversized reply or hard failure",
+  async (count) => {
+    const { client } = channelListing(count, false);
+    const answer = (await callTool(client, {}, "channels", {
+      all: true,
+      q: "NEEDLE",
+    })) as string;
+    expect(answer).toContain("room-0 needle (not joined)");
+    expect(answer.includes(`room-${count - 1} needle`)).toBe(count <= 10_000);
+    expect(answer.includes("Partial channel list")).toBe(count > 10_000);
+    expect(answer).not.toContain("busy");
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+    expect(client.query).toHaveBeenCalledTimes(21 + (count >= 10_000 ? 1 : 0));
+  },
+);
+
+it.each([9_999, 10_000, 10_001])(
+  "searches %i memberships within joined scope and reports incomplete scans",
+  async (count) => {
+    const { client, metadata } = channelListing(count, true);
+    metadata.push(
+      event({
+        kind: 39000,
+        tags: [
+          ["d", "outside"],
+          ["name", "needle"],
+        ],
+      }),
+    );
+    const answer = (await callTool(client, {}, "channels", {
+      q: "needle",
+    })) as string;
+    expect(answer).toContain("room-0 needle");
+    expect(answer.includes(`room-${count - 1} needle`)).toBe(count <= 10_000);
+    expect(answer.includes("Partial channel list")).toBe(count > 10_000);
+    expect(answer).not.toContain("outside");
+    expect(answer).not.toContain("not joined");
+  },
+);
+
+it("does not claim non-membership when the membership scan is partial", async () => {
+  const { client, metadata } = channelListing(10_001, true);
+  metadata.splice(0, 10_000);
+  await expect(
+    callTool(client, {}, "channels", { all: true }),
+  ).resolves.toContain(
+    "room-10000 needle (membership unknown)\nPartial channel list",
+  );
+});
+
+it("reports a partial search even when no channel matched before the scan limit", async () => {
+  const { client } = channelListing(10_001, false);
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "missing" }),
+  ).resolves.toBe(
+    "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.",
+  );
+});
+
+it("keeps transport failures as errors instead of treating them as partial scans", async () => {
+  const { client } = channelListing(501, false);
+  const query = client.query;
+  client.query = vi.fn(async (filters) => {
+    if (filters[0]?.before_id) throw new Error("relay unavailable");
+    return query(filters);
+  });
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "needle" }),
+  ).rejects.toThrow("relay unavailable");
+});
+
+it.each([500, 501])(
+  "bounds a %i-row listing and labels partial output",
+  async (count) => {
+    const { client } = channelListing(count, false);
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    const answer =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(
+      answer.split("\n").filter((row) => row.startsWith("room-")),
+    ).toHaveLength(500);
+    expect(answer.includes("Partial channel list")).toBe(count > 500);
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+  },
+);
+
+it.each(["x", "界", "😀", '"\\\n'])(
+  "bounds MCP text bytes with long %j names, retaining a usable ID",
+  async (unit) => {
+    const { client, metadata } = channelListing(2, false);
+    metadata[0] = event({
+      kind: 39000,
+      tags: [
+        ["d", "oversized"],
+        ["name", unit.repeat(20_000)],
+      ],
+    });
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true, q: unit } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    expect(reply.result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining("oversized (details omitted;"),
+        },
+      ],
+    });
+    const text =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(text).toContain("Partial channel list");
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(16_384);
+  },
+);
+
+it.each([-1, 0, 1])(
+  "handles the UTF-8 output boundary at offset %i",
+  async (offset) => {
+    const { client, metadata } = channelListing(2, false);
+    const notice =
+      "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
+    const suffix = " (not joined)";
+    const budget = 16_384 - new TextEncoder().encode(notice).length - 1;
+    const prefix = "room-0 ";
+    const name = "界".repeat(
+      Math.floor((budget - prefix.length - suffix.length) / 3),
+    );
+    const padding =
+      budget -
+      prefix.length -
+      suffix.length -
+      new TextEncoder().encode(name).length;
+    metadata[0] = event({
+      id: "0".repeat(64),
+      kind: 39000,
+      tags: [
+        ["d", "room-0"],
+        ["name", name + "x".repeat(padding + offset)],
+      ],
+    });
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    const answer =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+    expect(answer.includes(name)).toBe(offset <= 0);
+    expect(answer).toContain(notice);
+    if (offset === 0)
+      expect(new TextEncoder().encode(answer).length).toBe(16_384);
+  },
+);
+
+it("reads an existing canvas without querying channel metadata", async () => {
+  const { client } = fake([event({ kind: 40100, content: "# Existing" })]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas", {}),
+  ).resolves.toBe("# Existing");
+  expect(client.query).toHaveBeenCalledExactlyOnceWith([
+    { kinds: [40100], "#h": ["chan"], limit: 1 },
+  ]);
+});
+
+it("waits past the existing canvas timestamp before publishing", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client, published } = fake([
+      event({ kind: 40100, content: "old" }),
+    ]);
+    const publish = client.publish;
+    client.publish = vi.fn(async (template) => {
+      expect(Date.now()).toBe(101_000);
+      return publish(template);
+    });
+    const write = callTool(client, { channel: "chan" }, "canvas", {
+      text: "new",
+    });
+    await vi.advanceTimersByTimeAsync(499);
+    expect(published).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(write).resolves.toBe("saved");
+    expect(published).toEqual([
+      { kind: 40100, content: "new", tags: [["h", "chan"]] },
+    ]);
+    expect(client.query).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("publishes the first canvas only after finding visible channel metadata", async () => {
+  const { client, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas", { text: "first" }),
+  ).resolves.toBe("saved");
+  expect(client.query).toHaveBeenNthCalledWith(2, [
+    { kinds: [39000], "#d": ["chan"], limit: 1 },
+  ]);
+  expect(published).toEqual([
+    { kind: 40100, content: "first", tags: [["h", "chan"]] },
+  ]);
 });
 
 it("creates a channel from its owner's template, reporting each agent it could not add", async () => {
@@ -732,7 +994,9 @@ it("shows a channel's details and changes them as the channel shows", async () =
   );
   await expect(
     callTool(client, { channel: "gone" }, "channel", {}),
-  ).rejects.toThrow("No channel gone that you can see.");
+  ).rejects.toThrow(
+    "No channel gone that you can see (it may not be visible yet).",
+  );
 });
 
 it("changes only the name of a session", async () => {

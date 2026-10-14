@@ -135,9 +135,12 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
-/** A read's page size, and the most `all` reads. */
+/** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
+const CHANNEL_BYTES = 16_384;
+const CHANNEL_PARTIAL =
+  "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
 /** The `channel` arguments each action takes. */
 const ACTIONS: Readonly<Record<string, readonly string[]>> = {
   details: [],
@@ -312,30 +315,55 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async channels(tools, args) {
     const { client } = tools;
-    const memberships = await tools.all({
-      kinds: [39002],
-      "#p": [client.pubkey],
-    });
-    const ids = [
-      ...new Set(memberships.map((event) => tag(event, "d")).filter(Boolean)),
-    ] as string[];
-    const all = args.all === true;
-    if (!ids.length && !all) return "No channels.";
-    const channels = await tools.all(
-      all ? { kinds: [39000] } : { kinds: [39000], "#d": ids },
+    const ids = new Set<string>();
+    const membershipsComplete = await tools.scan(
+      { kinds: [39002], "#p": [client.pubkey] },
+      (event) => {
+        const id = tag(event, "d");
+        if (id) ids.add(id);
+        return true;
+      },
     );
+    const all = args.all === true;
     const q = text(args.q)?.toLowerCase();
-    const rows = channels
-      .map((event) => {
-        const flags = [
-          tag(event, "t") === "stream" ? "" : tag(event, "t"),
-          has(event, "private") ? "private" : "",
-          has(event, "archived") ? "archived" : "",
-          ids.includes(tag(event, "d") ?? "") ? "" : "not joined",
-        ].filter(Boolean);
-        return `${tag(event, "d")} ${tag(event, "name") ?? ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
-      })
-      .filter((row) => !q || row.toLowerCase().includes(q));
+    const rows: string[] = [];
+    const encoder = new TextEncoder();
+    // Reserve the partial-result notice even when the last row fills the budget.
+    let bytes = encoder.encode(CHANNEL_PARTIAL).length;
+    const channelsComplete =
+      !ids.size && !all
+        ? true
+        : await tools.scan(
+            all ? { kinds: [39000] } : { kinds: [39000], "#d": [...ids] },
+            (event) => {
+              const id = tag(event, "d") ?? "";
+              const flags = [
+                tag(event, "t") === "stream" ? "" : tag(event, "t"),
+                has(event, "private") ? "private" : "",
+                has(event, "archived") ? "archived" : "",
+                ids.has(id)
+                  ? ""
+                  : membershipsComplete
+                    ? "not joined"
+                    : "membership unknown",
+              ].filter(Boolean);
+              const row = `${id} ${tag(event, "name") ?? ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+              if (q && !row.toLowerCase().includes(q)) return true;
+              if (rows.length === PAGE) return false;
+              const size = encoder.encode(row).length + 1;
+              if (bytes + size > CHANNEL_BYTES) {
+                // Preserve a usable ID when one channel has oversized details.
+                const brief = `${id} (details omitted; use channel for details)`;
+                if (bytes + encoder.encode(brief).length + 1 <= CHANNEL_BYTES)
+                  rows.push(brief);
+                return false;
+              }
+              rows.push(row);
+              bytes += size;
+              return true;
+            },
+          );
+    if (!membershipsComplete || !channelsComplete) rows.push(CHANNEL_PARTIAL);
     return rows.join("\n") || "No channels.";
   },
 
@@ -593,19 +621,18 @@ class Tools {
     return [["e", root, "", "reply"]];
   }
 
-  /** Every event `filter` matches, a page at a time, as the relay caps each
-   * read. */
-  async all(filter: Filter) {
-    const events: BuzzEvent[] = [];
+  /** Visit matching events in relay order, retaining only what the caller needs.
+   * False means the scan or caller's output budget stopped the listing. */
+  async scan(filter: Filter, visit: (event: BuzzEvent) => boolean) {
+    let count = 0;
     for (let cursor = {}; ; ) {
-      const page = await this.client.query([
-        { ...filter, ...cursor, limit: PAGE },
-      ]);
-      events.push(...page);
-      if (events.length > MAX_EVENTS)
-        throw new Error(`More than ${MAX_EVENTS} to read.`);
+      const limit = Math.min(PAGE, MAX_EVENTS - count + 1);
+      const page = await this.client.query([{ ...filter, ...cursor, limit }]);
+      for (const event of page) {
+        if (++count > MAX_EVENTS || !visit(event)) return false;
+      }
       const last = page.at(-1);
-      if (!last || page.length < PAGE) return events;
+      if (!last || page.length < limit) return true;
       // The relay reads newest first, then by id.
       cursor = { until: last.created_at, before_id: last.id };
     }
@@ -1052,10 +1079,10 @@ async function until<T>(load: () => Promise<T>, done: (value: T) => boolean) {
   return value;
 }
 
-/** A channel the agent cannot see, perhaps given by name. */
+/** A channel without visible metadata, including a newly created channel. */
 const unseen = (channel: string) =>
   new Error(
-    `No channel ${channel} that you can see. channels with q finds a channel's ID by name.`,
+    `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
   );
 
 /** A failed read after a write, as the reason the write is not confirmed. */

@@ -194,7 +194,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(workspace).toHaveCount(0);
-  await expect(split).toHaveAttribute("aria-disabled", "true");
+  await expect(split).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();

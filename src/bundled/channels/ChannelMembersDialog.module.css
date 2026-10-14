@@ -13,7 +13,10 @@
   overflow: auto;
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
-  margin-inline: calc(-1 * (var(--space-control-inset) + var(--space-1)));
+  margin-inline: calc(
+    -1 *
+    min(var(--dialog-padding), var(--space-control-inset) + var(--space-1))
+  );
   padding: 0 var(--space-1) var(--space-6);
 }
 .memberList > * {

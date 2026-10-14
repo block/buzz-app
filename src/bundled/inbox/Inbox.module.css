@@ -237,13 +237,11 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
     var(--space-2)
   );
   opacity: 0;
-  pointer-events: none;
 }
 
 .row:hover .rowArchive,
 .row:focus-within .rowArchive {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .rowDate {
@@ -262,7 +260,6 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 @media (hover: none), (pointer: coarse) {
   .rowArchive {
     opacity: 1;
-    pointer-events: auto;
   }
 
   .rowDate {

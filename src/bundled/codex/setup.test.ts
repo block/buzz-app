@@ -256,14 +256,12 @@ it("starts Codex, its app server and install steps as steps of codex.sh", async 
   const { spawn, calls } = scripted({});
   const run = withScript(spawn);
   await run("codex", { args: ["--version"] });
-  await run("app-server", { args: ["isolated"] });
-  await run("app-server", { args: ["legacy"] });
+  await run("app-server");
   await run("use", { args: ["0.163.0"] });
   await run("platform");
   expect(calls).toEqual([
     { id: "codex-sh", args: [script, "codex.sh", "run", "--version"] },
-    { id: "codex-sh", args: [script, "codex.sh", "server", "isolated"] },
-    { id: "codex-sh", args: [script, "codex.sh", "server", "legacy"] },
+    { id: "codex-sh", args: [script, "codex.sh", "run", "app-server"] },
     { id: "codex-sh", args: [script, "codex.sh", "use", "0.163.0"] },
     { id: "platform", args: [] },
   ]);

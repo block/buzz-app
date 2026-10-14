@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { Wire } from "./rpc";
-import { sessionTag, sessionTitle } from "./prompt";
+import { sessionTag } from "./prompt";
 import {
   codexTurns,
   findConversation,
@@ -356,16 +356,14 @@ it("merges the threads other builds started, found by tag or by their earlier na
   ).toEqual([
     { searchTerm: tag, limit: 50 },
     { searchTerm: title, limit: 50 },
-    { searchTerm: tag, limit: 50 },
-    { searchTerm: title, limit: 50 },
   ]);
   // With no saved thread, the newest one found for it is the conversation's.
   await expect(
     findConversation(server(list, threads).spawn, lookup, signal),
-  ).resolves.toEqual({ threadId: "tagged", at: 3000, store: "isolated" });
+  ).resolves.toEqual({ threadId: "tagged", at: 3000 });
   await expect(
     findConversation(server(list, threads.slice(1)).spawn, lookup, signal),
-  ).resolves.toEqual({ threadId: "legacy", at: 2000, store: "isolated" });
+  ).resolves.toEqual({ threadId: "legacy", at: 2000 });
   await expect(
     findConversation(
       server(list, []).spawn,
@@ -390,118 +388,4 @@ it("treats a thread Codex no longer has as missing, and other failures as errors
   await expect(readTranscript(broken.spawn, saved, signal)).rejects.toThrow(
     "database is locked",
   );
-});
-
-it.each(["legacy", "isolated"] as const)(
-  "reads native history from its %s owning store",
-  async (store) => {
-    const f = server(() => ({ result: { data: [turn()], nextCursor: null } }));
-    const read = await readTranscript(
-      f.spawn,
-      { ...lookup, threadId: "thread-1", store },
-      new AbortController().signal,
-    );
-    expect(f.spawn.mock.calls[0]?.[1]?.args?.at(-1)).toBe(store);
-    expect(read?.turns[0]?.items).toContainEqual(
-      expect.objectContaining({ type: "message", text: "Fixed." }),
-    );
-  },
-);
-
-it("discovers conversations in both stores and returns the newest owning store", async () => {
-  const tagged =
-    sessionTitle(agent.name, lookup) + " · " + sessionTag(agent.pubkey, lookup);
-  const isolated = server(
-    () => ({ result: { data: [], nextCursor: null } }),
-    [{ id: "private", name: tagged, updatedAt: 1 }],
-  );
-  const legacy = server(
-    () => ({ result: { data: [], nextCursor: null } }),
-    [{ id: "shared", name: tagged, updatedAt: 2 }],
-  );
-  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
-    (options?.args?.at(-1) === "isolated" ? isolated : legacy).spawn(
-      id,
-      options,
-    ),
-  );
-  await expect(
-    findConversation(spawn, lookup, new AbortController().signal),
-  ).resolves.toEqual({ threadId: "shared", at: 2000, store: "legacy" });
-  expect(spawn.mock.calls.map(([, options]) => options?.args?.at(-1))).toEqual([
-    "isolated",
-    "legacy",
-  ]);
-});
-
-it("merges display history across stores while activity belongs to the saved thread", async () => {
-  const tagged = `${sessionTitle(agent.name, lookup)} · ${sessionTag(agent.pubkey, lookup)}`;
-  const isolated = server(
-    paged([turn({ id: "new", startedAt: 200, status: "completed" })]),
-    [{ id: "private", name: tagged, updatedAt: 2 }],
-  );
-  const legacy = server(
-    paged([turn({ id: "old", startedAt: 100, status: "inProgress" })]),
-    [{ id: "shared", name: tagged, updatedAt: 1 }],
-  );
-  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
-    (options?.args?.at(-1) === "isolated" ? isolated : legacy).spawn(
-      id,
-      options,
-    ),
-  );
-  const read = await readTranscript(
-    spawn,
-    { ...lookup, threadId: "private", store: "isolated" },
-    new AbortController().signal,
-  );
-  expect(read?.turns.map((turn) => turn.turnId)).toEqual(["old", "new"]);
-  expect(read?.working).toBe(false);
-});
-
-it("retains readable history with a diagnostic when the other home fails", async () => {
-  const f = server(paged([turn()]));
-  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
-    options?.args?.at(-1) === "isolated"
-      ? Promise.reject(new Error("conflicting setup"))
-      : f.spawn(id, options),
-  );
-  const read = await readTranscript(
-    spawn,
-    { ...lookup, threadId: "thread-1", store: "legacy" },
-    new AbortController().signal,
-  );
-  expect(read?.turns).toHaveLength(1);
-  expect(read?.warning).toContain("conflicting setup");
-  await expect(
-    readTranscript(
-      spawn,
-      { ...lookup, threadId: "thread-1", store: "isolated" },
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow("conflicting setup");
-});
-
-it("retains discovered history and reports an unavailable other home", async () => {
-  const tagged = `${sessionTitle(agent.name, lookup)} · ${sessionTag(agent.pubkey, lookup)}`;
-  const f = server(paged([turn()]), [
-    { id: "shared", name: tagged, updatedAt: 1 },
-  ]);
-  const spawn = vi.fn((id: string, options?: HostProcessOptions) =>
-    options?.args?.at(-1) === "isolated"
-      ? Promise.reject(new Error("conflicting setup"))
-      : f.spawn(id, options),
-  );
-  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  try {
-    await expect(
-      findConversation(spawn, lookup, new AbortController().signal),
-    ).resolves.toEqual({ threadId: "shared", at: 1000, store: "legacy" });
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("isolated"),
-      expect.any(Error),
-    );
-  } finally {
-    error.mockRestore();
-  }
 });

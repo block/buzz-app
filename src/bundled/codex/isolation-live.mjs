@@ -101,50 +101,47 @@ requires_openai_auth = false
     output: { dir: root, entryFileNames: "rpc.mjs", format: "esm" },
   });
   const { AppServer } = await import(join(root, "rpc.mjs"));
-  await mkdir(join(isolated.slice(0, -5), "0.1.0/bin"), { recursive: true });
-  await symlink(
-    execFileSync("which", ["codex"], { encoding: "utf8" }).trim(),
-    join(isolated.slice(0, -5), "0.1.0/bin/codex"),
-  );
-  await writeFile(join(isolated.slice(0, -5), "current"), "0.1.0");
-  const nativeSpawn = async (id, options = {}) => {
-    assert.equal(id, "app-server");
-    const child = spawn(
-      "bash",
-      ["-c", script, "codex.sh", "server", ...options.args],
-      {
-        env: {
-          ...process.env,
-          HOME: root,
-          XDG_DATA_HOME: join(root, "data"),
-          CODEX_HOME: shared,
-          CODEX_SQLITE_HOME: shared,
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
-    child.stdout.on("data", (data) => options.onStdout?.(String(data)));
-    child.stderr.on("data", (data) => options.onStderr?.(String(data)));
-    const exited = new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", resolve);
-    });
-    return {
-      write: (data) =>
-        new Promise((resolve, reject) =>
-          child.stdin.write(data, (error) =>
-            error ? reject(error) : resolve(),
-          ),
-        ),
-      end: async () => child.stdin.end(),
-      kill: async () => child.kill("SIGKILL"),
-      exited,
-    };
+  const codex = execFileSync("which", ["codex"], { encoding: "utf8" }).trim();
+  const releases = isolated.slice(0, -5);
+  await mkdir(join(releases, "0.1.0/bin"), { recursive: true });
+  await symlink(codex, join(releases, "0.1.0/bin/codex"));
+  await writeFile(join(releases, "current"), "0.1.0");
+  const env = {
+    ...process.env,
+    HOME: root,
+    XDG_DATA_HOME: join(root, "data"),
+    CODEX_HOME: shared,
+    CODEX_SQLITE_HOME: shared,
   };
-  const open = async (store) => {
+  // Buzz starts app-server through codex.sh; desktop runs Codex on the shared home.
+  const open = async (desktop = false) => {
     const rpc = new AppServer();
     servers.push(rpc);
-    await rpc.open(nativeSpawn, undefined, store);
+    await rpc.open(async (id, options = {}) => {
+      assert.equal(id, "app-server");
+      const child = desktop
+        ? spawn(codex, ["app-server"], { env })
+        : spawn("bash", ["-c", script, "codex.sh", "run", "app-server"], {
+            env,
+          });
+      child.stdout.on("data", (data) => options.onStdout?.(String(data)));
+      child.stderr.on("data", (data) => options.onStderr?.(String(data)));
+      const exited = new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", resolve);
+      });
+      return {
+        write: (data) =>
+          new Promise((resolve, reject) =>
+            child.stdin.write(data, (error) =>
+              error ? reject(error) : resolve(),
+            ),
+          ),
+        end: async () => child.stdin.end(),
+        kill: async () => child.kill("SIGKILL"),
+        exited,
+      };
+    });
     return rpc;
   };
   const create = async (rpc, text) => {
@@ -183,11 +180,11 @@ requires_openai_auth = false
     });
     return data.some((thread) => thread.id === id);
   };
-  const legacy = await open("legacy");
-  const oldId = await create(legacy, "Legacy fixture remains resumable");
-  await legacy.close();
+  const desktop = await open(true);
+  const desktopId = await create(desktop, "Desktop fixture stays in desktop");
+  await desktop.close();
   const beforeAuth = await readFile(join(shared, "auth.json"));
-  const current = await open("isolated");
+  const current = await open();
   assert.equal(
     (await current.request("account/read", { refreshToken: false })).account
       .type,
@@ -202,36 +199,27 @@ requires_openai_auth = false
     "Isolated fixture persists after restart",
   );
   await current.close();
-  const releases = isolated.slice(0, -5);
   await mkdir(join(releases, "0.2.0/bin"), { recursive: true });
-  await symlink(
-    execFileSync("which", ["codex"], { encoding: "utf8" }).trim(),
-    join(releases, "0.2.0/bin/codex"),
-  );
-  execFileSync("bash", ["-c", script, "codex.sh", "use", "0.2.0"], {
-    env: {
-      ...process.env,
-      HOME: root,
-      XDG_DATA_HOME: join(root, "data"),
-      CODEX_HOME: shared,
-    },
-  });
-  const restarted = await open("isolated");
+  await symlink(codex, join(releases, "0.2.0/bin/codex"));
+  execFileSync("bash", ["-c", script, "codex.sh", "use", "0.2.0"], { env });
+  const restarted = await open();
   assert.equal(
     (await restarted.request("thread/resume", { threadId: newId })).thread.id,
     newId,
   );
   assert.equal(await has(restarted, newId), true);
-  assert.equal(await has(restarted, oldId), false);
-  await restarted.close();
-  const desktop = await open("legacy");
-  assert.equal(
-    (await desktop.request("thread/resume", { threadId: oldId })).thread.id,
-    oldId,
+  assert.equal(await has(restarted, desktopId), false);
+  // A conversation saved before Buzz had its own home starts afresh, through
+  // the runtime's missing-thread fallback.
+  await assert.rejects(
+    restarted.request("thread/resume", { threadId: desktopId }),
+    { message: `no rollout found for thread id ${desktopId}` },
   );
-  assert.equal(await has(desktop, oldId), true);
-  assert.equal(await has(desktop, newId), false);
-  await desktop.close();
+  await restarted.close();
+  const reopened = await open(true);
+  assert.equal(await has(reopened, desktopId), true);
+  assert.equal(await has(reopened, newId), false);
+  await reopened.close();
   assert.deepEqual(await readFile(join(shared, "auth.json")), beforeAuth);
   assert.equal(
     await readFile(join(shared, "config.toml"), "utf8"),
@@ -243,7 +231,7 @@ requires_openai_auth = false
     ),
   );
   console.log(
-    "PASS: shared synthetic sign-in/config, private SQLite/history, restart/update resume, and preserved legacy sessions; local fixture model only; no external model or relay calls",
+    "PASS: shared synthetic sign-in/config, private SQLite/history, restart/update resume, and no threads shared with desktop; local fixture model only; no external model or relay calls",
   );
 } finally {
   await Promise.all(servers.map((rpc) => rpc.close()));

@@ -3,8 +3,6 @@ import type {
   HostProcess,
   HostProcessOptions,
 } from "../../features/host/service";
-/** Unmarked saved bindings still belong to the desktop store. */
-export type Store = "legacy" | "isolated";
 export type Spawn = (
   id: string,
   options?: HostProcessOptions,
@@ -55,9 +53,8 @@ export class AppServer {
     private readonly toolCall?: (call: ToolCall) => Promise<ToolReply>,
   ) {}
 
-  async open(spawn: Spawn, cwd?: string, store: Store = "isolated") {
+  async open(spawn: Spawn, cwd?: string) {
     this.process = await spawn("app-server", {
-      args: [store],
       ...(cwd ? { cwd } : {}),
       onStdout: (data) => this.read(data),
       onStderr: (data) => {

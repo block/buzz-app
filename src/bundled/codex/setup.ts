@@ -33,7 +33,7 @@ const TARGETS: Readonly<Record<string, string>> = {
  * plugin starts by name. */
 const STEPS: Readonly<Record<string, readonly string[]>> = {
   codex: ["run"],
-  "app-server": ["server"],
+  "app-server": ["run", "app-server"],
   install: ["install"],
   use: ["use"],
 };

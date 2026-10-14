@@ -2,8 +2,7 @@
 # The plugin runs it as `bash -c` (see `withScript` in setup.ts), each time
 # with one of these steps:
 #
-#   server [legacy|isolated]       starts app-server in the owning store
-#   run [ARGS...]                  runs the copy in use with ARGS
+#   run [ARGS...]                  runs the copy in use with ARGS, in Buzz's home
 #   install VERSION TARGET SHA256  downloads a release and checks it
 #   use VERSION                    makes a downloaded release the one in use
 set -eu
@@ -31,38 +30,25 @@ newer() {
 
 command="$1"
 shift
-store=isolated
-if [ "$command" = server ]; then
-  store="${1:-isolated}"
-  shift "$(( $# > 0 ))"
-  case "$store" in legacy | isolated) ;; *) exit 2 ;; esac
-  set -- app-server "$@"
-  command=run
-fi
-if [ "$command" = run ] && [ "$store" = isolated ]; then
-  sharedHome=${CODEX_HOME:-"$HOME/.codex"}
-  mkdir -p "$sharedHome"
-  sharedHome=$(cd "$sharedHome" && pwd -P)
-  umask 077
-  mkdir -p "${dir}-home"
-  privateHome=$(cd "${dir}-home" && pwd -P)
-  if [ "$privateHome" = "$sharedHome" ]; then
-    echo "Buzz's Codex store must differ from the shared Codex home" >&2
-    exit 1
-  fi
+# Buzz keeps its own Codex home, beside the releases, so its conversations stay
+# out of the user's Codex history. It links in only the settings, sign-in and
+# instructions, and never replaces a file in the way.
+if [ "$command" = run ]; then
+  mkdir -p "${CODEX_HOME:-$HOME/.codex}"
+  shared=$(cd "${CODEX_HOME:-$HOME/.codex}" && pwd -P)
+  mkdir -p -m 700 "$dir-home"
+  home=$(cd "$dir-home" && pwd -P)
+  [ "$home" != "$shared" ] ||
+    { echo "Buzz's Codex home must differ from the shared one" >&2; exit 1; }
   for name in config.toml auth.json AGENTS.md rules skills; do
-    target="$sharedHome/$name"
-    link="$privateHome/$name"
-    if [ ! -e "$link" ] && [ ! -L "$link" ]; then
-      ln -s "$target" "$link" || true
-    fi
-    if [ ! -L "$link" ] || [ "$(readlink "$link")" != "$target" ]; then
-      echo "Buzz's Codex setup conflicts with $link" >&2
-      exit 1
-    fi
+    [ -e "$home/$name" ] || [ -L "$home/$name" ] ||
+      ln -s "$shared/$name" "$home/$name" 2>/dev/null || true
+    [ "$(readlink "$home/$name")" = "$shared/$name" ] ||
+      { echo "Buzz's Codex setup conflicts with $home/$name" >&2; exit 1; }
   done
-  export CODEX_HOME="$privateHome"
-  set -- -c "sqlite_home=$privateHome" "$@"
+  export CODEX_HOME="$home"
+  # Even a shared `sqlite_home` setting must not lead back to the user's history.
+  set -- -c "sqlite_home=$home" "$@"
 fi
 case "$command" in
 run)

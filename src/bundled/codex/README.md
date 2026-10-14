@@ -2,7 +2,8 @@
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
 Agents owns the identity, admission, configuration, and signed Buzz actions. This plugin
-owns Codex work after delivery handover. Agents share one `codex app-server` per storage home, with an independent Codex thread for each agent's Buzz conversation.
+owns Codex work after delivery handover. It starts one `codex app-server` for all
+agents and uses an independent Codex thread for each agent's Buzz conversation.
 Each thread carries its agent's workspace, instructions and tools, so one crash
 fails every agent's current turn; the next mention reopens the server.
 
@@ -86,11 +87,9 @@ follow-up before its final reply.
 
 ## Conversation storage
 
-New conversations use `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. The launcher links only `config.toml`, `auth.json`, `AGENTS.md`, `rules`, and `skills` from the existing `CODEX_HOME` (default `~/.codex`); credentials are not copied. An explicit private `sqlite_home` override prevents shared configuration or `CODEX_SQLITE_HOME` from routing new database state back to desktop. Rollouts, paginated history and other runtime state remain private. File-based sign-in and refresh retain the existing shared file. Keyring credentials are scoped to the home and may require a separate Buzz sign-in through the provider’s **Sign in** action. The same managed launcher handles provider checks, login and app-server; legacy sessions use Buzz’s managed binary with their original home.
+Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared and nothing is copied. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. A file already in the way of a link stops setup rather than being replaced.
 
-Existing v4 bindings without a store marker keep their original home, native context, tool history and transcript. Those conversations remain visible in Codex desktop and continue updating there. Bindings retain their history because Codex has no complete supported migration for paginated history. New bindings persist their store marker; workspace changes and recovery from a genuinely deleted thread create an isolated session. Conversation scope follows the configured thread/channel/DM policy. Legacy and isolated servers start lazily and retain background terminals until the existing agent/plugin shutdown boundary.
-
-Conflicting private configuration files or links to a different shared home stop setup with a diagnostic instead of overwriting either setup. The private home lives outside both the default agent workspace and the managed release directory. Release cleanup only prunes validated version folders.
+Conversations saved before Buzz had its own home start afresh: their Codex thread isn't in Buzz's home, so the runtime starts a new one. Buzz still sends each turn's conversation from the relay. The old threads stay in `~/.codex`.
 
 ## Checks
 
@@ -100,7 +99,7 @@ bin/node src/bundled/codex/isolation-live.mjs
 bin/node src/bundled/codex/live.mjs
 ```
 
-The isolation check runs real Codex processes against disposable homes, a synthetic file-based account and a loopback fixture model. It verifies independent thread listings, private SQLite state despite inherited overrides, shared sign-in/configuration, persistence after restart, and unchanged legacy history. It sends no external model or relay requests.
+The isolation check runs the installed Codex through `codex.sh` with disposable homes, a synthetic file-based account and a loopback model. It checks shared sign-in and settings, a private database despite a shared `sqlite_home`, resuming after a restart and a release switch, and that neither home lists the other's threads. It sends no external model or relay requests.
 
 The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell
@@ -125,8 +124,9 @@ and cleanup.
 
 The plugin never runs the `codex` on PATH. It runs Buzz's own copy from
 `~/Library/Application Support/Buzz/codex/<version>/bin/codex`, or
-`${XDG_DATA_HOME:-~/.local/share}/buzz/codex/<version>/bin/codex` on Linux; a `current` file names
-the version in use. File-based sign-in and settings come from the existing Codex home; conversation storage is separate. [`codex.sh`](codex.sh) is the launcher and installer;
+`${XDG_DATA_HOME:-~/.local/share}/buzz/codex` on Linux; a `current` file names
+the version in use. Sign-in and settings are the same as in the terminal, but
+conversations are not ([Conversation storage](#conversation-storage)). [`codex.sh`](codex.sh) is the launcher and installer;
 the plugin runs each step through the one declared `bash -c` process.
 
 Releases come from OpenAI's channel, `releases.openai.com/codex/channels/latest`,

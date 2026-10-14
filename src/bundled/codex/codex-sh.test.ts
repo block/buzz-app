@@ -176,27 +176,65 @@ it("starts the release in use when switches prune the one it read", async () => 
   expect((await launching).stdout.trim()).toBe("codex-cli 0.3.0");
 });
 
-it("retains runtime history and links when switching managed releases", async () => {
+// Buzz's own Codex home keeps its conversations out of the user's Codex
+// history, linking in only the settings, sign-in and instructions.
+const shared = ["config.toml", "auth.json", "AGENTS.md", "rules", "skills"];
+
+/** A release that prints the home and arguments it ran with. */
+async function echoing() {
   const f = await disk(["0.1.0", "0.2.0"], "0.1.0");
-  await mkdir(join(f.home, ".codex/skills"), { recursive: true });
   await writeFile(
     join(f.dir, "0.1.0/bin/codex"),
-    '#!/bin/sh\nprintf "%s\\n" "$CODEX_HOME"\n',
+    '#!/bin/sh\nprintf "%s\\n" "$CODEX_HOME" "$@"\n',
   );
-  const home = (await f.step("server", "isolated")).stdout.trim();
-  await mkdir(join(home, "sessions"), { recursive: true });
-  await writeFile(join(home, "sessions/rollout.jsonl"), "history");
-  await mkdir(join(f.dir, "sessions"), { recursive: true });
-  await writeFile(join(f.dir, "sessions/keep"), "unrelated");
+  return { ...f, own: `${f.dir}-home`, codex: join(f.home, ".codex") };
+}
+
+it("runs Codex in Buzz's own home, linked to the shared settings and sign-in", async () => {
+  const f = await echoing();
+  const { stdout } = await f.step("run", "app-server");
+  expect(stdout.trim().split("\n")).toEqual([
+    f.own,
+    "-c",
+    `sqlite_home=${f.own}`,
+    "app-server",
+  ]);
+  for (const name of shared)
+    expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
+  // A sign-in refresh writes through the link, to the shared file.
+  await writeFile(join(f.own, "auth.json"), "refreshed");
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("refreshed");
+  await f.step("run", "app-server");
+});
+
+it("sets up Buzz's home once when two runs start at once", async () => {
+  const f = await echoing();
+  await Promise.all([f.step("run"), f.step("run")]);
+  for (const name of shared)
+    expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
+});
+
+it("stops rather than replace a file in the way of a link", async () => {
+  const f = await echoing();
+  await mkdir(f.own, { recursive: true });
+  await writeFile(join(f.own, "config.toml"), "keep me");
+  await expect(f.step("run")).rejects.toMatchObject({
+    stderr: expect.stringContaining("setup conflicts"),
+  });
+  expect(await readFile(join(f.own, "config.toml"), "utf8")).toBe("keep me");
+});
+
+it("keeps Buzz's conversations when switching releases", async () => {
+  const f = await echoing();
+  await f.step("run");
+  await mkdir(join(f.own, "sessions"));
+  await writeFile(join(f.own, "sessions/rollout.jsonl"), "history");
+  await mkdir(join(f.dir, "sessions"));
   await f.step("use", "0.2.0");
-  expect(await readFile(join(home, "sessions/rollout.jsonl"), "utf8")).toBe(
+  expect(await readFile(join(f.own, "sessions/rollout.jsonl"), "utf8")).toBe(
     "history",
   );
-  expect(await readlink(join(home, "skills"))).toBe(
-    join(f.home, ".codex/skills"),
-  );
-  expect(await readFile(join(f.dir, "sessions/keep"), "utf8")).toBe(
-    "unrelated",
-  );
-  expect(home).toBe(`${f.dir}-home`);
+  expect(await readlink(join(f.own, "skills"))).toBe(join(f.codex, "skills"));
+  // Only release folders are pruned.
+  expect(await f.folders()).toEqual(["0.1.0", "0.2.0", "sessions"]);
 });

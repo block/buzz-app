@@ -8,7 +8,7 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import { sessionTag, sessionTitle } from "./prompt";
-import { AppServer, type Spawn, type Store } from "./rpc";
+import { AppServer, type Spawn } from "./rpc";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
 export const TURN_LIMIT = 20;
@@ -22,11 +22,7 @@ type Turn = {
   startedAt: number | null;
   completedAt: number | null;
 };
-export type CodexTranscript = Transcript & {
-  more: boolean;
-  working: boolean;
-  warning?: string;
-};
+export type CodexTranscript = Transcript & { more: boolean; working: boolean };
 
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 const display = (value: unknown) =>
@@ -233,7 +229,6 @@ export type Lookup = Readonly<{
   name?: string;
   root?: string;
   threadId?: string;
-  store?: Store;
 }>;
 /** `legacy` threads were named without the tag, so their name alone does not
  * tell same-named channels apart. */
@@ -295,32 +290,12 @@ export async function findConversation(
   lookup: Lookup,
   signal: AbortSignal,
 ) {
-  const found = [];
-  let failure: unknown;
-  for (const store of ["isolated", "legacy"] as const) {
-    const thread = await withServer(
-      spawn,
-      signal,
-      async (rpc) => {
-        for (const thread of await findThreads(rpc, lookup))
-          if (
-            !thread.legacy ||
-            startedFor(await turns(rpc, thread.id, 1), lookup)
-          )
-            return { threadId: thread.id, at: thread.updatedAt * 1000, store };
-        return undefined;
-      },
-      store,
-    ).catch((error) => {
-      signal.throwIfAborted();
-      failure = error;
-      console.error(`Codex could not search ${store} history`, error);
-      return undefined;
-    });
-    if (thread) found.push(thread);
-  }
-  if (!found.length && failure) throw failure;
-  return found.sort((a, b) => b.at - a.at)[0];
+  return withServer(spawn, signal, async (rpc) => {
+    for (const thread of await findThreads(rpc, lookup))
+      if (!thread.legacy || startedFor(await turns(rpc, thread.id, 1), lookup))
+        return { threadId: thread.id, at: thread.updatedAt * 1000 };
+    return undefined;
+  });
 }
 
 type Page = { data: Turn[]; nextCursor: string | null };
@@ -356,14 +331,13 @@ async function withServer<T>(
   spawn: Spawn,
   signal: AbortSignal,
   use: (rpc: AppServer) => Promise<T>,
-  store: Store = "legacy",
 ) {
   const rpc = new AppServer();
   const abort = () => void rpc.close();
   signal.addEventListener("abort", abort, { once: true });
   try {
     signal.throwIfAborted();
-    await rpc.open(spawn, undefined, store);
+    await rpc.open(spawn);
     signal.throwIfAborted();
     const result = await use(rpc);
     signal.throwIfAborted();
@@ -383,52 +357,33 @@ export async function readTranscript(
   signal: AbortSignal,
   name?: Names,
 ): Promise<CodexTranscript | undefined> {
-  const all: Turn[] = [];
-  const seen = new Set<string>();
-  let found = false;
-  let more = false;
-  let working = false;
-  let warning: string | undefined;
-  const owner = lookup.store ?? "legacy";
-  for (const store of [
-    owner,
-    owner === "legacy" ? "isolated" : "legacy",
-  ] as const)
-    await withServer(
-      spawn,
-      signal,
-      async (rpc) => {
-        const threads = new Map<string, boolean>(
-          store === owner && lookup.threadId ? [[lookup.threadId, false]] : [],
-        );
-        for (const thread of await findThreads(rpc, lookup))
-          if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
-        for (const [threadId, legacy] of threads) {
-          if (seen.has(threadId)) continue;
-          const read = await page(rpc, threadId, TURN_LIMIT);
-          if (!read || (legacy && !startedFor(read.data, lookup))) continue;
-          seen.add(threadId);
-          found = true;
-          more ||= read.more;
-          if (store === owner && threadId === lookup.threadId)
-            working = read.data[0]?.status === "inProgress";
-          all.push(...[...read.data].reverse());
-        }
-      },
-      store,
-    ).catch((error) => {
-      signal.throwIfAborted();
-      if (store === owner) throw error;
-      warning = `Some conversation history could not be read: ${error instanceof Error ? error.message : String(error)}`;
-    });
-  if (!found && warning) throw new Error(warning);
-  if (!found) return undefined;
-  all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  return {
-    turns: codexTurns(all.slice(-TURN_LIMIT), lookup, name),
-    unknownThread: 0,
-    more: more || all.length > TURN_LIMIT,
-    working,
-    ...(warning ? { warning } : {}),
-  };
+  return withServer(spawn, signal, async (rpc) => {
+    // The saved thread is the conversation's; a found one by its name.
+    const threads = new Map<string, boolean>(
+      lookup.threadId ? [[lookup.threadId, false]] : [],
+    );
+    for (const thread of await findThreads(rpc, lookup))
+      if (!threads.has(thread.id)) threads.set(thread.id, thread.legacy);
+    const all: Turn[] = [];
+    let found = false;
+    let more = false;
+    let working = false;
+    for (const [threadId, legacy] of threads) {
+      const read = await page(rpc, threadId, TURN_LIMIT);
+      if (!read || (legacy && !startedFor(read.data, lookup))) continue;
+      found = true;
+      more ||= read.more;
+      if (threadId === lookup.threadId)
+        working = read.data[0]?.status === "inProgress";
+      all.push(...[...read.data].reverse());
+    }
+    if (!found) return undefined;
+    all.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    return {
+      turns: codexTurns(all.slice(-TURN_LIMIT), lookup, name),
+      unknownThread: 0,
+      more: more || all.length > TURN_LIMIT,
+      working,
+    };
+  });
 }

@@ -601,18 +601,11 @@ export function createTabs(
             agentName={agent.name}
             state={() => (read.transcript.working ? "working" : undefined)}
             before={
-              <>
-                {read.transcript.warning && (
-                  <p role="alert" className="m-0 wrap-anywhere text-body-sm">
-                    {read.transcript.warning}
-                  </p>
-                )}
-                {read.transcript.more && (
-                  <p className="m-0 text-body-sm text-subtle">
-                    Showing the latest {TURN_LIMIT} turns.
-                  </p>
-                )}
-              </>
+              read.transcript.more && (
+                <p className="m-0 text-body-sm text-subtle">
+                  Showing the latest {TURN_LIMIT} turns.
+                </p>
+              )
             }
           />
         )}

@@ -55,11 +55,9 @@ function fixture({
   saved = {},
   turns = () => ({ result: { data: [] } }),
   threads = [],
-  failedStore,
 }: {
   signedIn?: boolean;
   installed?: boolean;
-  failedStore?: string;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
@@ -69,8 +67,6 @@ function fixture({
   const disk = { signedIn, installed };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
-    if (options?.args?.at(-1) === failedStore)
-      throw new Error("conflicting setup");
     const exit = deferred<number | null>();
     if (id === "codex") {
       const args = options?.args?.join(" ");
@@ -936,46 +932,4 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   expect(provider.snapshot()).toMatchObject({ readiness: "ready" });
   expect(provider.snapshot()).not.toHaveProperty("blocking");
   provider.dispose();
-});
-
-it("shows readable history alongside the other-store failure", async () => {
-  const root = "e".repeat(64);
-  const f = fixture({
-    saved: {
-      [JSON.stringify(["channel", root])]: {
-        threadId: "kept",
-        workspace: "/w",
-      },
-    },
-    turns: () => ({
-      result: {
-        data: [
-          {
-            id: "turn",
-            status: "completed",
-            startedAt: 1,
-            completedAt: 2,
-            items: [
-              { type: "agentMessage", id: "a", text: "Retained history." },
-            ],
-          },
-        ],
-        nextCursor: null,
-      },
-    }),
-    failedStore: "isolated",
-  });
-  render(<f.tabs.SettingsTab {...f.props()} />);
-  fireEvent.click(screen.getByText("Runtime diagnostics"));
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "View transcript" }));
-  expect(await screen.findByText("Retained history.")).toBeVisible();
-  expect(
-    screen.getByText(
-      "Some conversation history could not be read: conflicting setup",
-    ),
-  ).toHaveTextContent(
-    "Some conversation history could not be read: conflicting setup",
-  );
 });

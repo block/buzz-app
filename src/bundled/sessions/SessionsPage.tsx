@@ -67,6 +67,12 @@ import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
+import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
+import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
+import {
+  readSelectedAssistant,
+  writeSelectedAssistant,
+} from "../../features/sessions/selected-assistant";
 import {
   SessionColumn,
   SessionHeading,
@@ -284,6 +290,13 @@ function SessionWork({
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState(() =>
+    readSelectedAssistant(scope, channel.id),
+  );
+  const selectAgent = (agent: string) => {
+    setSelectedAgent(agent);
+    writeSelectedAssistant(scope, channel.id, agent);
+  };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const list = useChannelList(session.channels);
@@ -435,7 +448,7 @@ function SessionWork({
                   <MenuIcon>
                     <GearIcon size={16} />
                   </MenuIcon>
-                  Session settings…
+                  {inMe ? "Chat settings…" : "Session settings…"}
                 </MenuItem>
               </MenuPopup>
             </MenuRoot>
@@ -513,6 +526,7 @@ function SessionWork({
                 </p>
               ) : (
                 <ChannelTimeline
+                  chatPresentation={inMe}
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -527,9 +541,37 @@ function SessionWork({
               )}
             </div>
             <MessageComposer
+              chatPresentation={inMe}
               sessionConversation
               activityClickOpensPanel
               personalConversation={placement.status !== "ready" || inMe}
+              selectedAgent={inMe ? selectedAgent : undefined}
+              trailingTool={
+                inMe ? (
+                  <>
+                    <SessionAgentControl
+                      session={session}
+                      channelId={channel.id}
+                      value={selectedAgent}
+                      onChange={selectAgent}
+                      disabled={
+                        !!channel.archived ||
+                        placement.status !== "ready" ||
+                        !inMe
+                      }
+                    />
+                    <SessionProjectControl
+                      session={session}
+                      channelId={channel.id}
+                      disabled={
+                        !!channel.archived ||
+                        placement.status !== "ready" ||
+                        !inMe
+                      }
+                    />
+                  </>
+                ) : undefined
+              }
               onSend={setSent}
               extensions={extensions}
               session={session}

@@ -357,7 +357,7 @@ test.describe("Me layout", () => {
     ).toBeVisible();
     await expectReachable();
     await sidebar
-      .getByRole("button", { name: "New conversation", exact: true })
+      .getByRole("button", { name: "New chat", exact: true })
       .click();
     await expect(composer).toHaveText("Scaled session draft");
     await page.evaluate(() =>

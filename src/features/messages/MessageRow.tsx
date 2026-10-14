@@ -113,6 +113,8 @@ export type MessageRowProps = {
   viewer?: string | undefined;
   stackPrevious?: boolean;
   stackNext?: boolean;
+  alignViewer?: boolean;
+
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -165,6 +167,8 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
+  alignViewer = false,
+
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -508,8 +512,12 @@ function MessageRowContent({
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
+        data-viewer-message={
+          alignViewer && row.authorId === viewer ? "" : undefined
+        }
       >
         <span className={styles.messageGutter} />
+
         <div className={styles.messageBody}>
           {opened && session && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>

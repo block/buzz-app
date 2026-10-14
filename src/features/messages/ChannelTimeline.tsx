@@ -375,9 +375,16 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  // The reveal keeps its row in place through late measurement until any newer
+  // intent: reader input, a send or Jump to latest.
+  const targetIntent = useRef<number | undefined>(undefined);
+  const holdTarget = useCallback(
+    () => intent.current === targetIntent.current,
+    [],
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
-    intent.current++;
+    targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
     restoredAnchor.current = undefined;
@@ -399,6 +406,7 @@ function Timeline({
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
+    hold: holdTarget,
   });
   useReading({
     session: queries,

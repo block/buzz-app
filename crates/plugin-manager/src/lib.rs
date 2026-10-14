@@ -1,4 +1,5 @@
 //! Installation and settings never execute plugin code. Both desktop and CLI use this crate.
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use nostr::{
     event::{Event, EventBuilder, FinalizeEvent, Kind, Tag},
     key::{Keys, SecretKey},
@@ -17,6 +18,10 @@ mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
+const MAX_README_BYTES: usize = 256 * 1024;
+const MAX_ICON_BYTES: usize = 1024 * 1024;
+const MAX_ICON_DIMENSION: u32 = 4096;
+const MAX_ICON_PIXELS: u64 = 1024 * 1024;
 pub const DEFAULT_HOST_COMMAND_OUTPUT_BYTES: u64 = 4096;
 pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 1024 * 1024;
 pub const MAX_HOST_COMMAND_INPUT_BYTES: u64 = 64 * 1024;
@@ -301,6 +306,10 @@ struct Installed {
     #[serde(default)]
     previous_source: Option<ReloadSource>,
     enabled: bool,
+    #[serde(default)]
+    readme_revision: Option<String>,
+    #[serde(default)]
+    icon_revision: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -341,6 +350,24 @@ impl Default for Registry {
 struct Artifact {
     manifest: Manifest,
     code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    readme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_png: Option<String>,
+}
+impl Artifact {
+    fn readme_revision(&self) -> Option<String> {
+        self.readme.as_deref().map(|value| hash(value.as_bytes()))
+    }
+    fn icon_bytes(&self) -> Result<Option<Vec<u8>>> {
+        self.icon_png
+            .as_deref()
+            .map(|value| BASE64.decode(value).map_err(err))
+            .transpose()
+    }
+    fn icon_revision(&self) -> Result<Option<String>> {
+        Ok(self.icon_bytes()?.as_deref().map(hash))
+    }
 }
 #[derive(Clone)]
 struct Release {
@@ -380,10 +407,7 @@ fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
 }
 
 pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
-    let bytes = artifact_from_text(
-        &read_limited(&directory.join("manifest.json"))?,
-        read_limited(&directory.join("plugin.js"))?,
-    )?;
+    let bytes = imports::prepare_unsigned_artifact(directory)?;
     let secret = SecretKey::parse(key_text.trim()).map_err(|_| "Invalid signing key")?;
     let tags = [
         Tag::custom("x", [hash(&bytes).as_str()]),
@@ -445,6 +469,15 @@ pub struct PluginInfo {
     pub reloadable: bool,
     pub error: Option<String>,
     pub publisher: Option<String>,
+    pub readme_revision: Option<String>,
+    pub icon_revision: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginContent {
+    pub readme: Option<String>,
+    pub icon_png: Option<Vec<u8>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -613,6 +646,8 @@ impl Manager {
                     reloadable: false,
                     error: None,
                     publisher: None,
+                    readme_revision: None,
+                    icon_revision: None,
                 }
             })
             .collect();
@@ -649,6 +684,8 @@ impl Manager {
                 reloadable: p.current_source.is_some(),
                 error,
                 publisher,
+                readme_revision: p.readme_revision,
+                icon_revision: p.icon_revision,
             });
         }
         Ok(Catalog {
@@ -663,7 +700,10 @@ impl Manager {
     }
     fn install_artifact(&self, release: &Release, source: Option<ReloadSource>) -> Result<Catalog> {
         let bytes = &release.bytes;
-        let manifest = release.validate()?;
+        let artifact = release.artifact()?;
+        let manifest = artifact.manifest.clone();
+        let readme_revision = artifact.readme_revision();
+        let icon_revision = artifact.icon_revision()?;
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
@@ -704,6 +744,8 @@ impl Manager {
                     previous_signature,
                     previous_source,
                     enabled,
+                    readme_revision,
+                    icon_revision,
                 },
             );
             self.save(&registry)?;
@@ -754,6 +796,8 @@ impl Manager {
                         p.current = previous;
                         std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
                         p.current_source = previous_source;
+                        p.readme_revision = a.readme_revision();
+                        p.icon_revision = a.icon_revision()?;
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -801,7 +845,10 @@ impl Manager {
             )
         };
         let release = prepare_reload_artifact(&snapshot.1)?;
-        let manifest = release.validate()?;
+        let artifact = release.artifact()?;
+        let manifest = artifact.manifest.clone();
+        let readme_revision = artifact.readme_revision();
+        let icon_revision = artifact.icon_revision()?;
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
@@ -861,12 +908,35 @@ impl Manager {
             plugin.previous = previous;
             plugin.previous_signature = previous_signature;
             plugin.previous_source = previous_source;
+            plugin.readme_revision = readme_revision;
+            plugin.icon_revision = icon_revision;
             self.save(&registry)?;
         }
         self.catalog()
     }
     pub fn module(&self, id: &str, revision: &str) -> Result<String> {
         Ok(self.current_artifact(id, revision)?.code)
+    }
+    /// Read inert package content only when a details surface asks for it. This does not
+    /// execute the plugin or add its potentially large content to the polled catalog.
+    pub fn content(&self, id: &str, revision: &str) -> Result<PluginContent> {
+        valid_id(id)?;
+        valid_hash(revision)?;
+        let _lock = self.lock()?;
+        let registry = self.read()?;
+        let plugin = registry
+            .installed
+            .get(id)
+            .ok_or("Plugin is not installed")?;
+        if plugin.current != revision {
+            return Err("Plugin was updated; refresh the catalog".into());
+        }
+        let artifact = self.artifact(id, revision, plugin.current_signature.as_ref())?;
+        let icon_png = artifact.icon_bytes()?;
+        Ok(PluginContent {
+            readme: artifact.readme,
+            icon_png,
+        })
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
         if revision == "bundled" {
@@ -918,12 +988,18 @@ impl Manager {
     }
 }
 impl Release {
+    fn artifact(&self) -> Result<Artifact> {
+        self.validate()?;
+        serde_json::from_slice(&self.bytes).map_err(err)
+    }
     fn validate(&self) -> Result<Manifest> {
         if self.bytes.len() as u64 > LIMIT {
             return Err("Plugin artifact exceeds 8 MiB".into());
         }
         let artifact: Artifact = serde_json::from_slice(&self.bytes).map_err(err)?;
         artifact.manifest.validate()?;
+        validate_readme(artifact.readme.as_deref())?;
+        validate_icon(artifact.icon_bytes()?.as_deref())?;
         if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
@@ -985,7 +1061,16 @@ fn validate_candidate_path(path: &str) -> Result<PathBuf> {
     }
     Ok(relative)
 }
+#[cfg(test)]
 fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
+    artifact_from_parts(manifest, code, None, None)
+}
+fn artifact_from_parts(
+    manifest: &str,
+    code: String,
+    readme: Option<String>,
+    icon_png: Option<Vec<u8>>,
+) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;
     manifest.validate()?;
     if is_bundled(&manifest.id) {
@@ -994,11 +1079,56 @@ fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
     if code.trim().is_empty() {
         return Err("Plugin module is empty".into());
     }
-    let bytes = serde_json::to_vec(&Artifact { manifest, code }).map_err(err)?;
+    validate_readme(readme.as_deref())?;
+    validate_icon(icon_png.as_deref())?;
+    let bytes = serde_json::to_vec(&Artifact {
+        manifest,
+        code,
+        readme,
+        icon_png: icon_png.map(|bytes| BASE64.encode(bytes)),
+    })
+    .map_err(err)?;
     if bytes.len() as u64 > LIMIT {
         return Err("Plugin artifact exceeds 8 MiB".into());
     }
     Ok(bytes)
+}
+
+fn validate_readme(readme: Option<&str>) -> Result<()> {
+    if readme.is_some_and(|value| value.len() > MAX_README_BYTES) {
+        return Err("README.md exceeds 256 KiB".into());
+    }
+    Ok(())
+}
+
+fn validate_icon(icon: Option<&[u8]>) -> Result<()> {
+    let Some(bytes) = icon else { return Ok(()) };
+    if bytes.len() > MAX_ICON_BYTES {
+        return Err("icon.png exceeds 1 MiB".into());
+    }
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("icon.png must be a PNG image".into());
+    }
+    let reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|_| "icon.png must be a valid PNG image")?;
+    if width == 0
+        || height == 0
+        || width > MAX_ICON_DIMENSION
+        || height > MAX_ICON_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_ICON_PIXELS
+    {
+        return Err(
+            "icon.png dimensions must be 1–4096 pixels per side and at most 1,048,576 pixels"
+                .into(),
+        );
+    }
+    // Dimensions bound decoded allocation before the full decode verifies the image body.
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .map_err(|_| "icon.png must be a valid PNG image")?;
+    Ok(())
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -1064,7 +1194,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::{
         artifact_from_text, bundled_manifests, enabled_by_default, validate_candidate_path,
-        Manager, Manifest, MAX_HOST_COMMAND_OUTPUT_BYTES,
+        Manager, Manifest, Release, MAX_HOST_COMMAND_OUTPUT_BYTES,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -1105,6 +1235,18 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+    }
+
+    #[test]
+    fn legacy_manifest_and_code_artifacts_remain_compatible() {
+        let release = Release {
+            bytes: br#"{"manifest":{"id":"example.page","name":"Example","apiVersion":1},"code":"export function apply() {}"}"#.to_vec(),
+            signature: None,
+        };
+        let artifact = release.artifact().unwrap();
+        assert_eq!(artifact.manifest.id, "example.page");
+        assert!(artifact.readme.is_none());
+        assert!(artifact.icon_png.is_none());
     }
 
     #[test]

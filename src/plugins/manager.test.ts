@@ -40,6 +40,7 @@ function harness(overrides: Partial<PluginStorage> = {}, fail = false) {
     changePlugin: vi.fn(async () => ready(false)),
     recoverSettings: vi.fn(async () => ready()),
     readModule: vi.fn(async () => ""),
+    readContent: vi.fn(async () => ({ readme: null, iconPng: null })),
     reloadPlugin: vi.fn(async () => ready(false)),
     ...overrides,
   };

@@ -632,6 +632,23 @@ or URL is needed. Include both files in the imported folder or Git repository.
 Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
+
+A build may also include conventional `README.md` and `icon.png` files beside
+those required files. README content must be UTF-8 and is limited to 256 KiB.
+Icons must be fully decodable PNGs, at most 1 MiB, no more than 4096 pixels on
+either side, and no more than 1,048,576 pixels total. Signing places their exact
+content in typed optional release-envelope fields, so the artifact hash and
+publisher signature cover them without changing plugin `apiVersion: 1`. Hosts
+continue to accept older `{ manifest, code }` artifacts. The catalog exposes only
+small content revisions for import/update comparison; a details surface reads the
+content through the integrity-checked native command on demand.
+
+These files are publisher-supplied presentation content, not an endorsement or a
+runtime asset directory. Buzz-owned framing and fallback artwork remain
+authoritative. A future README renderer must keep raw HTML/scripts disabled and
+must not load embedded data URLs or passive remote media; the package API does not
+turn README links, images, or the icon into plugin runtime resources.
+
 A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.
@@ -666,9 +683,10 @@ Local discovery skips symlink directories, `node_modules`, `target` and dot-pref
 directories such as `.git` and `.claude` (Claude worktrees) below the selected
 folder; select such a folder itself to import from it. Git discovery does not skip
 dot-prefixed directories. Local discovery uses `cap-std` directory-relative reads to
-confine descendant path resolution. Files
-must be regular, non-symlink UTF-8 text; candidate folder names must be UTF-8 and are
-not lossily normalized. Discovery never evaluates modules. Git is a required local
+confine descendant path resolution. Files must be regular and non-symlink;
+manifests, modules, READMEs, signatures and candidate folder names must be UTF-8,
+while icons are validated as binary PNGs. Folder names are not lossily normalized.
+Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
@@ -684,7 +702,7 @@ Folder traversal checks a 60-second budget between directory reads (a hung files
 syscall is not forcibly cancelled), 32 nesting levels and 20,000 entries. A preview
 holds at most 32 plugins / 32 MiB; each artifact retains the 8 MiB limit. No builds
 are run: source-only folders explain that the author must supply `manifest.json`
-plus the self-contained `plugin.js`. Separate assets/TSX/runtime dependency resolution
+plus the self-contained `plugin.js`. Arbitrary assets/TSX/runtime dependency resolution
 remain outside API v1. Browser Settings truthfully directs users to desktop rather
 than adding a second external-plugin storage or broadening CSP. Native commands need
 a rebuilt/restarted desktop process; frontend HMR alone cannot add them.

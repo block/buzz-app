@@ -93,6 +93,7 @@ fn main() {
             "plugin_change",
             "plugin_reload",
             "plugin_module",
+            "plugin_content",
             "plugin_recover",
             "plugin_host_run_command",
             "plugin_host_request",

@@ -32,6 +32,18 @@ function hostGrants(manifest: PluginManifest): string[] {
   ];
 }
 
+function contentChange(
+  name: string,
+  next: string | null | undefined,
+  previous: string | null | undefined,
+  updating: boolean,
+) {
+  if (!updating) return next ? `${name} included` : `${name} not included`;
+  if (!next) return previous ? `${name} removed` : `${name} not included`;
+  if (!previous) return `${name} included (new)`;
+  return `${name} included (${next === previous ? "unchanged" : "changed"})`;
+}
+
 export function PluginImport({
   plugins,
   catalog,
@@ -260,6 +272,33 @@ export function PluginImport({
                   ))}
                 </ul>
               </details>
+            )}
+            {candidate && (
+              <section aria-label="Package content" className="text-body-sm">
+                <p className="m-0 font-medium">Package content</p>
+                <ul className="m-0">
+                  <li>
+                    {contentChange(
+                      "README.md",
+                      candidate.readmeRevision,
+                      existing?.readmeRevision,
+                      !!existing,
+                    )}
+                  </li>
+                  <li>
+                    {contentChange(
+                      "icon.png",
+                      candidate.iconRevision,
+                      existing?.iconRevision,
+                      !!existing,
+                    )}
+                  </li>
+                </ul>
+                <p className="m-0 text-caption text-muted">
+                  Supplied by the plugin publisher; inclusion is not an
+                  endorsement by Buzz.
+                </p>
+              </section>
             )}
             {candidate && (
               <section

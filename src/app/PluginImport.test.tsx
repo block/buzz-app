@@ -25,6 +25,8 @@ it("shows exact declared access and changes before an enabled update", async () 
       {
         path: "dist",
         revision: "two",
+        readmeRevision: "readme-two",
+        iconRevision: null,
         manifest: {
           id: "example.plugin",
           name: "Example",
@@ -69,6 +71,8 @@ it("shows exact declared access and changes before an enabled update", async () 
         previous: null,
         reloadable: false,
         error: null,
+        readmeRevision: "readme-one",
+        iconRevision: "icon-one",
       },
     ],
   };
@@ -96,6 +100,9 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(
     screen.getByText(/Removed:.*--brief.*https:\/\/old.example.com/),
   ).toBeVisible();
+  expect(screen.getByText("README.md included (changed)")).toBeVisible();
+  expect(screen.getByText("icon.png removed")).toBeVisible();
+  expect(screen.getByText(/not an endorsement by Buzz/)).toBeVisible();
   expect(
     screen.getByText(
       /stays on and may run immediately unless this launch is in safe mode/,

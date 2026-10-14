@@ -2958,7 +2958,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: "Reply to thread",
+      name: sessionChannel ? "Message #Design" : "Reply to thread",
     });
     fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
@@ -2981,7 +2981,10 @@ it.each([true, false])(
     const sent = h.published[0];
     if (!sent) throw Error("Missing publication");
     expect(sent.tags).toContainEqual(["h", "room"]);
-    expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
+    // A session is flat: Inbox replies continue it at the top level.
+    expect(sent.tags.some(([name]) => name === "e")).toBe(!sessionChannel);
+    if (!sessionChannel)
+      expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual(
       sessionChannel ? [["p", h.agent.pubkey]] : [],
     );
@@ -3000,7 +3003,7 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Reply to thread",
+    name: "Message #Design",
   });
   fireEvent.change(editor, { target: { value: "Choose someone first" } });
   await waitFor(() =>

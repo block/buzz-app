@@ -13,6 +13,7 @@ import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
+import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
 import {
   keypair,
   message,
@@ -2607,6 +2608,47 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
     unread.snapshot({ kind: "channel", channelId: "room" }).observedCount,
   ).toBe(2);
   stop();
+});
+
+it("inbox groups a flat session channel into one conversation read as a channel, unlike top-level channel posts", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("session");
+  h.emit([
+    metadata(h.relay, "session", "Session", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ]),
+  ]);
+  const mention = (channel: string, content: string, at: number) =>
+    message(h.alice, channel, content, at, [["p", h.viewer.pubkey]]);
+  const [first, second] = [
+    mention("session", "First", 20),
+    mention("session", "Second", 21),
+  ];
+  h.emit([
+    first,
+    second,
+    mention("room", "One", 22),
+    mention("room", "Two", 23),
+  ]);
+  const items = h.session.unread.inbox().items;
+  expect(items.filter((item) => item.channelId === "room")).toHaveLength(2);
+  expect(items.filter((item) => item.channelId === "session")).toEqual([
+    expect.objectContaining({
+      id: "session:session",
+      target: { kind: "channel", channelId: "session" },
+      messageIds: [first.id, second.id],
+      readThrough: [],
+      unreadCount: 2,
+    }),
+  ]);
+  await h.session.unread.prepareChannelRead("session")();
+  expect(
+    h.session.unread.inbox().items.find((item) => item.channelId === "session")
+      ?.unreadCount,
+  ).toBe(0);
 });
 
 it.each([false, true])(

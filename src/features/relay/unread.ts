@@ -916,11 +916,13 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
+        // A session is one flat conversation read as a channel, like a DM.
+        const flat = dm || channel.channelType === "session";
         const groups = new Map<string, Evidence[]>();
         for (const entry of byChannel.get(channel.id) ?? []) {
           want(entry, dm);
           if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
-          const id = dm ? channel.id : (entry.rootId ?? entry.event.id);
+          const id = flat ? channel.id : (entry.rootId ?? entry.event.id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -943,7 +945,7 @@ export function createUnread({
           const representative = unread[0] ?? latest;
           const replies = entries.filter((entry) => entry.rootId !== undefined);
           const lastReply = replies[replies.length - 1];
-          const target: ReadTarget = dm
+          const target: ReadTarget = flat
             ? { kind: "channel", channelId: channel.id }
             : lastReply?.rootId &&
                 events.has(lastReply.rootId) &&
@@ -958,7 +960,7 @@ export function createUnread({
                   channelId: channel.id,
                   messageId: latest.event.id,
                 };
-          const readThrough: { target: ReadTarget; messageId: string }[] = dm
+          const readThrough: { target: ReadTarget; messageId: string }[] = flat
             ? []
             : entries
                 .filter(
@@ -974,7 +976,7 @@ export function createUnread({
                   },
                   messageId: entry.event.id,
                 }));
-          if (!dm && lastReply?.rootId)
+          if (!flat && lastReply?.rootId)
             readThrough.push({
               target: {
                 kind: "thread",

@@ -36,6 +36,8 @@ shift
 if [ "$command" = run ]; then
   mkdir -p "${CODEX_HOME:-$HOME/.codex}"
   shared=$(cd "${CODEX_HOME:-$HOME/.codex}" && pwd -P)
+  # Codex can't make its skills folder through a link to nothing.
+  mkdir -p "$shared/skills" "$shared/rules"
   mkdir -p -m 700 "$dir-home"
   home=$(cd "$dir-home" && pwd -P)
   [ "$home" != "$shared" ] ||

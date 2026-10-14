@@ -11,6 +11,7 @@ import {
   realpath,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -221,6 +222,14 @@ it("sets up Buzz's home once when runs start at once", async () => {
     expect(await readdir(join(f.codex, "rules"))).toEqual([]);
   }
 }, 20_000);
+
+it("makes the shared skills and rules folders a fresh home lacks", async () => {
+  const f = await echoing();
+  await f.step("run");
+  // Codex fails to set up its skills through a link to nothing.
+  for (const name of ["skills", "rules"])
+    expect((await stat(join(f.own, name))).isDirectory()).toBe(true);
+});
 
 it("stops rather than replace a file in the way of a link", async () => {
   const f = await echoing();

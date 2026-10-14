@@ -31,21 +31,25 @@ ${BUZZ_PROMPT}`;
  * tokens, which it estimates as 4 UTF-8 bytes each. */
 const CONTEXT_VALUE_BYTES = 4_000;
 const bytes = (text: string) => new TextEncoder().encode(text).length;
-/** The agent's current instructions, team, and core memory as turn context.
+/** The agent's current identity, instructions, team, and core memory as turn
+ * context: a resumed Codex thread keeps its original developer instructions.
  * Codex orders values by key, so text over its per-value limit continues in
  * `buzz.instructions.001` onward, split at line breaks where possible. */
 export function turnContext(
+  agent: AgentHandle,
   settings: Config,
   team = "",
   /** The agent's `core` memory: `null` when it has none, undefined if unread. */
   memory?: string | null,
 ) {
   const core = coreMemorySection(memory);
-  const text = `Current Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}`;
+  const text = `You are ${agent.name} (pubkey ${agent.pubkey}).\nCurrent Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}`;
   const values = [""];
   let size = 0;
-  for (const line of text.split(/(?<=\n)/))
-    for (const piece of bytes(line) > CONTEXT_VALUE_BYTES ? line : [line]) {
+  for (const line of text.split(/(?<=\n)/)) {
+    // A line over the limit splits by code point.
+    const pieces = bytes(line) > CONTEXT_VALUE_BYTES ? [...line] : [line];
+    for (const piece of pieces) {
       const length = bytes(piece);
       if (size + length > CONTEXT_VALUE_BYTES) {
         values.push("");
@@ -54,6 +58,7 @@ export function turnContext(
       values[values.length - 1] += piece;
       size += length;
     }
+  }
   return Object.fromEntries(
     values.map((value, index) => [
       index

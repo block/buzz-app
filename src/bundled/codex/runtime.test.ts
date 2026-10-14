@@ -581,15 +581,11 @@ it("serves every agent from one server and routes each tool call to its own agen
   await f.runtime.run(b.delivery("@Other second"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   expect(servers(f)).toHaveLength(1);
-  expect(
-    f.sent
-      .filter((wire) => wire.method === "thread/start")
-      .map(
-        (wire) =>
-          (wire.params as { developerInstructions: string })
-            .developerInstructions,
-      ),
-  ).toContainEqual(expect.stringContaining("You are Other "));
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": { value: expect.stringContaining("Other") },
+    },
+  });
   await f.complete(1, "FROM OTHER");
   await f.complete(0, "FROM CODEX");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -1966,6 +1962,34 @@ it("splits turn context into ordered values that Codex does not truncate", async
   );
   expect(text).toContain(`CORE START ${"c".repeat(6_000)} CORE END`);
   expect(context["buzz.instructions.001"]?.value).toMatch(/^Rule \d+\.\n/);
+});
+
+it("gives a resumed conversation the agent's current name", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const renamed = f.delivery("@Renamed second");
+  await f.runtime.run({
+    ...renamed,
+    agent: { ...renamed.agent, name: "Renamed" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Codex keeps a resumed thread's original developer instructions.
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({
+    threadId: (f.starts()[0]?.params as { threadId?: string } | undefined)
+      ?.threadId,
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringMatching(/^You are Renamed \(pubkey /),
+      },
+    },
+  });
 });
 
 it("does not declare core missing when the owner listing is partial", async () => {

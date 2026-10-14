@@ -983,7 +983,7 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: turnContext(settings, request.team, memory),
+        additionalContext: turnContext(agent, settings, request.team, memory),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

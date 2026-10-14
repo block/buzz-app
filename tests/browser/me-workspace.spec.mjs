@@ -398,6 +398,14 @@ test.describe("personal recipients", () => {
         exact: true,
       });
       const [honey, brain, outsider] = app.meAgents;
+      const tag = (agent) =>
+        workspace.getByRole("button", {
+          name: `Remove mention ${agent.name} ${agent.pubkey}`,
+          exact: true,
+        });
+      await expect(tag(honey)).toBeVisible();
+      // Replace the automatic agent with another explicit owned recipient.
+      await composer.fill("");
       await workspace
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
@@ -412,7 +420,7 @@ test.describe("personal recipients", () => {
       ).toBeVisible();
       await picker
         .getByRole("button", {
-          name: `${honey.name} ${honey.pubkey}`,
+          name: `${brain.name} ${brain.pubkey}`,
           exact: true,
         })
         .click();
@@ -442,11 +450,12 @@ test.describe("personal recipients", () => {
 
       expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
-        ["p", honey.pubkey],
+        ["p", brain.pubkey],
       ]);
-      // A mention is one-off in Me: the assistant picker carries follow-ups.
-      await expect(composer).toHaveText("");
-      // A draft from the Messages reader may retain a channel member
+      // After an explicit one-off choice, the next draft tags the account default.
+      await expect(tag(honey)).toBeVisible();
+      await expect(tag(brain)).toHaveCount(0);
+      // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");
       await openPage(page, "Messages");

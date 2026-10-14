@@ -11,11 +11,13 @@ mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-chec
 Owner-specific tests are colocated in `src/`, `browser-host/` and `scripts/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
 
-Most functional cases run in file groups. The five crowded-reply width cases
-in `nested-replies.spec.mjs` use a scoped parallel group: each owns its page,
-relay state and signed data, and the existing two workers can run them independently.
-This avoids serializing the geometry matrix at the end of one shard without
-adding runners or extending test/job deadlines.
+Most functional cases run in file groups. CI runs the five crowded-reply width
+cases separately, one on each of five existing shard jobs: 390 on shard 1,
+700 on shard 4, 1280 on shard 6, 1492 on shard 7, and 1024 on shard 8.
+`crowded-replies.test-list` excludes the same group from the normal shard run;
+the routing guard verifies every case runs exactly once in each engine.
+The width run owns a separate output directory so it preserves the normal
+shard's evidence. Runners, workers and test/job deadlines remain unchanged.
 
 ## Run
 

@@ -87,6 +87,52 @@ test("Linux shards and macOS recording discover every functional test/project ex
       t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
     }
   }
+  const browserJob = parse(workflow).jobs.browser;
+  const crowded = browserJob.steps.find(
+    (step) => step.name === "Crowded reply width",
+  );
+  assert.equal(crowded?.if, "env.BUZZ_CROWDED_WIDTH != '0'");
+  const widths = browserJob.env.BUZZ_CROWDED_WIDTH.match(
+    /^\$\{\{ fromJSON\('([^']+)'\)\[matrix\.shard\] \}\}$/,
+  )?.[1];
+  assert.ok(widths, "crowded widths must have a literal shard mapping");
+  const widthByShard = JSON.parse(widths);
+  assert.equal(widthByShard.length, matrixValues("shard").length + 1);
+  assert.equal(widthByShard[0], 0);
+  const crowdedCommand = crowded.run.match(
+    / -- (\.\/bin\/pnpm test:browser:ci .+)$/,
+  )?.[1];
+  assert.ok(crowdedCommand, "crowded invocation must exist");
+  const outputDir = crowdedCommand.match(/ --output (\S+)/)?.[1];
+  assert.ok(outputDir, "crowded run must own a separate output directory");
+  assert.notEqual(outputDir, "test-results/browser");
+  assert.equal(
+    crowded.env.PLAYWRIGHT_JSON_OUTPUT_FILE,
+    `${outputDir}/ci-report.json`,
+  );
+  const upload = browserJob.steps.find(
+    (step) => step.name === "Browser evidence",
+  );
+  assert.deepEqual(
+    upload.with.path.trim().split(/\s+/).sort(),
+    ["test-results/browser", outputDir].sort(),
+  );
+  for (const engine of matrixValues("engine")) {
+    for (const shard of matrixValues("shard")) {
+      const width = widthByShard[Number(shard)];
+      if (width === 0) continue;
+      const expanded = crowdedCommand
+        .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
+        .replaceAll(/\$\{BUZZ_CROWDED_WIDTH\}/g, String(width));
+      const selected = discover(
+        expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
+      );
+      assert.equal(selected.length, 1, `${engine}/${shard}: one crowded width`);
+      assert.ok(selected[0].startsWith(`${engine}:`));
+      actual.push(...selected);
+      t.diagnostic(`${engine}/${shard}: crowded width ${width}`);
+    }
+  }
   const recording = parse(workflow).jobs.media_recorder.steps.find(
     (step) => step.name === "Recording journeys",
   );

@@ -468,9 +468,7 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-test.describe(() => {
-  // Independent width fixtures share the existing worker pool instead of
-  // serializing the entire geometry matrix at the end of one shard.
+test.describe("crowded replies", () => {
   test.describe.configure({ mode: "parallel" });
   for (const width of [1492, 1280, 1024, 700, 390])
     test(`crowded capped branches expand once with readable actions at ${width}`, async ({

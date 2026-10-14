@@ -208,7 +208,9 @@ jobs:
     env:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
-    # Eight file-level shards leave setup headroom for the growing journey suite.
+      # Spread the expensive width matrix across jobs with measured headroom.
+      BUZZ_CROWDED_WIDTH: ${{ fromJSON('[0,390,0,0,700,0,1280,1492,1024]')[matrix.shard] }}
+    # Eight file-level shards plus one crowded width on five existing runners.
     # Keep the same workers and deadline; every case still runs in both engines.
     timeout-minutes: 15
     strategy:
@@ -243,13 +245,20 @@ jobs:
       - name: Functional journeys
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
-        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/8)" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/8 --reporter=list,json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/8)" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --test-list-invert tests/browser/crowded-replies.test-list --shard=${{ matrix.shard }}/8 --reporter=list,json
+      - name: Crowded reply width
+        if: env.BUZZ_CROWDED_WIDTH != '0'
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser-crowded/ci-report.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-crowded/ci-report.json evidence=test-results/browser-crowded/ci-timing.json title="Crowded replies (${{ matrix.engine }}, ${BUZZ_CROWDED_WIDTH})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --test-list tests/browser/crowded-replies.test-list --grep=${BUZZ_CROWDED_WIDTH}$ --output test-results/browser-crowded --reporter=list,json
       - name: Browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: browser-journeys-${{ matrix.engine }}-${{ matrix.shard }}
-          path: test-results/browser
+          path: |
+            test-results/browser
+            test-results/browser-crowded
           retention-days: 7
 
   media_recorder:

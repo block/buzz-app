@@ -258,6 +258,9 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  // Set from a Virtua height commit until its restore frame or reader input. The
+  // browser can deliver Virtua's own offset correction as a scroll in between.
+  const layoutCorrection = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -309,7 +312,8 @@ function Timeline({
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
       // A measured list-height mutation can likewise include Virtua's own offset
-      // correction; only explicit upward input may cancel follow in that callback.
+      // correction, in that callback or in a scroll delivered before its restore
+      // frame; only explicit upward input may cancel follow there.
       // Explicit upward input wins even when shrink and reader movement share
       // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
@@ -601,8 +605,12 @@ function Timeline({
               scroller.current
             )
               recordPosition(scroller.current, true);
+            layoutCorrection.current = true;
             cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(restorePosition);
+            frame = requestAnimationFrame(() => {
+              layoutCorrection.current = false;
+              restorePosition();
+            });
           });
           observer.observe(list, {
             attributes: true,
@@ -617,6 +625,7 @@ function Timeline({
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
+      layoutCorrection.current = false;
       // A row refresh can arrive before the first deferred measurement or
       // cancel its correction. Keep restoration until newer reader input.
       if (restore && !follow.current && intent.current === scheduledIntent) {
@@ -682,6 +691,7 @@ function Timeline({
   }, [loadNearTop]);
   const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
+    layoutCorrection.current = false;
     intent.current++;
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
@@ -752,7 +762,7 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          recordPosition(element);
+          recordPosition(element, layoutCorrection.current);
           updateJumpToLatest(element);
         }
         loadNearTop(element);

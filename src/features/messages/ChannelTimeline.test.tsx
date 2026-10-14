@@ -944,6 +944,26 @@ it("keeps bottom follow through an upward virtualizer correction during late gro
   expect(h.saved().bottom).toBe(true);
 });
 
+it("keeps bottom follow when the virtualizer correction scrolls after its height commit", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  // The browser delivers the correction's scroll before the restore frame.
+  h.element.scrollTop -= 1;
+  h.dispatchScroll();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
 it("honors one cached top-edge gesture when the replacement head becomes verified", () => {
   const h = setup({
     hasMore: true,

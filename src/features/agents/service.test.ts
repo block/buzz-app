@@ -2268,14 +2268,20 @@ it("rejects a save that agent storage could not write, and saves it on retry", a
   const { service } = await setup({ storage });
   await service.create({ type: "example/echo", name: "Echo" });
   failing = true;
+  // Every config the owner sees. A form resets its draft when the shown
+  // config changes, so a change it never saved must not be shown at all.
+  const shown: unknown[] = [];
+  const stop = service.subscribe(() => shown.push(service.find(bot)?.config));
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   await expect(
     service.save(bot, { config: { reply: "unsaved" } }),
   ).rejects.toThrow("disk full");
   error.mockRestore();
+  stop();
+  expect(shown).not.toContainEqual({ reply: "unsaved" });
   expect(disk.get(`buzz.agent.v1:${bot}`)).not.toContain("unsaved");
   // The agent shows what is saved, so a settings form's draft differs from it
-  // again and its Save is enabled.
+  // and its Save stays enabled.
   expect(service.find(bot)?.config).toEqual({ reply: "ok" });
   failing = false;
   await service.save(bot, { config: { reply: "unsaved" } });

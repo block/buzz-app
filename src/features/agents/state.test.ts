@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { fileBacked, loadAgentStorage } from "./state";
+import { fileBacked, loadAgentStorage, MOVED_KEY } from "./state";
 import { memoryStorage } from "./test-fakes";
 
 const files = (items: Record<string, string> = {}) => {
@@ -40,6 +40,7 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.claude-code.provider-defaults.v1": "claude defaults",
     "buzz.agents.archive-unchecked.v1": "unchecked",
     "buzz.agents.catch-up.v1": "checkpoints",
+    [MOVED_KEY]: "1",
   });
   expect(storage.getItem("buzz.agents.teams.v1")).toBe("new teams");
   // Moved keys leave localStorage; other keys stay.
@@ -79,6 +80,35 @@ it("uses localStorage for a start where a copy fails, and keeps its state throug
   expect(third.getItem("buzz.agent.v1:aa")).toBe("saved again");
 });
 
+it("keeps the moved state when a later start without agent storage saves", async () => {
+  const local = memoryStorage();
+  local.setItem("buzz.agents.v1", "all records");
+  local.setItem("buzz.claude-code.sessions.v1", "all sessions");
+  const native = files();
+  await loadAgentStorage(local, native);
+  expect(local.length).toBe(0);
+
+  // A start that cannot read agent storage begins with no agent state.
+  native.load.mockRejectedValueOnce(new Error("denied"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const fallback = await loadAgentStorage(local, native);
+  error.mockRestore();
+  expect(fallback).toBe(local);
+  fallback.setItem("buzz.claude-code.sessions.v1", "one new session");
+  fallback.setItem("buzz.agent.v1:bb", "new agent");
+
+  // The next start keeps the full copy, and adds only the new key.
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const next = await loadAgentStorage(local, native);
+  warn.mockRestore();
+  expect(next).not.toBe(local);
+  expect(next.getItem("buzz.agents.v1")).toBe("all records");
+  expect(next.getItem("buzz.claude-code.sessions.v1")).toBe("all sessions");
+  expect(next.getItem("buzz.agent.v1:bb")).toBe("new agent");
+  expect(native.saved.get("buzz.claude-code.sessions.v1")).toBe("all sessions");
+  expect(local.length).toBe(0);
+});
+
 it("uses localStorage when agent storage cannot be read", async () => {
   const local = memoryStorage();
   const native = files();
@@ -108,6 +138,7 @@ it("uses localStorage when agent storage does not answer, and leaves it as it wa
   error.mockRestore();
   vi.useRealTimers();
   expect(local.getItem("buzz.agents.v1")).toBe("records");
+  expect(native.saved.has(MOVED_KEY)).toBe(false);
 });
 
 it("saves each write in order, and a failed write does not stop later ones", async () => {

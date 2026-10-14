@@ -991,7 +991,11 @@ export class AgentsService extends Service implements Agents {
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
+  /** Each agent's settings as saved, and as the owner and the agent see them. */
   private records: Record<string, AgentRecord>;
+  /** Each agent's last write while it is being saved. Later changes build on
+   * it; it is shown only once it is saved. */
+  private readonly saving = new Map<string, AgentRecord>();
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
@@ -2401,36 +2405,56 @@ export class AgentsService extends Service implements Agents {
     return agent;
   }
 
-  /** Saves one record; memory changes once storage has taken it, and the
-   * promise settles once it is saved. When the save fails, memory goes back
-   * to what storage still has, so the owner and the agent see the change was
-   * not made, unless `keep`: timer progress stays, so a timer whose progress
-   * was lost does not run again at once. */
-  private write(record: AgentRecord, keep = false) {
+  /** Saves one record. The owner and the agent see it once it is saved, and
+   * the promise settles then; when the save fails, they keep seeing what
+   * storage still has, so a form keeps its unsaved changes. With `keep`, it
+   * is shown at once and stays when its save fails: timer progress, so a
+   * timer whose progress was lost does not run again at once. */
+  private async write(record: AgentRecord, keep = false) {
     const { pubkey } = record;
     // Only this agent's key: others may be another program's to change.
     writeRecord(this.storage, record);
-    this.records = { ...this.records, [pubkey]: record };
-    this.update();
-    return persisted(this.storage, recordKey(pubkey)).catch((error) => {
-      // Unless a later write replaced it, which settles on its own.
-      if (!keep && this.records[pubkey] === record) {
+    this.saving.set(pubkey, record);
+    if (keep) {
+      this.records = { ...this.records, [pubkey]: record };
+      this.update();
+    }
+    /** Whether this is still the agent's last write; it stops being saved. */
+    const last = () => {
+      if (this.saving.get(pubkey) !== record) return false;
+      this.saving.delete(pubkey);
+      return !keep;
+    };
+    try {
+      await persisted(this.storage, recordKey(pubkey));
+    } catch (error) {
+      // A later write settles on its own. Storage put back the saved value.
+      if (last()) {
         const { [pubkey]: _, ...others } = this.records;
         const saved = readOne(this.storage, pubkey);
         this.records = saved ? { ...others, [pubkey]: saved } : others;
         this.update();
       }
       throw error;
-    });
+    }
+    if (last()) {
+      this.records = { ...this.records, [pubkey]: record };
+      this.update();
+    }
   }
   private live(pubkey: string) {
     return this.identities.find(
       (identity) => identity.pubkey === pubkey && !identity.deleted,
     );
   }
+  /** Its settings as the next change starts from: its last write, even one
+   * still being saved, else `shownRecordOf`. */
+  private recordOf(identity: AgentIdentity) {
+    return this.saving.get(identity.pubkey) ?? this.shownRecordOf(identity);
+  }
   /** Its saved settings or, without any, its type's defaults, kept in memory
    * until a save stores them. Without its type there are no defaults yet. */
-  private recordOf({ pubkey, type }: AgentIdentity) {
+  private shownRecordOf({ pubkey, type }: AgentIdentity) {
     const kind = this.types().find((entry) => entry.key === type);
     if (!this.records[pubkey] && kind)
       try {
@@ -2829,7 +2853,7 @@ export class AgentsService extends Service implements Agents {
     const running: Agent[] = [];
     for (const identity of identities) {
       if (!this.alive(identity)) continue;
-      const record = this.recordOf(identity);
+      const record = this.shownRecordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
       const prior = this.agent(identity.pubkey);

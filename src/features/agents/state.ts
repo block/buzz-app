@@ -56,13 +56,19 @@ const native: Native = {
   set: (key, value) => invoke("app_agent_state_set", { key, value }),
 };
 
+/** Agent storage holds this key once every agent key in localStorage was
+ * moved into it. */
+export const MOVED_KEY = "buzz.agents.state-moved.v1";
+
 /** Reads agent storage before the app starts. It moves agent state the app
- * kept in localStorage into it. Agent keys are in localStorage only before
- * the first move, or when an earlier start could not use agent storage, so
- * they are the newer copy and replace what agent storage has. They leave
- * localStorage only once every one is saved; if agent storage cannot be read,
- * a copy fails, or this takes longer than `timeoutMs`, the app uses
- * localStorage until the next start. */
+ * kept in localStorage into it. Before the first move finishes, agent keys in
+ * localStorage are the newer copy and replace what agent storage has. After
+ * it, agent storage is the full copy: agent keys in localStorage come from a
+ * start that could not use agent storage and began with none, so they fill
+ * in only keys agent storage does not have. Agent keys leave localStorage
+ * only once every one is saved; if agent storage cannot be read, a copy
+ * fails, or this takes longer than `timeoutMs`, the app uses localStorage
+ * until the next start. */
 export async function loadAgentStorage(
   local: Storage = globalThis.localStorage,
   files: Native | undefined = isTauri() ? native : undefined,
@@ -80,15 +86,29 @@ export async function loadAgentStorage(
       const key = local.key(index);
       if (key && isAgentKey(key)) moved.push(key);
     }
+    const finished = storage.getItem(MOVED_KEY) !== null;
     for (const key of moved) {
       const value = local.getItem(key);
-      if (value !== null && storage.getItem(key) !== value) {
-        storage.setItem(key, value);
+      if (value === null || storage.getItem(key) === value) continue;
+      if (finished && storage.getItem(key) !== null) {
+        console.warn(
+          `Agent state ${key} from a start without agent storage was not kept`,
+        );
+        continue;
       }
+      storage.setItem(key, value);
     }
     await storage.saved();
+    if (!finished) {
+      storage.setItem(MOVED_KEY, "1");
+      await storage.saved(MOVED_KEY);
+    }
     // Too late: the app already started with localStorage, which keeps them.
-    if (late) throw new Error("Agent storage took too long");
+    // So this start's keys are again the newer copy.
+    if (late) {
+      if (!finished) storage.removeItem(MOVED_KEY);
+      throw new Error("Agent storage took too long");
+    }
     for (const key of moved) local.removeItem(key);
     loaded = storage;
     return storage;

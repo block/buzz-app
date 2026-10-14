@@ -154,11 +154,14 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   );
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toBeVisible();
-  // The append scrolls the timeline to re-pin the bottom. Virtua holds the
-  // list's pointer events off for 150ms after each scroll event and the row can
-  // still move, so a click issued now can miss its target. Wait for idle first.
-  await virtuaIdle(page);
-  await link.click();
+  // Virtua holds the list's pointer events off for 150ms after every scroll
+  // event, and a late scroll can land after the timeline looks settled. A click
+  // whose release falls in that hold reaches the scroller, not the link, and
+  // Playwright's retries scroll the list again. This test is about activation,
+  // not hit testing: activate by keyboard, which no scroll can intercept.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Enter");
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
@@ -400,9 +403,10 @@ test("a mixed-case Buzz scheme activates in-app instead of falling through to an
   );
   const link = row.getByRole("link", { name: "#Beta", exact: true });
   await expect(link).toBeVisible();
-  // Same post-append click as above: wait out Virtua's re-pin first.
-  await virtuaIdle(page);
-  await link.click();
+  // Same post-append activation as above: keyboard, not a pointer click.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Enter");
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();

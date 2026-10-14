@@ -380,7 +380,8 @@ it("seeds a first launch to now and keeps communities apart", async () => {
 });
 
 // Roster pages per launch shape: "two" puts the channel on page two of 501,
-// "capped" returns full pages until discovery stops at its retained cap.
+// "capped" returns full pages until the third overflows discovery's retained
+// cap (1024) by one channel, with as few events as that takes.
 const ROSTERS = { one: 1, empty: 1, two: 2, capped: 3 } as const;
 
 type Launch = Readonly<{
@@ -562,7 +563,7 @@ async function launch(options: Launch) {
         : shape === "capped"
           ? page === 0
             ? [room(2e6), ...filler(0, 499)]
-            : filler(page, 500)
+            : filler(page, page === 1 ? 500 : 25)
           : [room(1e6)];
   let served = 0;
   return {

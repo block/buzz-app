@@ -125,9 +125,8 @@ and cleanup.
 
 The plugin never runs the `codex` on PATH. It runs Buzz's own copy from
 `~/Library/Application Support/Buzz/codex/<version>/bin/codex`, or
-`${XDG_DATA_HOME:-~/.local/share}/buzz/codex-home` on Linux; a `current` file names
-the version in use. `~/.codex` is shared, so the sign-in and settings are the
-same as in the terminal. [`codex.sh`](codex.sh) is the launcher and installer;
+`${XDG_DATA_HOME:-~/.local/share}/buzz/codex/<version>/bin/codex` on Linux; a `current` file names
+the version in use. File-based sign-in and settings come from the existing Codex home; conversation storage is separate. [`codex.sh`](codex.sh) is the launcher and installer;
 the plugin runs each step through the one declared `bash -c` process.
 
 Releases come from OpenAI's channel, `releases.openai.com/codex/channels/latest`,

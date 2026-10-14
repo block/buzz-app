@@ -88,7 +88,7 @@ test("thread stays beside the channel whenever both panes fit", async ({
   await page.setViewportSize({ width: 640, height: 900 });
   await expect(page.locator("html")).toHaveCSS("font-size", "12.8px");
   const narrowChannel = await channel.boundingBox();
-  const narrowThread = await thread.boundingBox();
+  const narrowThread = await page.locator("[data-panel-dock]").boundingBox();
   expect(narrowThread.y).toBe(narrowChannel.y);
   expect(narrowThread.height).toBe(narrowChannel.height);
   await expect(

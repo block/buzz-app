@@ -127,12 +127,14 @@ export function MemoryPanel({
   const rest = listing?.entries.filter((entry) => entry.slug !== "core") ?? [];
   const canRefresh =
     memories &&
-    status !== "ready" &&
+    (status !== "ready" || listing?.partial) &&
     status !== "loading" &&
     status !== "denied";
   const refreshButton = canRefresh ? (
     <IconButton
-      aria-label="Refresh"
+      aria-label={listing?.partial ? "Retry loading memories" : "Refresh"}
+      disabled={refreshing}
+      focusableWhenDisabled
       icon={
         <ArrowsClockwiseIcon
           className={refreshing && !reducedMotion ? "animate-spin" : undefined}
@@ -162,9 +164,12 @@ export function MemoryPanel({
             refreshing={refreshing}
           />
           {listing.partial && (
-            <p className="m-0 text-body-sm text-secondary">
-              Some memories couldn't be shown.
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="m-0 text-body-sm text-secondary">
+                Some memories couldn't be shown.
+              </p>
+              {refreshButton}
+            </div>
           )}
         </>
       ) : status === "loading" ? (

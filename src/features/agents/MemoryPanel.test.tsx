@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -277,4 +278,39 @@ it("loads memories automatically without a refresh control in the loaded view", 
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();
+});
+
+it("retries a partial listing while retaining its memories until recovery", async () => {
+  const user = userEvent.setup();
+  let complete: (listing: MemoryListing) => void = () => {};
+  const pending = new Promise<MemoryListing>((resolve) => {
+    complete = resolve;
+  });
+  const read = vi
+    .fn<() => Promise<MemoryListing>>()
+    .mockResolvedValueOnce({
+      entries: [entry("core", "Retained.")],
+      partial: true,
+    })
+    .mockReturnValueOnce(pending);
+  setup(read);
+  await screen.findByText("Some memories couldn't be shown.");
+  const retry = screen.getByRole("button", { name: "Retry loading memories" });
+  await user.click(retry);
+  expect(retry).toHaveAttribute("aria-disabled", "true");
+  await user.click(retry);
+  expect(screen.getByText("Retained.")).toBeInTheDocument();
+  expect(document.querySelector("[data-memory-list]")).toHaveAttribute(
+    "data-refreshing",
+    "true",
+  );
+  expect(read).toHaveBeenCalledTimes(2);
+  await act(async () =>
+    complete({ entries: [entry("core", "Recovered.")], partial: false }),
+  );
+  expect(await screen.findByText("Recovered.")).toBeInTheDocument();
+  expect(screen.queryByText("Some memories couldn't be shown.")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /Retry loading memories|Refresh/ }),
+  ).toBeNull();
 });

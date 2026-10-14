@@ -177,6 +177,13 @@ function applied({
                         "Opus 5.5 · Best for everyday, complex tasks",
                     },
                     {
+                      value: "claude-fable-5-1[1m]",
+                      resolvedModel: "claude-fable-5-1",
+                      displayName: "Fable",
+                      description:
+                        "Fable 5.1 · Most capable for your hardest tasks",
+                    },
+                    {
                       value: "sonnet",
                       resolvedModel: "claude-sonnet-5-5",
                       displayName: "Sonnet",
@@ -484,9 +491,12 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
       name: "Claude default (Opus 5.5)",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
-  const sonnet = await screen.findByRole("option", { name: "Sonnet 5.5" });
-  expect(sonnet).toHaveAccessibleDescription("Efficient for routine tasks");
-  await user.click(sonnet);
+  // Every model Claude lists is offered, not only the aliases.
+  const fable = await screen.findByRole("option", { name: "Fable 5.1" });
+  expect(fable).toHaveAccessibleDescription(
+    "Most capable for your hardest tasks",
+  );
+  await user.click(fable);
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(onClose).toHaveBeenCalledOnce();
   cleanup();
@@ -496,7 +506,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Sonnet 5.5",
+      "Provider default · Fable 5.1",
     ),
   );
   expect(save).not.toHaveBeenCalled();

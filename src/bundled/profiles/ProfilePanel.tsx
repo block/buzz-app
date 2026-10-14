@@ -217,8 +217,10 @@ function ProfileDetails({
     profile?.name ??
       (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
   );
+  // The portrait is 5rem (at most 240 device px), so the relay's 320 px
+  // thumbnail already covers it and reuses the URL message rows have loaded.
   const picture = profile?.picture
-    ? (session.media(profile.picture) ?? null)
+    ? (session.media(profile.picture, "small") ?? null)
     : null;
   const tabAvatar = useMemo(
     () => (

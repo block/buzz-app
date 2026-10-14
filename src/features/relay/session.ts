@@ -23,6 +23,11 @@ import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
+import {
+  channelIdentityUnsupported,
+  MAX_CHANNEL_LABELS,
+  validChannelLabel,
+} from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -139,7 +144,11 @@ function parseChannelCreation(
 ): PendingChannelCreation | undefined {
   if (item.event.kind !== 9007) return;
   const tags = item.event.tags.filter(([name]) => name !== "client-id");
-  const [h, name, visibility, channelType, ...optional] = tags;
+  const firstLabel = tags.findIndex(([name]) => name === "t");
+  const labelTags = firstLabel < 0 ? [] : tags.slice(firstLabel);
+  const [h, name, visibility, channelType, ...optional] =
+    firstLabel < 0 ? tags : tags.slice(0, firstLabel);
+  const labels = labelTags.map(([, label]) => label ?? "");
   const id = h?.[1];
   const channelName = name?.[1];
   const channelVisibility = visibility?.[1];
@@ -167,7 +176,12 @@ function parseChannelCreation(
     channelType[0] !== "channel_type" ||
     channelType[1] !== "stream" ||
     !validOptionalOrder ||
-    optional.some((tag) => tag.length !== 2)
+    optional.some((tag) => tag.length !== 2) ||
+    labelTags.some(
+      (tag) => tag.length !== 2 || tag[0] !== "t" || !validChannelLabel(tag[1]),
+    ) ||
+    labels.length > MAX_CHANNEL_LABELS ||
+    new Set(labels).size !== labels.length
   )
     return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
@@ -186,6 +200,7 @@ function parseChannelCreation(
     visibility: channelVisibility as "open" | "private",
     ...(description ? { description } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+    ...(labels.length ? { labels: Object.freeze(labels) } : {}),
   });
   return Object.freeze({
     signature: JSON.stringify(input),
@@ -702,6 +717,7 @@ export function createRelaySession(
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
           archiveAuthority: transport.archiveAuthority,
+          channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
@@ -735,6 +751,7 @@ export function createRelaySession(
   const details = createChannelDetails({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelDetails,
+    labels: transport?.channelIdentity === true,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     canAccess: (id) => !closed && channels.canParticipate(id),
@@ -1297,6 +1314,7 @@ export function createRelaySession(
               input.description,
               input.ttlSeconds,
               active,
+              { labels: input.labels },
             ),
           delivered: (id, active) =>
             workSessions.delivered(
@@ -1443,8 +1461,12 @@ export function createRelaySession(
     async create(input: ChannelCreationInput) {
       input = { ...input, name: canonicalDetailsName(input.name) };
       if (!transport) throw new Error("The community connection changed.");
+      // A relay without NIP-CL drops label tags: refuse before any new write.
+      // A saved creation that was already signed may still be retried below.
+      const unsupported = !!input.labels?.length && !transport.channelIdentity;
       await writes?.ready;
       if (channelSetup && !pendingCreation()) {
+        if (unsupported) throw channelIdentityUnsupported();
         const run = channelSetup.run(input, transport.viewer);
         let opened: string | undefined;
         void run.completion.catch((error) => {
@@ -1469,6 +1491,9 @@ export function createRelaySession(
         ...(input.ttlSeconds !== undefined
           ? { ttlSeconds: input.ttlSeconds }
           : {}),
+        ...(input.labels?.length
+          ? { labels: Object.freeze([...new Set(input.labels)]) }
+          : {}),
       };
       const signature = JSON.stringify(normalized);
       await writes?.ready;
@@ -1478,6 +1503,7 @@ export function createRelaySession(
           throw new Error(
             "Another channel is still awaiting confirmation. Retry it before changing the details.",
           );
+        if (unsupported) throw channelIdentityUnsupported();
         const id = crypto.randomUUID();
         pendingChannelCreation = {
           signature,
@@ -1489,6 +1515,8 @@ export function createRelaySession(
             normalized.visibility,
             normalized.description,
             normalized.ttlSeconds,
+            undefined,
+            { labels: normalized.labels },
           ),
         };
         restoredOperation = pendingChannelCreation.operation;

@@ -3,7 +3,6 @@ import {
   ConversationChannel,
   ConversationThread,
 } from "../../features/conversation/Conversation";
-import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import {
   type ReactNode,
   useEffect,
@@ -410,7 +409,6 @@ export function DraftsView({
                   channel={activeChannel}
                   active={false}
                 >
-                  <MessageManagementStatus />
                   {active.coordinates.threadRootId ? (
                     <ConversationThread
                       messageId={active.coordinates.threadRootId}

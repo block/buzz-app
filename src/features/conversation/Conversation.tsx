@@ -8,7 +8,10 @@ import {
   MessageComposer,
   type MessageComposerProps,
 } from "../messages/MessageComposer";
-import { MessageManagement } from "../messages/MessageManagement";
+import {
+  MessageManagement,
+  MessageManagementStatus,
+} from "../messages/MessageManagement";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import {
   ConversationHost,
@@ -23,8 +26,9 @@ type Conversation = Pick<
 > &
   ConversationInteractions & { sessionConversation: boolean };
 type Shared = keyof Conversation;
-/** Pages supply their own policy; shared props are defaults they may refine. */
-type Own<P> = Omit<P, Shared> & Partial<Pick<P, Extract<keyof P, Shared>>>;
+/** Pages supply only their own policy, and may relabel the channel. */
+type Own<P> = Omit<P, Shared> &
+  Partial<Pick<P, Extract<keyof P, "channelName">>>;
 
 const Context = createContext<Conversation | undefined>(undefined);
 export function useConversation() {
@@ -62,43 +66,47 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
 /** One channel's editing recovery, visit and interactions for every reader in it. */
 export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
-  const provide = (interactions: ConversationInteractions) =>
-    channel ? (
-      <Provider
-        session={session}
-        scope={scope}
-        extensions={extensions}
-        channelId={channel.id}
-        channelName={props.channelName ?? channel.name}
-        sessionConversation={channel.channelType === "session"}
-        {...interactions}
-      >
-        {children}
-      </Provider>
-    ) : (
-      children
-    );
+  const channelName = props.channelName ?? channel?.name ?? "";
+  // One stable element, so selecting a channel never remounts the page below.
+  const provide = (interactions: ConversationInteractions) => (
+    <Provider
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      channel={channel}
+      channelName={channelName}
+      interactions={interactions}
+    >
+      {children}
+    </Provider>
+  );
   return (
     <MessageManagement
       session={session}
       channelId={channel?.id}
       active={active}
     >
-      {props.host && channel ? (
-        <ConversationHost
-          key={props.threadId}
-          host={props.host}
-          session={session}
-          scope={scope}
-          channelId={channel.id}
-          channelName={props.channelName ?? channel.name}
-          threadId={props.threadId}
-          extensions={extensions}
-        >
-          {provide}
-        </ConversationHost>
+      {props.host ? (
+        <>
+          {/* Dialog-hosted pages have no layout of their own for recovery. */}
+          <MessageManagementStatus />
+          {channel && (
+            <ConversationHost
+              key={props.threadId}
+              host={props.host}
+              session={session}
+              scope={scope}
+              channelId={channel.id}
+              channelName={channelName}
+              threadId={props.threadId}
+              extensions={extensions}
+            >
+              {provide}
+            </ConversationHost>
+          )}
+        </>
       ) : (
-        provide(props.interactions as ConversationInteractions)
+        provide(props.interactions)
       )}
     </MessageManagement>
   );
@@ -110,30 +118,36 @@ function Provider({
   session,
   scope,
   extensions,
-  channelId,
+  channel,
   channelName,
-  sessionConversation,
-  onOpenLink,
-  canOpenLink,
-  onOpenMediaReview,
-}: Conversation & { children: ReactNode }) {
+  interactions: { onOpenLink, canOpenLink, onOpenMediaReview },
+}: Pick<ChannelProps, "session" | "scope" | "extensions" | "channel"> & {
+  channelName: string;
+  interactions: ConversationInteractions;
+  children: ReactNode;
+}) {
+  const id = channel?.id;
+  const sessionConversation = channel?.channelType === "session";
   const value = useMemo(
-    () => ({
-      session,
-      scope,
-      extensions,
-      channelId,
-      channelName,
-      sessionConversation,
-      onOpenLink,
-      canOpenLink,
-      onOpenMediaReview,
-    }),
+    () =>
+      id
+        ? {
+            session,
+            scope,
+            extensions,
+            channelId: id,
+            channelName,
+            sessionConversation,
+            onOpenLink,
+            canOpenLink,
+            onOpenMediaReview,
+          }
+        : undefined,
     [
       session,
       scope,
       extensions,
-      channelId,
+      id,
       channelName,
       sessionConversation,
       onOpenLink,

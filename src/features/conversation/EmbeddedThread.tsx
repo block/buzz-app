@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from "react";
-import { MessageManagementStatus } from "../messages/MessageManagement";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { messageViewKey } from "../messages/view-key";
 import { ConversationChannel, ConversationThread } from "./Conversation";
@@ -44,7 +43,6 @@ export function EmbeddedThread({
           ?.channelType,
       }}
     >
-      <MessageManagementStatus />
       <ConversationThread messageId={messageId} />
     </ConversationChannel>
   );

@@ -14,6 +14,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { EmbeddedThread } from "./EmbeddedThread";
+import { ConversationChannel, ConversationComposer } from "./Conversation";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ComponentProps } from "react";
 import { createAgentLibrary } from "../agents/library";
@@ -244,6 +245,42 @@ it.each([
     );
   },
 );
+
+it("selecting a channel supplies its readers without remounting the page below", () => {
+  const { props } = fixture();
+  const interactions: ConversationInteractions = {
+    onOpenLink: () => true,
+    canOpenLink: () => false,
+    onOpenMediaReview: () => {},
+  };
+  const page = (channel?: {
+    id: string;
+    name: string;
+    channelType: "session";
+  }) => (
+    <ConversationChannel
+      session={props.session}
+      scope={props.scope}
+      extensions={props.extensions}
+      channel={channel}
+      interactions={interactions}
+    >
+      <input aria-label="Page state" />
+      {channel && <ConversationComposer />}
+    </ConversationChannel>
+  );
+  const view = render(page());
+  const input = screen.getByLabelText("Page state");
+  fireEvent.change(input, { target: { value: "kept" } });
+  view.rerender(page({ id: "c", name: "Channel", channelType: "session" }));
+  expect(screen.getByLabelText("Page state")).toBe(input);
+  expect(input).toHaveValue("kept");
+  const composer = screen.getByLabelText("Composer");
+  expect(composer).toHaveAttribute("data-session-conversation", "true");
+  expect(composer).toHaveAttribute("data-deletion", "true");
+  view.rerender(page());
+  expect(screen.getByLabelText("Page state")).toBe(input);
+});
 
 it("keeps one channel visit while the thread is retargeted within a channel", () => {
   const h = fixture();

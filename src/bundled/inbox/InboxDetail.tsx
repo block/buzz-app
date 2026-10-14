@@ -18,7 +18,6 @@ import type { NavigationScope } from "../../features/navigation/targets";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
-import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import { ChannelPreview } from "./ChannelPreview";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -321,7 +320,6 @@ export function InboxDetail({
                 channelName={channelName}
                 active={false}
               >
-                <MessageManagementStatus />
                 {item.target.kind === "channel" ? (
                   <ChannelPreview
                     channelName={

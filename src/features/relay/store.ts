@@ -75,8 +75,6 @@ export type ChannelStoreOptions = {
   maxHeads?: number;
   maxHistoryRows?: number;
   maxHistoryBytes?: number;
-  /** How many public channels name search reads before it reports `partial`. */
-  maxPublicChannels?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
   /** The session's send clock; rendered windows raise its channel watermarks. */
@@ -86,13 +84,14 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
-// Public channel metadata for name search, read a page at a time up to
-// `maxPublicChannels`; matches resolve exactly.
+// Public channel metadata for name search, read a page at a time up to a
+// bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+const PUBLIC_CHANNEL_DIRECTORY = 20_000;
 /** One creator's channels with one label: a small answer, within one `resolve`. */
 const LABELED_CHANNEL_PAGE = 100;
-/** How long name search reuses the public channel metadata. Typing reads it
- * once; a channel created meanwhile shows up after this. */
+/** How long name search reuses the public channel metadata once read. Typing
+ * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
 /** How long a channel link keeps a `withheld` answer before rechecking it. */
 const REFERENCE_TTL = 5 * 60_000;
@@ -155,7 +154,6 @@ export function createChannelStore(
     maxHeads = 64,
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
-    maxPublicChannels = 20_000,
     now = Date.now,
     local,
     clock = new MessageClock(),
@@ -1442,7 +1440,8 @@ export function createChannelStore(
   let publicDirectory:
     | {
         generation: number;
-        at: number;
+        /** When the read finished; a pending read is always reused. */
+        at?: number;
         read: Promise<{ events: readonly RelayEvent[]; partial: boolean }>;
       }
     | undefined;
@@ -1477,7 +1476,8 @@ export function createChannelStore(
         ),
       );
       if (page.length < PUBLIC_CHANNEL_PAGE) return { events, partial: false };
-      if (events.length >= maxPublicChannels) return { events, partial: true };
+      if (events.length >= PUBLIC_CHANNEL_DIRECTORY)
+        return { events, partial: true };
       // Relay query order is time descending, then ID ascending (also at ties).
       const last = [...page]
         .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
@@ -1507,19 +1507,22 @@ export function createChannelStore(
     // never grants access by itself.
     if (
       publicDirectory?.generation !== generation ||
-      now() - publicDirectory.at >= PUBLIC_CHANNEL_PAGE_TTL
+      (publicDirectory.at !== undefined &&
+        now() - publicDirectory.at >= PUBLIC_CHANNEL_PAGE_TTL)
     ) {
       const controller = new AbortController();
       controllers.add(controller);
-      const entry = {
+      const entry: NonNullable<typeof publicDirectory> = {
         generation,
-        at: now(),
         read: readPublicDirectory(transport, generation, controller.signal),
       };
       publicDirectory = entry;
       // A failed read is not reused; the next keystroke starts again.
       void entry.read.then(
-        () => controllers.delete(controller),
+        () => {
+          controllers.delete(controller);
+          entry.at = now();
+        },
         () => {
           controllers.delete(controller);
           if (publicDirectory === entry) publicDirectory = undefined;

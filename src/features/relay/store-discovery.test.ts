@@ -738,7 +738,8 @@ it("ranks public name matches before the cut and reuses one metadata page while 
 });
 
 it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
-  const h = setup();
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
   h.channels.ensureList();
   await h.rosters(0);
   await h.settled();
@@ -761,6 +762,8 @@ it("reads every public metadata page, and a keystroke that gives up leaves the r
   gaveUp.abort();
   await expect(first).rejects.toThrow();
   expect(page.signal?.aborted).toBe(false);
+  // A read still running is reused however long it takes.
+  clock += 60_000;
   const second = h.channels.searchPublic?.("buzz-com");
   assert.exists(second);
   page.respond(recent);

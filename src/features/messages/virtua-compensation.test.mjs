@@ -581,6 +581,46 @@ function resizeHarness() {
   };
 }
 
+// Paging history prepends a page, jumps once, and measures the prepended rows
+// in the next frame's observer batch. The pending jump is flushed only by the
+// Virtualizer layout effect, which every store update commits: scroll events
+// and repeated flushes must not re-apply it, and a batch is one correction.
+it("applies one correction per shift jump and per measurement batch, none from scroll events", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  const corrections = () =>
+    c.calls.map(({ method, options, overflow }) => [
+      method,
+      options.top,
+      overflow,
+    ]);
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(40); // 20 older rows at the 100px estimate: one 2000px jump
+  expect(corrections()).toEqual([["scrollBy", 2000, ""]]);
+  c.driver.J(); // another commit's layout effect
+  c.store.W(1, 2300); // the jump's own scroll event, rendered through flushSync
+  c.driver.J();
+  expect(c.calls).toHaveLength(1);
+  // The prepended rows measure together: one correction for the whole batch.
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J();
+  c.driver.J();
+  expect(corrections()).toEqual([
+    ["scrollBy", 2000, ""],
+    ["scrollBy", 200, ""],
+  ]);
+  // Its scroll event and an unchanged measurement add nothing.
+  c.store.W(1, 2500);
+  c.driver.J();
+  c.store.W(3, [[0, 110]]);
+  c.driver.J();
+  expect(c.calls).toHaveLength(2);
+  expect(vi.getTimerCount()).toBe(0); // no Chromium overflow toggle to restore
+  c.driver._();
+});
+
 it("delivers the latest resize per target outside native observer delivery", () => {
   const h = resizeHarness();
   const first = h.node(),

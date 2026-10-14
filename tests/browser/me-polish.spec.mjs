@@ -396,6 +396,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   page,
   app,
 }) => {
+  await page.clock.install();
   const person = app.serveProfile(generateSecretKey(), { name: "Aria" });
   const grants = [];
   const evidence = [];
@@ -626,6 +627,9 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
       }),
     );
   const beforeShare = await footerBounds();
+  // Screenshots measure pending layout, not relay timeout behavior. Freeze the
+  // page clock before the read deadline is armed so slow capture cannot expire it.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
   try {
     await page.keyboard.press("Enter");
     await requestedReadback;
@@ -674,6 +678,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
     // Restore the desktop sidebar before asserting its retained row after close.
     await page.setViewportSize({ width: 1280, height: 850 });
     releaseReadback();
+    await page.clock.resume();
     await expect(dialog).not.toBeVisible();
     expect(evidence).toEqual([
       "grant",
@@ -683,6 +688,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
     ]);
   } finally {
     releaseReadback();
+    await page.clock.resume();
   }
   await expect(row).toBeVisible();
   await expect(

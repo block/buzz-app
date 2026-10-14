@@ -18,12 +18,11 @@ import {
   CopyIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
+import { CommunityUrlField } from "./CommunityUrlField";
 import { JoinCommunity } from "./JoinCommunity";
 import { ProfileStep } from "./ProfileStep";
 import type { Identity } from "./service";
-import { createSetup, setupSteps, wait } from "./setup";
+import { createSetup, discoverAuthentication, setupSteps, wait } from "./setup";
 import { SetupWindowHeader } from "./SetupWindowHeader";
 
 /**
@@ -47,10 +46,13 @@ export function Welcome({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [login] = useState(() => createOAuthSession(connect));
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
-  const [setup] = useState(() => createSetup(setupSteps(identity, delay)));
+  const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
+  // The canonical origin the user asked to join: before sign-in it drives the
+  // discovery lookup; after setup, the Join Community page. Cleared on every
+  // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
   const [joinError, setJoinError] = useState<{
     title: string;
@@ -71,9 +73,17 @@ export function Welcome({
     [login],
   );
   if (state.status === "ready" && progress.status === "idle") return children;
-  const signIn = async () => {
+  /** `findCommunities` is false when a landing-page URL already names the community. */
+  const signIn = async (findCommunities: boolean) => {
     await login.signIn();
-    if (login.snapshot().status === "signed-in") void setup.start();
+    if (login.snapshot().status === "signed-in")
+      void setup.start(setupSteps(identity, delay, { findCommunities }));
+  };
+  /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
+  const backToLanding = () => {
+    setFinding(undefined);
+    setup.reset();
+    login.cancel();
   };
   /**
    * The same join the Add-a-community dialog performs without an invite code:
@@ -208,16 +218,26 @@ export function Welcome({
           <Failure
             title="Couldn’t finish setup"
             error={progress.error}
-            onBack={() => {
-              setup.reset();
-              login.cancel();
-            }}
+            onBack={backToLanding}
           />
         ) : auth.error ? (
           <Failure
             title="Couldn’t connect to Builderlab"
             error={auth.error}
-            onBack={login.cancel}
+            onBack={backToLanding}
+          />
+        ) : finding && auth.status === "signed-out" ? (
+          // Discovery: the same unauthenticated lookup Join Community runs
+          // after setup, so a bad address fails here, before sign-in and before
+          // a key exists. A found community says which sign-in comes next.
+          <FindCommunity
+            url={finding}
+            onCancel={backToLanding}
+            onFound={(found) => {
+              if (discoverAuthentication(found) === "builderlab")
+                void signIn(false);
+            }}
+            titleId="welcome-title"
           />
         ) : (
           <>
@@ -234,8 +254,8 @@ export function Welcome({
                 variant={auth.status === "pending" ? "outline" : "primary"}
                 size="lg"
                 onClick={() => {
-                  if (auth.status === "pending") login.cancel();
-                  else void signIn();
+                  if (auth.status === "pending") backToLanding();
+                  else void signIn(true);
                 }}
               >
                 {auth.status === "pending"
@@ -247,9 +267,13 @@ export function Welcome({
                   Finish sign-in in your browser, then return to Buzz.
                 </p>
               )}
-              <Field label="Community URL" disabled>
-                <Input type="url" placeholder="Coming soon" disabled />
-              </Field>
+              <CommunityUrlField
+                url={entered}
+                onUrlChange={setEntered}
+                onSubmit={setFinding}
+                disabled={auth.status === "pending"}
+              />
+              {/* A scanner's text takes the field's path: enteredRelayOrigin → setFinding. */}
               <Button size="lg" disabled>
                 Scan a QR code — Coming soon
               </Button>

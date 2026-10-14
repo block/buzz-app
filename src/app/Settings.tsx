@@ -339,7 +339,11 @@ export function Settings({
                                 ? running.error
                                 : null);
                             return (
-                              <article className="py-1" key={id}>
+                              <article
+                                className="py-1"
+                                data-preference-description-layout="wide"
+                                key={id}
+                              >
                                 {/* Channels is required and has no enable/disable control. */}
                                 {isRequiredPlugin(plugin) ? (
                                   <PreferenceRow

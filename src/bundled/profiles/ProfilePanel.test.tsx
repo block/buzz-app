@@ -346,7 +346,10 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
   }
 });
 
-function renderAgentActivity(tabs: { title: string; role?: string }[]) {
+function renderAgentActivity(
+  tabs: { title: string; role?: string }[],
+  rootId?: string,
+) {
   const owner = createRelaySession(null);
   const snapshot = {
     status: "ready" as const,
@@ -367,7 +370,21 @@ function renderAgentActivity(tabs: { title: string; role?: string }[]) {
       id: title.toLowerCase(),
       title,
       role,
-      component: () => <p>Echo {title.toLowerCase()}</p>,
+      component: ({
+        conversation,
+      }: {
+        conversation?: { channelId: string; rootId?: string };
+      }) => (
+        <>
+          <p>Echo {title.toLowerCase()}</p>
+          {conversation && (
+            <p>
+              Opened from {conversation.channelId}/
+              {conversation.rootId ?? "channel"}
+            </p>
+          )}
+        </>
+      ),
     })),
   } as unknown as RegisteredAgentType;
   const agent = {
@@ -393,6 +410,7 @@ function renderAgentActivity(tabs: { title: string; role?: string }[]) {
       target={profileActivityViewTarget(key) ?? ""}
       context={{
         channelId: "originating-channel",
+        ...(rootId && { rootId }),
         canOpen: () => true,
         open: vi.fn(() => true),
       }}
@@ -406,13 +424,20 @@ function renderAgentActivity(tabs: { title: string; role?: string }[]) {
 }
 
 it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
-  const dispose = renderAgentActivity([
-    { title: "Settings", role: "settings" },
-    { title: "Activity", role: "activity" },
-  ]);
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+  );
   try {
     expect(
       screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    // The originating thread reaches the tab that selects its session.
+    expect(
+      screen.getByText("Opened from originating-channel/thread-root"),
     ).toBeVisible();
     expect(screen.getAllByRole("tab", { name: "Activity" })).toHaveLength(1);
     expect(screen.getByText("Echo activity")).toBeVisible();

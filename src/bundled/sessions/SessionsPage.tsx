@@ -66,6 +66,7 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
   SessionColumn,
@@ -344,7 +345,7 @@ function SessionWork({
   const canOpenLink = (url: string) =>
     !!panels.resolve(url) ||
     (!!navigator && !!sessionLinkTarget(url, scope, session.viewer));
-  function openLink(url: string) {
+  function openLink(url: string, origin?: MessageLinkOrigin) {
     const connection = relay.snapshot();
     if (
       !mounted.current ||
@@ -365,7 +366,12 @@ function SessionWork({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({ channelId: channel.id, panel, target: url });
+    secondary.open({
+      channelId: channel.id,
+      ...(origin && { rootId: origin.rootId }),
+      panel,
+      target: url,
+    });
     return true;
   }
   useEffect(

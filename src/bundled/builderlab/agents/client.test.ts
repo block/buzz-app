@@ -415,7 +415,9 @@ const challenge = {
 it("links an unbound Buzz key to the account before attesting", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)
-    .mockResolvedValueOnce(response({ correlation_id: "c" }))
+    .mockResolvedValueOnce(
+      response({ error: { code: "missing_mapping", setup_needed: true } }, 404),
+    )
     .mockResolvedValueOnce(response({ ...challenge, kind: 24243 }))
     .mockResolvedValueOnce(bound())
     .mockResolvedValueOnce(response({ status: "ATTEST_AGENT_STATUS_ACTIVE" }));

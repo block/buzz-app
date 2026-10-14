@@ -171,7 +171,12 @@ export function createAgentClient(
     } catch {
       // Reported below with the HTTP status.
     }
-    const code = (result?.error as { code?: unknown } | undefined)?.code;
+    const error = result?.error as
+      | { code?: unknown; setup_needed?: unknown }
+      | undefined;
+    // An unbound account reports the missing mapping as setup needed.
+    if (path === "current" && error?.setup_needed === true) return {};
+    const code = error?.code;
     if (response.status >= 200 && response.status < 300 && result && !code)
       return result;
     if (typeof code === "string" && Object.hasOwn(LINK_ERRORS, code))

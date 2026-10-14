@@ -197,3 +197,40 @@ it("cancels without removing local state or contacting the relay", async () => {
   expect(leave).not.toHaveBeenCalled();
   expect(onRemoved).not.toHaveBeenCalled();
 });
+
+it.each(["relay", "device"])(
+  "reports a %s failure after the departure page unmounts",
+  async (phase) => {
+    const request = deferred<string>();
+    api.requestLeave.mockReturnValue(request.promise);
+    const { user, leave, onRemoved, rerender } = setup();
+    if (phase === "device")
+      leave.mockRejectedValueOnce(new Error("storage unavailable"));
+    await user.click(screen.getByRole("button", { name: "Leave community" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Leave community",
+      }),
+    );
+    await waitFor(() => expect(api.requestLeave).toHaveBeenCalledOnce());
+    // Navigation retires the page, not the app-owned toast provider.
+    rerender(
+      <ToastProvider>
+        <p>Replacement destination</p>
+      </ToastProvider>,
+    );
+    await act(async () => {
+      if (phase === "relay") request.reject(new Error("offline"));
+      else request.resolve("left");
+    });
+    await screen.findByText(
+      phase === "relay"
+        ? "Couldn’t leave Acme. Check your connection and try again."
+        : "Left Acme, but this device couldn’t finish cleaning up (storage unavailable). Leave it again to finish.",
+    );
+    expect(screen.getByText("Replacement destination")).toBeVisible();
+    expect(onRemoved).not.toHaveBeenCalled();
+    if (phase === "relay") expect(leave).not.toHaveBeenCalled();
+    else expect(leave).toHaveBeenCalledWith(community.id, { purge: true });
+  },
+);

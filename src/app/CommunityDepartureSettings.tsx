@@ -78,7 +78,7 @@ export function CommunityDepartureSettings({
         onRemoved();
       }
     } catch (error) {
-      if (!mounted.current || communities.snapshot().viewer !== viewer) return;
+      if (communities.snapshot().viewer !== viewer) return;
       const departure =
         error instanceof CommunityDepartureError ? error : undefined;
       notify(
@@ -96,7 +96,7 @@ export function CommunityDepartureSettings({
               ),
         "error",
       );
-      setIntent(null);
+      if (mounted.current) setIntent(null);
     } finally {
       busy.current = false;
       if (mounted.current) {

@@ -15,10 +15,7 @@ test.use({
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const state = (page) =>
   page.evaluate(() => window.fixtureNavigation.snapshot());
-// Settle the controller before checking what it produced so a failure records
-// the navigation status (opening/failed) rather than a missing element. Outlast
-// the controller's 15 s open deadline so a stall records its terminal failure
-// reason instead of a still-pending "opening".
+// Outlasts the navigation controller's 15 s open deadline.
 const opened = (page) =>
   expect
     .poll(async () => (await state(page)).status, { timeout: 20_000 })

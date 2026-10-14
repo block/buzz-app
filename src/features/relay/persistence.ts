@@ -80,12 +80,7 @@ export function createHeadPersistence(
     });
     return opening;
   }
-  /** Runs `handler` with a request's result unless its transaction ended first.
-   * Work callbacks issue follow-up requests only through this, and only
-   * synchronously inside `handler`: after an await or microtask the
-   * transaction has auto-committed, so a follow-up request would throw
-   * TransactionInactiveError on a healthy transaction and the catch below
-   * would mistake that for an abort and resolve with a partial result. */
+  /** `handler` must issue follow-up requests synchronously (IDB auto-commits). */
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
   async function transact<T>(
     mode: IDBTransactionMode,
@@ -97,10 +92,6 @@ export function createHeadPersistence(
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(name, mode);
       let result: T;
-      // Once set, request results are ignored: the transaction can no longer
-      // accept requests, and a success event already queued before abort()
-      // is still delivered (WebKit), so a request issued from its handler
-      // would throw TransactionInactiveError outside this promise.
       let ended = false;
       const timeout = setTimeout(() => {
         ended = true;
@@ -138,10 +129,7 @@ export function createHeadPersistence(
             try {
               handler(request.result);
             } catch (error) {
-              // The browser can abort on its own (quota, connection close)
-              // and still deliver this queued success before its abort event.
-              // A follow-up request then throws here; let that abort event
-              // settle the operation instead of escaping the handler.
+              // WebKit delivers a queued success after a browser-initiated abort.
               if (
                 !(
                   error instanceof DOMException &&

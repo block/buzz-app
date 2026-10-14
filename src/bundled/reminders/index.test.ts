@@ -380,8 +380,7 @@ it("seeds a first launch to now and keeps communities apart", async () => {
 });
 
 // Roster pages per launch shape: "two" puts the channel on page two of 501,
-// "capped" returns full pages until the third overflows discovery's retained
-// cap (1024) by one channel, with as few events as that takes.
+// "capped" overflows discovery's retained cap on the third page.
 const ROSTERS = { one: 1, empty: 1, two: 2, capped: 3 } as const;
 
 type Launch = Readonly<{
@@ -729,8 +728,6 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
       await vi.waitFor(() => expect(app.show).toHaveBeenCalledTimes(banners));
       await vi.waitFor(() => expect(app.saved()).toBe("5000"));
       if (rest.revoke) expect(app.roster()).toBe("verified");
-      // Only an overflowing third page leaves the list capped; a short page
-      // would complete it and clear coverage.
       if (rest.roster === "capped")
         expect(app.list()).toMatchObject({
           status: "ready",

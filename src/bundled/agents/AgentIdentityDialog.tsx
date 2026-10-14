@@ -33,6 +33,8 @@ export function AgentIdentityDialog({
   const [error, setError] = useState("");
   const [avatarActive, setAvatarActive] = useState(initialAvatarPicker);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarCanGoBack, setAvatarCanGoBack] = useState(false);
+  const pictureChanged = picture !== (agent.picture ?? "");
   const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
   const avatarNavigation = useRef<{ back(): void }>(null);
   const nameField = useRef<HTMLInputElement>(null);
@@ -41,13 +43,14 @@ export function AgentIdentityDialog({
   const resize = useRef<Animation | null>(null);
   const resizeFrom = useRef<number | null>(null);
   const reducedMotion = useReducedMotion();
-  const changeAvatarView = useCallback((active: boolean) => {
+  const changeAvatarView = useCallback((active: boolean, view: string) => {
     if (resize.current?.playState === "running") {
       const popup =
         formElement.current?.closest<HTMLElement>('[role="dialog"]');
       resizeFrom.current = popup?.getBoundingClientRect().height ?? null;
     }
     setAvatarActive(active);
+    setAvatarCanGoBack(view !== "collections" && view !== "selected");
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Measure the modal after each avatar view changes its layout.
   useLayoutEffect(() => {
@@ -72,16 +75,25 @@ export function AgentIdentityDialog({
     );
     return () => resize.current?.cancel();
   }, [avatarActive, reducedMotion]);
-  const back = avatarActive
-    ? () => avatarNavigation.current?.back()
-    : undefined;
+  const back =
+    avatarActive &&
+    (!initialAvatarPicker || (avatarCanGoBack && !pictureChanged))
+      ? () => avatarNavigation.current?.back()
+      : undefined;
   const save = async () => {
-    if (pending || avatarBusy || avatarActive || !name.trim()) return;
+    if (
+      pending ||
+      avatarBusy ||
+      (avatarActive && !initialAvatarPicker) ||
+      !name.trim() ||
+      (initialAvatarPicker && !pictureChanged)
+    )
+      return;
     setPending(true);
     setError("");
     try {
       await agents.save(agent.pubkey, {
-        name: name.trim(),
+        ...(!initialAvatarPicker && { name: name.trim() }),
         picture: picture || null,
       });
       onClose();
@@ -122,7 +134,7 @@ export function AgentIdentityDialog({
       actions={
         <>
           <div ref={setAvatarAction} hidden={!avatarActive} />
-          {!avatarActive && (
+          {(!avatarActive || initialAvatarPicker) && (
             <>
               <Button disabled={pending || avatarBusy} onClick={onClose}>
                 Cancel
@@ -132,7 +144,12 @@ export function AgentIdentityDialog({
                 type="submit"
                 form={form}
                 loading={pending}
-                disabled={pending || avatarBusy || !name.trim()}
+                disabled={
+                  pending ||
+                  avatarBusy ||
+                  !name.trim() ||
+                  (initialAvatarPicker && !pictureChanged)
+                }
               >
                 Save changes
               </Button>

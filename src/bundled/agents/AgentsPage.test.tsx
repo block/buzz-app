@@ -1272,7 +1272,12 @@ it("opens avatar and name editing from the profile menu", async () => {
   expect(
     within(dialog).getByRole("button", { name: "Use image" }),
   ).toBeVisible();
-  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  expect(
+    within(dialog).queryByRole("button", { name: "Back" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(menu).toHaveFocus());
   await user.click(menu);
@@ -1322,4 +1327,54 @@ it("shares the editable owner profile with chat profile targets", async () => {
     view.unmount();
     owner.dispose();
   }
+});
+
+it("saves an avatar directly from its choices and cancels a changed draft", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  const open = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change avatar" }),
+    );
+    return screen.findByRole("dialog", { name: "Edit agent" });
+  };
+  let dialog = await open();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(
+    within(dialog).queryByRole("textbox", { name: "Agent name" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole("button", { name: "Back" }),
+  ).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(agents.save).not.toHaveBeenCalled();
+  dialog = await open();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Gloopies", exact: true }),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Gloopies 1", exact: true }),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
+    picture: expect.any(String),
+  });
 });

@@ -32,9 +32,16 @@
   outline-offset: 2px;
 }
 .portrait {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
   width: 8rem;
   height: 8rem;
+}
+/* Solid photos need less area than the transparent pack artwork. */
+.portrait > [class~="buzz-avatar-status"] {
+  width: 75%;
+  height: 75%;
 }
 .card[data-unavailable] .portrait {
   opacity: 0.5;
@@ -45,6 +52,8 @@
   object-fit: contain;
 }
 .name {
+  /* Balance the gaps around the name against the inset photo edge. */
+  margin-block: -0.5rem 0.5rem;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

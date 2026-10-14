@@ -48,7 +48,7 @@ export function AgentCreateHeader({
   editing: boolean;
   avatarNavigationRef?: Ref<{ back(): void }>;
   avatarActionTarget?: HTMLElement | null;
-  onAvatarActiveChange?: (active: boolean) => void;
+  onAvatarActiveChange?: (active: boolean, view: string) => void;
   nameRef?: Ref<HTMLInputElement>;
   initialAvatarPicker?: boolean;
 }) {
@@ -58,11 +58,15 @@ export function AgentCreateHeader({
   );
   const [movingAvatar, setMovingAvatar] = useState<string>();
   useEffect(() => {
-    onAvatarActiveChange?.(view !== "selected");
+    onAvatarActiveChange?.(view !== "selected", view);
   }, [view, onAvatarActiveChange]);
   useImperativeHandle(avatarNavigationRef, () => ({
     back() {
-      setView(view === "collections" ? "selected" : "collections");
+      setView(
+        view === "collections" && !initialAvatarPicker
+          ? "selected"
+          : "collections",
+      );
     },
   }));
   const [keyboard, setKeyboard] = useState(false);
@@ -247,7 +251,7 @@ export function AgentCreateHeader({
                   onChange={(value) => {
                     // Done with no image keeps the avatar it had.
                     if (value) onChange({ picture: value });
-                    setView("selected");
+                    setView(initialAvatarPicker ? "collections" : "selected");
                   }}
                 />
               </div>
@@ -271,7 +275,7 @@ export function AgentCreateHeader({
                     onClick={() => {
                       setMovingAvatar(avatar.id);
                       onChange({ picture: avatar.url });
-                      setView("selected");
+                      if (!initialAvatarPicker) setView("selected");
                     }}
                   >
                     {artwork(avatar)}

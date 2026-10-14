@@ -76,7 +76,8 @@ export function AgentIdentityDialog({
     return () => resize.current?.cancel();
   }, [avatarActive, reducedMotion]);
   const back =
-    avatarActive && (!initialAvatarPicker || avatarCanGoBack)
+    avatarActive &&
+    (!initialAvatarPicker || (avatarCanGoBack && !pictureChanged))
       ? () => avatarNavigation.current?.back()
       : undefined;
   const save = async () => {
@@ -118,7 +119,7 @@ export function AgentIdentityDialog({
       }}
       onEscape={() => {
         if (pending || avatarBusy) return true;
-        if (back) {
+        if (back || (initialAvatarPicker && avatarCanGoBack)) {
           avatarNavigation.current?.back();
           return true;
         }

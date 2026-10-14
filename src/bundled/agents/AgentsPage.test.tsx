@@ -1354,7 +1354,9 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
   expect(
     within(dialog).queryByRole("textbox", { name: "Agent name" }),
   ).not.toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "Back" })).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: "Back" }),
+  ).not.toBeInTheDocument();
   expect(agents.save).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   expect(

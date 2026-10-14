@@ -964,3 +964,58 @@ it("a name-only writer cannot erase explicit provenance accidentally", async () 
   ).rejects.toThrow("automatic session name");
   expect(h.sign).not.toHaveBeenCalled();
 });
+
+it.each([undefined, 600])(
+  "session naming preserves NIP-CL labels with lifetime %s",
+  async (ttlSeconds) => {
+    const h = harness("owner", true);
+    const before = sessionDescription(undefined, {
+      automatic: "First prompt",
+      explicit: false,
+    });
+    const after = sessionDescription(undefined, {
+      automatic: "First prompt",
+      explicit: true,
+    });
+    const metadata = (name: string, description: string, ttl?: number) =>
+      h.record(39000, [
+        ["name", name],
+        ["about", description],
+        ["private"],
+        ["t", "stream"],
+        ["t", "for-you"],
+        ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
+      ]);
+    h.set([metadata("First prompt", before), ...h.events().slice(1)]);
+    const base = await h.owner.capability.load(id);
+    expect(base.labels).toEqual(["for-you"]);
+    await expect(
+      h.owner.capability.save(base, {
+        ...base,
+        name: "Named",
+        description: after,
+        labels: [],
+      }),
+    ).rejects.toThrow("Only the name and lifetime");
+    expect(h.sign).not.toHaveBeenCalled();
+    h.publish.mockImplementationOnce(async () =>
+      h.set([metadata("Named", after, ttlSeconds), ...h.events().slice(1)]),
+    );
+    await h.owner.capability.save(base, {
+      ...base,
+      name: "Named",
+      description: after,
+      ttlSeconds,
+    });
+    const command = h.sign.mock.calls[0]?.[0];
+    assert(command);
+    expect(command.tags).toEqual([
+      ["h", id],
+      ["name", "Named"],
+      ["about", after],
+      ...(ttlSeconds === undefined ? [] : [["ttl", String(ttlSeconds)]]),
+    ]);
+    expect((await h.owner.capability.load(id)).labels).toEqual(["for-you"]);
+    expect(h.publish).toHaveBeenCalledOnce();
+  },
+);

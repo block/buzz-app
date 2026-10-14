@@ -14,8 +14,8 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   migration, membership revocation, nested creation or transcript copy.
 - Projects are existing Me groups, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
-  draft, channel ID, name, lifetime, Canvas and group defaults in the existing pending-start
-  receipt. Setup and Me placement must succeed before sending; retries reuse that
+  draft, channel ID, name, lifetime, Canvas and group defaults in the existing
+  pending-start receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
 - New Me conversations add a `personal` line to the session description
   (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
@@ -91,7 +91,9 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 Me projects, assignments and project defaults never fall back to Messages defaults.
 Workspace folders, optional worktree/base branch and Canvas are instructions saved
 in ordinary Canvas Markdown; saving settings does not create a worktree or change
-an agent process. Templates are copied into each new chat, not live-linked. Moving
+an agent process. Templates are copied into each new chat, not live-linked.
+Switching a draft to another project reloads its Workspace/Canvas defaults while
+retaining its independent name and lifetime. Moving
 a saved chat only changes its project assignment. Saved conversation
 settings retain the existing Canvas revision checks and explicit conflict recovery.
 
@@ -192,9 +194,10 @@ provenance without a name write or validation error. Other settings can still sa
 The form uses the shared content-sized dialog and its normal footer spacing, with
 one body scrollport and no reserved bottom area. The title and actions stay visible
 in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
-scrolls, retaining space for a complete body control and pointer access to actions. Name, Project folders, Canvas and Lifetime use consistent 32px
-section spacing; labels sit 8px above their controls. Parent-linked sessions retain their
-existing details-write exclusion.
+scrolls, retaining space for a complete body control and pointer access to actions.
+Name, Project folders, Canvas and Lifetime use consistent 32px section spacing;
+labels sit 8px above their controls. Parent-linked sessions retain their existing
+details-write exclusion.
 
 Naming uses the existing fresh signed authority/version check and exact full details
 readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save

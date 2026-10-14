@@ -332,12 +332,14 @@ it("uses the shared naming grammar for creation and signed-details commands", ()
       if (accepted) expect(() => validateDetailsTemplate(edit)).not.toThrow();
       else expect(() => validateDetailsTemplate(edit)).toThrow();
       if (accepted) {
-        expect(() =>
-          validateDetailsTemplate({
-            ...edit,
-            tags: [...edit.tags, ["visibility", "open"]],
-          }),
-        ).toThrow();
+        for (const tail of [
+          ["visibility", "open"],
+          ["t", "for-you"],
+          ["t", ""],
+        ])
+          expect(() =>
+            validateDetailsTemplate({ ...edit, tags: [...edit.tags, tail] }),
+          ).toThrow();
         expect(() =>
           validateDetailsTemplate({
             ...edit,

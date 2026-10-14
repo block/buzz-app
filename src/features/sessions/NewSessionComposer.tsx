@@ -487,8 +487,13 @@ export function NewSessionComposer({
                     if (project === selectedProject) return;
                     setSelectedProject(project);
                     writeView(scope, `${draftKey}:new-project`, project);
-                    setDraftSettings({ canvas: undefined });
-                    writeView(scope, `${draftKey}:settings`, null);
+                    const next = {
+                      name: draftSettings.name,
+                      ttlSeconds: draftSettings.ttlSeconds,
+                      canvas: undefined,
+                    };
+                    setDraftSettings(next);
+                    writeView(scope, `${draftKey}:settings`, next);
                   }}
                   disabled={busy || !!pending}
                 />

@@ -259,6 +259,31 @@ mod tests {
                     .is_ok(),
                     accepted
                 );
+                if accepted {
+                    for tail in [
+                        vec!["visibility", "open"],
+                        vec!["t", "for-you"],
+                        vec!["t", ""],
+                    ] {
+                        let mut invalid = template(&serde_json::to_value(&event).unwrap()).unwrap();
+                        invalid
+                            .tags
+                            .push(tail.iter().map(|value| (*value).to_string()).collect());
+                        assert!(validate(
+                            "channel-details",
+                            &serde_json::to_value(&invalid).unwrap(),
+                            None
+                        )
+                        .is_err());
+                        let signed = tauri::async_runtime::block_on(host.sign(invalid)).unwrap();
+                        assert!(validate(
+                            "channel-details",
+                            &signed,
+                            Some(signed["pubkey"].as_str().unwrap())
+                        )
+                        .is_err());
+                    }
+                }
                 let mut create = event;
                 create.kind = 9007;
                 create

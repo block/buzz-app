@@ -221,6 +221,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     "Fresh start",
     undefined,
     undefined,
+    { automatic: "Fresh start", explicit: false },
   );
 });
 
@@ -1324,11 +1325,16 @@ it.each(
     ),
   ),
 )(
-  "switching projects uses new defaults and clears old settings (saved=$saved, remount=$remount, fromProject=$fromProject)",
+  "switching projects uses new defaults and retains independent naming/lifetime (saved=$saved, remount=$remount, fromProject=$fromProject)",
   async ({ saved, remount, fromProject }) => {
     const f = await projectSetup();
     const user = userEvent.setup();
     const started = vi.fn();
+    const draftKey = fromProject ? "me:section:work" : "me";
+    writeView("switch-project", `${draftKey}:settings`, {
+      name: "My chosen title",
+      ttlSeconds: 600,
+    });
     const view = () => (
       <NewSessionComposer
         standalone
@@ -1341,9 +1347,8 @@ it.each(
     );
     const mounted = render(view());
     const openSettings = async () => {
-      await user.click(screen.getByRole("button", { name: "Session actions" }));
       await user.click(
-        await screen.findByRole("menuitem", { name: "Chat settings…" }),
+        screen.getByRole("button", { name: "Session settings" }),
       );
       return screen.findByRole("textbox", { name: "Canvas" });
     };
@@ -1370,6 +1375,10 @@ it.each(
     }
     const canvas = await openSettings();
     await waitFor(() => expect(canvas).toHaveValue("other instructions"));
+    expect(
+      screen.getByRole("textbox", { name: "Session name (optional)" }),
+    ).toHaveValue("My chosen title");
+    expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await user.type(screen.getByRole("textbox"), "New project chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -1382,6 +1391,13 @@ it.each(
     expect(f.mePlacement.admit).toHaveBeenCalledWith(expect.any(String), {
       sectionId: "other",
     });
+    expect(f.workSessions.create).toHaveBeenCalledWith(
+      expect.any(String),
+      "My chosen title",
+      undefined,
+      600,
+      { automatic: "New project chat", explicit: true },
+    );
   },
 );
 

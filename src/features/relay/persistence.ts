@@ -130,7 +130,23 @@ export function createHeadPersistence(
         },
         (request, handler) => {
           request.onsuccess = () => {
-            if (!ended) handler(request.result);
+            if (ended) return;
+            try {
+              handler(request.result);
+            } catch (error) {
+              // The browser can abort on its own (quota, connection close)
+              // and still deliver this queued success before its abort event.
+              // A follow-up request then throws here; let that abort event
+              // settle the operation instead of escaping the handler.
+              if (
+                !(
+                  error instanceof DOMException &&
+                  error.name === "TransactionInactiveError"
+                )
+              )
+                throw error;
+              ended = true;
+            }
           };
         },
       );

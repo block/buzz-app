@@ -65,29 +65,37 @@ it("rejects unexpected abort errors instead of leaving the operation pending", a
   await rejected;
 });
 
-it("ignores a request result delivered after the timeout aborted its transaction", async () => {
-  vi.useFakeTimers();
-  // WebKit delivers a request's already-queued success event after abort(),
-  // before the abort event. A follow-up request issued from that handler
-  // throws synchronously, outside any promise, and so surfaces as a page error.
-  let active = true;
+/** A store whose `put` throws like a finished transaction once `active` is off. */
+function inactivating() {
+  const state = { active: true };
   const get = { onsuccess: () => {}, result: undefined };
   const store: Store = {
     get: vi.fn(() => get as unknown as IDBRequest),
     getAll: vi.fn(),
     put: vi.fn(() => {
-      if (active) return {} as IDBRequest<IDBValidKey>;
+      if (state.active) return {} as IDBRequest<IDBValidKey>;
       throw new DOMException(
         "Failed to store record in an IDBObjectStore: The transaction is inactive or finished.",
         "TransactionInactiveError",
       );
     }),
   };
+  return { state, get, store };
+}
+const writeStartup = (cache: HeadPersistence) =>
+  cache.writeStartup?.({}) ?? Promise.reject();
+
+it("ignores a request result delivered after the timeout aborted its transaction", async () => {
+  vi.useFakeTimers();
+  // WebKit delivers a request's already-queued success event after abort(),
+  // before the abort event. A follow-up request issued from that handler
+  // throws synchronously, outside any promise, and so surfaces as a page error.
+  const { state, get, store } = inactivating();
   const { tx, result } = transaction(
     () => {
-      active = false;
+      state.active = false;
     },
-    (cache) => cache.writeStartup?.({}) ?? Promise.reject(),
+    writeStartup,
     store,
   );
   const rejected = expect(result).rejects.toThrow("Cache transaction aborted");
@@ -97,5 +105,27 @@ it("ignores a request result delivered after the timeout aborted its transaction
   expect(store.put).not.toHaveBeenCalled();
   tx.onabort();
   await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("swallows a follow-up request thrown by a browser-initiated abort", async () => {
+  vi.useFakeTimers();
+  // The browser can abort before this module's timeout and still deliver the
+  // queued success first, so nothing here has set `ended` yet. The follow-up
+  // put throws TransactionInactiveError; the handler must not let it escape,
+  // and the abort event that follows settles the operation.
+  const { state, get, store } = inactivating();
+  const { tx, result } = transaction(() => {}, writeStartup, store);
+  const rejected = expect(result).rejects.toThrow("Cache transaction aborted");
+  // Let the open settle and the work issue its get, short of the 2 s abort.
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get).toHaveBeenCalledOnce();
+  state.active = false;
+  expect(() => get.onsuccess()).not.toThrow();
+  expect(store.put).toHaveBeenCalledOnce();
+  expect(store.getAll).not.toHaveBeenCalled();
+  tx.onabort();
+  await rejected;
+  expect(tx.abort).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });

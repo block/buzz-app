@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readdir,
   readlink,
+  realpath,
   readFile,
   rm,
   writeFile,
@@ -28,7 +29,7 @@ afterEach(async () => {
 
 /** Buzz's codex folder in a new home, holding fake `releases` with `current`. */
 async function disk(releases: readonly string[], current?: string) {
-  const home = await mkdtemp(join(tmpdir(), "buzz-codex-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "buzz-codex-")));
   homes.push(home);
   const dir =
     process.platform === "darwin"

@@ -266,6 +266,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
             vec!["h".to_owned(), "channel".to_owned()],
+            vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
         ];
         let event = agent.sign(&key, kind, "hi".into(), tags).unwrap();
         assert_eq!(event["kind"], kind);
@@ -276,7 +277,11 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         assert!(ms[1].parse::<u16>().unwrap() < 1000);
         assert_eq!(
             tags,
-            [vec!["h".to_owned(), "channel".to_owned()], saved.clone()]
+            [
+                vec!["h".to_owned(), "channel".to_owned()],
+                vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
+                saved.clone()
+            ]
         );
     }
     // A plugin cannot pick its own `ms`, and events outside a channel get none.

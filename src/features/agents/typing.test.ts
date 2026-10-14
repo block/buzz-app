@@ -21,7 +21,7 @@ const threaded = () => Promise.resolve(false);
 it("pulses in the mention's thread every three seconds until stopped", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
-  const stop = pulseTyping(publish, threaded(), mention, "channel");
+  const stop = pulseTyping(publish, threaded(), mention, "channel", new Map());
   await vi.advanceTimersByTimeAsync(0);
   expect(publish).toHaveBeenCalledExactlyOnceWith({
     kind: 20002,
@@ -47,6 +47,7 @@ it("tags a top-level mention as its own thread's root", async () => {
     threaded(),
     { ...mention, tags: [["h", "channel"]] },
     "channel",
+    new Map(),
   );
   await vi.advanceTimersByTimeAsync(0);
   stop();
@@ -72,7 +73,7 @@ it("waits for a slow pulse, rides out a failure, and stops after three in a row"
         answer = (ok) => (ok ? resolve() : reject(new Error("refused")));
       }),
   );
-  pulseTyping(publish, threaded(), mention, "channel");
+  pulseTyping(publish, threaded(), mention, "channel", new Map());
   await vi.advanceTimersByTimeAsync(6_000);
   expect(publish).toHaveBeenCalledOnce();
   // One failure, then a success, starts the count again.
@@ -92,7 +93,7 @@ it("waits for a slow pulse, rides out a failure, and stops after three in a row"
 it("stops after half an hour of a run that never settles", async () => {
   vi.useFakeTimers();
   const publish = vi.fn(async () => {});
-  pulseTyping(publish, threaded(), mention, "channel");
+  pulseTyping(publish, threaded(), mention, "channel", new Map());
   await vi.advanceTimersByTimeAsync(30 * 60_000);
   const sent = publish.mock.calls.length;
   await vi.advanceTimersByTimeAsync(9_000);
@@ -111,6 +112,7 @@ it("types in the channel itself for a Me chat, once its turn knows where it answ
     }),
     mention,
     "channel",
+    new Map(),
   );
   await vi.advanceTimersByTimeAsync(6_000);
   expect(publish).not.toHaveBeenCalled();
@@ -134,9 +136,42 @@ it("shows nothing for a turn that cannot tell where it answers, or that ended fi
     Promise.reject(new Error("Couldn't read your Me chats")),
     mention,
     "channel",
+    new Map(),
   );
-  pulseTyping(publish, threaded(), mention, "channel")();
+  pulseTyping(publish, threaded(), mention, "channel", new Map())();
   await vi.advanceTimersByTimeAsync(9_000);
   expect(publish).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shares one pulse among turns in a thread, until the last of them stops", async () => {
+  vi.useFakeTimers();
+  const publish = vi.fn(async () => {});
+  const pulses = new Map();
+  const first = pulseTyping(publish, threaded(), mention, "channel", pulses);
+  const second = pulseTyping(
+    publish,
+    threaded(),
+    { ...mention, id: "e".repeat(64) },
+    "channel",
+    pulses,
+  );
+  const elsewhere = pulseTyping(
+    publish,
+    threaded(),
+    { ...mention, tags: [["h", "channel"]] },
+    "channel",
+    pulses,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  // One for the thread both turns are in, one for the other.
+  expect(publish).toHaveBeenCalledTimes(2);
+  elsewhere();
+  first();
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(publish).toHaveBeenCalledTimes(3);
+  second();
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(publish).toHaveBeenCalledTimes(3);
+  expect(pulses.size).toBe(0);
 });

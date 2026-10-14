@@ -12,18 +12,24 @@ const LONGEST_MS = 30 * 60_000;
 /** Failed pulses in a row that mean the community will not take them. */
 const FAILURES = 3;
 
+/** One agent's pulses by conversation, each shared by the turns typing there,
+ * so a second mention in a thread adds no second pulse. */
+export type Pulses = Map<string, { turns: number; stop: () => void }>;
+
 /** Pulses typing, signed as the agent, where it answers `event` until the
  * returned function is called: in the channel itself when `topLevel` settles
  * true, for a chat in the owner's Me, which reads as one conversation. It waits
  * for that answer, as its turn does, so both place it alike; a turn that cannot
  * tell where to answer fails, and shows no typing. The pulse ends with it:
  * clients drop typing when the agent replies, or a few seconds after its last
- * pulse. */
+ * pulse. Turns in the same conversation share one pulse in `pulses`, which
+ * lasts until the last of them stops. */
 export function pulseTyping(
   publish: (event: AgentEventTemplate) => Promise<unknown>,
   topLevel: Promise<boolean>,
   event: RelayEvent,
   channelId: string,
+  pulses: Pulses,
 ): () => void {
   let stop: (() => void) | undefined;
   let stopped = false;
@@ -31,23 +37,43 @@ export function pulseTyping(
     (flat) => {
       if (stopped) return;
       const root = threadReference(event)?.rootId ?? event.id;
-      stop = pulse(publish, {
-        kind: 20002,
-        content: "",
-        tags: [
-          ["h", channelId],
-          ...(flat
-            ? []
-            : [
-                ...(root === event.id ? [] : [["e", root, "", "root"]]),
-                ["e", event.id, "", "reply"],
-              ]),
-        ],
-      });
+      const key = `${channelId}:${flat ? "" : root}`;
+      let shared = pulses.get(key);
+      if (!shared) {
+        const created = { turns: 0, stop: () => {} };
+        created.stop = pulse(
+          publish,
+          {
+            kind: 20002,
+            content: "",
+            tags: [
+              ["h", channelId],
+              ...(flat
+                ? []
+                : [
+                    ...(root === event.id ? [] : [["e", root, "", "root"]]),
+                    ["e", event.id, "", "reply"],
+                  ]),
+            ],
+          },
+          // A pulse that gave up is not joined; the next turn starts anew.
+          () => {
+            if (pulses.get(key) === created) pulses.delete(key);
+          },
+        );
+        pulses.set(key, created);
+        shared = created;
+      }
+      const joined = shared;
+      joined.turns++;
+      stop = () => {
+        if (--joined.turns === 0) joined.stop();
+      };
     },
     () => {},
   );
   return () => {
+    if (stopped) return;
     stopped = true;
     stop?.();
   };
@@ -56,11 +82,15 @@ export function pulseTyping(
 function pulse(
   publish: (event: AgentEventTemplate) => Promise<unknown>,
   template: AgentEventTemplate,
+  ended: () => void,
 ) {
   const started = Date.now();
   let sending = false;
   let failed = 0;
-  const stop = () => clearInterval(timer);
+  const stop = () => {
+    clearInterval(timer);
+    ended();
+  };
   const send = () => {
     if (Date.now() - started >= LONGEST_MS) return stop();
     // A slow community gets the next pulse once this one is answered.

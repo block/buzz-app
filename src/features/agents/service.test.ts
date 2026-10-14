@@ -658,6 +658,28 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it("shows no typing for a mention its runtime ignores", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.());
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  await vi.advanceTimersByTimeAsync(9_000);
+  expect(await published(native, 20002)).toEqual([]);
+});
+
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

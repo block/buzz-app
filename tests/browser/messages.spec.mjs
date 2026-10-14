@@ -109,7 +109,7 @@ test("media review stage contains portrait video and image media", async ({
 
 // Browser-only: scoped tokens and inherited aliases resolve at different owners.
 // Exercise the production viewer opened from a light host, not a styled stand-in.
-test("dark media review controls keep local colors when opened from light mode", async ({
+test("media review chrome follows host colors while stage controls stay dark", async ({
   page,
 }) => {
   await withMessagesFixture(page, async () => {
@@ -127,29 +127,43 @@ test("dark media review controls keep local colors when opened from light mode",
     const comments = dialog.getByRole("button", {
       name: /^(Show|Hide) comments$/,
     });
-    await expect(dialog).toHaveAttribute("data-color-mode", "dark");
+    const stage = dialog.locator("[data-review-stage]");
+    const zoom = stage.getByRole("button", { name: "Zoom in", exact: true });
+    await expect(stage).toHaveAttribute("data-color-mode", "dark");
     await page.mouse.move(0, 0);
     for (const button of [close, comments]) {
-      await expect(button).toHaveCSS("color", "rgb(255, 255, 255)");
+      await expect(button).toHaveCSS("color", "rgb(15, 15, 15)");
       await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     }
-    await comments.hover();
-    await expect(comments).toHaveCSS("background-color", "rgb(46, 46, 46)");
+    await expect(zoom).toHaveCSS("color", "rgb(255, 255, 255)");
+    await stage.getByRole("group", { name: "Image gallery" }).hover({
+      position: { x: 8, y: 8 },
+    });
+    await zoom.hover();
+    await expect(zoom).toHaveCSS("background-color", "rgb(46, 46, 46)");
     await page.mouse.down();
     try {
-      await expect(comments).toHaveCSS("background-color", "rgb(51, 51, 51)");
+      await expect(zoom).toHaveCSS("background-color", "rgb(51, 51, 51)");
     } finally {
-      // Inspect :active without also starting the separate sidebar animation.
+      // Inspect :active without also changing the image zoom.
       await page.mouse.move(0, 0);
       await page.mouse.up();
     }
-    // A live host-theme change must not retint the still-open dark viewer.
+    // Live host changes retint chrome while the media stage stays dark.
     for (const mode of ["dark", "light"]) {
       await page.evaluate((mode) => {
+        document.documentElement.classList.toggle("dark", mode === "dark");
         document.documentElement.dataset.colorMode = mode;
       }, mode);
       await expect(close).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await expect(close).toHaveCSS("color", "rgb(255, 255, 255)");
+      for (const button of [close, comments]) {
+        await expect(button).toHaveCSS(
+          "color",
+          mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
+        );
+      }
+      await expect(stage).toHaveCSS("background-color", "rgb(0, 0, 0)");
+      await expect(zoom).toHaveCSS("color", "rgb(255, 255, 255)");
     }
     await close.click();
     await expect(dialog).toBeHidden();
@@ -435,8 +449,17 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       "data-avatar-shape",
       "squircle",
     );
-    const threadHumanAvatar = history
+    const threadRoot = history
       .getByText("First root", { exact: true })
+      .locator("xpath=ancestor::*[@data-message-id][1]");
+    await expect(threadRoot.locator("[data-layout]")).toHaveAttribute(
+      "data-stack-next",
+      "true",
+    );
+    await expect(threadRoot.locator("[data-avatar-shape]")).toHaveCount(0);
+    // The human avatar belongs to the final row of the same-author group.
+    const threadHumanAvatar = history
+      .getByRole("heading", { name: "Markdown reply", level: 2 })
       .locator("xpath=ancestor::*[@data-message-id][1]")
       .locator("[data-avatar-shape]")
       .first();
@@ -563,7 +586,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await stopObserving.dispose();
     }
     await history.evaluate((element) => {
-      for (const selector of ["pre", "table"]) {
+      for (const selector of ["pre code", "table"]) {
         const item = element.querySelector(selector);
         if (!(item instanceof HTMLElement))
           throw new Error(`Missing ${selector}`);

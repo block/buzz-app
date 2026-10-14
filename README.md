@@ -342,6 +342,8 @@ controls are included. Keep Buzz running for existing agents to answer selected
 - [Contextual identity names: cross-client spec and fixtures](src/bundled/identity-naming/README.md)
 - [Mention rules: cross-client spec and fixtures](src/bundled/mentions/README.md)
 - [Contributing](docs/contributing.md)
+- [Buzz feedback community](https://feedback.communities.buzz.xyz)
+- [@buzzdotxyz on X](https://x.com/buzzdotxyz)
 - [Project leads](CODEOWNERS)
 - [Governance](GOVERNANCE.md)
 - [Apache-2.0 license](LICENSE)

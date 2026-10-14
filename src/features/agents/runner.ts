@@ -16,6 +16,7 @@ import { threadReference } from "../relay/thread-reference";
 import type { RelayEvent } from "../relay/events";
 import { Lanes } from "../agent-harness/lanes";
 import { wake } from "../agent-harness/wakes";
+import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import {
@@ -661,7 +662,9 @@ export class AgentRunners {
             trigger,
             () => lanes === runner.lanes && delivery.current(),
             (key, prompt) =>
-              runOnce({ delivery, key, signal: lifetime, prompt }),
+              standalone(lifetime, (signal) =>
+                runOnce({ delivery, key, signal, prompt }),
+              ),
             type.title,
           ),
         );
@@ -849,5 +852,29 @@ export class AgentRunners {
     const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;
+  }
+}
+
+/** Runs a standalone turn with a signal that also aborts
+ * STANDALONE_DEADLINE_MS after it starts, so the deadline covers the
+ * harness's readiness wait as well as the turn. */
+async function standalone<T>(
+  lifetime: AbortSignal,
+  turn: (signal: AbortSignal) => Promise<T>,
+) {
+  const deadline = new AbortController();
+  const timer = setTimeout(
+    () =>
+      deadline.abort(
+        new Error(
+          `The turn ran past its ${STANDALONE_DEADLINE_MS / 1000}s deadline and was stopped`,
+        ),
+      ),
+    STANDALONE_DEADLINE_MS,
+  );
+  try {
+    return await turn(AbortSignal.any([lifetime, deadline.signal]));
+  } finally {
+    clearTimeout(timer);
   }
 }

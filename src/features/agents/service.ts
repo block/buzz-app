@@ -253,8 +253,11 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
   delivery: Delivery<Config>;
   /** Names the turn, for status views. */
   key: string;
-  /** Aborts when the agent is removed or its type replaced. Unlike the
-   * delivery's signal, it has no deadline: the turn may wait in its lane. */
+  /** Aborts when the agent is removed, its type is replaced, or
+   * STANDALONE_DEADLINE_MS after the turn starts (agent-harness/standalone).
+   * Unlike the delivery's signal, it does not count time spent waiting in
+   * the lane. A harness waits for readiness under it and stops its turn when
+   * it aborts. */
   signal: AbortSignal;
   /** The turn's whole prompt, asked once the harness is ready to start it.
    * Undefined means it is no longer wanted, so no turn starts. */
@@ -376,8 +379,8 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
-  /** Runs a standalone turn and settles when it ends, stopping it after
-   * STANDALONE_DEADLINE_MS (agent-harness/standalone). With it, the host runs watches and timers as
+  /** Runs a standalone turn and settles when it ends, stopping it when
+   * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */

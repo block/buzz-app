@@ -63,7 +63,8 @@ A mention in a chat filed in the owner's Me is one conversation whatever the
 scope: the agent continues the channel's session and posts at its top level, and
 its tools refuse a reply into a thread there. A turn keeps the routing it started
 with, so a mention after the chat is shared waits for it and then threads as
-usual. Watches keep their own routing.
+usual. Watch and timer turns have no default destination: their `send` must
+name a channel.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
 disconnecting from its community interrupts its turns and asks Codex to end

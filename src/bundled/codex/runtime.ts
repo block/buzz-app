@@ -18,7 +18,6 @@ import {
   callSessionTool,
   turnNote,
 } from "../../buzz-mcp/session-tools";
-import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 import {
   config,
   defaults,
@@ -54,8 +53,6 @@ type Request = {
   conversation: Conversation;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
-  /** The Buzz tools' note for the end of its turn, as of its delivery. */
-  note: string | undefined;
   /** The agent's team sections, if it is on a team. */
   team: string;
   /** The model and effort the owner picked for this turn. */
@@ -71,11 +68,7 @@ type Request = {
 };
 /** `at` is when the binding last started a turn; bindings saved before it
  * existed have none. */
-type Saved = {
-  threadId: string;
-  workspace: string;
-  at?: number;
-};
+type Saved = { threadId: string; workspace: string; at?: number };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -105,6 +98,8 @@ type Once = {
   workspace: string;
   agent: AgentHandle;
   scope: string;
+  /** Settles once the turn has ended and let go of its thread. */
+  released: Promise<void>;
 };
 type Lane = {
   tail: Promise<void>;
@@ -288,11 +283,12 @@ export class CodexRuntime {
    * again waits rather than resuming a thread that is still letting go. */
   private stop(server: Server, pubkey: string, entry: Entry) {
     const stopped = (async () => {
-      await Promise.all(
-        [...entry.lanes.values()].map((lane) =>
+      await Promise.all([
+        ...[...entry.lanes.values()].map((lane) =>
           lane.tail.catch(() => undefined),
         ),
-      );
+        ...[...entry.onces].map((once) => once.released),
+      ]);
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
           if (this.server !== server) return;
@@ -442,8 +438,9 @@ export class CodexRuntime {
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
-    // tool change starts fresh. v5 added channel and member management.
-    return `buzz.codex.sessions.v5:${scope}:${pubkey}`;
+    // tool change starts fresh. v5 added channel and member management; v6
+    // added the shared session tools.
+    return `buzz.codex.sessions.v6:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -519,7 +516,6 @@ export class CodexRuntime {
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
       },
-      note: turnNote(agent),
       team: delivery.team ?? "",
       answered,
       failActivity,
@@ -584,7 +580,7 @@ export class CodexRuntime {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${turnInput(request.event, request.conversation, text, true, request.note)}`,
+              `${context}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
             ),
           });
           active.reply = request;
@@ -620,12 +616,13 @@ export class CodexRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's: a new
    * ephemeral thread that joins no conversation and is not saved, stopped
-   * after STANDALONE_DEADLINE_MS. Asks for its prompt once the thread can
+   * when the turn's signal aborts. Asks for its prompt once the thread can
    * start, and starts none when the turn is no longer wanted. A failure is
    * logged, not posted. */
   async runOnce({
     delivery,
     key,
+    signal: turnSignal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent } = delivery;
@@ -646,24 +643,18 @@ export class CodexRuntime {
       };
     await entry.after.catch(() => undefined);
     const server = this.open();
-    const turnAbort = new AbortController();
-    const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
+    const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
+    let release!: () => void;
     const once: Once = {
       finished: false,
       signal,
       workspace: settings.workspace,
       agent,
       scope,
+      released: new Promise((resolve) => {
+        release = resolve;
+      }),
     };
-    const deadline = setTimeout(
-      () =>
-        turnAbort.abort(
-          new Error(
-            `The turn ran past its ${Math.round(STANDALONE_DEADLINE_MS / 1000)}s deadline and was stopped`,
-          ),
-        ),
-      STANDALONE_DEADLINE_MS,
-    );
     const followed = follow(server.rpc, signal, once);
     entry.onces.add(once);
     try {
@@ -722,9 +713,7 @@ export class CodexRuntime {
       return { ok: false, error: message(error) };
     } finally {
       once.finished = true;
-      clearTimeout(deadline);
       followed.stop();
-      entry.onces.delete(once);
       const { threadId } = once;
       // Nothing resumes the thread, so the shells it left are ended now.
       if (threadId && server.threads.get(threadId) === agent.pubkey) {
@@ -734,6 +723,8 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId })
           .catch(() => undefined);
       }
+      entry.onces.delete(once);
+      release();
     }
   }
 
@@ -1119,7 +1110,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${turnInput(request.event, request.conversation, text, false, request.note)}`,
+          `${context}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
         ),
         model,
         effort,

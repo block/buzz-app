@@ -1752,7 +1752,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3"])(
+it.each(["v2", "v3", "v5"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();
@@ -2526,7 +2526,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v5:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2563,7 +2563,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v5:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -2674,7 +2674,10 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
   // The observed author is not the owner, and the watch still runs; it
   // answers no one, so `send` has no default destination.
   const send = await f.tool("send", { audience: "everyone", text: "x" });
-  expect(JSON.stringify(send)).not.toContain("No active Buzz tool");
+  expect(send?.result).toMatchObject({
+    success: false,
+    contentItems: [{ text: "channel is required here." }],
+  });
   expect(f.publish).not.toHaveBeenCalled();
   const shown = await f.tool("interest_show", { id: "ops" });
   expect(JSON.stringify(shown?.result)).toContain("Watch ops");
@@ -2757,12 +2760,13 @@ it("drops a waiting wake that is no longer current, and queues wakes per Interes
     });
   };
   let second = true;
+  const secondCurrent = vi.fn(() => second);
   await deliver(() => true);
-  await deliver(() => second);
+  await deliver(secondCurrent);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  // The second waits in the Interest's lane while the first runs ...
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(f.starts()).toHaveLength(1);
+  // The second waits in the Interest's lane while the first runs: a free
+  // lane would have asked it at once whether it is still current ...
+  expect(secondCurrent).not.toHaveBeenCalled();
   // ... and is dropped once its watch is no longer wanted.
   second = false;
   await f.complete(0, "");
@@ -2781,6 +2785,104 @@ it("drops a waiting wake that is no longer current, and queues wakes per Interes
   expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
     1,
   );
+});
+
+const wakeWatch = {
+  type: "event",
+  enabled: true,
+  interest_id: "ops",
+  since: 0,
+  channels: "all",
+  kinds: [9],
+} as const;
+function watchDelivery(
+  f: ReturnType<typeof fixture>,
+  extra: Partial<Delivery> = {},
+): Delivery {
+  f.attention.on = true;
+  f.objects.set("interest/ops", { type: "interest", instructions: "Ops" });
+  f.objects.set("watch/deploys", wakeWatch);
+  const base = f.delivery("watched");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  return {
+    ...base,
+    ...extra,
+    trigger: {
+      type: "watch",
+      event: base.trigger.event,
+      slug: "watch/deploys",
+      watch: wakeWatch,
+    },
+  };
+}
+
+it("ends a queued mention with the attention note current when it starts", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A different model cannot steer, so this one waits for the first turn.
+  await f.runtime.run({ ...f.delivery("@Codex second"), model: "deep-model" });
+  f.attention.on = false;
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const text = (
+    f.starts()[1]?.params as { input: { text: string }[] } | undefined
+  )?.input[0]?.text;
+  expect(text).toMatch(/<attention>\nYour owner has attention off/);
+  await f.complete(1, "SECOND");
+});
+
+it("stops a wake when its turn signal aborts, and lists it as needing attention", async () => {
+  const f = fixture();
+  const turn = new AbortController();
+  f.wake(watchDelivery(f, { signal: turn.signal }));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  turn.abort(new Error("The turn ran past its deadline"));
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "The turn ran past its deadline",
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+  expect(f.runtime.sessions(pubkey)).toEqual([
+    {
+      key: "watch/deploys",
+      status: "Needs attention",
+      detail: "The turn ran past its deadline",
+    },
+  ]);
+});
+
+it("ends a removed agent's wake shells before letting go of its thread", async () => {
+  const f = fixture();
+  const b = second(f);
+  f.wake(watchDelivery(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = (f.starts()[0]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  // Removing the agent aborts its wake; the other agent keeps the server.
+  f.runtime.sync([{ pubkey: b.agent.pubkey } as Agent]);
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+    ok: false,
+  });
+  const methods = f.sent
+    .filter(
+      (wire) =>
+        (wire.params as { threadId?: string } | undefined)?.threadId === thread,
+    )
+    .map((wire) => wire.method);
+  expect(methods).toEqual(
+    expect.arrayContaining([
+      "turn/interrupt",
+      "thread/backgroundTerminals/clean",
+      "thread/backgroundTerminals/list",
+      "thread/unsubscribe",
+    ]),
+  );
+  expect(methods.indexOf("thread/backgroundTerminals/list")).toBeLessThan(
+    methods.indexOf("thread/unsubscribe"),
+  );
+  expect(f.process.end).not.toHaveBeenCalled();
 });
 
 describe("codexStep", () => {

@@ -21,6 +21,7 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
+import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
@@ -1677,6 +1678,48 @@ it("runs a type's wakes as standalone turns, one at a time per Interest, and dro
   await vi.advanceTimersByTimeAsync(1_000);
   expect(turns).toHaveLength(2);
   expect(run).not.toHaveBeenCalled();
+});
+
+it("aborts a standalone turn's signal at its deadline, counted from when it starts", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const reasons: unknown[] = [];
+  let started: number | undefined;
+  const { service } = await setup({
+    // A harness still waiting for readiness when the deadline passes.
+    runOnce: (turn) =>
+      new Promise((resolve) => {
+        started = Date.now();
+        turn.signal.addEventListener("abort", () => {
+          reasons.push(turn.signal.reason);
+          resolve({ ok: false, error: String(turn.signal.reason) });
+        });
+      }),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/held": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "one",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_000,
+        max_occurrences: 1,
+        expires_at: null,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  if (started === undefined) throw new Error("Expected the turn to start");
+  await vi.advanceTimersByTimeAsync(
+    started + STANDALONE_DEADLINE_MS - 1_000 - Date.now(),
+  );
+  expect(reasons).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(reasons).toHaveLength(1);
+  expect(String(reasons[0])).toContain("deadline");
 });
 
 it("keeps at most one occurrence of a timer waiting, and never runs one removed meanwhile", async () => {

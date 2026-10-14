@@ -21,10 +21,21 @@ const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 // Build the bundled goose-acp before Tauri compiles, so a cold build does not
 // count against its dev-server timeout. Local runs skip the size optimizations.
 if (!help) {
+  // Build for the target Tauri is given, as Tauri tells beforeBuildCommand.
+  const at = forwarded.findIndex((arg) => arg === "--target" || arg === "-t");
+  const triple =
+    at === -1
+      ? forwarded.find((arg) => arg.startsWith("--target="))?.slice(9)
+      : forwarded[at + 1];
   const goose = spawnSync(
     process.execPath,
     [fileURLToPath(new URL("./build-goose-acp.mjs", import.meta.url)), "--dev"],
-    { stdio: "inherit" },
+    {
+      stdio: "inherit",
+      env: triple
+        ? { ...process.env, TAURI_ENV_TARGET_TRIPLE: triple }
+        : process.env,
+    },
   );
   if (goose.error) console.error(goose.error.message);
   if (goose.signal) process.kill(process.pid, goose.signal);

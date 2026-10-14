@@ -1,6 +1,7 @@
 // Builds the goose-acp the app bundles from the pin in runtime/goose-acp.json.
 // `--dev` (`just desktop`) uses Cargo's fast dev profile; packaged builds use the
-// pin's small one.
+// pin's small one. Tauri names the target it builds for in
+// TAURI_ENV_TARGET_TRIPLE; without it, goose-acp is built for this machine.
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -19,14 +20,18 @@ const pin = JSON.parse(
   readFileSync(join(root, "runtime/goose-acp.json"), "utf8"),
 );
 const profile = process.argv.includes("--dev") ? pin.devProfile : pin.profile;
-const name = process.platform === "win32" ? "goose-acp.exe" : "goose-acp";
+const triple = process.env.TAURI_ENV_TARGET_TRIPLE || undefined;
+const windows = triple
+  ? triple.includes("windows")
+  : process.platform === "win32";
+const name = windows ? "goose-acp.exe" : "goose-acp";
 // Tauri ships this directory as the app's `bin` resources.
 const destination = join(root, "src-tauri/resources/bin");
 const binary = join(destination, name);
 const target = join(root, "target/goose-acp-build");
 // What the staged binary was built from, kept out of the shipped directory.
 const stampPath = join(target, "staged.json");
-const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile }, null, 2)}\n`;
+const stamp = `${JSON.stringify({ revision: pin.revision, features: pin.features, profile, triple }, null, 2)}\n`;
 
 if (existsSync(binary) && read(stampPath) === stamp) {
   console.log(`goose-acp ready (${pin.revision.slice(0, 9)}, ${profile})`);
@@ -55,12 +60,19 @@ run(
     "--no-default-features",
     "--features",
     pin.features,
+    ...(triple ? ["--target", triple] : []),
   ],
   { ...process.env, CARGO_TARGET_DIR: target },
 );
-// Cargo names the dev profile's output directory "debug".
-const built = join(target, profile === "dev" ? "debug" : profile, name);
-if (process.platform === "darwin") {
+// Cargo names the dev profile's output directory "debug", under the triple
+// when one is given.
+const built = join(
+  target,
+  triple ?? "",
+  profile === "dev" ? "debug" : profile,
+  name,
+);
+if (process.platform === "darwin" && (!triple || triple.includes("apple"))) {
   // The app must run on Macs without Homebrew's libraries.
   const libraries = run("otool", ["-L", built]).split("\n").slice(1);
   for (const line of libraries) {

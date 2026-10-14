@@ -764,7 +764,6 @@ it("does not promote parent-linked sessions", async () => {
 it.each([
   { description: "ordinary channel" },
   { visibility: "public" as const },
-  { ttlSeconds: 600 },
 ])(
   "rejects session metadata changes alongside renaming: %j",
   async (change) => {
@@ -776,7 +775,7 @@ it.each([
     const base = await h.owner.capability.load(id);
     await expect(
       h.owner.capability.save(base, { ...base, name: "New title", ...change }),
-    ).rejects.toThrow("Only the name");
+    ).rejects.toThrow("Only the name and lifetime");
     expect(h.sign).not.toHaveBeenCalled();
   },
 );
@@ -866,3 +865,44 @@ it("refuses a label change without signing when the relay does not advertise NIP
     "for-you",
   ]);
 });
+it.each([
+  [undefined, 600],
+  [600, 86400],
+  [600, undefined],
+  [600, 600],
+] as const)(
+  "standalone lifetime %s → %s retains marker and privacy with changed-only ttl",
+  async (before, after) => {
+    const h = harness();
+    const metadata = (ttl: number | undefined) =>
+      h.record(39000, [
+        ["name", "Work"],
+        ["about", sessionDescription()],
+        ["private"],
+        ["t", "stream"],
+        ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
+      ]);
+    h.set([metadata(before), ...h.events().slice(1)]);
+    const base = await h.owner.capability.load(id);
+    h.publish.mockImplementationOnce(async () =>
+      h.set([metadata(after), ...h.events().slice(1)]),
+    );
+    await h.owner.capability.save(base, { ...base, ttlSeconds: after });
+    const command = h.sign.mock.calls[0]?.[0];
+    assert(command);
+    expect(command.tags).toEqual([
+      ["h", id],
+      ["name", "Work"],
+      ...(before === after
+        ? []
+        : [["ttl", after === undefined ? "" : String(after)]]),
+    ]);
+    expect(() => validateDetailsTemplate(command)).not.toThrow();
+    const saved = await h.owner.capability.load(id);
+    expect(saved).toMatchObject({
+      description: sessionDescription(),
+      visibility: "private",
+    });
+    expect(saved.ttlSeconds).toBe(after);
+  },
+);

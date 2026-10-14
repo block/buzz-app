@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import type { KitEntry, Lineup, Template } from "../channel-templates/model";
 import {
@@ -21,6 +21,9 @@ import {
   type Workspace,
 } from "./workspace";
 import { WorkspaceFields } from "./WorkspaceFields";
+import { useSessionLifetime } from "./SessionLifetime";
+import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import styles from "./WorkspaceSettings.module.css";
 
 type Target =
@@ -31,11 +34,15 @@ export function WorkspaceSettings({
   scope,
   target,
   close,
+  signal,
+  finalFocus,
 }: {
   session: RelaySession;
   scope: string;
   target: Target;
   close(): void;
+  signal?: AbortSignal | undefined;
+  finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
   const [raw, setRaw] = useState<string>();
@@ -45,11 +52,22 @@ export function WorkspaceSettings({
   const [entries, setEntries] = useState<readonly KitEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loadingCanvas, setLoadingCanvas] = useState(false);
   const [error, setError] = useState("");
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const alive = useRef(true);
   const inFlight = useRef(false);
+  const confirmedCanvas = useRef("");
+  const canvasAvailable =
+    target.kind === "section" || !!session.canvas?.available;
+  const lifetime = useSessionLifetime({
+    session,
+    id: target.id,
+    signal,
+    enabled: target.kind === "session" && !!session.channelDetails?.available,
+  });
+  const active = () => alive.current && !signal?.aborted;
   const personal = target.kind === "section" && !!target.personal;
   const key = `${personal ? "me" : "sessions"}:workspace-draft:${target.kind}:${target.id}`;
   const adopt = (canvas: string) => {
@@ -61,21 +79,21 @@ export function WorkspaceSettings({
     }
   };
   const load = async (replace = false) => {
-    if (inFlight.current) return;
+    if (inFlight.current || !canvasAvailable || !active()) return;
     inFlight.current = true;
-    setBusy(true);
+    setLoadingCanvas(true);
     setError("");
     try {
       let content = "",
         revision: string | undefined;
       if (target.kind === "section") {
         await session.channelKit.refresh();
-        if (!alive.current) return;
+        if (!active()) return;
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Section defaults are unavailable.");
         const id = await sectionTemplateId(target.id, personal);
-        if (!alive.current) return;
+        if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
         const entry = kit.entries.find(
           (entry) =>
@@ -96,10 +114,11 @@ export function WorkspaceSettings({
         revision = entry?.eventId;
       } else {
         const head = await session.canvas.read(target.id);
-        if (!alive.current) return;
+        if (!active()) return;
         content = head?.content ?? "";
         revision = head?.id;
       }
+      confirmedCanvas.current = content;
       const saved = replace ? null : readView<unknown>(scope, key, null);
       if (
         saved &&
@@ -123,13 +142,16 @@ export function WorkspaceSettings({
       }
       setLoaded(true);
       setReloadConfirmed(false);
-      if (replace) writeView(scope, key, null);
+      if (replace && !writeView(scope, key, null))
+        throw new Error(
+          "Saved settings loaded, but the old draft couldn’t be cleared on this device.",
+        );
     } catch (reason) {
       if (alive.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       inFlight.current = false;
-      if (alive.current) setBusy(false);
+      if (alive.current) setLoadingCanvas(false);
     }
   };
   // The dialog is keyed by destination; live reads must not rebase a draft.
@@ -142,37 +164,94 @@ export function WorkspaceSettings({
     };
   }, []);
   const save = async () => {
-    if (!alive.current || inFlight.current || !loaded) return;
+    if (!active() || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
+    let canvasConfirmed = false;
     try {
-      const canvas = raw ?? workspaceCanvas(workspace);
-      if (!writeView(scope, key, { canvas, base: base ?? null, lineup }))
+      if (lifetime.checkOnly) {
+        // Checking an uncertain details write never publishes pending Canvas edits.
+        await lifetime.run("check");
+        if (!active()) return;
+        if (
+          (canvasAvailable && !loaded) ||
+          (loaded &&
+            (raw ?? workspaceCanvas(workspace)) !== confirmedCanvas.current)
+        )
+          return;
+      } else {
+        // Validate both drafts before admitting either publication.
+        const canvas = loaded
+          ? raw === undefined
+            ? workspaceCanvas(workspace)
+            : workspaceCanvas({ folders: [], canvas: raw })
+          : undefined;
+        if (lifetime.changed && lifetime.blocked)
+          throw new Error(
+            lifetime.invalid ||
+              "Reload session details before saving lifetime.",
+          );
+        if (
+          canvas !== undefined &&
+          !writeView(scope, key, { canvas, base: base ?? null, lineup })
+        )
+          throw new Error(
+            "Your draft couldn’t be saved on this device. No new changes were sent.",
+          );
+        if (
+          canvas !== undefined &&
+          (target.kind === "section" || canvas !== confirmedCanvas.current)
+        ) {
+          const template: Template = {
+            ...lineup,
+            canvas,
+            type: "template",
+            id: recipeId,
+            name: `${target.name.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
+            description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
+          };
+          if (target.kind === "section")
+            parseKitRecord(
+              { version: 1, community: "", deleted: false, value: template },
+              "",
+            );
+          if (target.kind === "section") {
+            await session.channelKit.save(template, base);
+          } else {
+            const selected = await session.canvas.save(target.id, canvas, base);
+            confirmedCanvas.current = selected.content;
+            setBase(selected.id);
+            canvasConfirmed = true;
+            if (
+              !writeView(scope, key, {
+                canvas: selected.content,
+                base: selected.id,
+                lineup,
+              })
+            )
+              throw new Error(
+                "The confirmed Canvas revision couldn’t be saved on this device. Lifetime was not sent; keep this dialog open to retry.",
+              );
+          }
+        }
+        // Canvas operations remain session-owned; the visit fences only later admission.
+        if (!active()) return;
+        if (lifetime.changed) await lifetime.run("save");
+      }
+      if (!active()) return;
+      if (loaded && !writeView(scope, key, null))
         throw new Error(
-          "Your draft couldn’t be saved on this device. No changes were sent.",
+          target.kind === "section"
+            ? "Section defaults are confirmed, but the saved draft couldn’t be cleared on this device."
+            : "Changes are confirmed, but the saved draft couldn’t be cleared on this device. Retry to finish without resending confirmed changes.",
         );
-      if (target.kind === "section") {
-        const template: Template = {
-          ...lineup,
-          canvas,
-          type: "template",
-          id: recipeId,
-          name: `${target.name.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
-          description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
-        };
-        // Validate the complete encrypted recipe budget before publication.
-        parseKitRecord(
-          { version: 1, community: "", deleted: false, value: template },
-          "",
-        );
-        await session.channelKit.save(template, base);
-      } else await session.canvas.save(target.id, canvas, base);
-      writeView(scope, key, null);
-      if (alive.current) close();
+      close();
     } catch (reason) {
-      if (alive.current)
-        setError(reason instanceof Error ? reason.message : String(reason));
+      if (active())
+        setError(
+          `${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
+        );
     } finally {
       inFlight.current = false;
       if (alive.current) setBusy(false);
@@ -190,24 +269,36 @@ export function WorkspaceSettings({
     <Dialog
       open
       height="stable"
+      footerGap="roomy"
+      finalFocus={finalFocus}
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      preventClose={busy}
+      preventClose={busy || lifetime.busy}
       dismissOnOutsideClick
       title={personal ? "Project settings" : "Session settings"}
       actions={
         <>
-          <Button disabled={busy} onClick={close}>
+          <Button disabled={busy || lifetime.busy} onClick={close}>
             Cancel
           </Button>
           <Button
-            loading={busy}
-            disabled={!loaded}
+            loading={busy || lifetime.busy || loadingCanvas}
+            disabled={
+              loadingCanvas ||
+              !!signal?.aborted ||
+              (!loaded && !lifetime.eligible) ||
+              (lifetime.available &&
+                !lifetime.checkOnly &&
+                (lifetime.changed || !loaded || lifetime.unrelatedAttempt) &&
+                lifetime.blocked)
+            }
             variant="prominent"
             onClick={() => void save()}
           >
-            Save {target.kind === "section" ? "defaults" : "changes"}
+            {lifetime.checkOnly
+              ? "Check save status"
+              : `Save ${target.kind === "section" ? "defaults" : "changes"}`}
           </Button>
         </>
       }
@@ -281,12 +372,55 @@ export function WorkspaceSettings({
             )}
           </>
         )}
-        {!loaded && !busy && (
+        {canvasAvailable && !loaded && !loadingCanvas && (
           <Button onClick={() => void load()}>Retry settings</Button>
+        )}
+        {!canvasAvailable && (
+          <p role="status">Workspace and Canvas are unavailable.</p>
+        )}
+        {lifetime.available && (
+          <>
+            <InlineHeader title="Lifetime" />
+            {lifetime.base ? (
+              <ChannelDurationField
+                temporary={lifetime.ttl !== undefined}
+                ttlSeconds={lifetime.temporaryTtl}
+                disabled={busy || lifetime.busy || lifetime.blocked}
+                error={lifetime.invalid}
+                onChange={lifetime.change}
+              />
+            ) : (
+              !lifetime.error && <p role="status">Loading session details…</p>
+            )}
+            {lifetime.base && !lifetime.eligible && (
+              <p role="status">
+                Only a standalone session you can edit can change its lifetime.
+              </p>
+            )}
+            {lifetime.unrelatedAttempt && (
+              <p role="status">
+                Finish the existing channel details change before editing
+                lifetime.
+              </p>
+            )}
+            {lifetime.error && !error.includes(lifetime.error) && (
+              <p role="alert">{lifetime.error}</p>
+            )}
+            {lifetime.error && !lifetime.checkOnly && (
+              <Button
+                disabled={busy || lifetime.busy || !!signal?.aborted}
+                onClick={() => void lifetime.run("reload").catch(() => {})}
+              >
+                Reload session details
+              </Button>
+            )}
+          </>
         )}
         {error && <p role="alert">{error}</p>}
       </div>
-      {busy && !loaded && <p role="status">Loading settings…</p>}
+      {canvasAvailable && loadingCanvas && !loaded && (
+        <p role="status">Loading settings…</p>
+      )}
     </Dialog>
   );
 }

@@ -1762,3 +1762,29 @@ it("refuses a new labeled channel without signing when the relay does not advert
     owner.dispose();
   }
 });
+
+it("standalone session creation sends validated TTL in its single durable outbox command", () => {
+  const h = setup();
+  const id = "11111111-1111-4111-8111-111111111111";
+  h.service.create(id, "Work", undefined, 600);
+  expect(h.outbox.send).toHaveBeenCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Work"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["ttl", "600"],
+    ],
+  });
+  for (const ttl of [0, -1, 1.5, 2147483648, NaN])
+    expect(() => h.service.create(id, "Work", undefined, ttl)).toThrow(
+      "duration",
+    );
+  expect(() =>
+    h.service.create(id, "Work", "22222222-2222-4222-8222-222222222222", 600),
+  ).toThrow("standalone");
+  expect(h.outbox.send).toHaveBeenCalledOnce();
+});

@@ -14,7 +14,7 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   migration, membership revocation, nested creation or transcript copy.
 - Projects are existing Me groups, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
-  draft, channel ID, Canvas and group defaults in the existing pending-start
+  draft, channel ID, lifetime, Canvas and group defaults in the existing pending-start
   receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
 - New Me conversations add a `personal` line to the session description
@@ -117,6 +117,53 @@ submitted operations, confirmed access or Me placement.
 An interrupted link can be retried by its exact ID in Outbox; confirmed delivery
 can be removed there before sharing to the same destination again. Unknown
 receipts remain protected. Whole-share intent does not survive an app restart.
+
+## Standalone session lifetime
+
+Lifetime is separate from Share. Before first send, **Session settings**
+offers the existing Ongoing/Temporary duration control for standalone drafts:
+Ongoing means no automatic archive; Temporary defaults to seven days and archives
+after the selected duration without activity. Existing custom values are retained.
+Parent-linked sessions do not offer this control.
+
+The validated `ttlSeconds` is frozen in the local first-attempt receipt before
+asynchronous setup begins and sent as the fourth `workSessions.create` argument.
+Retries reuse the saved creation event ID: no second creation or create-then-edit.
+Local settings now store Canvas and lifetime together; old Canvas-only strings
+still load. Invalid stored durations are visible failures, not implicit Ongoing.
+Setup, Me placement, and first-message ordering retain their existing owners.
+
+**Session settings…** in the session header and personal Me row menus opens one
+scrollable dialog, with **Lifetime** below Workspace/Canvas and one **Save changes**
+action. There is no separate lifetime menu or tab. Changed Canvas confirms first,
+then changed lifetime uses fresh signed channel details. Name, marker, privacy,
+history, membership and Me placement remain unchanged. A no-op closes without
+writing. If lifetime fails after Canvas confirms, the dialog keeps both choices
+and retry skips that confirmed Canvas revision. Partial confirmation is explained
+as an error, not presented as two independent normal save states.
+
+Conflicts require explicit Reload while retaining the selected lifetime; an
+unconfirmed save survives modal remount and relabels the single primary action
+**Check save status**, without republishing or implicitly saving other draft
+changes. Workspace drafts keep their existing revision and conflict recovery.
+Section defaults are unchanged; parent-linked sessions have no lifetime section.
+Archived, cached, read-only or unauthorized lifetime writes remain excluded or
+denied by signed details. Canvas/lifetime capabilities can be independently
+unavailable; a failed read never sends an inferred default lifetime.
+
+Closing/retiring a view fences later lifetime admission and late UI completion.
+Canvas remains session-owned: navigation does not guarantee cancellation of its
+internal preparation or already dispatched write. No atomic rollback or composite
+app-restart journal is added. Native GUI, packaged/live-relay and renewed human
+acceptance remain separate gates.
+
+The edit wire command is exact `h,name[,ttl]`: unchanged lifetime omits `ttl`, a
+changed positive canonical decimal (1–2147483647) sets it, and an empty value
+removes it. It omits `about` and visibility entirely. Creation permits positive
+TTL only for an ordinary channel or the exact standalone session marker, never a
+parent-linked marker; empty creation TTL is rejected. Browser and native signing
+and publish guards enforce this syntax independently. The host grammar cannot
+prove parent ancestry; the shared fresh-details owner remains edit authority.
 
 ## Owners and validation limits
 

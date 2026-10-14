@@ -945,6 +945,8 @@ on top of that body padding. Create/Edit channel forms opt into
 other dialog compositions retain their default spacing. Their privacy confirmation
 steps also opt into `footerGap="compact"` for 8px between the final checkbox row
 and the actions; returning to the form restores the normal body-bottom padding.
+Session settings opts into `footerGap="roomy"`, reserving `space-4` above the
+fixed footer actions even when its body is scrolled. Other footer defaults stay unchanged.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and

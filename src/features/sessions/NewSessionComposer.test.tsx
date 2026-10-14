@@ -220,7 +220,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     ),
     "Fresh start",
     undefined,
-    false,
+    undefined,
   );
 });
 
@@ -681,6 +681,9 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     order.push("send");
     return "d".repeat(64);
   });
+  test.workSessions.delivered.mockRejectedValueOnce(
+    new Error("Unknown creation"),
+  );
   const onStarted = vi.fn();
   const user = userEvent.setup();
   const view = (focusRequest: number | AbortSignal = 0) => (
@@ -692,15 +695,17 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
       onStarted={onStarted}
     />
   );
+  writeView("test", "sessions:settings", "Legacy Canvas");
   let mounted = render(view());
   await user.click(screen.getByRole("button", { name: "Session actions" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Session settings…" }),
   );
-  await user.type(
-    await screen.findByRole("textbox", { name: "Canvas" }),
-    "Keep the change small",
-  );
+  const canvas = await screen.findByRole("textbox", { name: "Canvas" });
+  expect(canvas).toHaveValue("Legacy Canvas");
+  await user.clear(canvas);
+  await user.type(canvas, "Keep the change small");
+  await user.click(screen.getByRole("radio", { name: /^Temporary/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   expect(test.workSessions.create).not.toHaveBeenCalled();
   expect(saveCanvas).not.toHaveBeenCalled();
@@ -717,7 +722,20 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
   expect(composer).toHaveFocus();
   await user.type(composer, "Build this");
   await user.keyboard("{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Unknown creation",
+  );
+  expect(test.workSessions.create.mock.calls[0]?.[3]).toBe(604800);
+  mounted.unmount();
+  // A changed local setting must not replace the frozen first-attempt lifetime.
+  writeView("test", "sessions:settings", {
+    canvas: "Other settings",
+    ttlSeconds: 86400,
+  });
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalled());
+  expect(test.workSessions.create).toHaveBeenCalledOnce();
   expect(saveCanvas).toHaveBeenCalledWith(
     expect.any(String),
     "Keep the change small",
@@ -805,12 +823,6 @@ it("retries Me placement on the same created channel before sending, including a
   expect(f.messages.send).not.toHaveBeenCalled();
   const id = f.workSessions.create.mock.calls[0]?.[0];
   if (!id) throw new Error("Missing creation");
-  expect(f.workSessions.create).toHaveBeenCalledWith(
-    id,
-    "Private thought",
-    undefined,
-    true,
-  );
   view.unmount();
   render(
     <NewSessionComposer
@@ -973,64 +985,269 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
   );
 });
 
-it("opens and saves local draft settings in a fresh Me-only group", async () => {
-  vi.stubGlobal("crypto", webcrypto);
-  try {
-    const f = setup();
-    const refreshMe = vi.fn(async () => {});
-    const refreshMessages = vi.fn(async () => {
-      throw new Error("Wrong namespace");
+it.each([false, true])(
+  "opens and saves local draft settings in a fresh Me-only group, failed initial read=%s",
+  async (failedRead) => {
+    vi.stubGlobal("crypto", webcrypto);
+    try {
+      const f = setup();
+      const refreshMe = vi.fn(async () => {});
+      if (failedRead)
+        refreshMe.mockRejectedValueOnce(new Error("Settings unavailable"));
+      const refreshMessages = vi.fn(async () => {
+        throw new Error("Wrong namespace");
+      });
+      Object.assign(f.session, {
+        mePreferences: {
+          writable: true,
+          refresh: refreshMe,
+          snapshot: () => ({
+            status: "ready",
+            data: {
+              sections: [{ id: "me-only", name: "Work" }],
+              assignments: {},
+            },
+          }),
+        },
+        sidebarPreferences: { refresh: refreshMessages },
+        channelKit: {
+          refresh: async () => {},
+          snapshot: () => ({ status: "ready", entries: [] }),
+        },
+      });
+      const view = () => (
+        <NewSessionComposer
+          standalone
+          personal
+          session={f.session}
+          scope="me-settings"
+          sectionId="me-only"
+          onStarted={() => {}}
+        />
+      );
+      const user = userEvent.setup();
+      const mounted = render(view());
+      const open = async () => {
+        await user.click(
+          screen.getByRole("button", { name: "Session actions" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Session settings…" }),
+        );
+      };
+      await open();
+      if (failedRead) {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "Settings unavailable",
+        );
+        expect(screen.queryByText("Loading settings…")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Save changes" }),
+        ).toBeDisabled();
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        refreshMe.mockImplementationOnce(() => held);
+        try {
+          await user.click(
+            screen.getByRole("button", { name: "Retry settings" }),
+          );
+          await waitFor(() => expect(refreshMe).toHaveBeenCalledTimes(2));
+          expect(screen.getByRole("status")).toHaveTextContent(
+            "Loading settings…",
+          );
+          expect(screen.queryByRole("alert")).toBeNull();
+          expect(
+            screen.getByRole("button", { name: "Save changes" }),
+          ).toBeDisabled();
+        } finally {
+          release();
+        }
+      }
+      await user.type(
+        await screen.findByRole("textbox", { name: "Canvas" }),
+        "Keep this Me draft",
+      );
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      expect(refreshMe).toHaveBeenCalledTimes(failedRead ? 2 : 1);
+      expect(refreshMessages).not.toHaveBeenCalled();
+      mounted.unmount();
+      render(view());
+      await open();
+      expect(
+        await screen.findByRole("textbox", { name: "Canvas" }),
+      ).toHaveValue("Keep this Me draft");
+      expect(
+        screen.getByRole("button", { name: "Save changes" }),
+      ).toBeEnabled();
+      expect(f.workSessions.create).not.toHaveBeenCalled();
+      expect(f.messages.send).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each(["draft", "nonnumber draft", "receipt"])(
+  "invalid stored %s lifetime fails visibly without a new create",
+  async (source) => {
+    const h = setup();
+    writeView("test", "sessions:new-draft", "Keep this draft");
+    if (source !== "receipt")
+      writeView("test", "sessions:settings", {
+        canvas: "",
+        ttlSeconds: source === "draft" ? -1 : "broken",
+      });
+    else
+      writeView("test", "sessions:pending", {
+        id: parent.id,
+        text: "Keep this draft",
+        ttlSeconds: -1,
+        creationId: "c".repeat(64),
+      });
+    const user = userEvent.setup();
+    render(
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "duration could not be verified",
+    );
+    expect(h.workSessions.create).not.toHaveBeenCalled();
+    expect(h.workSessions.delivered).not.toHaveBeenCalled();
+  },
+);
+
+it("freezes lifetime even when the first create fails before receiving an event ID", async () => {
+  const h = setup(),
+    user = userEvent.setup(),
+    started = vi.fn();
+  Object.assign(h.session, {
+    canvas: { read: async () => undefined, save: vi.fn(async () => {}) },
+  });
+  h.workSessions.create.mockImplementationOnce(() => {
+    throw new Error("Creation unavailable");
+  });
+  writeView("test", "sessions:settings", { ttlSeconds: 600 });
+  writeView("test", "sessions:new-draft", "Keep this prompt");
+  const view = () => (
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={started}
+    />
+  );
+  const mounted = render(view());
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  );
+  const temporary = await screen.findByRole("radio", { name: /^Temporary/ });
+  await user.click(screen.getByRole("radio", { name: /^Ongoing/ }));
+  await user.click(temporary);
+  expect(temporary).toHaveAccessibleDescription(
+    "Archives after 10 minutes without activity.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Creation unavailable",
+  );
+  mounted.unmount();
+  writeView("test", "sessions:settings", { ttlSeconds: 86400 });
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(h.workSessions.create.mock.calls.map((call) => call[3])).toEqual([
+    600, 600,
+  ]);
+});
+
+it.each([-1, "broken"])(
+  "parent-linked settings hide and clear invalid inherited lifetime %s",
+  async (ttlSeconds) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    Object.assign(h.session, {
+      canvas: { read: async () => undefined, save: vi.fn(async () => {}) },
     });
-    Object.assign(f.session, {
-      mePreferences: {
-        writable: true,
-        refresh: refreshMe,
-        snapshot: () => ({
-          status: "ready",
-          data: {
-            sections: [{ id: "me-only", name: "Work" }],
-            assignments: {},
-          },
-        }),
-      },
-      sidebarPreferences: { refresh: refreshMessages },
-      channelKit: {
-        refresh: async () => {},
-        snapshot: () => ({ status: "ready", entries: [] }),
-      },
+    writeView("test", `sessions:channel:${parent.id}:settings`, {
+      canvas: "Keep parent Canvas",
+      ttlSeconds,
     });
-    const view = () => (
+    writeView(
+      "test",
+      `sessions:channel:${parent.id}:new-draft`,
+      "Keep parent prompt",
+    );
+    render(
       <NewSessionComposer
         standalone
-        personal
-        session={f.session}
-        scope="me-settings"
-        sectionId="me-only"
-        onStarted={() => {}}
-      />
+        session={h.session}
+        parent={parent}
+        scope="test"
+        onStarted={started}
+      />,
     );
-    const user = userEvent.setup();
-    const mounted = render(view());
-    const open = async () => {
-      await user.click(screen.getByRole("button", { name: "Session actions" }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "Chat settings…" }),
-      );
-      return screen.findByRole("textbox", { name: "Canvas" });
-    };
-    await user.type(await open(), "Keep this Me draft");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(refreshMe).toHaveBeenCalledOnce();
-    expect(refreshMessages).not.toHaveBeenCalled();
-    mounted.unmount();
-    render(view());
-    expect(await open()).toHaveValue("Keep this Me draft");
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
-    expect(f.workSessions.create).not.toHaveBeenCalled();
-    expect(f.messages.send).not.toHaveBeenCalled();
-  } finally {
-    vi.unstubAllGlobals();
-  }
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "duration could not be verified",
+    );
+    expect(h.workSessions.create).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Session actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Session settings…" }),
+    );
+    expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
+      "Keep parent Canvas",
+    );
+    expect(screen.queryByRole("radio", { name: /^Ongoing/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /^Temporary/ })).toBeNull();
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(h.workSessions.create.mock.calls[0]?.[3]).toBeUndefined();
+  },
+);
+
+it("invalid stored Canvas is safely editable without dropping a malformed lifetime", async () => {
+  const h = setup(),
+    user = userEvent.setup();
+  writeView("test", "sessions:settings", {
+    canvas: { invalid: true },
+    ttlSeconds: "broken",
+  });
+  writeView("test", "sessions:new-draft", "Keep this prompt");
+  render(
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  );
+  const canvas = await screen.findByRole("textbox", { name: "Canvas" });
+  expect(canvas).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "duration could not be verified",
+  );
+  expect(h.workSessions.create).not.toHaveBeenCalled();
 });
 
 async function projectSetup() {

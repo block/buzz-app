@@ -11,6 +11,7 @@ import {
   canConvertSession,
 } from "../../features/sessions/ConvertSession";
 import { profileActivityViewTarget } from "../../features/profiles/target";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
@@ -352,7 +353,9 @@ function SessionWork({
   const [convertOpen, setConvertOpen] = useState(false);
   const shareAttempts = useSessionShareAttempts(session);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<{
+    visit: AbortSignal | undefined;
+  }>();
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -517,8 +520,12 @@ function SessionWork({
                   Rename
                 </MenuItem>
                 <MenuItem
-                  disabled={!!channel.readOnly || !session.canvas.available}
-                  onClick={() => setSettingsOpen(true)}
+                  disabled={
+                    !!channel.readOnly ||
+                    (!session.canvas.available &&
+                      !canEditSessionLifetime(session, channel))
+                  }
+                  onClick={() => setSettingsOpen({ visit: navigation?.signal })}
                 >
                   <MenuIcon>
                     <GearIcon size={16} />
@@ -576,11 +583,13 @@ function SessionWork({
           )}
           {settingsOpen && (
             <WorkspaceSettings
+              signal={settingsOpen.visit}
+              finalFocus={actionsTrigger}
               key={channel.id}
               session={session}
               scope={scope}
               target={{ kind: "session", id: channel.id, name: channel.name }}
-              close={() => setSettingsOpen(false)}
+              close={() => setSettingsOpen(undefined)}
             />
           )}
           {placement.status === "error" && !placement.transient ? (

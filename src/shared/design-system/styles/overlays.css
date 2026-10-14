@@ -194,6 +194,9 @@
     gap: var(--space-3);
     overflow-x: auto;
   }
+  .buzz-dialog-actions[data-footer-gap="roomy"] {
+    padding-block-start: var(--space-4);
+  }
   /* Each step retains its own sizing while it exits, including when the next
      step is content-sized. The transparent popup only owns their shared grid. */
   /* Opt in for searches and switching views, not content-sized forms. */

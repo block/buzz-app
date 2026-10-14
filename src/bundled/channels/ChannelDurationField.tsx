@@ -57,30 +57,34 @@ export function ChannelDurationField({
           value="ongoing"
           variant="card"
           label="Ongoing"
-          description="Keeps its history until you archive it."
+          description="No automatic archive."
         />
         <div className={styles.temporary}>
           <Radio
             value="temporary"
             variant="card"
-            label="Temporary"
+            label={<span className={styles.temporaryLabel}>Temporary</span>}
             description={
               <>
                 <span className="sr-only">
                   {temporary
-                    ? `Cleans up after ${label} without activity.`
-                    : "Cleans up without activity."}
+                    ? `Archives after ${label} without activity.`
+                    : "Archives without activity."}
                 </span>
                 <span aria-hidden="true">
-                  Cleans up{" "}
+                  Archives{" "}
                   <motion.span
                     className={styles.durationReveal}
                     initial={false}
                     animate={{
                       width: temporary ? "auto" : 0,
                       opacity: temporary ? 1 : 0,
+                      whiteSpace: "nowrap",
+                      transitionEnd: {
+                        whiteSpace: temporary ? "normal" : "nowrap",
+                      },
                     }}
-                    transition={transition}
+                    transition={{ ...transition, whiteSpace: { duration: 0 } }}
                   >
                     <strong className={styles.duration}>after {label}</strong>
                     {"\u00a0"}

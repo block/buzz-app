@@ -185,7 +185,7 @@ it("rejects every truncated mandatory creation-tag prefix", () => {
     ).toBe(false);
 });
 
-it("does not add temporary cleanup to Sessions metadata", () => {
+it("allows standalone lifetime but rejects parent-linked and malformed creation TTL", () => {
   const create = {
     kind: 9007,
     created_at: 1,
@@ -199,7 +199,24 @@ it("does not add temporary cleanup to Sessions metadata", () => {
       ["ttl", "604800"],
     ],
   };
-  expect(validChannelCommand(create)).toBe(false);
+  expect(validChannelCommand(create)).toBe(true);
+  for (const ttl of ["", "0", "01", "+1", "1\n", "2147483648"])
+    expect(
+      validChannelCommand({
+        ...create,
+        tags: [...create.tags.slice(0, -1), ["ttl", ttl]],
+      }),
+    ).toBe(false);
+  expect(
+    validChannelCommand({
+      ...create,
+      tags: create.tags.map((tag) =>
+        tag[0] === "about"
+          ? ["about", `Buzz session (buzz.sessions/v1)\nparent:${id}`]
+          : tag,
+      ),
+    }),
+  ).toBe(false);
 });
 
 it("rejects plugin placement metadata in channel creation", () => {

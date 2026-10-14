@@ -10,6 +10,7 @@ export type PendingStart = {
   invitationId?: string;
   creationId?: string;
   messageId?: string;
+  ttlSeconds?: number | undefined;
   setup?: SessionSetup;
   setupDone?: boolean;
   placementDone?: boolean;

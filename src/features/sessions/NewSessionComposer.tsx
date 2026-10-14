@@ -1,3 +1,4 @@
+import { detailsDraftErrors } from "../relay/channel-details-protocol";
 import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
@@ -83,10 +84,22 @@ export function NewSessionComposer({
     );
     return typeof saved === "string" ? saved : (sectionId ?? "");
   });
-  const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
+  const [draftSettings, setDraftSettings] = useState(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
-    return typeof saved === "string" ? saved : undefined;
+    if (typeof saved === "string") return { canvas: saved };
+    const settings = saved && typeof saved === "object" ? saved : {};
+    return {
+      canvas:
+        "canvas" in settings && typeof settings.canvas === "string"
+          ? settings.canvas
+          : undefined,
+      // Preserve malformed lifetime input for the existing visible validation.
+      ttlSeconds: ("ttlSeconds" in settings
+        ? settings.ttlSeconds
+        : undefined) as number | undefined,
+    };
   });
+  const draftCanvas = draftSettings.canvas;
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focusRequest)
@@ -139,6 +152,7 @@ export function NewSessionComposer({
         }
       : {
           id: channelId,
+          ttlSeconds: draftSettings.ttlSeconds,
           text: composerMarkdown(draft),
           draft,
         };
@@ -156,6 +170,17 @@ export function NewSessionComposer({
       ),
     ];
     try {
+      const lifetimeError = detailsDraftErrors({
+        name: "Session",
+        description: "",
+        visibility: "private",
+        ttlSeconds: current.ttlSeconds,
+      }).lifetime;
+      if (lifetimeError || (parent && current.ttlSeconds !== undefined))
+        throw new Error(
+          lifetimeError ?? "Parent-linked sessions cannot set a lifetime.",
+        );
+      save(current); // Freeze validated lifetime before the first asynchronous start operation.
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
         if (
@@ -228,7 +253,7 @@ export function NewSessionComposer({
           current.id,
           [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
           parent?.id,
-          personal,
+          current.ttlSeconds,
         );
         save({ ...current });
       }
@@ -424,7 +449,7 @@ export function NewSessionComposer({
                     if (project === selectedProject) return;
                     setSelectedProject(project);
                     writeView(scope, `${draftKey}:new-project`, project);
-                    setDraftCanvas(undefined);
+                    setDraftSettings({ canvas: undefined });
                     writeView(scope, `${draftKey}:settings`, null);
                   }}
                   disabled={busy || !!pending}
@@ -526,13 +551,16 @@ export function NewSessionComposer({
           session={session}
           sectionId={selectedProject || undefined}
           canvas={draftCanvas}
+          ttlSeconds={draftSettings.ttlSeconds}
+          parentLinked={!!parent}
           close={() => setSettingsOpen(false)}
-          save={(canvas) => {
-            if (!writeView(scope, `${draftKey}:settings`, canvas))
+          save={(canvas, ttlSeconds) => {
+            const next = { canvas, ttlSeconds };
+            if (!writeView(scope, `${draftKey}:settings`, next))
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",
               );
-            setDraftCanvas(canvas);
+            setDraftSettings(next);
           }}
         />
       )}

@@ -1,3 +1,4 @@
+import { checkDurationLayout } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
 import { openPage } from "./navigation.mjs";
@@ -1119,4 +1120,292 @@ test("Me and Messages share one resizable sidebar width", async ({
   await expect.poll(() => width("Solo sidebar")).toBe(220);
   await page.reload();
   await expect.poll(() => width("Solo sidebar")).toBe(220);
-});
+
+test("session lifetime and draft settings retain host focus and save only explicit lifetime", async ({
+  page,
+  app,
+}) => {
+  const readbacks = [];
+  await page.route("**/api/relay/**/query", async (route) => {
+    const response = await route.fetch();
+    const events = await response.json();
+    readbacks.push(
+      ...events.filter(
+        (event) =>
+          event.kind === 39000 &&
+          event.tags.some(([key, value]) => key === "d" && value === id),
+      ),
+    );
+    await route.fulfill({ response });
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const actions = page.getByRole("button", {
+    name: "Session actions",
+    exact: true,
+  });
+  await actions.click();
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", {
+    name: "Session settings",
+    exact: true,
+  });
+  const canvas = settings.getByRole("textbox", { name: "Canvas", exact: true });
+  await expect(canvas).toBeVisible();
+  await canvas.fill("Keep this local draft");
+  const draftTemporary = settings.getByRole("radio", {
+    name: "Temporary",
+    exact: true,
+  });
+  await settings
+    .locator("label")
+    .filter({
+      has: page.getByRole("radio", { name: "Temporary", exact: true }),
+    })
+    .click();
+  await expect(draftTemporary).toBeChecked();
+  await settings.getByRole("button", { name: "Increase duration" }).click();
+  await expect(draftTemporary).toHaveAccessibleDescription(
+    "Archives after 2 weeks without activity.",
+  );
+  await settings.getByRole("button", { name: "Decrease duration" }).click();
+  await expect(draftTemporary).toHaveAccessibleDescription(
+    "Archives after 7 days without activity.",
+  );
+  const draftSave = settings.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  const inspect = async (dialog, save, prefix) => {
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [390, 950, 1280]) {
+        await page.setViewportSize({ width, height: 850 });
+        await expect(save).toBeInViewport();
+        // The settings footer reserves space above actions even while the body scrolls.
+        await expect
+          .poll(() =>
+            dialog.locator(".buzz-dialog-actions").evaluate((footer) => {
+              const body =
+                footer.previousElementSibling.getBoundingClientRect();
+              const button = footer
+                .querySelector("button")
+                .getBoundingClientRect();
+              return button.top - body.bottom;
+            }),
+          )
+          .toBeGreaterThan(0);
+        const temporaryControl = dialog.getByRole("radio", {
+          name: "Temporary",
+          exact: true,
+        });
+        await temporaryControl.scrollIntoViewIfNeeded();
+        await expect(temporaryControl).toBeInViewport();
+        await expect(
+          dialog.getByRole("heading", { name: "Lifetime", exact: true }),
+        ).toBeVisible();
+        await expect(dialog.getByRole("tab")).toHaveCount(0);
+        await expect(
+          dialog.getByRole("button", {
+            name: /^(Save changes|Check save status)$/,
+          }),
+        ).toHaveCount(1);
+        await expect
+          .poll(() =>
+            dialog.locator(".buzz-dialog-body").evaluate((el) => el.scrollTop),
+          )
+          .toBeGreaterThan(0);
+        await dialog.evaluate((element) =>
+          Promise.allSettled(
+            element
+              .getAnimations({ subtree: true })
+              .filter(
+                (animation) =>
+                  animation.effect?.getComputedTiming().endTime !== Infinity,
+              )
+              .map((animation) => animation.finished),
+          ),
+        );
+        await checkDurationLayout(dialog, { selected: false });
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(`${prefix}-${mode}-ongoing-${width}.png`),
+        });
+        await checkDurationLayout(dialog, { alongside: width >= 950 });
+        await page.screenshot({
+          path: test.info().outputPath(`${prefix}-${mode}-${width}.png`),
+        });
+      }
+    }
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await page.setViewportSize({ width: 390, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      await checkDurationLayout(dialog, { selected: false });
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`${prefix}-${mode}-ongoing-enlarged-390.png`),
+      });
+      await checkDurationLayout(dialog);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-${mode}-enlarged-390.png`),
+      });
+    }
+    // Start at the user's current control: Tab must expose the footer without
+    // programmatic focus/scroll or resetting enlarged text to mask clipping.
+    let tabs = 0;
+    while (
+      tabs < 20 &&
+      !(await save.evaluate((el) => el === document.activeElement))
+    ) {
+      await page.keyboard.press("Tab");
+      tabs += 1;
+    }
+    await expect(save).toBeFocused();
+    await expect(save).toBeInViewport();
+    await expect
+      .poll(() =>
+        save.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return el.contains(
+            document.elementFromPoint(
+              rect.left + rect.width / 2,
+              rect.top + rect.height / 2,
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+    console.log(
+      `${test.info().project.name} ${prefix}: enlarged Save reachable in ${tabs}/20 Tabs; focused, in viewport, center hit-test passed`,
+    );
+    await page.screenshot({
+      path: test.info().outputPath(`${prefix}-enlarged-footer-390.png`),
+    });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    await page.setViewportSize({ width: 1280, height: 850 });
+  };
+  await inspect(settings, draftSave, "draft-lifetime");
+  await expect(draftSave).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(settings).not.toBeVisible();
+  await expect(actions).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await actions.click();
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  await expect(canvas).toHaveValue("Keep this local draft");
+  await expect(draftTemporary).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  await row.click();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  await actions.click();
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  const lifetime = page.getByRole("dialog", {
+    name: "Session settings",
+    exact: true,
+  });
+  const save = lifetime.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  await expect(save).toBeEnabled();
+  await expect(
+    lifetime.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
+  const ongoing = lifetime.getByRole("radio", { name: "Ongoing", exact: true });
+  const temporary = lifetime.getByRole("radio", {
+    name: "Temporary",
+    exact: true,
+  });
+  await ongoing.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(temporary).toBeChecked();
+  await lifetime.getByRole("button", { name: "Increase duration" }).click();
+  await inspect(lifetime, save, "session-lifetime");
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Enter");
+  await expect(lifetime).not.toBeVisible();
+  await expect(actions).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await row.focus();
+  await row.press("Shift+F10");
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  await expect(save).toBeEnabled();
+  await expect(ongoing).toBeChecked();
+  await lifetime
+    .locator("label")
+    .filter({
+      has: page.getByRole("radio", { name: "Temporary", exact: true }),
+    })
+    .click();
+  await lifetime.getByRole("button", { name: "Increase duration" }).click();
+  await save.click();
+  await expect(lifetime).not.toBeVisible();
+  await expect(row).toBeFocused();
+  await expect(row).toBeVisible();
+  expect(app.report.detailsPublications).toHaveLength(1);
+  const event = app.report.detailsPublications[0];
+  expect(verifyEvent(event)).toBe(true);
+  expect(event.kind).toBe(9002);
+  expect(event.tags).toEqual([
+    ["h", id],
+    ["name", "Alpha"],
+    ["ttl", "1209600"],
+  ]);
+  const saved = readbacks.find((entry) =>
+    entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
+  );
+  expect(saved).toBeDefined();
+  expect(verifyEvent(saved)).toBe(true);
+  expect(saved.tags).toContainEqual([
+    "about",
+    "Buzz session (buzz.sessions/v1)",
+  ]);
+  expect(saved.tags).toContainEqual(["private"]);
+  expect(saved.tags).not.toContainEqual(["public"]);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
+  expect(
+    app.report.publications.filter(({ event }) =>
+      [9, 9000, 9007, 30315].includes(event.kind),
+    ),
+  ).toHaveLength(0);
+  await row.focus();
+  await row.press("Shift+F10");
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  await expect(save).toBeEnabled();
+  await expect(temporary).toHaveAccessibleDescription(
+    "Archives after 2 weeks without activity.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(row).toBeFocused();});

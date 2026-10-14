@@ -1,9 +1,14 @@
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
+import { detailsDraftErrors } from "../relay/channel-details-protocol";
+import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
 import { useEffect, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
+import styles from "./WorkspaceSettings.module.css";
 import { WorkspaceFields } from "./WorkspaceFields";
 import {
   emptyWorkspace,
@@ -20,14 +25,28 @@ export function DraftSessionSettings({
   canvas,
   save,
   close,
+  ttlSeconds,
+  parentLinked = false,
 }: {
   session: RelaySession;
   sectionId?: string | undefined;
   personal?: boolean;
   canvas?: string | undefined;
-  save(canvas: string): void;
+  ttlSeconds?: number | undefined;
+  parentLinked?: boolean;
+  save(canvas: string, ttlSeconds?: number): void;
   close(): void;
 }) {
+  const [ttl, setTtl] = useState(ttlSeconds);
+  const [temporaryTtl, setTemporaryTtl] = useState(
+    ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
+  );
+  const lifetimeError = detailsDraftErrors({
+    name: "Session",
+    description: "",
+    visibility: "private",
+    ttlSeconds: ttl,
+  }).lifetime;
   const [workspace, setWorkspace] = useState(emptyWorkspace);
   const [raw, setRaw] = useState<string>();
   const [loaded, setLoaded] = useState(false);
@@ -64,6 +83,7 @@ export function DraftSessionSettings({
     <Dialog
       open
       height="stable"
+      footerGap="roomy"
       title="Session settings"
       onOpenChange={(open) => {
         if (!open) close();
@@ -73,13 +93,14 @@ export function DraftSessionSettings({
           <Button onClick={close}>Cancel</Button>
           <Button
             variant="prominent"
-            disabled={!loaded}
+            disabled={!loaded || (!parentLinked && !!lifetimeError)}
             onClick={() => {
               try {
                 save(
                   raw === undefined
                     ? workspaceCanvas(workspace)
                     : workspaceCanvas({ folders: [], canvas: raw }),
+                  parentLinked ? undefined : ttl,
                 );
                 close();
               } catch (reason) {
@@ -94,27 +115,44 @@ export function DraftSessionSettings({
         </>
       }
     >
-      {loaded ? (
-        raw === undefined ? (
-          <WorkspaceFields value={workspace} onChange={setWorkspace} />
+      <div className={styles.fields}>
+        {loaded ? (
+          raw === undefined ? (
+            <WorkspaceFields value={workspace} onChange={setWorkspace} />
+          ) : (
+            <Field label="Canvas">
+              <Textarea
+                rows={12}
+                value={raw}
+                onChange={(event) => setRaw(event.target.value)}
+              />
+            </Field>
+          )
         ) : (
-          <Field label="Canvas">
-            <Textarea
-              rows={12}
-              value={raw}
-              onChange={(event) => setRaw(event.target.value)}
+          !error && <p role="status">Loading settings…</p>
+        )}
+        {!parentLinked && (
+          <>
+            <InlineHeader title="Lifetime" />
+            <ChannelDurationField
+              temporary={ttl !== undefined}
+              ttlSeconds={temporaryTtl}
+              disabled={!loaded}
+              error={lifetimeError}
+              onChange={(next) => {
+                setTtl(next);
+                if (next !== undefined) setTemporaryTtl(next);
+              }}
             />
-          </Field>
-        )
-      ) : (
-        <p role="status">Loading settings…</p>
-      )}
-      {error && <p role="alert">{error}</p>}
-      {!loaded && error && (
-        <Button onClick={() => setAttempt((value) => value + 1)}>
-          Retry settings
-        </Button>
-      )}
+          </>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {!loaded && error && (
+          <Button onClick={() => setAttempt((value) => value + 1)}>
+            Retry settings
+          </Button>
+        )}
+      </div>
     </Dialog>
   );
 }

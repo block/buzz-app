@@ -73,7 +73,8 @@ export function validChannelCommand(event) {
         (ttl.length === 2 &&
           /^(?:[1-9]\d*)$/.test(ttlValue) &&
           Number(ttlValue) <= 2_147_483_647 &&
-          sessionMetadata(aboutValue) === undefined))
+          String(Number(ttlValue)) === ttlValue &&
+          !sessionMetadata(aboutValue)?.parentId))
     );
   }
   if (event.kind === 9000)

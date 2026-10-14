@@ -1131,11 +1131,13 @@ function ImportAgents({
       setError(message(reason));
     } finally {
       setPending(undefined);
+      onPendingChange(false);
     }
   };
   const portTeam = async (team: OldTeam) => {
     if (!chosen || pending) return;
     setPending(team.id);
+    onPendingChange(true);
     setError("");
     try {
       const result = await agents.portTeam({ id: team.id, type: chosen.key });

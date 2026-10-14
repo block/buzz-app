@@ -956,10 +956,15 @@ const nightShift: OldTeam = {
   ],
 };
 const onImport = () =>
-  expect(screen.getByRole("tab", { name: "Import" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  expect(
+    screen.getByRole("dialog", { name: "Import an agent" }),
+  ).toBeInTheDocument();
+async function openImport(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
   );
+}
 
 it("lists old teams apart from agents, and imports one as a team", async () => {
   const user = userEvent.setup();
@@ -970,7 +975,7 @@ it("lists old teams apart from agents, and imports one as a team", async () => {
     warnings: [],
     here: ["c".repeat(64)],
   });
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
   expect(
     within(teams).getByRole("heading", { name: "Teams" }),
@@ -1005,7 +1010,7 @@ it("counts no member of a team as here when they were imported into another comm
     warnings: [],
     here: [],
   });
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
   expect(within(teams).getByText("2 members")).toBeInTheDocument();
   expect(within(teams).queryByText(/already here/)).not.toBeInTheDocument();
@@ -1036,7 +1041,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
     elsewhere: [],
     foreign: [],
   }));
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await openImport(user);
   await user.click(
     await screen.findByRole("button", { name: "Import team Night Shift" }),
   );
@@ -1048,11 +1053,11 @@ it("keeps a team whose members are all here importable with no agents to list", 
     "aria-selected",
     "true",
   );
-  await openAction(user, "Teams");
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
   expect(screen.getByText("Night Shift")).toBeInTheDocument();
 });
 
-it("stays on Import and names each part of a team import that did not come", async () => {
+it("keeps Import open and names each part of a team import that did not come", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.portable.mockResolvedValue({
@@ -1086,7 +1091,7 @@ it("stays on Import and names each part of a team import that did not come", asy
       elsewhere: ["Cy"],
       foreign: [],
     });
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await openImport(user);
   const importTeam = await screen.findByRole("button", {
     name: "Import team Night Shift",
   });
@@ -1129,7 +1134,7 @@ it("neither counts nor adds a member another account on this device has", async 
     elsewhere: [],
     foreign: ["Cy"],
   });
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
   expect(within(teams).getByText("2 members")).toBeInTheDocument();
   await user.click(

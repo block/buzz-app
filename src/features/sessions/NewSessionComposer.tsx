@@ -35,11 +35,12 @@ export function resetNewChatProject(
   personal: boolean,
   sectionId: string,
 ) {
-  writeView(
-    scope,
-    `${personal ? "me" : "sessions"}:section:${sectionId}:new-project`,
-    null,
-  );
+  const key = `${personal ? "me" : "sessions"}:section:${sectionId}`;
+  // A submitted start owns its frozen project and must remain recoverable.
+  if (readPending(scope, key)) return;
+  const selected = readView<unknown>(scope, `${key}:new-project`, sectionId);
+  if (selected !== sectionId) writeView(scope, `${key}:settings`, null);
+  writeView(scope, `${key}:new-project`, null);
 }
 
 export function NewSessionComposer({

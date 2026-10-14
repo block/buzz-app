@@ -54,6 +54,7 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
       onCreated={vi.fn()}
       session={
         {
+          scope: "https://relay.example.test:viewer",
           channelKit: {
             refresh: async () => {},
             snapshot: () => ({ status: "ready", entries }),
@@ -89,4 +90,28 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledOnce();
   expect(create.mock.calls[0]).toEqual(create.mock.calls[1]);
+});
+
+it("rejects oversized defaults with their real community envelope before creating anything", async () => {
+  const create = vi.fn(async () => {});
+  render(
+    <NewProject
+      create={create}
+      close={vi.fn()}
+      onCreated={vi.fn()}
+      session={{ scope: "https://relay.example.test:viewer" } as RelaySession}
+    />,
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Work" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), {
+    target: { value: "a".repeat(16_095) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("16 KiB");
+  expect(create).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "Name" })).not.toHaveAttribute(
+    "readonly",
+  );
 });

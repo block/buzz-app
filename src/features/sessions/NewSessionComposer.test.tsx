@@ -8,7 +8,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
-import { NewSessionComposer } from "./NewSessionComposer";
+import { NewSessionComposer, resetNewChatProject } from "./NewSessionComposer";
 import { readSelectedAssistant } from "./selected-assistant";
 import { createWorkSessions } from "../relay/work-sessions";
 import { createOutbox } from "../relay/outbox";
@@ -1290,6 +1290,54 @@ async function projectSetup() {
   });
   return { ...f, saveCanvas };
 }
+
+it.each([false, true])(
+  "a project entry clears only changed draft defaults and preserves pending starts (pending=%s)",
+  async (submitted) => {
+    const f = await projectSetup();
+    const scope = `project-reset-${submitted}`;
+    const key = "me:section:work";
+    writeView(scope, `${key}:new-project`, "other");
+    writeView(scope, `${key}:settings`, "other edited instructions");
+    if (submitted)
+      writeView(scope, `${key}:pending`, {
+        id: "22222222-2222-4222-8222-222222222222",
+        text: "Keep me",
+        setup: {
+          sectionId: "other",
+          agents: [],
+          canvas: "other edited instructions",
+        },
+      });
+    resetNewChatProject(scope, true, "work");
+    render(
+      <NewSessionComposer
+        personal
+        standalone
+        sectionId="work"
+        session={f.session}
+        scope={scope}
+        onStarted={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: submitted ? "Project: Other" : "Project: Work",
+      }),
+    ).toBeVisible();
+    if (!submitted) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Session actions" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Chat settings…" }),
+      );
+      expect(
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
+      ).toHaveValue("work instructions");
+    }
+  },
+);
 
 it("inherits the project's defaults for two consecutive new chats", async () => {
   const f = await projectSetup();

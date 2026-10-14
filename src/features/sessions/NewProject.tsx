@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
-import { emptyLineup } from "../channel-templates/model";
+import { emptyLineup, parseKitRecord } from "../channel-templates/model";
+import { splitPartition } from "../relay/partition";
 import type { Resume } from "../channel-templates/capability";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -62,6 +63,16 @@ export function NewProject({
             canvas,
           })
         : undefined;
+      if (template) {
+        const community = splitPartition(session.scope)?.communityOrigin;
+        if (!community)
+          throw new Error("Project defaults require a connected community.");
+        // The real envelope includes the community URL in its 16KiB budget.
+        parseKitRecord(
+          { version: 1, community, deleted: false, value: template },
+          community,
+        );
+      }
       setSubmitted(true);
       await create({ id, name: trimmed });
       if (template) {

@@ -152,9 +152,18 @@ test("an open image gallery follows host appearance while retaining its dark sta
       "rgb(0, 0, 0)",
     );
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.evaluate(() =>
-      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-    );
+    for (let percent = 110; percent <= 200; percent += 10) {
+      await other
+        .getByRole("button", { name: "Increase interface size", exact: true })
+        .click();
+      await expect(
+        other.getByRole("status", { name: "Interface size", exact: true }),
+      ).toHaveText(`${percent}%`);
+    }
+    await expect(
+      dialog.getByRole("heading", { name: "Image", exact: true }),
+    ).toHaveCSS("font-size", "28px");
+    await page.bringToFront();
     await expect(composer).toBeVisible();
     await dialog.screenshot({
       path: testInfo.outputPath("gallery-dark-narrow-enlarged.png"),
@@ -167,6 +176,9 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(comments).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(composer).toHaveCSS("color", "rgb(15, 15, 15)");
     await expect(composer).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "Image", exact: true }),
+    ).toHaveCSS("font-size", "28px");
     await page.bringToFront();
     await dialog.screenshot({
       path: testInfo.outputPath("gallery-light-narrow-enlarged.png"),

@@ -916,13 +916,17 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        // A session is one flat conversation read as a channel, like a DM.
-        const flat = dm || channel.channelType === "session";
+        // A session's top-level timeline is one conversation; its threads
+        // stay separate.
+        const session = channel.channelType === "session";
         const groups = new Map<string, Evidence[]>();
         for (const entry of byChannel.get(channel.id) ?? []) {
           want(entry, dm);
           if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
-          const id = flat ? channel.id : (entry.rootId ?? entry.event.id);
+          const id =
+            dm || (session && !entry.parentId)
+              ? channel.id
+              : (entry.rootId ?? entry.event.id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -945,7 +949,7 @@ export function createUnread({
           const representative = unread[0] ?? latest;
           const replies = entries.filter((entry) => entry.rootId !== undefined);
           const lastReply = replies[replies.length - 1];
-          const target: ReadTarget = flat
+          const target: ReadTarget = dm
             ? { kind: "channel", channelId: channel.id }
             : lastReply?.rootId &&
                 events.has(lastReply.rootId) &&
@@ -960,7 +964,7 @@ export function createUnread({
                   channelId: channel.id,
                   messageId: latest.event.id,
                 };
-          const readThrough: { target: ReadTarget; messageId: string }[] = flat
+          const readThrough: { target: ReadTarget; messageId: string }[] = dm
             ? []
             : entries
                 .filter(
@@ -976,7 +980,7 @@ export function createUnread({
                   },
                   messageId: entry.event.id,
                 }));
-          if (!flat && lastReply?.rootId)
+          if (!dm && lastReply?.rootId)
             readThrough.push({
               target: {
                 kind: "thread",

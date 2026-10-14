@@ -69,7 +69,7 @@ function matches(index: ArchiveIndex, item: InboxItem) {
   ];
 }
 
-// The shared Inbox projection groups DMs and sessions under a channel read target,
+// The shared Inbox projection groups DMs under a channel read target,
 // including top-level messages and replies. Both renew ordinary activity.
 const ordinaryActivity = (item: InboxItem) =>
   item.thread || item.target.kind === "channel";

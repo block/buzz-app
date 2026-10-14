@@ -147,10 +147,11 @@ session retirement fence these projections. Opening Inbox does not mark rows
 read; selecting an unread row does. Canonical Messages keeps its own reading
 behavior.
 
-A DM or flat session channel is one conversation row. Elsewhere, each thread
-root or top-level message is its own row.
+A DM is one conversation row, and so is a session's flat top-level timeline;
+Inbox opens that session row in the channel reader. Elsewhere, including session
+threads, each thread root or top-level message is its own row.
 
-DM and session read clears the channel through its newest retained evidence. Thread read
+DM read clears the channel through its newest retained evidence. Thread read
 advances the thread prefix, including earlier unshown replies, plus individually
 represented top-level mentions and local message marks, but not unrelated
 messages. Participation follows the shared unread owner's direct-parent policy,

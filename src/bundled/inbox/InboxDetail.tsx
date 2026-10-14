@@ -312,7 +312,8 @@ export function InboxDetail({
                 active={false}
               >
                 <MessageManagementStatus />
-                {item.target.kind === "channel" ? (
+                {item.target.kind === "channel" ||
+                (channel?.channelType === "session" && !item.thread) ? (
                   <ChannelPreview
                     session={session}
                     extensions={extensions}

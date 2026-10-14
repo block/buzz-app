@@ -2610,7 +2610,7 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
   stop();
 });
 
-it("inbox groups a flat session channel into one conversation read as a channel, unlike top-level channel posts", async () => {
+it("inbox groups a session's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");
   h.grant("session");
@@ -2627,28 +2627,41 @@ it("inbox groups a flat session channel into one conversation read as a channel,
     mention("session", "First", 20),
     mention("session", "Second", 21),
   ];
+  const root = message(h.viewer, "session", "My thread", 22);
+  const reply = message(h.alice, "session", "Reply", 23, [
+    ["e", root.id, "", "reply"],
+  ]);
   h.emit([
     first,
     second,
-    mention("room", "One", 22),
-    mention("room", "Two", 23),
+    root,
+    reply,
+    mention("room", "One", 24),
+    mention("room", "Two", 25),
   ]);
   const items = h.session.unread.inbox().items;
   expect(items.filter((item) => item.channelId === "room")).toHaveLength(2);
-  expect(items.filter((item) => item.channelId === "session")).toEqual([
+  const session = () =>
+    h.session.unread
+      .inbox()
+      .items.filter((item) => item.channelId === "session");
+  expect(session()).toEqual([
+    expect.objectContaining({
+      id: `session:${root.id}`,
+      target: { kind: "thread", channelId: "session", rootId: root.id },
+      messageIds: [reply.id],
+    }),
     expect.objectContaining({
       id: "session:session",
-      target: { kind: "channel", channelId: "session" },
+      target: { kind: "message", channelId: "session", messageId: second.id },
       messageIds: [first.id, second.id],
-      readThrough: [],
+      thread: false,
       unreadCount: 2,
     }),
   ]);
-  await h.session.unread.prepareChannelRead("session")();
-  expect(
-    h.session.unread.inbox().items.find((item) => item.channelId === "session")
-      ?.unreadCount,
-  ).toBe(0);
+  for (const step of session()[1]?.readThrough ?? [])
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(session().map((item) => item.unreadCount)).toEqual([1, 0]);
 });
 
 it.each([false, true])(

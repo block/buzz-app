@@ -1,312 +1,103 @@
 # Session sharing validation
 
-Behavior and limitations live in [Sharing a live session](sharing.md) and
-[Me and sessions](README.md). This record separates checked snapshots from
-outstanding acceptance; earlier feedback-round counts are not aggregate results.
+Current behavior and limits live in [Sharing a live session](sharing.md).
+These are snapshot-specific results, not cumulative coverage or shipping acceptance.
+PR [#1070](https://github.com/block/buzz-app/pull/1070) is independent of lifetime/settings
+[#1079](https://github.com/block/buzz-app/pull/1079).
 
-## Conversion moves to Messages (2026-10-14, product decision)
+## Current contract and evidence
 
-The author approved a distinct conversion contract after discussing Wes's Me
-reply-policy question: Share stays in Me; explicit Private/Public conversion
-removes the initiating viewer's Me placement and opens the same ID in Messages.
-This supersedes the older retained-Me/no-navigation conversion behavior below.
+Share preserves Me placement and session behavior. Explicit Private/Public conversion
+confirms metadata, removes only the initiating viewer's placement/assignment, then
+opens the same ID in Messages. This supersedes earlier retained-Me conversion.
 
-Checked tree: `8f24a062d` plus this conversion update (final commit in PR).
-
-- The actual signed-details owner confirms metadata before the existing Me
-  preference/recipe/Outbox owner removes the placement and assignment. Real-owner
-  tests preserve other groups/placements and name/labels/lifetime; no membership,
-  transcript, Canvas or key changes. A false loading/error placement is not success.
-- A bounded in-process conversion receipt retains the metadata-confirmed phase.
-  Failed/unconfirmed removal can finish without another kind-9002 command. Fresh
-  selected-head reconciliation after a lost acknowledgment publishes neither
-  operation twice. Existing Outbox uncertainty guards remain intact.
-- Review caught two recovery gaps: lost receipt after restart, and another details
-  consumer confirming an uncertain metadata command. Explicit removal-only **Move
-  to Messages** from a retained ordinary Me row handles the first; fresh exact-draft
-  reconciliation handles the second. Both have regressions with real owners.
-- Verified ordinary type overrides retained private filing in `meChat`, including
-  another agent owner's filing. Claude/Codex tests exercise ordinary threaded
-  replies; existing admitted-turn policy retention remains. Stale Me routes now
-  use ordinary composer flags. No runtime, FOUNDATION or host changes.
-
-| Check | Result | Local time |
+| Checked snapshot | Local checks | Timing |
 | --- | --- | --- |
-| Thirteen complete Vitest owner files | 299 tests | 15.83s wall; 37.05s summed execution |
-| Complete Me/sharing files, Chromium + WebKit | 18 cases | 30.9s wall; 50.9s summed case time; two workers, no retries |
+| `fab1f5599` conversion change | 299 Vitest tests / 13 complete owner files | 15.83s wall; 37.05s summed; slowest file SessionShare 13.89s |
+| `ba62c1553` main integration plus test repair | Page/sidebar files: 13 passed; final page file: 11 passed | 3.19s and 3.41s wall, respectively |
+| `931271405` | Complete Me/share browser files: 18 Chromium/WebKit cases | 32.8s wall; 55.2s summed; slowest 5.4s; two workers, no retries |
+| `931271405` push hooks | Types/related tests, design guards, organization policy | 75.76s client; 4.28s design; no PR-relative Rust inputs |
 
-Vitest owners: ConvertSession and its real-placement integration, share, SessionShare,
-SessionSections, SessionsPage.loading, ChannelsPage.conversion, ChannelHeaderMenu,
-me-preferences, channel-details, me-chat, Claude runtime and Codex runtime. Slowest:
-SessionShare, 13.89s. Slowest browser case: WebKit Share reachability/recovery, 5.6s.
-Separate before/after checks show the new metadata→removal completion and ordinary
-reply-policy assertions fail on the previous production implementation. Browser
-assertions now prove automatic Messages navigation/composer focus, disappearance
-from Me and exact placement write while preserving all retained-history and sharing
-checks. **No browser cases added or removed** in this product-change pass. Partial
-failure, concurrency and restart-style removal matrices live in mounted/service
-tests; UI end-to-end behavior remains in the two existing conversion journeys.
+The main-integration owner run initially passed 584/585 tests. Main had moved
+**Retry Me** to MeSidebar; mounting that real owner repaired the fixture without
+restoring duplicate product UI. Merge review found no remaining integration blocker.
 
-The first integration fixture failed because it attempted details before channel
-admission was ready; it now waits for real list discovery. A row-menu fixture waited
-for Me preferences to settle and scoped its trigger to the exact row rather than
-a same-named group. Concurrent-dialog assertions include the inert underlying form.
-These fixes add lifecycle barriers/selectors, not retries, delays or relaxed behavior.
-Both themes, 390/950/1280px, enlarged-text and pointer/keyboard geometry remain
-covered; dark/narrow and light/intermediate conversion screenshots inspected.
+Hosted CI at `931271405` found the same `me-workspace` personal-recipient failure
+in both engines: Beta was an ordinary stream while the test expected personal
+session controls. Chromium shard 2: 86 passed/1 failed, 386.34s wall and 666.21s
+summed test time; slowest test navigation mute/read 33.57s, file layout 84.25s.
+WebKit shard 2: 78 passed/1 failed, about 7m. Other executed checks, including DCO,
+passed; Windows validation was skipped. This was not classified as a flake.
 
-Independent first-slice review found the two concrete recovery gaps above; the
-follow-up closed both, rated necessity/minimalness 9/10 and independently ran all
-30 tests in the two conversion files. No other concrete blocker was reported.
-Normal hooks, hosted status and final head are recorded in the PR. The running
-checkout is not switched or restarted. Human testing of this behavior, packaged
-native, live relay and live-agent reply acceptance remain separate from synthetic
-browser/host-seam checks. No `buzz-review-completed` attestation or PR merge.
+### CI fixture repair and cleanup
 
-### Latest-main integration for the conversion decision
+On `09550a264` plus this cleanup, all 30 cases in the complete `me-workspace`,
+`me-polish` and `session-sharing` files passed in Chromium/WebKit: 50.68s wall,
+82.24s summed execution, slowest case 5.29s (WebKit Share reachability/recovery).
+Two workers, no retries. The fixture now inherits both actual session IDs; its
+Messages link is scoped to Beta's secondary tab and session composer. The first
+repair run exposed that previously masked ambiguous-selector failure in both
+engines; explicit tab scoping fixed it without changing any recipient assertion.
+No browser case was added/removed. Seven unused direct-promotion type/import lines
+were removed; redundant historical prose was condensed, not production recovery.
+Main `f44102078` merged cleanly. Final hooks, review and hosted status belong to
+the cleanup commit/PR; the earlier CI failure is not claimed green until rerun.
 
-Main advanced to `c49bdff81` during this work. Merge `ba62c1553` resolves three
-conflicts against `fab1f5599`: retain this PR's access-only Share instead of
-resurrecting main's retired combined Share/settings form; preserve incoming
-Projects/Chats, selected assistant, profile Activity and relay-recovery ownership;
-restrict selected-assistant/project controls and chat presentation to actual Me
-sessions, not converted ordinary channels with residual private filing.
+## Regression and test-layer accounting
 
-The merged 15-file owner run passed 584/585 tests; the one failure was an incoming
-`SessionsPage.loading` test expecting Retry Me in the page after main moved it to
-the sidebar owner. The test now mounts the real MeSidebar for that case, retaining
-its retry assertion rather than restoring duplicate product UI. The entire page
-and sidebar files then passed (13 tests, 3.19s); the final page file passed again
-with both retained/removed-placement ordinary-control cases (11 tests, 3.41s).
-Complete merged browser files passed **18 cases in 32.0s**, two workers/no retries.
-Main replaced its own organization journey with the project/assistant journey;
-all sharing/conversion journeys remain. No additional browser cases were added.
-A bounded independent merge review found no integration blocker in the three
-resolutions or caller wiring. Final normal push hooks own types/related tests;
-full upstream native/relay-recovery validation remains hosted CI, not a local scan.
+- Real signed-details → Me preference → Outbox tests cover ordering, exact
+  confirmation, preservation of other groups/labels/lifetime, lost acknowledgments
+  without replay, concurrent forms and stale visits. Loading/error absence is not
+  removal evidence. Metadata-confirmed removal retry never republishes kind 9002.
+- Independent review found two recovery gaps: receipt loss after restart and an
+  external details consumer confirming uncertain metadata. Explicit removal-only
+  **Move to Messages** and fresh exact-draft reconciliation closed them. Follow-up
+  review rated the slice 9/10 and independently passed all 30 conversion tests.
+- Shared `meChat` tests and Claude/Codex runtime tests cover verified ordinary type
+  overriding retained Me filing, while already-admitted turns keep frozen policy.
+- Wes's repairs cover frozen **Submitted audience** disclosure, Messages conversion
+  surviving type replacement, reactive pending-share guards and truthful local
+  history warnings. The mounted audience/lifecycle regressions failed before repair.
+- Browser checks caught replacement-composer autofocus stealing dialog return
+  focus in both engines. The workspace-only fix preserves shared focus behavior.
+  Pending-footer and label-neutral recovery regressions also failed before repair.
+- Relative to main, this PR adds two browser cases per engine: same-ID Me conversion
+  and Messages conversion lifecycle/focus. Native focus, navigation, portal hit
+  testing and geometry justify this layer. Failure matrices stay in mounted/service
+  tests. No browser cases were added or removed for the later conversion decision.
+  The separate lifetime/settings case remains in #1079.
+- Existing journeys retain frozen retries, history reload, link navigation,
+  light/dark 390/950/1280px layouts, enlarged text and keyboard/pointer reachability.
+  Screenshots were inspected. No retries, longer deadlines or weakened assertions
+  were used to hide failures.
 
-## Review repairs (2026-10-14)
+## Historical checkpoints
 
-The author requested repair of Wes's review comments on PR #1070. The independent
-sharing branch merged main `71e2c229e` cleanly in `6076c3f6d`, preserving the
-published commits. This pass repairs the two reported blockers and two should-fix
-comments; the Public/Me recipient and agent-reply policy remains a product question.
+These do not validate later code. Detailed earlier reports remain in Git history.
 
-- Retry renders its original destination snapshot as **Submitted audience**, not
-  a changed current roster. The mounted departure/join/reopen and oversized-audience
-  assertions failed before the repair; exact recipients and link receipts stay intact.
-- Messages owns conversion outside the type-dependent heading. A StrictMode-mounted
-  actual `ChannelsPage` test holds the real details capability's return after signed
-  stream metadata is accepted. Before repair, the form disappears while held; after
-  repair it remains pending and completes once, with the success announcement.
-- A real-browser journey additionally found replacement-composer autofocus stealing
-  the modal's return focus in both engines. The workspace now suppresses that default
-  focus only on an existing conversation's session-to-channel transition. Shared
-  focus behavior is unchanged. Cancel returns to Share; completion returns to the
-  replacement Channel actions button. Retired-visit completion remains fenced.
-- Header/row/footer and already-open conversion controls observe begin/finish in the
-  existing share-attempt owner. Mounted tests begin and finish an attempt from another
-  entry point and verify disabled controls, no write, then recovery. No new reads,
-  timer, polling, durable journal or relay permission behavior.
-- History warnings now say unrecorded people appear under Other access. No eviction
-  or automatic repair was added; the existing full/malformed-state limitation is
-  documented, and the previous record is retained.
-
-Checked production: `6076c3f6d` plus the review-repair diff (final commit in PR).
-Pinned Hermit commands ran the complete affected files:
-
-| Check | Result | Local time |
+| Snapshot/round | Focused result | Local timing |
 | --- | --- | --- |
-| Eleven Vitest owner files | 189 tests | 17.11s wall; 26.64s summed test execution |
-| Complete Me/sharing browser files, Chromium + WebKit | 18 cases | 32.0s wall; 51.6s summed case time; two workers, no retries |
+| `76f1499e0`, independent/footer/label recovery | 176 tests / 8 files; 16 browser cases | 14.81s / 22.47s Vitest wall/summed; 31.2s / 48.4s browser |
+| `8f24a062d`, Wes repairs and main integration | 189 tests / 11 files; 18 browser cases | 17.11s / 26.64s Vitest; 32.6s browser wall |
+| `c98fc1fce`, former combined stack | 509 client tests, 11 native guards, 161 design tests, 66 browser cases | 15.33s client wall; 2.5m browser wall |
 
-The previous eight owner files are joined by `share-attempt`, the existing shallow
-`ChannelsPage` boundary tests, and a new real-React `ChannelsPage.conversion` file.
-Slowest file: SessionShare, 14.07s. Slowest browser case: WebKit Share
-reachability/recovery, 5.4s. These are local fixture measurements, not hosted CI.
-The browser total increases from 16 to 18: one new Messages conversion focus
-journey per engine, justified by native modal-to-replacement-header focus. No case
-was removed; departure/join/retry and held completion matrices remain at the mounted
-layer. Existing screenshots cover both themes, narrow/intermediate/wide widths and
-enlarged text; pending light/intermediate and dark/narrow captures were inspected.
+The historical combined stack included lifetime/settings. Its native guard tests
+were not packaged-GUI acceptance. Unstacking preserved sharing coverage and left
+lifetime/settings in #1079. Earlier human feedback predates the current conversion
+contract and does not certify it.
 
-Main advanced again during validation. The clean merge `3dd9d56cc` includes main
-`01830334f` (notification reveal and nested-reply test fixes). The complete 18-case
-browser files passed again in 32.6s after that merge. The real mounted Messages
-conversion file and incoming `use-message-reveal` file also passed together:
-16 tests, 5.19s wall / 1.46s execution. A final TypeScript check caught a test-only
-Testing Library option copied from Playwright (`exact`); removing that unsupported
-option preserves exact string-name matching. Normal push hooks check final types
-and related tests; no compiler target or assertion was weakened.
+## Commands and remaining gates
 
-Independent read-only repair review found no blocker and assessed the slice 9/10.
-The configured desktop and original sharing/lifetime worktrees remain untouched.
-No live-account grants, native launch/build, routine full scan or PR merge occurred.
-Renewed human confirmation, packaged/native and live-relay acceptance, current hosted
-CI and Wes/code-owner approval remain open. The old review is not self-dismissed,
-and no completed-review attestation is added.
+Use pinned Hermit tools: `pnpm exec vitest run <owner files>` and
+`pnpm test:browser <files> --no-deps --project=chromium --project=webkit`.
+Normal commit/push hooks remain mandatory. No routine `just scan` was run.
+Fixtures use synthetic identities; no configured-account grants were made.
+Raw logs and screenshots remain outside Git.
 
-## Independent sharing PR and pending-footer correction (2026-10-14)
-
-PR #1070 is rebased from the published sharing head `ec2a44b81` onto main
-`f442ed0a5`. Lifetime/settings and optional naming remain separate in PR #1079;
-sharing and conversion do not depend on them. The main-relative diff has no
-lifetime editor, creation/TTL host changes, settings form, or naming implementation.
-Conversion retains only the required session-menu trigger/ref wiring and its focus
-regression. The running sharing checkout remains unchanged.
-
-The initial pending share no longer inserts a disabled **Start over** action.
-One pending-action state retains the original Share/Retry label and recovery
-button set, without changing operation receipts or grant/link admission. Its mounted
-regression failed before repair; the existing held-readback browser journey also
-failed in Chromium and WebKit before repair. No new browser case was needed.
-The repaired journey compares exact footer geometry before/after submission and
-captures pending light/dark 390/950/1280px layouts. The first after-run caught a
-fixture mistake: the new narrow capture left the sidebar collapsed before an
-existing desktop row assertion. Restoring the original viewport fixes the fixture,
-without changing product behavior, assertions, timeouts, or retries.
-
-Main's new channel labels remain outside conversion intent. The explicit conversion
-draft omits labels, so no label tags are sent; independent relabeling cannot be
-overwritten or strand uncertain recovery. Read-only review caught the initial
-label-sensitive recovery error. Both mounted/remounted uncertainty regressions
-failed before this repair and passed afterward. Existing name/visibility/TTL
-conflict checks and readback-only recovery remain.
-
-Checked production tree: `732b855b8` plus the pending-action and label-neutral
-conversion changes (final commit/check links are recorded in the PR).
-
-| Check | Result | Local time |
-| --- | --- | --- |
-| Eight complete affected Vitest owner files | 176 tests | 14.81s wall; 22.47s summed test execution |
-| Complete Me/sharing files, Chromium + WebKit | 16 cases | 31.2s wall; 48.4s summed case time; two workers, no retries |
-| Changed-file Biome | Passed | Pinned tools |
-
-Vitest files: `SessionShare`, `ConvertSession`, `share`, `share-history`,
-`SessionsPage.loading`, `ChannelSidebar`, `channel-details`, and channel-member
-`members`. Browser files: `me-polish.spec.mjs` and `session-sharing.spec.mjs`,
-using `pnpm test:browser <files> --no-deps --project=chromium --project=webkit`.
-Commands use pinned Hermit tools. The slowest owner file was `SessionShare`
-(about 13s); the slowest browser case was WebKit Share reachability/recovery (5.5s).
-Read-only follow-up closed the concrete label-recovery finding; source verification
-rejected a mistaken first-button focus claim because the existing row button
-precedes the indicator. The 9/10 review bar is met for the changed integration.
-Commands use no hook bypasses. Screenshots were inspected. These tests use
-isolated fixture identities and do not touch configured accounts.
-
-The previous combined stack had 18 browser cases in these files. Its one
-lifetime/settings case per engine remains in #1079, not deleted from that work.
-All sharing/conversion cases and their assertions remain here; same-ID conversion
-is the one added case per engine relative to main. Failure matrices remain in
-mounted/service tests. No routine full scan, live write, app restart or merge.
-Human confirmation of the independently rebased build, packaged/native and live
-relay acceptance, current hosted CI and required review remain separate gates.
-A concurrent hosted review of `ec2a44b81` reported frozen-audience display drift
-and Messages-header conversion lifetime/focus issues. They are not repaired or
-closed by this bounded unstack/footer update; the PR remains draft with those
-findings open. Its other permission-entry and copy comments also remain for triage.
-The local follow-up above is a changed-integration review, not whole-feature approval.
-
-## Historical combined-stack evidence
-
-The following results include the earlier combined lifetime/settings work where
-noted. They are not validation of the independent PR snapshot above.
-
-### Checked snapshots
-
-Rebase onto main `49ae64bb0` completed without conflicts. Feature snapshot
-`c98fc1fce` passed the following focused integration checks:
-
-| Check | Result | Local time |
-| --- | --- | --- |
-| Client/host and overlapping-owner Vitest | 509 tests, 22 files | 15.33s wall; 45.25s summed execution |
-| Native channel-write guards | 11 tests | 15.17s build; 0.05s execution |
-| Shared design tests | 161 tests, 25 files | 3.56s wall; 4.64s execution |
-| Design viewer builds | `design:build` passed | Includes design typecheck |
-| Sharing, Me, header and sidebar journeys | 66 Chromium/WebKit cases | 2.5m; two workers, no retries |
-
-Commands used pinned `bin/` tools: `pnpm exec vitest run <owner files>`,
-`cargo test -p buzz-foundation relay::channel_writes --lib --locked`,
-`pnpm design:test`, `pnpm design:build`, and `pnpm test:browser` with the complete
-`session-sharing`, `me-polish`, `channel-header-menu` and `navigation-sidebar`
-files in both engines. Frozen dependency refresh applied main's Base UI patch
-without lockfile changes.
-
-The subsequent menu-ref repair at `a6c87889a` passed 48 affected RTL tests in
-three complete files (14.35s wall; 14.63s execution) and all ten Me journeys
-across both engines (31.4s). Mandatory push hooks passed client types/related
-Vitest, design types/guards, locked workspace all-target Clippy with warnings
-denied, and organization policy. Commit hooks passed applicable formatting,
-icon checks and machine secret scanning; commits carry DCO and agent attribution.
-The diary was condensed from 1,020 to fewer than 100 lines without deleting tests.
-Later agent-row feedback passed 40 owner tests in four complete files (14.32s wall;
-13.83s execution) and 18 Chromium/WebKit cases (44.6s). The initial browser run
-passed 16/18: its old 17-member fallback expectation needed to exclude two agents
-now rendered individually, leaving 15. The mounted solo-agent case failed before
-repair; channel-only/direct-history overlap remains covered. No cases were added
-or removed. Hosted checks remain a separate gate reported in the pull request.
-
-### Selected-channel footer correction
-
-On the stacked `ae5796e94` tree plus this correction, 54 owner tests in five files
-passed (14.65s wall; 16.36s execution), then all 18 Chromium/WebKit Me/sharing
-journeys passed (45.8s, two workers, no retries). The existing Me case demonstrated
-52px action-row separation before the compact **Share** label and trailing group;
-its 390px/2× extension demonstrated 104px separation before non-wrapping grouping.
-Native Tab then exposed nested overflow clipping; bounded group scrolling and a
-physically contained focus-reveal handler passed the unchanged center hit tests.
-Hover/focus tooltip, tooltip Escape, exact held grant/link ordering, both themes
-and default/enlarged layouts passed. No cases added/removed or permissions changed.
-Normal-width actions stay on one row; narrow enlarged controls scroll as one group.
-Screenshots were inspected; human/native/hosted acceptance remains separate.
-
-### Discriminating regressions
-
-Mounted React uses real collaborating owners and held external operations, not
-mocked hooks. The following failures were demonstrated before repair and passed
-afterward:
-
-- Failed conversion read with an uncertain attempt lacked Reload; pending Public
-  intent also displayed Private before reload. Reload now preserves exact intent,
-  and Check status reconciles without signing or publishing again.
-- A validated 101-key destination was rejected before freezing. Retry could adopt
-  changed membership. The attempt now freezes before the existing combined cap;
-  it sends nothing until explicit Start over captures different intent.
-- Draft-settings read failure still showed Loading. Error/Retry now replaces it;
-  held Retry proves pending state, recovery and local draft persistence.
-- Row Share omitted its captured visit. Real SessionSections with held signing
-  published after that visit retired. Forwarding the signal prevents publication
-  and late completion while the sidebar survives navigation.
-- A lifetime save after status reconciliation used stale eligibility following
-  external conversion. Fresh actual-base validation prevents the extra signature.
-- Session actions overwrote Base UI's trigger ref. Keyboard/focus alone did not
-  catch it; the mounted menu's external `aria-labelledby` relationship did.
-  The existing render-element pattern preserves internal and return-focus refs.
-
-Wes derivation, boundary/lifecycle and test-honesty reviews and independent Crack
-Catcher reviews closed their concrete findings. Final bounded integration/ref
-follow-ups scored 9/10 or higher with no remaining finding. Exhausted delegates
-were not treated as approvals. These reviews do not certify shipping acceptance.
-
-### Historical browser coverage and remaining gates
-
-The historical combined feature added two cases per engine: same-ID conversion
-and combined lifetime/settings. The independent split is mapped above. Existing journeys retain routing/history, local
-storage reload, exact link recovery, portalled search, scrolling/hit testing,
-keyboard dismissal and focus restoration. Lower-layer tests own failure matrices.
-Light/dark, 390/950/1280px and enlarged-text captures were inspected; shared
-specimens alone are not host-integration acceptance.
-
-The user approved the earlier running interface. Human confirmation of the rebased
-build/ref repair, packaged/native GUI quit/relaunch, real-relay ACL/Public history,
-cross-account discovery/no-wake behavior, hosted CI and required approvals remain
-outstanding. Native guards prove command enforcement, not packaged GUI behavior.
-Narrow enlarged-text footer edge/focus clipping remains despite Tab/center
-reachability. Main's opaque modal fill supersedes earlier translucent dialog
-captures. No full scan, live-account write, app restart or merge was performed.
-
-Device-local history remains display-only, with no cross-device sync or backfill.
-Naming/named links, direct DM handoff, read-only access roles and synced encrypted
-provenance remain deferred. Local logs and screenshots are preserved outside git
-under `/tmp/session-sharing-pr-20261014/` and the earlier focused-check directories;
-raw logs, session transcripts and screenshots are not committed.
+At the user's request, the `931271405` desktop was compiled and launched on
+2026-10-14, preserving port 13345 and the configured public identity. This is a
+native window using the development broker, not packaged native acceptance.
+Human confirmation of Share/Convert, packaged native persistence/relaunch, live
+relay ACL/Public history, cross-account discovery/no-wake and live-agent reply
+behavior remain separate gates. Current hosted checks and required human review
+must be verified at the latest PR head; prior green checks do not transfer.

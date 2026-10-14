@@ -223,7 +223,6 @@ test("Me leaves an empty pane unavailable until content opens it", async ({
 // Owner-authored inventory supplies choices; signed membership remains authority.
 test.describe("personal recipients", () => {
   test.use({
-    sessionChannels: [id],
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
@@ -297,13 +296,13 @@ test.describe("personal recipients", () => {
       ]);
       // A mention is one-off in Me: the assistant picker carries follow-ups.
       await expect(composer).toHaveText("");
-      // A draft from the ordinary Messages reader may retain a channel member
+      // A draft from the Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");
       await openPage(page, "Messages");
       await page.locator('[data-channel-id="gamma"]').click();
       // Me-owned conversations are intentionally absent from the Messages
-      // sidebar. A real conversation link still opens their ordinary reader.
+      // sidebar. A real conversation link still opens their Messages reader.
       const link = app.append(
         "primary",
         "gamma",
@@ -315,7 +314,11 @@ test.describe("personal recipients", () => {
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", { name: "Open Beta", exact: true })
         .click();
-      await workspace
+      const linkedSession = page.getByRole("tabpanel", {
+        name: "Beta",
+        exact: true,
+      });
+      await linkedSession
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
@@ -325,8 +328,8 @@ test.describe("personal recipients", () => {
           exact: true,
         })
         .click();
-      const ordinaryComposer = page.getByRole("textbox", {
-        name: "Message #Beta",
+      const ordinaryComposer = linkedSession.getByRole("textbox", {
+        name: "Message this session",
         exact: true,
       });
       await ordinaryComposer.press("End");

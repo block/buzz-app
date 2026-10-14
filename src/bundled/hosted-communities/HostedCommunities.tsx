@@ -114,7 +114,7 @@ export function HostedCommunities({
       ]);
       if (at !== generation.current) return null;
       // A setup-needed mapping is the connect state. An upstream unauthorized
-      // response may also be an expired session (dev/builderlab.mjs forwards it).
+      // response may also be an expired session (browser-host/builderlab.mjs forwards it).
       if (
         current.error?.code === "unauthorized" ||
         list.error?.code === "unauthorized"

@@ -11,13 +11,37 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
+import {
+  SessionColumn,
+  SessionHeading,
+} from "../../features/sessions/SessionPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
+import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
 
-/** Each secondary conversation has its own editing, deletion and media-review scope. */
+type ConversationTabProps = {
+  tab: Tab;
+  active: boolean;
+  focusOnMount?: boolean;
+  channel: ChannelSummary;
+  session: RelaySession;
+  scope: string;
+  extensions?: ConversationExtensions | undefined;
+  openLink(target: string, origin?: MessageLinkOrigin): boolean;
+  canOpenLink(target: string): boolean;
+  openThread(messageId: string, rootId: string, intent?: "reply"): void;
+  close(): void;
+  /** The current route's request, only for the thread it addresses. */
+  navigation?: PageNavigation | undefined;
+  onRetryNavigation?: (() => void) | undefined;
+  onResolvedRoot?: ((rootId: string) => void) | undefined;
+  onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
+};
+/** Each secondary conversation retains its own editing and media-review scope. */
 export function ConversationTab({
   tab,
   active,
@@ -30,21 +54,14 @@ export function ConversationTab({
   canOpenLink,
   openThread,
   close,
-}: {
-  tab: Exclude<Tab, { kind: "new" }>;
-  active: boolean;
-  focusOnMount?: boolean;
-  channel: ChannelSummary;
-  session: RelaySession;
-  scope: string;
-  extensions?: ConversationExtensions | undefined;
-  openLink(target: string): boolean;
-  canOpenLink(target: string): boolean;
-  openThread(messageId: string, rootId: string, intent?: "reply"): void;
-  close(): void;
-}) {
+  navigation,
+  onRetryNavigation,
+  onResolvedRoot,
+  onDifferentThread,
+}: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration.
   const restoredTab = useRef(focusOnMount ? undefined : tab);
+  const sessionConversation = channel.channelType === "session";
   const [sent, setSent] = useState<string>();
   const [media, setMedia] = useState<{
     messageId: string;
@@ -75,14 +92,22 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
+        {sessionConversation && <SessionHeading channel={channel} />}
         {tab.kind === "thread" ? (
           <ThreadPanel
+            sessionConversation={sessionConversation}
             active={active}
             session={session}
             scope={scope}
             channelId={channel.id}
             channelName={channel.name}
             messageId={tab.messageId}
+            navigation={navigation}
+            retainThread
+            tabbed
+            onRetryNavigation={onRetryNavigation}
+            onResolvedRoot={onResolvedRoot}
+            onDifferentThread={onDifferentThread}
             replyRequest={
               tab === restoredTab.current ? undefined : tab.replyRequest
             }
@@ -93,7 +118,7 @@ export function ConversationTab({
             onOpenMediaReview={openMedia}
           />
         ) : (
-          <>
+          <SessionColumn enabled={sessionConversation}>
             <ChannelBody
               queries={session}
               scope={scope}
@@ -108,6 +133,8 @@ export function ConversationTab({
               revealMessageId={sent}
             />
             <MessageComposer
+              sessionConversation={sessionConversation}
+              label={sessionConversation ? "Message this session" : undefined}
               session={session}
               scope={scope}
               channelId={channel.id}
@@ -117,7 +144,7 @@ export function ConversationTab({
               canOpenLink={canOpenLink}
               onSend={setSent}
             />
-          </>
+          </SessionColumn>
         )}
         {media && (
           <MediaReviewViewer

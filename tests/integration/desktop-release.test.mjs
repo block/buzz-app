@@ -34,10 +34,47 @@ const assets = {
   ],
   windows: [`Buzz_${version}_x64_unsigned.exe`],
   linux: [`Buzz_${version}_amd64.deb`, `Buzz_${version}_x86_64.AppImage`],
+  signatures: [
+    `Buzz_${version}_x64_unsigned.exe.sig`,
+    `Buzz_${version}_amd64.deb.sig`,
+    `Buzz_${version}_x86_64.AppImage.sig`,
+  ],
 };
 const assembly = jobs.publish.steps.find((step) =>
   step.run?.includes("sha256sum --check"),
 ).run;
+
+test("Tauri and the release signer use microphone entitlements and verify the signed app", () => {
+  const config = JSON.parse(
+    readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"),
+  );
+  const signing = jobs.build.steps.find((step) => step.id === "codesign");
+  const path = `src-tauri/${config.bundle.macOS.entitlements}`;
+  assert.equal(signing.with["entitlements-plist-path"], path);
+  assert.match(
+    readFileSync(join(root, path), "utf8"),
+    /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\s*\/>/,
+  );
+  const verify = jobs.build.steps.find(
+    (step) => step.name === "Verify release DMG",
+  );
+  assert.ok(
+    verify.run.includes(
+      'codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"',
+    ),
+  );
+  assert.ok(
+    verify.run.includes(
+      `test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true ||`,
+    ),
+  );
+  assert.ok(
+    jobs.build.steps.indexOf(verify) <
+      jobs.build.steps.findIndex(
+        (step) => step.name === "Stage release assets and checksums",
+      ),
+  );
+});
 
 function temp(t) {
   const dir = mkdtempSync(join(tmpdir(), "desktop-release-"));
@@ -70,6 +107,10 @@ test("existing platform version generators agree for the same run and attempt", 
     const config = JSON.parse(readFileSync(join(dir, name), "utf8"));
     assert.equal(config.version, version);
     assert.equal(config.bundle.createUpdaterArtifacts, false);
+    assert.deepEqual(config.plugins.updater, {
+      pubkey: "fixture-key",
+      endpoints: ["https://example.com/feed"],
+    });
   }
   assert.equal(readFileSync(env.GITHUB_ENV, "utf8"), `VERSION=${version}\n`);
   assert.equal(readFileSync(env.GITHUB_OUTPUT, "utf8"), `version=${version}\n`);
@@ -81,6 +122,7 @@ function fixture(t) {
     const path = join(dir, "build-assets", platform);
     mkdirSync(path, { recursive: true });
     for (const file of files) writeFileSync(join(path, file), file);
+    if (platform === "signatures") continue;
     writeFileSync(join(path, "SOURCE_COMMIT"), `${sha}\n`);
     writeFileSync(
       join(path, "SHA256SUMS"),
@@ -101,7 +143,7 @@ function fixture(t) {
   };
 }
 
-test("actual assembly command collects all six assets and emits one complete checksum file", (t) => {
+test("actual assembly command collects all nine assets and emits one complete checksum file", (t) => {
   const { dir, run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr);
@@ -123,7 +165,12 @@ test("actual assembly command collects all six assets and emits one complete che
   );
 });
 
-for (const failure of ["corrupt", "mixed version", "missing platform"]) {
+for (const failure of [
+  "corrupt",
+  "mixed version",
+  "missing platform",
+  "missing signature",
+]) {
   test(`actual assembly refuses ${failure} before publication`, (t) => {
     const { dir, run } = fixture(t);
     const windows = join(dir, "build-assets/windows");
@@ -135,6 +182,8 @@ for (const failure of ["corrupt", "mixed version", "missing platform"]) {
       writeFileSync(join(windows, "SHA256SUMS"), `${hash(file)}  ./${older}\n`);
     }
     if (failure === "missing platform") rmSync(windows, { recursive: true });
+    if (failure === "missing signature")
+      rmSync(join(dir, "build-assets/signatures", assets.signatures[2]));
     assert.notEqual(run().status, 0);
   });
 }

@@ -1,67 +1,43 @@
 .root {
+  margin-block-start: var(--space-2);
   min-width: 0;
   flex-shrink: 0;
-  /* Leave 4px before the composer's 12px top margin. */
-  margin: var(--space-3) var(--space-4) calc(-1 * var(--space-2));
-  background: var(--surface-panel);
 }
-.summary {
-  padding: var(--space-2);
-  color: var(--text-subtle);
-  cursor: pointer;
-}
-.summary:focus-visible {
-  outline: 2px solid var(--affordance-accent-prominent);
-  outline-offset: -2px;
-  border-radius: var(--radius-sm);
-}
-.agents {
+.previews {
   display: flex;
   flex-direction: column;
-  max-height: 8.25rem;
-  overflow-y: auto;
-  scrollbar-width: thin;
 }
-.agents > button {
-  width: 100%;
+/* Error dismissal is a sibling action, never a button nested in NavigationItem. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.row > :first-child {
   min-width: 0;
-  flex-shrink: 0;
-  justify-content: flex-start;
-  gap: var(--space-2);
-  text-align: left;
+  flex: 1;
 }
-.name {
-  max-width: 40%;
-  font-weight: var(--type-weight-medium);
+
+/* One glanceable line each; NavigationItem's label truncation applies per line. */
+.preview {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
 }
-.name,
-.status {
+.preview > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.status {
+/* Errors explain what to do; keep their reason readable instead of clipped. */
+.preview[data-error] > * {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.detail {
   color: var(--text-subtle);
-}
-.indicator {
-  margin-left: auto;
-  flex-shrink: 0;
-  color: var(--affordance-accent-prominent);
-}
-@keyframes working-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .indicator[data-working] {
-    animation: working-pulse 1.4s ease-in-out infinite;
-  }
-}
-
-@media (max-width: 40.625rem) {
-  .root {
-    /* The narrow composer has an 8px top margin. */
-    margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
-  }
 }

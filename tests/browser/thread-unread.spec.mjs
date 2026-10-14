@@ -135,9 +135,10 @@ test("thread buttons show observed unread independently, clear only after readin
   // focus. Exercise the real portals while unread activity is still present.
   await alpha.click({ button: "right" });
   const actions = page.getByRole("menu", { name: "Actions for Alpha" });
+  await expect(actions).toBeVisible();
   await expect(
     actions.getByRole("menuitem", { name: "New session" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   // Leave the hover trigger while the context menu still owns focus. Otherwise
   // its delayed hover close can overlap the later keyboard-open assertion.
   await page.mouse.move(0, 0);
@@ -172,7 +173,9 @@ test("thread buttons show observed unread independently, clear only after readin
     page.getByRole("complementary", { name: "Thread", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   await expect(alpha).toBeFocused();
   await page.clock.resume();
@@ -274,7 +277,9 @@ test("thread buttons show observed unread independently, clear only after readin
   // The close transition owns channel width; unread receipt does not mean its
   // resulting Virtua remeasurement and native scrolling have finished.
   await page
-    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
     .click();
   await expect(
     page.locator('[data-panel-dock][data-closing="true"]'),
@@ -419,10 +424,9 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
       )
       .toBe("opened");
     await page
-      .getByRole("button", {
-        name: /^Close (?:thread|Thread tab)$/,
-        exact: true,
-      })
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      )
       .click();
     await expect(alpha).toBeFocused();
   } finally {
@@ -477,7 +481,9 @@ test("opening a fitting thread reads after unchanged-row continuation without an
       panel.getByText("Unread reply 1", { exact: true }),
     ).toBeInViewport();
     await expect(
-      page.getByRole("tab", { name: "Thread", exact: true }),
+      page.locator(
+        '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+      ),
     ).toBeFocused();
     expect(
       await history.evaluate(
@@ -500,7 +506,9 @@ test("opening a fitting thread reads after unchanged-row continuation without an
   await other.click();
   await expect(panel).toHaveCount(1);
   await expect(
-    page.getByRole("tab", { name: "Thread", exact: true }),
+    page.locator(
+      '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+    ),
   ).toBeFocused();
   const reply = panel
     .locator("[data-message-id]")

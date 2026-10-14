@@ -1,5 +1,6 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 import { readView } from "../../shared/view-state";
-import type { AgentControl } from "../agents/control";
+import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
@@ -16,7 +17,10 @@ import type { ReadTransport } from "./transport";
 export type RelaySnapshot = Readonly<{
   status: "disconnected" | "connecting" | "ready" | "error";
   generation: number;
+  /** The persistence partition, `origin:viewer`. */
   scope?: string;
+  /** The community's normalized origin, as `scope` was built from. */
+  origin?: string;
   session: RelaySession;
   viewer?: string;
   error?: string;
@@ -45,8 +49,9 @@ export function provideRelay(
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
   presenceActivity?: PresenceActivity,
   identityNames?: IdentityNames,
-  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
+  localAgents?: LocalAgentSource,
 ) {
   let disposed = false;
   let generation = 0;
@@ -131,6 +136,7 @@ export function provideRelay(
         cached: true,
         generation,
         viewer: resume.viewer,
+        origin: resume.scope,
         scope: relayPartition(resume.scope, resume.viewer),
         session: store.session,
       });
@@ -207,6 +213,7 @@ export function provideRelay(
           const successor = createRelaySession(transport, {
             identityNames,
             agentChoices,
+            localAgents,
             ...(presenceActivity ? { presenceActivity } : {}),
             prepared: true,
             // Keep intent preparation, but do not fetch every unopened channel.
@@ -241,6 +248,7 @@ export function provideRelay(
             status: "ready",
             generation,
             viewer: transport.viewer,
+            origin: transportOrigin(transport),
             scope: transportPartition(transport),
             session: store.session,
           });

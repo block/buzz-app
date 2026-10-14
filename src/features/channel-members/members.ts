@@ -2,16 +2,6 @@ import { archiveHides } from "../relay/identity-archives";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { LocalEvents } from "../relay/outbox";
-import type { AgentControl } from "../agents/control";
-import { sameCommunityAgents } from "../agents/choices";
-
-export class MembershipChanged extends Error {
-  constructor() {
-    super(
-      "Membership changed. This agent is no longer in the channel and was not started. Select Add to invite it again.",
-    );
-  }
-}
 
 const keyPattern = /^[0-9a-f]{64}$/;
 
@@ -25,6 +15,24 @@ export function canAddMembers(session: RelaySession, channel?: ChannelSummary) {
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     (channel.members?.includes(session.viewer) ||
       (channel.readOnly && !channel.private))
+  );
+}
+
+/** A session share adds only to this session. It never opens ordinary Members UI
+ * or inherits parent-channel membership. */
+export function canShareSession(
+  session: RelaySession,
+  channel?: ChannelSummary,
+) {
+  return !!(
+    session.viewer &&
+    session.outbox?.supports(9000) &&
+    channel?.channelType === "session" &&
+    channel.private &&
+    !channel.readOnly &&
+    !channel.cached &&
+    !channel.archived &&
+    channel.members?.includes(session.viewer)
   );
 }
 
@@ -76,6 +84,8 @@ export async function addChannelMember(
   signal: AbortSignal,
   intent: MemberAdditionIntent = {},
   receipts: LocalEvents | undefined = session.outbox,
+  sessionParticipant = false,
+  allowSessionAgents = false,
 ) {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -84,7 +94,11 @@ export async function addChannelMember(
     session.channels.get?.(channelId);
   const check = () => {
     signal.throwIfAborted();
-    if (!canAddMembers(session, channel()))
+    if (
+      !(sessionParticipant
+        ? canShareSession(session, channel())
+        : canAddMembers(session, channel()))
+    )
       throw new Error(
         "This channel cannot add members right now. Refresh and try again.",
       );
@@ -92,6 +106,15 @@ export async function addChannelMember(
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
       );
+    if (
+      sessionParticipant &&
+      !allowSessionAgents &&
+      (session.agentChoices
+        .snapshot()
+        .identities.some((agent) => agent.pubkey === pubkey) ||
+        session.profiles.snapshot().get(pubkey)?.isAgent)
+    )
+      throw new Error("Add agents with the session agent picker instead.");
   };
   check();
   const outbox = session.outbox;
@@ -186,76 +209,4 @@ export async function addChannelMember(
   await outbox.acknowledge(id);
   check();
   intent.confirmed = true;
-}
-
-/** Start only an exact identity managed here, after membership is confirmed. */
-export async function startAddedAgent(
-  control: AgentControl | undefined,
-  session: RelaySession,
-  channelId: string,
-  pubkey: string,
-  signal: AbortSignal,
-  retryStart = false,
-) {
-  signal.throwIfAborted();
-  const wasManaged =
-    control &&
-    sameCommunityAgents(
-      control.snapshot().data?.agents ?? [],
-      session.scope,
-    ).some((agent) => agent.pubkey === pubkey);
-  if (
-    !wasManaged &&
-    !session.agentChoices
-      .snapshot()
-      .identities.some((agent) => agent.pubkey === pubkey && agent.managed)
-  )
-    return;
-  if (!control)
-    throw new Error(
-      "Added to the channel, but local agent controls are unavailable.",
-    );
-  // A failed start may be retried long after its successful membership write.
-  if (retryStart) await session.workSessions.refreshMembership(channelId);
-  signal.throwIfAborted();
-  await control.refresh();
-  signal.throwIfAborted();
-  const state = control.snapshot();
-  const agent =
-    state.status === "ready" &&
-    sameCommunityAgents(state.data?.agents ?? [], session.scope).find(
-      (item) => item.pubkey === pubkey,
-    );
-  const channel =
-    session.channels.list().channels.find((item) => item.id === channelId) ??
-    session.channels.get?.(channelId);
-  if (retryStart && !channel?.members?.includes(pubkey))
-    throw new MembershipChanged();
-  if (!agent || !channel?.members?.includes(pubkey))
-    throw new Error(
-      "Added, but the local agent could not be checked. Retry to start it.",
-    );
-  if (
-    agent.status === "running" ||
-    agent.status === "waiting" ||
-    agent.status === "starting"
-  )
-    return;
-  try {
-    const result = await control.action(agent.id, "start");
-    const started = result.agents.find((item) => item.id === agent.id);
-    if (
-      !started ||
-      (started.status !== "running" &&
-        started.status !== "waiting" &&
-        started.status !== "starting")
-    )
-      throw new Error(
-        started?.error ?? "The agent is not running. Retry to start it.",
-      );
-  } catch (error) {
-    throw new Error(
-      `Added to the channel, but the agent did not start. ${error instanceof Error ? error.message : "Retry to start it."}`,
-    );
-  }
 }

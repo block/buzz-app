@@ -234,21 +234,8 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   overflow: auto;
 }
 
-.addTab {
+.paneToggle {
   display: flex;
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--easing-state);
-}
-.workspace > header:is(:hover, :focus-within) .addTab {
-  opacity: 1;
-}
-@media (hover: none) {
-  .addTab {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .addTab {
-    transition: none;
-  }
+  border-inline-start: 1px solid var(--border-standard);
+  padding-inline-start: var(--space-2);
 }

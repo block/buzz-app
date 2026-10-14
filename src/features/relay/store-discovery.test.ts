@@ -396,7 +396,7 @@ it.each(["cache clear", "disposal"])(
 );
 
 it.each(["revocation", "cache clear"])(
-  "fences a later page after %s and allows a fresh scan",
+  "fences a later page after %s and starts a fresh scan",
   async (action) => {
     const h = setup();
     h.emit([
@@ -408,11 +408,10 @@ it.each(["revocation", "cache clear"])(
     const late = await h.next(39002);
     if (action === "revocation") h.emit([roster(relay, "revoked", [], 11)]);
     else await h.clearCache();
-    await h.settled("deferred");
     expect(late.signal?.aborted).toBe(true);
     const snapshot = h.channels.list();
     late.respond(memberships.slice(500, 501));
-    h.channels.ensureList();
+    if (action === "cache clear") h.channels.ensureList();
     const restarted = await h.next(39002);
     expect(restarted.filters[0]?.before_id).toBeUndefined();
     expect(h.channels.list().channels).toEqual(snapshot.channels);
@@ -631,4 +630,105 @@ it("continues into an older timestamp after a full same-timestamp page", async (
   await h.metadata(501);
   expect(h.channels.list().channels).toHaveLength(501);
   expect(h.channels.list().coverage).toBeUndefined();
+});
+
+it.each([
+  ["between pages", 1],
+  ["before the first page", 0],
+])(
+  "resumes discovery after a live revocation interrupts it %s",
+  async (_, pagesBefore) => {
+    const h = setup();
+    h.emit([roster(relay, "revoked", [viewer.pubkey], 10)]);
+    h.channels.ensureList();
+    for (let page = 0; page < pagesBefore; page++)
+      (await h.next(39002)).respond(memberships.slice(0, 500));
+    const interrupted = await h.next(39002);
+    h.emit([roster(relay, "revoked", [], 11)]);
+    expect(interrupted.signal?.aborted).toBe(true);
+    await h.rosters(501);
+    await h.metadata(501);
+    expect(h.pending).toHaveLength(0);
+    expect(h.channels.list().channels).toHaveLength(501);
+    expect(h.channels.list().coverage).toBeUndefined();
+  },
+);
+
+it("leaves a failed roster page in error without rereading", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  (await h.next(39002)).fail(new Error("Relay read failed (500)"));
+  await h.settled("error");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+});
+
+it("does not reread after dispose interrupts discovery", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  const interrupted = await h.next(39002);
+  h.dispose();
+  expect(interrupted.signal?.aborted).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+});
+
+it("ranks public name matches before the cut and reuses one metadata page while typing", async () => {
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  expect(h.channels.list().status).toBe("ready");
+  const id = (n: number) =>
+    `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  // Eight names that sort before "ops", which an alphabetical cut kept.
+  const page = [
+    ...Array.from({ length: 8 }, (_, n) => open(n, `aa-ops-${n}`)),
+    open(8, "ops"),
+  ];
+  const search = async (query: string, reads: boolean) => {
+    const done = h.channels.searchPublic?.(query);
+    assert.exists(done);
+    if (reads) {
+      const request = await h.next(39000);
+      expect(request.filters).toEqual([
+        { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+      ]);
+      request.respond(page);
+    }
+    const resolve = await h.next(39000);
+    const ids = resolve.filters[0]?.["#d"] ?? [];
+    resolve.respond(
+      page.filter((event) => ids.includes(tag(event, "d") ?? "")),
+    );
+    return { ids, result: await done };
+  };
+  const first = await search("op", true);
+  expect(first.ids).toHaveLength(8);
+  expect(first.ids).toContain(id(8));
+  expect(first.ids).not.toContain(id(7));
+  expect(first.result.channels[0]?.name).toBe("ops");
+  // A remounted caller reads the last answer back while the next search runs.
+  expect(
+    h.channels.matchPublic?.("ops").map((channel) => channel.name),
+  ).toEqual(["ops", ...Array.from({ length: 7 }, (_, n) => `aa-ops-${n}`)]);
+  expect(h.channels.matchPublic?.("ops", { exact: true })).toHaveLength(1);
+  expect(h.channels.matchPublic?.("zzz")).toEqual([]);
+  // The next keystroke filters the same page instead of reading it again.
+  clock += 29_999;
+  const second = await search("ops", false);
+  expect(second.result.channels.map((channel) => channel.name)[0]).toBe("ops");
+  expect(h.pending).toHaveLength(0);
+  // After the reuse window, a new page is read.
+  clock += 1;
+  await search("ops", true);
+  expect(h.pending).toHaveLength(0);
+  // Clearing the cache forgets the last answer.
+  await h.clearCache();
+  expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });

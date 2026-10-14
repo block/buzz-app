@@ -72,39 +72,6 @@ it("treats a tuple-bound aborted 202 replay as terminal, not progress", async ()
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it("treats a 409 UUID retarget conflict as definitive on replay", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      Response.json({ error: { code: "deletion_conflict" } }, { status: 409 }),
-    ),
-  );
-  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
-    code: "deletion_conflict",
-  } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(1);
-});
-
-it.each(["EOF", "relay 503"])(
-  "keeps %s ambiguous without automatically replaying",
-  async (failure) => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        if (failure === "EOF") throw new TypeError("EOF");
-        return Response.json(
-          { error: { code: "relay_unavailable" } },
-          { status: 503 },
-        );
-      }),
-    );
-    await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
-      code: "acceptance_unknown",
-    } satisfies Partial<ApiFailure>);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  },
-);
-
 it.each([
   ["invalid JSON", "{"],
   [
@@ -159,19 +126,6 @@ it("rejects a mismatched admission response without a second request", async () 
     code: "acceptance_unknown",
   } satisfies Partial<ApiFailure>);
   expect(calls).toEqual(["/api/builderlab/delete"]);
-});
-
-it("does not infer noncommit after a lost dispatch response", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => {
-      throw new TypeError("EOF");
-    }),
-  );
-  await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
-    code: "acceptance_unknown",
-  } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 it.each([

@@ -34,6 +34,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./VideoPlayer.module.css";
+import { useMediaElementSource } from "./use-media-element-source";
 
 export type VideoMarker = {
   id: string;
@@ -188,6 +189,7 @@ export function VideoControls({
       <div
         ref={inline ? corners : undefined}
         className={styles.controls}
+        data-video-controls=""
         data-inline={inline || undefined}
         data-playing={playing || undefined}
         data-review-chrome={inline ? undefined : ""}
@@ -440,6 +442,9 @@ export function VideoPlayer({
   const stage = useRef<HTMLDivElement>(null);
   const idle = useMediaControls(stage, source);
   const { handlers: gestures, feedback } = useVideoGestures(videoRef, source);
+  // Callers render their unavailable state instead of a player when
+  // `useMediaElementSource(source).unavailable`.
+  const { src: elementSource } = useMediaElementSource(source);
   return (
     <div
       ref={stage}
@@ -451,7 +456,7 @@ export function VideoPlayer({
         ref={videoRef}
         {...gestures}
         data-review-media=""
-        src={source}
+        src={elementSource}
         poster={poster}
         playsInline
         autoPlay

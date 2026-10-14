@@ -1,342 +1,331 @@
-import { useEffect, useRef, useState } from "react";
-import { Dialog } from "@base-ui/react/dialog";
+// The New agent dialog: one card with the avatar and name, which the app owns,
+// and the chosen type's `Create` view for the rest. The host combines type and
+// model choice in the footer; each type contributes its model-menu rows.
+import { useId, useMemo, useRef, useState } from "react";
 import {
-  agentFailureReason,
-  type AgentControl,
-  type AgentControlState,
-  type CloneSettings,
-  type AgentView,
-} from "../../features/agents/control";
+  CreateCardContext,
+  type CardEditing,
+} from "../../features/agents/create-card";
+import { randomAgentAvatar } from "../../features/agents/avatar-packs";
+import { CustomModelDialog } from "../../features/agents/ModelPicker";
+import type {
+  Agent,
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
+import {
+  CaretDownIcon,
+  CheckIcon,
+  RobotIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AgentSettingsFields } from "./AgentSettingsFields";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
-  agentDraft,
-  agentEdit,
-  harnessKind,
-  type AgentDraft,
-} from "./agent-edit";
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
+import { AgentCreateHeader } from "./AgentCreateHeader";
+import styles from "./AgentsPage.module.css";
 
-/** The Agent defaults harness is copied at creation; the rest is inherited at start. */
-function newAgentDraft(state: AgentControlState): AgentDraft {
-  const defaults = state.data?.defaultSettings;
-  const chosen = state.data?.harnessOptions?.find(
-    (option) =>
-      option.available !== false &&
-      harnessKind(option.command) === (defaults?.harness ?? "buzz-agent"),
-  );
-  const command = chosen?.command ?? "buzz-agent";
-  const inherits = defaults?.harness === "buzz-agent" && !!defaults.provider;
-  return {
-    revision: 0,
-    name: "",
-    systemPrompt: "",
-    sessionPolicy: null,
-    workspace: state.data?.defaultWorkspace ?? "",
-    command,
-    args: JSON.stringify(chosen?.defaultArgs ?? []),
-    model: "",
-    provider:
-      command !== "buzz-agent" ||
-      inherits ||
-      state.data?.agentDefaults?.provider
-        ? ""
-        : (chosen?.providers[0]?.value ?? "databricks_v2"),
-    environment: {},
-  };
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+/** The type's registered mark, or the generic agent mark. */
+export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
+  const Icon = type?.icon ?? RobotIcon;
+  return <Icon size={16} aria-hidden="true" />;
 }
 
-type CreatePhase = "creating" | "starting" | "publishing" | "checking";
+const startingConfig = (type: RegisteredAgentType | undefined) => {
+  try {
+    return type?.defaults().config;
+  } catch {
+    return undefined;
+  }
+};
 
 export function AgentCreateDialog({
-  control,
-  state,
-  destination,
-  owner,
-  source,
-  initialSettings,
+  agents,
+  types,
+  community,
   onClose,
-  onOpenHarnesses,
+  onCreated,
 }: {
-  control: AgentControl;
-  onOpenHarnesses?: (() => void) | undefined;
-  state: AgentControlState;
-  destination: string;
-  owner: string;
-  source?: AgentView;
-  initialSettings?: CloneSettings | undefined;
+  agents: Agents;
+  types: readonly RegisteredAgentType[];
+  community?: string | undefined;
   onClose(): void;
+  onCreated(agent: Agent): void;
 }) {
-  const [requestId] = useState(() => crypto.randomUUID());
-  const [draft, setDraft] = useState<AgentDraft>(() => {
-    const initial = source
-      ? {
-          ...agentDraft(source),
-          name: `${source.name} copy`,
-        }
-      : {
-          ...newAgentDraft(state),
-          name: initialSettings?.name ?? "",
-          systemPrompt: initialSettings?.systemPrompt ?? "",
-        };
-    return { ...initial, environment: { BUZZ_ACP_AGENTS: "10" } };
-  });
+  const [open, setOpen] = useState(true);
+  const [name, setName] = useState("");
+  const [picture, setPicture] = useState(() => randomAgentAvatar().url);
+  const [typeKey, setTypeKey] = useState(types[0]?.key ?? "");
+  const type = types.find((item) => item.key === typeKey) ?? types[0];
+  const [config, setConfig] = useState(() => startingConfig(type));
   const [dirty, setDirty] = useState(false);
-  const [saved, setSaved] = useState<AgentView | null>(null);
-  const [nextStep, setNextStep] = useState<"start" | "profile">("start");
-  const [error, setError] = useState<string>();
-  const [phase, setPhase] = useState<CreatePhase | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const available = !!(
-    destination &&
-    owner &&
-    state.data?.createAvailable &&
-    control.create
-  );
-  const runtimeBlocked =
-    !state.data?.runtimeAvailable && (!saved || nextStep === "start");
-  const busy = phase !== null;
-  const blocked = busy || state.busy || state.status !== "ready";
-  const create = async () => {
-    if (
-      blocked ||
-      runtimeBlocked ||
-      (!saved && (!available || !control.create))
-    )
-      return;
-    setError(undefined);
-    let step: "creating" | "starting" | "publishing" = "creating";
-    let agent = saved;
-    let startFailure: string | null = null;
-    try {
-      if (!agent) {
-        let edit: ReturnType<typeof agentEdit>;
-        try {
-          edit = agentEdit(draft);
-        } catch (problem) {
-          if (mounted.current)
-            setError(
-              problem instanceof Error
-                ? problem.message
-                : "Check the agent settings and try again.",
-            );
-          return;
-        }
-        setPhase("creating");
-        if (!control.create) return;
-        agent = await control.create(requestId, destination, owner, edit);
-      }
-      const created = agent;
-      if (!saved && mounted.current) {
-        setDraft((current) => ({ ...current, environment: {} }));
-        setSaved(agent);
-      }
-
-      if (!saved || nextStep === "start") {
-        const current = control
-          .snapshot()
-          .data?.agents.find((item) => item.id === created.id);
-        if (current?.status !== "running") {
-          step = "starting";
-          if (mounted.current) setPhase(step);
-          const result = await control.action(created.id, "start");
-          const started = result.agents.find((item) => item.id === created.id);
-          if (started?.status !== "running") {
-            startFailure = `${created.name} was created, but couldn't start. ${started?.error ?? "Check its settings, then try Start again."}`;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<CardEditing | null>(null);
+  const [customModel, setCustomModel] = useState<{
+    initialValue: string;
+    onChange(model: string): void;
+  } | null>(null);
+  const [avatarActive, setAvatarActive] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
+  const avatarNavigation = useRef<{ back(): void }>(null);
+  const nameField = useRef<HTMLInputElement>(null);
+  const selectorTrigger = useRef<HTMLButtonElement>(null);
+  const form = useId();
+  const card = useMemo(() => ({ edit: setEditing }), []);
+  const Create = type?.Create;
+  const close = () => setOpen(false);
+  const choose = (key: string) => {
+    if (key === type?.key) return;
+    setTypeKey(key);
+    setConfig(startingConfig(types.find((item) => item.key === key)));
+    setDirty(true);
+  };
+  const chooseModel = (item: RegisteredAgentType, next: unknown) => {
+    setTypeKey(item.key);
+    setConfig(next);
+    setDirty(true);
+  };
+  const modelLabel =
+    type && config !== undefined ? type.createModelLabel?.(config) : undefined;
+  const selectionLabel = modelLabel
+    ? `${type?.title ?? ""} (${modelLabel})`
+    : (type?.title ?? "");
+  const selector =
+    types.length > 1 || type?.CreateModelMenu ? (
+      <MenuRoot>
+        <MenuTrigger
+          render={
+            <Button
+              ref={selectorTrigger}
+              size="compact"
+              variant="quiet"
+              disabled={pending}
+              aria-label={`Agent provider and model: ${selectionLabel}`}
+            >
+              <TypeIcon type={type} />
+              {selectionLabel}
+              <CaretDownIcon size={14} aria-hidden="true" />
+            </Button>
           }
-        }
-        if (!startFailure && mounted.current) setNextStep("profile");
-      }
-
-      const current = control
-        .snapshot()
-        .data?.agents.find((item) => item.id === created.id);
-      if (current?.profilePending !== false) {
-        step = "publishing";
-        if (mounted.current) setPhase(step);
-        if (!control.publishProfile)
-          throw new Error(
-            "Profile setup is unavailable. Rebuild the desktop app.",
-          );
-        await control.publishProfile(created.id);
-      }
-      if (mounted.current) {
-        if (startFailure) setError(startFailure);
-        else onClose();
-      }
-    } catch (problem) {
-      if (mounted.current) setPhase("checking");
-      await control.refresh();
-      if (!mounted.current) return;
-      const detail = agentFailureReason(problem);
-      const reason = detail && ` ${detail}`;
-      const refreshed = control.snapshot();
-      const created = agent;
-      const current = created
-        ? refreshed.data?.agents.find((item) => item.id === created.id)
-        : undefined;
-      if (step === "starting" && current?.status === "running") {
-        setNextStep("profile");
-        setError(undefined);
-      } else if (step === "publishing" && current?.profilePending === false) {
-        if (startFailure) setError(startFailure);
-        else onClose();
-      } else if (step === "creating") {
-        setError(
-          `We couldn't confirm whether the agent was created.${reason} Check the agent list before trying again.`,
-        );
-      } else if (refreshed.status === "ready" && current) {
-        setError(
-          step === "starting"
-            ? `${agent?.name ?? draft.name} was saved, but couldn't start.${reason} Check its card, then select Start agent to try again.`
-            : startFailure
-              ? `${startFailure} Profile setup also didn't finish.${reason}`
-              : `${agent?.name ?? draft.name} was saved and started, but profile setup didn't finish.${reason} Select Finish profile to try again.`,
-        );
-      } else {
-        setError(
-          step === "starting"
-            ? `${agent?.name ?? draft.name} was saved, but we couldn't confirm whether it started. Refresh status before trying again.`
-            : `${agent?.name ?? draft.name} was saved, but we couldn't confirm its profile setup. Refresh status before trying again.`,
-        );
-      }
-    } finally {
-      if (mounted.current) setPhase(null);
+        />
+        <MenuPopup>
+          {types.map((item) => {
+            const label = item.remote ? `${item.title} (hosted)` : item.title;
+            const CreateModelMenu = item.CreateModelMenu;
+            if (!CreateModelMenu)
+              return (
+                <MenuItem
+                  key={item.key}
+                  role="menuitemradio"
+                  aria-checked={item.key === type?.key}
+                  closeOnClick
+                  onClick={() => choose(item.key)}
+                >
+                  <ChoiceRow label={label} leading={<TypeIcon type={item} />} />
+                  {item.key === type?.key && (
+                    <CheckIcon size={16} aria-hidden="true" />
+                  )}
+                </MenuItem>
+              );
+            const itemConfig =
+              item.key === type?.key ? config : startingConfig(item);
+            return (
+              <MenuSubmenu key={item.key}>
+                <MenuSubmenuTrigger
+                  role="menuitemradio"
+                  aria-checked={item.key === type?.key}
+                >
+                  <ChoiceRow label={label} leading={<TypeIcon type={item} />} />
+                  {item.key === type?.key && (
+                    <CheckIcon size={16} aria-hidden="true" />
+                  )}
+                </MenuSubmenuTrigger>
+                <MenuSubmenuPopup
+                  size="wide"
+                  aria-label={`${item.title} models`}
+                >
+                  <CreateModelMenu
+                    config={itemConfig}
+                    active={item.key === type?.key}
+                    disabled={pending}
+                    onChange={(next) => chooseModel(item, next)}
+                    requestCustomModel={(initialValue, onChange) =>
+                      setCustomModel({ initialValue, onChange })
+                    }
+                  />
+                </MenuSubmenuPopup>
+              </MenuSubmenu>
+            );
+          })}
+        </MenuPopup>
+      </MenuRoot>
+    ) : (
+      <span className={styles.typeLabel}>
+        <TypeIcon type={type} />
+        {type?.title}
+      </span>
+    );
+  const create = async () => {
+    if (!type || !name.trim() || pending) return;
+    setPending(true);
+    setError("");
+    try {
+      const agent = await agents.create({
+        type: type.key,
+        name: name.trim(),
+        ...(picture ? { picture } : {}),
+        ...(config !== undefined ? { config } : {}),
+      });
+      onCreated(agent);
+    } catch (reason) {
+      setError(message(reason));
+      setPending(false);
     }
   };
+  const back = editing
+    ? editing.back
+    : avatarActive
+      ? () => avatarNavigation.current?.back()
+      : undefined;
   return (
-    <Dialog.Root
-      open
-      onOpenChange={(open) => {
-        if (!open && !dirty && !blocked) onClose();
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) close();
       }}
-    >
-      <Dialog.Portal>
-        <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
-        <Dialog.Popup
-          aria-modal="true"
-          data-buzz-ui=""
-          className="buzz-dialog agent-dialog text-body"
-        >
-          <header className="buzz-dialog-header">
-            <Dialog.Title className="text-heading">
-              {source
-                ? `Duplicate ${source.name}`
-                : initialSettings
-                  ? "Clone agent"
-                  : "Create agent"}
-            </Dialog.Title>
-          </header>
-          <Dialog.Description className="buzz-dialog-description">
-            Create and start an agent in{" "}
-            {destination || "a connected community"}. It won't join a channel
-            automatically.
-          </Dialog.Description>
-          {initialSettings && (
-            <p className="text-body-sm text-secondary">
-              Only the name and instructions were copied. Review them for
-              embedded secrets. Choose this computer’s workspace and runtime
-              settings. Identity keys, environment values, history and community
-              membership are not copied. The source stays unchanged.
-            </p>
+      onOpenChangeComplete={(next) => {
+        if (!next) onClose();
+      }}
+      title="Create agent"
+      size="wide"
+      initialFocus={nameField}
+      bodyLayout="flex"
+      // A started draft only closes from the close button.
+      dismissOnOutsideClick={!dirty}
+      onEscape={() => {
+        if (back) {
+          back();
+          return true;
+        }
+        return dirty || pending;
+      }}
+      preventClose={pending}
+      leadingActions={
+        back ? (
+          <Button disabled={pending} onClick={back}>
+            Back
+          </Button>
+        ) : !avatarActive ? (
+          <div className={styles.footerSelector}>{selector}</div>
+        ) : null
+      }
+      actions={
+        <>
+          <div ref={setAvatarAction} hidden={!avatarActive} />
+          {!avatarActive && (
+            <Button
+              variant="primary"
+              // The footer is outside the form; Enter in any field submits it.
+              type={editing ? "button" : "submit"}
+              form={editing ? undefined : form}
+              onClick={
+                editing
+                  ? (event) => {
+                      // This control becomes the submit button after editing ends.
+                      event.preventDefault();
+                      editing.done();
+                    }
+                  : undefined
+              }
+              loading={pending}
+              disabled={
+                !editing && (avatarBusy || !type || !name.trim() || pending)
+              }
+            >
+              {editing ? "Done editing" : "Create agent"}
+            </Button>
           )}
-          <form
-            className="buzz-dialog-body space-y-section-gap"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void create();
+        </>
+      }
+    >
+      <form
+        id={form}
+        className="flex flex-col gap-3"
+        aria-label="New agent"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!editing && !avatarActive) void create();
+        }}
+      >
+        <CreateCardContext.Provider value={card}>
+          <AgentCreateHeader
+            name={name}
+            picture={picture}
+            disabled={pending}
+            community={community}
+            onBusyChange={setAvatarBusy}
+            onChange={(patch) => {
+              if (patch.name !== undefined) setName(patch.name);
+              if (patch.picture !== undefined) setPicture(patch.picture);
+              setDirty(true);
+              setError("");
             }}
-          >
-            <AgentSettingsFields
-              draft={draft}
-              control={control}
-              state={state}
-              disabled={blocked || !!saved}
-              onOpenHarnesses={onOpenHarnesses}
-              discardEdits={dirty}
-              onChange={(patch) => {
-                setDraft({ ...draft, ...patch });
-                setDirty(true);
-                setError(undefined);
+            nameRef={nameField}
+            details={
+              Create ? (
+                <Create
+                  key={type.key}
+                  config={config}
+                  disabled={pending}
+                  onChange={(next) => {
+                    setConfig(next);
+                    setDirty(true);
+                  }}
+                />
+              ) : (
+                <p className="m-0 text-center text-body-sm text-secondary">
+                  {type?.remote
+                    ? "Its provider keeps its key and runs it, whether or not this app is open."
+                    : "Set it up after it is made."}
+                </p>
+              )
+            }
+            editing={!!editing}
+            avatarNavigationRef={avatarNavigation}
+            avatarActionTarget={avatarAction}
+            onAvatarActiveChange={setAvatarActive}
+          />
+          {customModel && (
+            <CustomModelDialog
+              initialValue={customModel.initialValue}
+              finalFocus={() => selectorTrigger.current ?? false}
+              onClose={() => setCustomModel(null)}
+              onSubmit={(model) => {
+                customModel.onChange(model);
+                setCustomModel(null);
               }}
             />
-            {source?.harness.environmentKeys.length ? (
-              <p role="status" className="text-body-sm text-secondary">
-                Re-enter environment values for{" "}
-                {source.harness.environmentKeys.join(", ")}. Saved values cannot
-                be copied into a new identity.
-              </p>
-            ) : null}
-            {!available && (
-              <p role="status">
-                Connect to a community and use a rebuilt desktop app to create
-                an agent.
-              </p>
-            )}
-            {runtimeBlocked && (
-              <p role="alert">
-                This app’s agent runtime is unavailable. Repair or rebuild the
-                desktop app before {saved ? "starting" : "creating"} an agent.
-                {state.data?.runtimeMessage && ` ${state.data.runtimeMessage}`}
-              </p>
-            )}
-            {busy && (
-              <p role="status">
-                {phase === "creating" && "Creating agent…"}
-                {phase === "starting" &&
-                  `${saved?.name ?? draft.name} was created. Starting it…`}
-                {phase === "publishing" &&
-                  `${saved?.name ?? draft.name} was saved. Finishing its profile…`}
-                {phase === "checking" && "Checking agent status…"}
-              </p>
-            )}
-            {saved && !busy && !error && (
-              <p role="status">
-                {nextStep === "start"
-                  ? `${saved.name} was saved. Start it to finish setup.`
-                  : `${saved.name} was saved and started. Finish its profile setup.`}
-              </p>
-            )}
-            {error && <p role="alert">{error}</p>}
-            {state.status === "error" && !busy && (
-              <Button onClick={() => void control.refresh()}>
-                Retry status
-              </Button>
-            )}
-            <div className="buzz-dialog-actions">
-              <Button onClick={onClose}>
-                {busy || saved ? "Close" : "Cancel"}
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={blocked || runtimeBlocked || (!saved && !available)}
-              >
-                {busy
-                  ? phase === "starting"
-                    ? "Starting…"
-                    : phase === "publishing"
-                      ? "Finishing…"
-                      : phase === "checking"
-                        ? "Checking…"
-                        : "Creating…"
-                  : saved
-                    ? nextStep === "start"
-                      ? "Start agent"
-                      : "Finish profile"
-                    : initialSettings
-                      ? "Clone agent"
-                      : "Create agent"}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+          )}
+        </CreateCardContext.Provider>
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+      </form>
+    </Dialog>
   );
 }

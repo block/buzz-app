@@ -13,12 +13,11 @@ import { createPortal, flushSync } from "react-dom";
 import {
   BrowserIcon,
   TerminalWindowIcon,
-  PlusIcon,
 } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
+import type { TabDragHost } from "./useTabDrag";
 
 type Item = {
   id: string;
@@ -27,7 +26,10 @@ type Item = {
   content: ReactNode;
   /** Stable for one opening, including retained exit content. */
   instance?: object;
-  close(): void;
+  /** Omit for a permanent tab such as a channel's own conversation. */
+  close?: (() => void) | undefined;
+  /** Keyboard placement: one position left or right, across panes at an edge. */
+  move?: ((delta: -1 | 1) => void) | undefined;
 };
 type Identity = { label: string; icon?: ReactNode };
 type Local = { id: string; label: string; owner: string; close(): void };
@@ -58,15 +60,29 @@ export function PanelWorkspace({
   items,
   value,
   select,
-  add,
+  actions,
+  main = false,
+  label = "Panel tabs",
   focusOnMount = true,
+  adoptSelection,
+  drag,
 }: {
+  drag?: TabDragHost | undefined;
   items: Item[];
   value: string;
   select(id: string): void;
-  add?: (() => void) | undefined;
+  /** Header icon actions owned by the hosting page. */
+  actions?: ReactNode;
+  /**
+   * The page's main pane: a lone permanent tab reads as a title, and native
+   * Close acts here only while focus is inside (the side pane is the default).
+   */
+  main?: boolean;
+  label?: string;
   /** Restoring a channel visit leaves focus with its main conversation. */
   focusOnMount?: boolean;
+  /** A new value adopts the current selection without moving focus. */
+  adoptSelection?: unknown;
 }) {
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
@@ -84,6 +100,10 @@ export function PanelWorkspace({
   const root = useRef<HTMLDivElement>(null);
   const focusTab = useRef(false);
   const closingTab = useRef<string | undefined>(undefined);
+  // Choosing a tab with the pointer resumes its content's typing target;
+  // keyboard selection keeps focus in the tab list.
+  const pointerTab = useRef(false);
+  const focusContent = useRef(false);
   const register = useCallback((tab: Local) => {
     setLocals((current) => [
       ...current.filter((item) => item.id !== tab.id),
@@ -137,32 +157,67 @@ export function PanelWorkspace({
       .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
   ]);
   const active = tabs.find((tab) => tab.id === selected);
+  const choose = (id: string) => {
+    const local = owned.find((tab) => tab.id === id);
+    setLocalSelection(local?.id);
+    select(local?.owner ?? id);
+  };
   useLayoutEffect(() => {
-    const close = (event: Event) => {
+    // With two tab hosts, the one containing focus owns Close and tab switching.
+    const owns = () => {
       const element = root.current;
-      if (
-        event.defaultPrevented ||
-        !active ||
-        !element?.isConnected ||
-        element.closest('[hidden], [inert], [aria-hidden="true"]') ||
-        !element.getClientRects().length
-      )
-        return;
+      return (
+        !!element?.isConnected &&
+        (document.activeElement?.closest(
+          "[data-panel-workspace], [data-main-workspace]",
+        ) ?? (main ? null : element)) === element &&
+        !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+        !!element.getClientRects().length
+      );
+    };
+    const close = (event: Event) => {
+      if (event.defaultPrevented || !active?.close || !owns()) return;
       event.preventDefault();
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
       flushSync(() => {
         closingTab.current = active.id;
-        active.close();
+        active.close?.();
       });
     };
+    // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
+    const step = (delta: -1 | 1) => (event: Event) => {
+      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
+      event.preventDefault();
+      const index = tabs.findIndex((tab) => tab.id === selected);
+      const target = tabs[(index + delta + tabs.length) % tabs.length];
+      if (!target) return;
+      // Like a browser, land in the next tab's content rather than the strip.
+      focusContent.current = true;
+      // Commit before a held accelerator's next request reads the selection.
+      flushSync(() => choose(target.id));
+    };
+    const showNext = step(1);
+    const showPrevious = step(-1);
     window.addEventListener("buzz:close-active-tab", close);
-    return () => window.removeEventListener("buzz:close-active-tab", close);
+    window.addEventListener("buzz:next-tab", showNext);
+    window.addEventListener("buzz:previous-tab", showPrevious);
+    return () => {
+      window.removeEventListener("buzz:close-active-tab", close);
+      window.removeEventListener("buzz:next-tab", showNext);
+      window.removeEventListener("buzz:previous-tab", showPrevious);
+    };
   });
   const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
+  const adopted = useRef(adoptSelection);
   useLayoutEffect(() => {
+    if (adopted.current !== adoptSelection) {
+      adopted.current = adoptSelection;
+      previous.current = selected;
+      previousInstance.current = instance;
+    }
     if (
       previous.current !== selected ||
       previousInstance.current !== instance ||
@@ -172,7 +227,22 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      tab?.focus({ preventScroll: true });
+      const content =
+        focusContent.current && previous.current !== selected
+          ? document
+              .getElementById(panelId(selected))
+              ?.querySelector<HTMLElement>(
+                '[data-tab-focus]:not([aria-disabled="true"])',
+              )
+          : undefined;
+      // A route may mount/select a retained tab behind an open dialog.
+      // Its navigation must not take focus from the modal's own handoff.
+      const modal = document.querySelector('dialog[open], [aria-modal="true"]');
+      if (!modal || modal.contains(root.current)) {
+        content?.focus({ preventScroll: true });
+        if (!content || document.activeElement !== content)
+          tab?.focus({ preventScroll: true });
+      }
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
         inline: "nearest",
@@ -180,61 +250,71 @@ export function PanelWorkspace({
       previous.current = selected;
       previousInstance.current = instance;
       focusTab.current = false;
+      focusContent.current = false;
       closingTab.current = undefined;
     }
   });
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Escape from descendant controls closes their active tab.
     <div
-      data-panel-workspace=""
+      {...(main
+        ? { "data-main-workspace": "" }
+        : { "data-panel-workspace": "" })}
       className={styles.workspace}
-      ref={root}
+      ref={(element) => {
+        root.current = element;
+        drag?.attach(element);
+      }}
+      onClickCapture={drag?.click}
+      onPointerDownCapture={(event) => {
+        drag?.begin(event);
+        pointerTab.current = !!(event.target as Element).closest?.(
+          '[role="tab"]',
+        );
+      }}
+      onKeyDownCapture={() => {
+        pointerTab.current = false;
+      }}
       onKeyDown={(event) => {
         if (
           event.key === "Escape" &&
           !event.nativeEvent.isComposing &&
           event.nativeEvent.keyCode !== 229 &&
           !event.defaultPrevented &&
+          active?.close &&
           event.currentTarget.contains(event.target as Node)
         ) {
           event.stopPropagation();
-          active?.close();
+          active.close();
         }
       }}
     >
       <PanelHeader
-        actions={
-          add && (
-            <span className={styles.addTab}>
-              <IconButton
-                size="toolbar"
-                aria-label="Add tab"
-                title="Add tab"
-                icon={<PlusIcon size="1rem" />}
-                onClick={add}
-              />
-            </span>
-          )
-        }
+        actions={actions}
         title={
           <Tabs
-            label="Panel tabs"
+            label={label}
             variant="navigation"
+            showSelection={!main || tabs.length > 1}
             value={selected}
             items={tabs.map((tab) => ({
               value: tab.id,
               label: tab.label,
               icon: tab.icon,
               panelId: panelId(tab.id),
-              onClose: () => {
-                closingTab.current = tab.id;
-                tab.close();
-              },
+              onMove: "move" in tab ? tab.move : undefined,
+              draggable: !!drag && "move" in tab && !!tab.move,
+              onClose: tab.close
+                ? () => {
+                    closingTab.current = tab.id;
+                    tab.close?.();
+                  }
+                : undefined,
             }))}
             onValueChange={(id) => {
-              const local = owned.find((tab) => tab.id === id);
-              setLocalSelection(local?.id);
-              select(local?.owner ?? id);
+              focusContent.current = pointerTab.current;
+              pointerTab.current = false;
+              choose(id);
             }}
           />
         }

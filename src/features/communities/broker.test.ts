@@ -13,7 +13,7 @@ import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { assert, expect, it } from "vitest";
 import { type Event, validateEvent, verifyEvent } from "nostr-tools";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "../relay/transport";
 import { keypair } from "../relay/testing";
 

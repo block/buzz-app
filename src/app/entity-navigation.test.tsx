@@ -22,14 +22,6 @@ import {
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
-import { createAgentControl } from "../features/agents/control";
-import { controlFixture } from "../features/agents/control-testing";
-
-let agentFixture: ReturnType<typeof controlFixture> | undefined;
-vi.mock("../features/agents/control-native", () => ({
-  createNativeAgentControl: () =>
-    createAgentControl(agentFixture?.host ?? null),
-}));
 
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
@@ -101,7 +93,6 @@ afterEach(async () => {
   stop();
   await services?.dispose();
   services = undefined;
-  agentFixture = undefined;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
@@ -192,93 +183,6 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("reconnects a failed routed Agents edit from the shell and opens its exact editor", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  vi.stubEnv("VITE_BUZZ_LIVE", "1");
-  agentFixture = controlFixture();
-  agentFixture.agent.relayUrl = "wss://community.example";
-  agentFixture.data.agents.push({
-    ...structuredClone(agentFixture.agent),
-    id: "different-agent",
-    pubkey: "cd".repeat(32),
-    name: "Different agent",
-  });
-  localStorage.setItem(
-    `buzz-client.v1:${viewer}`,
-    JSON.stringify({
-      profile: { name: "Fixture", picture: "" },
-      memberships: [{ id: origin, name: "Fixture community" }],
-      selected: origin,
-    }),
-  );
-  let attempts = 0;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/identity")) return Response.json({ viewer });
-      if (url.endsWith("/register")) return Response.json({});
-      if (url.endsWith("/session")) {
-        attempts++;
-        return attempts === 1
-          ? Response.json({ error: "relay offline" }, { status: 503 })
-          : Response.json({
-              viewer,
-              relayAuthor: viewer,
-              relayUrl: "wss://community.example",
-            });
-      }
-      if (url.endsWith("/query")) return Response.json([]);
-      return Response.json({});
-    }),
-  );
-  services = createServices();
-  const current = services;
-  const target = {
-    version: 1 as const,
-    kind: "page" as const,
-    pluginId: "buzz.agents",
-    pageId: "agents",
-    scope: { viewer, communityOrigin: origin },
-    route: {
-      version: 1 as const,
-      params: { pubkey: agentFixture.agent.pubkey },
-    },
-  };
-  render(<App services={current} />);
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
-  void current.navigation.open(target);
-  await screen.findByRole("button", { name: "Retry navigation" });
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "failed",
-    reason: "unavailable",
-    entry: { target },
-  });
-  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
-  expect(attempts).toBe(1);
-
-  await userEvent.click(
-    screen.getByRole("button", { name: "Retry navigation" }),
-  );
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(within(dialog).getByLabelText("Name")).toHaveValue("Fixture agent");
-  expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
-    "Help with the project.",
-  );
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "opened",
-    entry: { target },
-  });
-  expect(attempts).toBe(2);
-});
-
 it("lists only active primary pages in the channel sidebar", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -351,7 +255,10 @@ it("lists only active primary pages in the channel sidebar", async () => {
   ).toBeInTheDocument();
 });
 
-function legacyPageFixture() {
+function legacyPageFixture(
+  memberships = [{ id: origin, name: "Fixture community" }],
+  selected = origin,
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -365,8 +272,8 @@ function legacyPageFixture() {
     `buzz-client.v1:${viewer}`,
     JSON.stringify({
       profile: { name: "Fixture", picture: "" },
-      memberships: [{ id: origin, name: "Fixture community" }],
-      selected: origin,
+      memberships,
+      selected,
     }),
   );
   vi.stubGlobal(
@@ -451,6 +358,48 @@ it.each(["Inbox", "Bestie"])(
     }
   },
 );
+
+// Reminder notifications without an openable message send a page target scoped
+// to the reminder's community; it must win over the community selected at click.
+it("opens a community-scoped page from another community, but not after leaving it", async () => {
+  const other = "https://other.example";
+  const target = parseOpenTarget({
+    version: 1,
+    kind: "page",
+    pluginId: "fixture.notes",
+    pageId: "notes",
+    scope: { viewer, communityOrigin: origin },
+  });
+  const member = legacyPageFixture(
+    [
+      { id: origin, name: "Fixture community" },
+      { id: other, name: "Other community" },
+    ],
+    other,
+  );
+  await screen.findByRole("navigation", { name: "Pages" });
+  let result!: ReturnType<typeof member.navigation.open>;
+  act(() => {
+    result = member.navigation.open(target);
+  });
+  expect(await result).toEqual({ status: "opened" });
+  expect(member.communities.snapshot().selected).toBe(origin);
+  expect(member.navigation.snapshot().entry.target).toEqual(target);
+  cleanup();
+  await services?.dispose();
+  localStorage.clear();
+
+  const left = legacyPageFixture(
+    [{ id: other, name: "Other community" }],
+    other,
+  );
+  await screen.findByRole("navigation", { name: "Pages" });
+  act(() => {
+    result = left.navigation.open(target);
+  });
+  expect(await result).toEqual({ status: "failed", reason: "denied" });
+  expect(left.communities.snapshot().selected).toBe(other);
+});
 
 it("restores legacy placeholder history but does not normalize unknown versions or bypass access and plugin gates", async () => {
   const old: OpenTarget = {

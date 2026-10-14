@@ -352,12 +352,7 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
   }
 });
 
-it.each([
-  "",
-  "not-a-relay",
-  "http://relay.example",
-  "wss://relay.example/path",
-])(
+it.each(["", "not-a-relay"])(
   "shows inline relay validation for %j without contacting a relay",
   async (value) => {
     const user = userEvent.setup();

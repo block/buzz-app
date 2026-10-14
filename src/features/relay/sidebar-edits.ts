@@ -6,7 +6,26 @@ import type {
 import {
   editSidebarRecord,
   nextSidebarSectionOrder,
+  projectSidebarRecord,
 } from "./sidebar-registers.ts";
+
+/** Tombstone the section and reset its live placements in the same record. */
+export function editSidebarSectionRemoval(
+  current: Record<string, unknown>,
+  createdAt: number,
+  sectionId: string,
+  now = Date.now(),
+): Record<string, unknown> {
+  const projected = projectSidebarRecord("channel-sections", current);
+  const sections = projected.sections as SidebarGroups["sections"];
+  if (!sections.some(({ id }) => id === sectionId)) return current;
+  const writes: [string[], unknown][] = [[["s", sectionId, "live"], false]];
+  for (const [channelId, id] of Object.entries(
+    projected.assignments as SidebarGroups["assignments"],
+  ))
+    if (id === sectionId) writes.push([["a", channelId], null]);
+  return editSidebarRecord("channel-sections", current, createdAt, writes, now);
+}
 
 // Typed intent policy; host adapters retain untrusted-envelope validation.
 export function validSidebarChannelId(channelId: string): boolean {
@@ -25,6 +44,10 @@ export function validSidebarAssignment(
         /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(createSection.id) &&
         validSidebarChannelId(createSection.name)))
   );
+}
+
+export function validSidebarSectionRemoval(sectionId: string): boolean {
+  return validSidebarChannelId(sectionId);
 }
 
 export function validSidebarSort(

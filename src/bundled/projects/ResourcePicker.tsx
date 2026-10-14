@@ -10,11 +10,15 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GitPullRequestIcon } from "../../shared/design-system/icons/index";
 import type { ComposerToolProps } from "../../features/conversation/contracts";
+import { matchName } from "../../features/search/match";
+import { MatchedLabel } from "../../features/search/MatchedLabel";
+import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import {
   entityFailure,
   value,
   values,
   type Entity,
+  type ProjectHome,
 } from "../../features/projects/destinations";
 import {
   entityDtag,
@@ -35,8 +39,12 @@ type Item = {
 type Items =
   | { status: "loading" | "error" }
   | { status: "ready"; items: Item[]; truncated: boolean };
+type Home =
+  | { status: "loading"; cached: ProjectHome | undefined }
+  | { status: "error" }
+  | ProjectHome;
 
-/** Mounted per destination, so it owns the channel→project mapping and list reads.
+/** Mounted per destination; the session retains the channel→project mapping.
  * The composer owns the inserted link; this tool only proposes a verified one. */
 export function ResourcePicker({
   session,
@@ -45,9 +53,10 @@ export function ResourcePicker({
   insertResource,
 }: ComposerToolProps) {
   const [attempt, setAttempt] = useState(0);
-  const [home, setHome] = useState<
-    "loading" | "none" | "ambiguous" | "error" | Entity
-  >("loading");
+  const [home, setHome] = useState<Home>(() => ({
+    status: "loading",
+    cached: session.projects.peekHome(channelId),
+  }));
   const [open, setOpen] = useState(false);
   const [opening, setOpening] = useState(0);
   const [search, setSearch] = useState("");
@@ -59,18 +68,21 @@ export function ResourcePicker({
   const trigger = useRef<HTMLButtonElement>(null);
   const controls = useRef<HTMLFieldSetElement>(null);
   const searchInput = useRef<HTMLElement>(null);
-  const project = typeof home === "object" ? home : undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit retry.
+  const pending = home.status === "loading";
+  const visibleHome = home.status === "loading" ? home.cached : home;
+  const project = home.status === "home" ? home.project : undefined;
   useEffect(() => {
     const controller = new AbortController();
-    setHome("loading");
+    setHome({
+      status: "loading",
+      cached: attempt === 0 ? session.projects.peekHome(channelId) : undefined,
+    });
     session.projects.home(channelId, controller.signal).then(
       (result) => {
-        if (!controller.signal.aborted)
-          setHome(result.status === "home" ? result.project : result.status);
+        if (!controller.signal.aborted) setHome(result);
       },
       () => {
-        if (!controller.signal.aborted) setHome("error");
+        if (!controller.signal.aborted) setHome({ status: "error" });
       },
     );
     return () => controller.abort();
@@ -142,7 +154,40 @@ export function ResourcePicker({
     setRejected(undefined);
     setOpen(false);
   }, [disabled]);
-  if (home === "none") return null;
+  const query = search.trim().toLowerCase();
+  // The same items as before match. Order by how well the title matches,
+  // as the other pickers do: exact, then prefix, then word start, then the
+  // rest, newest first within each rank. A repository-only match comes last.
+  const shown =
+    items.status === "ready"
+      ? items.items
+          .filter((item) =>
+            `${item.label} ${item.repository.name}`
+              .toLowerCase()
+              .includes(query),
+          )
+          .map((item) => {
+            const match = matchName(item.label, query);
+            return { item, match, rank: match?.rank ?? Number.MAX_VALUE };
+          })
+          .sort((a, b) => a.rank - b.rank)
+      : [];
+  const busy = !!checking && !checking.failed;
+  const highlight = useSearchHighlight({
+    query: search,
+    keys: disabled || busy ? [] : shown.map(({ item }) => item.id),
+    onChoose: (id) => {
+      const choice = shown.find(({ item }) => item.id === id);
+      if (choice) choose(choice.item);
+    },
+    open: open && !disabled && !!project,
+    // Enter chose the first row before anything was typed; keep that, and
+    // show which row it is.
+    highlightEmpty: true,
+    wrap: true,
+  });
+  const highlighted = shown.find(({ item }) => item.id === highlight.active);
+  if (visibleHome?.status === "none") return null;
   // A deleted or retargeted item must not become an accepted link.
   const choose = (item: Item) => {
     validation.current?.abort();
@@ -182,17 +227,10 @@ export function ResourcePicker({
       },
     );
   };
-  const query = search.trim().toLowerCase();
-  const shown =
-    items.status === "ready"
-      ? items.items.filter((item) =>
-          `${item.label} ${item.repository.name}`.toLowerCase().includes(query),
-        )
-      : [];
   const label = "Add issue or pull request";
   return (
     <PopoverRoot
-      open={open && !disabled && home !== "loading"}
+      open={open && !disabled && !pending}
       onOpenChange={(next) => {
         setOpen(next);
         validation.current?.abort();
@@ -204,40 +242,44 @@ export function ResourcePicker({
         }
       }}
     >
+      {pending && (
+        <span role="status" className="sr-only">
+          Loading project…
+        </span>
+      )}
       <fieldset
         ref={controls}
         disabled={disabled}
+        hidden={!visibleHome}
         className={styles.controls}
         aria-label="Issue and pull request controls"
       >
         <PopoverTrigger
-          disabled={disabled || home === "loading"}
+          disabled={disabled || pending}
           render={
             <IconButton
-              disabled={disabled || home === "loading"}
+              disabled={disabled || pending}
               size="toolbar"
               ref={trigger}
               type="button"
               aria-label={label}
               title={
-                home === "loading"
+                pending
                   ? "Loading project…"
                   : project
                     ? label
                     : `${label} (unavailable)`
               }
               data-unavailable={
-                home === "ambiguous" || home === "error" ? "" : undefined
+                visibleHome?.status === "ambiguous" ||
+                visibleHome?.status === "error"
+                  ? ""
+                  : undefined
               }
               icon={<GitPullRequestIcon size={20} aria-hidden="true" />}
             />
           }
         />
-        {home === "loading" && (
-          <span role="status" className="sr-only">
-            Loading project…
-          </span>
-        )}
         <PopoverPopup
           side="top"
           sideOffset={4}
@@ -250,52 +292,6 @@ export function ResourcePicker({
             overflow: "hidden",
             display: "flex",
           }}
-          onKeyDown={(event) => {
-            if (
-              event.nativeEvent.isComposing ||
-              event.nativeEvent.keyCode === 229
-            )
-              return;
-            const fromSearch = event.target === searchInput.current;
-            if (event.key === "Enter" && fromSearch) event.preventDefault();
-            if (
-              event.altKey ||
-              event.ctrlKey ||
-              event.metaKey ||
-              event.shiftKey ||
-              !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)
-            )
-              return;
-            const rows = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                "[data-resource-choice]:not(:disabled)",
-              ),
-            );
-            if (event.key === "Enter") {
-              if (!fromSearch) return;
-              event.stopPropagation();
-              rows[0]?.click();
-              return;
-            }
-            if (
-              !fromSearch &&
-              !rows.includes(event.target as HTMLButtonElement)
-            )
-              return;
-            event.preventDefault();
-            event.stopPropagation();
-            const current = rows.indexOf(
-              document.activeElement as HTMLButtonElement,
-            );
-            const step = event.key === "ArrowDown" ? 1 : -1;
-            rows[
-              current < 0
-                ? step > 0
-                  ? 0
-                  : rows.length - 1
-                : (current + step + rows.length) % rows.length
-            ]?.focus();
-          }}
           aria-label={label}
           finalFocus={!accepted.current}
         >
@@ -303,7 +299,7 @@ export function ResourcePicker({
             {!project ? (
               <>
                 <p role="status">
-                  {home === "ambiguous"
+                  {home.status === "ambiguous"
                     ? "This channel belongs to more than one project, so issues and pull requests can't be chosen here."
                     : "Could not load this channel's project."}
                 </p>
@@ -320,6 +316,22 @@ export function ResourcePicker({
                   value={search}
                   onValueChange={setSearch}
                   disabled={disabled}
+                  aria-controls={highlight.listId}
+                  {...highlight.fieldProps}
+                  onKeyDown={(event) => {
+                    // A composition key belongs to the input method.
+                    if (
+                      event.nativeEvent.isComposing ||
+                      event.nativeEvent.keyCode === 229
+                    )
+                      return;
+                    if (event.key === "Enter") event.preventDefault();
+                    // Shift+Enter and Shift+arrows stay text keys, as before.
+                    const handled = !event.shiftKey && highlight.keyDown(event);
+                    // Keep these keys from the composer behind the popup.
+                    if (handled || event.key === "Enter")
+                      event.stopPropagation();
+                  }}
                 />
                 {items.status === "loading" && (
                   <p role="status">Loading issues and pull requests…</p>
@@ -349,19 +361,37 @@ export function ResourcePicker({
                 {(checking?.failed ?? rejected) && (
                   <p role="alert">{checking?.failed ?? rejected}</p>
                 )}
-                <div className={`${styles.choices} buzz-thin-scrollbar`}>
-                  {shown.map((item) => (
+                <div
+                  className={`${styles.choices} buzz-thin-scrollbar`}
+                  id={highlight.listId}
+                  {...highlight.listProps}
+                >
+                  {shown.map(({ item, match }) => (
                     <NavigationItem
                       variant="option"
                       data-resource-choice=""
                       type="button"
                       key={item.id}
+                      {...highlight.rowProps(item.id)}
+                      selected={highlight.active === item.id}
+                      aria-current={false}
                       aria-label={`${item.label}, ${kinds[item.type]} in ${item.repository.name}`}
-                      disabled={disabled || (!!checking && !checking.failed)}
+                      disabled={disabled || busy}
                       onClick={() => choose(item)}
                       label={
                         <span className="flex flex-col whitespace-normal">
-                          <span>{item.label}</span>
+                          {/* One element, so the flex column keeps the
+                              underlined title on one line. */}
+                          <span>
+                            <MatchedLabel
+                              label={item.label}
+                              positions={
+                                query && match && match.rank <= 3
+                                  ? match.positions
+                                  : undefined
+                              }
+                            />
+                          </span>
                           <small className="text-caption text-subtle">
                             {checking?.id === item.id && !checking.failed
                               ? "Checking…"
@@ -378,6 +408,11 @@ export function ResourcePicker({
                         : "This project has no issues or pull requests yet."}
                     </p>
                   )}
+                  <p role="status" className="sr-only">
+                    {highlighted
+                      ? `${highlighted.item.label}. Press Enter to add.`
+                      : ""}
+                  </p>
                 </div>
               </>
             )}

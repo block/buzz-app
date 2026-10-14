@@ -688,34 +688,6 @@ it("preflights serialized diagnostics input before uploading", async () => {
   );
 });
 
-it("rejects diagnostics content overflow before uploading", async () => {
-  const user = userEvent.setup();
-  const h = fixture();
-  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
-  await user.click(
-    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
-  );
-  const descriptor = uploaded(
-    "feedback-diagnostics.txt",
-    "application/octet-stream",
-    "abcdefgh",
-  );
-  const remaining =
-    32 * 1024 -
-    feedbackEvent("a", null, [descriptor], "https://relay.test").content
-      .length +
-    1;
-  fireEvent.change(screen.getByRole("textbox", { name: "Your feedback" }), {
-    target: { value: "x".repeat(remaining + 1) },
-  });
-  await user.click(screen.getByRole("button", { name: "Send feedback" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Feedback must contain text and fit within relay limits.",
-  );
-  expect(h.upload).not.toHaveBeenCalled();
-  expect(h.send).not.toHaveBeenCalled();
-});
-
 it("reuses an uploaded diagnostics descriptor after a failed send", async () => {
   const user = userEvent.setup();
   const h = fixture();

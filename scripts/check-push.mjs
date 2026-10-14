@@ -54,9 +54,10 @@ if (base.status === 0) {
       .split("\0")
       .filter(Boolean);
   const files = changed();
-  const source = /^(?:src|dev)\/.*\.(?:[cm]?[jt]sx?)$/s;
+  const source =
+    /^(?:vite\.config\.ts|(?:src|browser-host)\/.*\.(?:[cm]?[jt]sx?)|scripts\/(?:developer-settings(?:\.test)?\.(?:ts|mjs)|live-setup-probe(?:\.test)?\.mjs))$/s;
   const shared =
-    /^(?:package\.json|pnpm-lock\.yaml|(?:vitest|vite)\.config\.[cm]?[jt]s|tsconfig[^/]*\.json|tests\/relay-config\.ts|bin\/)/;
+    /^(?:package\.json|pnpm-lock\.yaml|vitest\.config\.[cm]?[jt]s|tsconfig[^/]*\.json|tests\/relay-config\.ts|bin\/)/;
   const rust =
     /^(?:crates\/|src-tauri\/|bin\/|rust-toolchain[^/]*|Cargo\.(?:toml|lock)|clippy\.toml)/;
   if (clippy) {
@@ -69,7 +70,7 @@ if (base.status === 0) {
   }
   if (design) {
     const input =
-      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$|\.githooks\/pre-push$)/s;
+      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$)/s;
     if (!files.some((file) => shared.test(file) || input.test(file))) {
       console.log(
         "No design-system inputs changed; remaining checks run in CI.",
@@ -86,6 +87,8 @@ if (base.status === 0) {
     related.add("src/shared/theme/tokens.test.ts");
   if (files.includes("public/appearance-init.js"))
     related.add("src/shared/theme/service.test.ts");
+  if (files.includes("vite.config.ts"))
+    related.add("browser-host/vite-config.test.mjs");
   if (files.some((file) => file.startsWith("src/")))
     related.add("src/app/pages.integration.test.mjs");
   if (!design && !clippy && !full && !related.size) {

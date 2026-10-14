@@ -1,0 +1,31 @@
+{
+  "id": "buzz.claude-code",
+  "name": "Claude",
+  "apiVersion": 1,
+  "host": {
+    "networkOrigins": ["https://downloads.claude.ai"],
+    "processes": [
+      {
+        "id": "claude-sh",
+        "program": "bash",
+        "args": ["-c"]
+      },
+      {
+        "id": "platform",
+        "program": "uname",
+        "args": ["-sm"]
+      },
+      {
+        "id": "read",
+        "program": "base64",
+        "args": ["-i"]
+      },
+      { "id": "workspace", "program": "pwd" },
+      {
+        "id": "find",
+        "program": "grep",
+        "args": ["-rlF", "--include=*.jsonl", "-e"]
+      }
+    ]
+  }
+}

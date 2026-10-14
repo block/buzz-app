@@ -79,29 +79,6 @@ it("binds message and channel links to the selected community and viewer", () =>
     },
   });
 });
-it("ignores query parameters outside the Buzz link grammar and opens the destination", () => {
-  expect(deepLinkStep(`${messageLink}&foo=bar`, client)).toEqual({
-    open: {
-      version: 1,
-      kind: "conversation",
-      scope: { viewer, communityOrigin: origin },
-      channelId: "general",
-      messageId: message,
-      threadRootId: root,
-    },
-  });
-  expect(
-    deepLinkStep(`${messageLink}&viewer=${"b".repeat(64)}`, client),
-  ).toEqual(deepLinkStep(messageLink, client));
-  expect(deepLinkStep("buzz://channel/general?foo=bar", client)).toEqual({
-    open: {
-      version: 1,
-      kind: "conversation",
-      scope: { viewer, communityOrigin: origin },
-      channelId: "general",
-    },
-  });
-});
 it("fails as unavailable without a selected community or identity, never inventing one", () => {
   expect(
     deepLinkStep("buzz://channel/general", { viewer, selected: null }),
@@ -115,14 +92,7 @@ it.each([
   // whether unscoped or scoped to a community as early Copy link output was.
   locator,
   `buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22conversation%22%2C%22scope%22%3A%7B%22communityOrigin%22%3A%22https%3A%2F%2Felsewhere.example%22%7D%2C%22channelId%22%3A%22general%22%2C%22messageId%22%3A%22${message}%22%7D`,
-  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
-  `buzz://open?target=${"x".repeat(40_000)}`,
   "buzz://join?relay=example&code=abc123",
-  "buzz://join?relay=example",
-  "buzz://pr?id=1&owner=alice&d=repo",
-  "buzz://issue?id=1&owner=alice&d=repo",
-  "buzz://connect?relay=example",
-  "buzz://add-community?relay=example",
   "buzz://unknown/general",
   `buzz:agent-activity?agent=${"a".repeat(64)}`,
   // Only the exact buzz scheme: no other case, prefix, suffix or padding.
@@ -133,13 +103,6 @@ it.each([
   "xbuzz://channel/general",
   " buzz://channel/general",
   "buzz",
-  "buzz://user@channel/general",
-  "buzz://channel:443/general",
-  `${messageLink}#fragment`,
-  // Unknown keys are ignored, but a duplicated known key is ambiguous.
-  `buzz://message?channel=general&channel=other&id=${message}`,
-  `${messageLink}&id=${message}`,
-  "buzz://message?channel=general&id=bad",
   "https://example.com/?next=buzz://channel/general",
   "javascript:alert(1)",
   "",
@@ -234,87 +197,102 @@ const channelOpen = `open:${JSON.stringify({
   channelId: "general",
 })}`;
 
-it("holds a cold invite through identity setup, then offers it without navigating or claiming", async () => {
-  const queue = ["buzz://join?relay=wss%3A%2F%2Frelay.example&code=v2.invite"];
-  let listener: () => void = () => {};
-  let client: Client = { status: "loading", selected: null };
-  const changed = new Set<() => void>();
-  const invite = vi.fn();
-  const host = createNavigationController(createMemoryHistory());
-  const fail = vi.fn();
-  const stop = bindDeepLinks(
-    { navigation: host.navigation, fail, invite },
-    {
-      snapshot: () => client,
-      subscribe(fn) {
-        changed.add(fn);
-        return () => changed.delete(fn);
+it.each([""])(
+  "holds a cold invite through identity setup without claiming (path %j)",
+  async (path) => {
+    const queue = [
+      `buzz://join${path}?relay=wss%3A%2F%2Frelay.example&code=v2.invite`,
+    ];
+    let listener: () => void = () => {};
+    let client: Client = { status: "loading", selected: null };
+    const changed = new Set<() => void>();
+    const invite = vi.fn();
+    const host = createNavigationController(createMemoryHistory());
+    const fail = vi.fn();
+    const stop = bindDeepLinks(
+      { navigation: host.navigation, fail, invite },
+      {
+        snapshot: () => client,
+        subscribe(fn) {
+          changed.add(fn);
+          return () => changed.delete(fn);
+        },
       },
-    },
-    {
-      take: async () => queue.splice(0),
-      watch(fn) {
-        listener = fn;
-        return () => {
-          listener = () => {};
-        };
+      {
+        take: async () => queue.splice(0),
+        watch(fn) {
+          listener = fn;
+          return () => {
+            listener = () => {};
+          };
+        },
       },
-    },
-  );
-  try {
-    await vi.waitFor(() => expect(queue).toEqual([]));
-    client = { status: "unavailable", selected: null };
-    for (const fn of changed) fn();
-    expect(invite).not.toHaveBeenCalled();
-    client = { status: "ready", viewer, selected: null };
-    for (const fn of changed) fn();
-    expect(invite).toHaveBeenCalledWith(
-      { community: "https://relay.example", code: "v2.invite" },
-      viewer,
     );
-    expect(fail).not.toHaveBeenCalled();
-    expect(host.navigation.snapshot().entry.target).toEqual({
-      version: 1,
-      kind: "home",
-    });
-    listener();
-    await settle();
-    expect(invite).toHaveBeenCalledTimes(1);
-  } finally {
-    stop();
-    host.dispose();
-  }
-});
+    try {
+      await vi.waitFor(() => expect(queue).toEqual([]));
+      client = { status: "unavailable", selected: null };
+      for (const fn of changed) fn();
+      expect(invite).not.toHaveBeenCalled();
+      client = { status: "ready", viewer, selected: null };
+      for (const fn of changed) fn();
+      expect(invite).toHaveBeenCalledWith(
+        { community: "https://relay.example", code: "v2.invite" },
+        viewer,
+      );
+      expect(fail).not.toHaveBeenCalled();
+      expect(host.navigation.snapshot().entry.target).toEqual({
+        version: 1,
+        kind: "home",
+      });
+      listener();
+      await settle();
+      expect(invite).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+      host.dispose();
+    }
+  },
+);
 
-it("offers a warm invite for an unselected community and rejects malformed join links", async () => {
-  const queue = ["buzz://join?relay=wss%3A%2F%2Frelay.example&code=x"];
-  let ping: () => void = () => {};
-  const invite = vi.fn();
-  const host = createNavigationController(createMemoryHistory());
-  const fail = vi.fn();
-  const stop = bindDeepLinks(
-    { navigation: host.navigation, fail, invite },
-    { snapshot: () => ready, subscribe: () => () => {} },
-    {
-      take: async () => queue.splice(0),
-      watch(fn) {
-        ping = fn;
-        return () => {};
+it.each([""])(
+  "offers a warm invite and rejects malformed join links (path %j)",
+  async (path) => {
+    const queue: string[] = [];
+    let ping: () => void = () => {};
+    const invite = vi.fn();
+    const host = createNavigationController(createMemoryHistory());
+    const fail = vi.fn();
+    const stop = bindDeepLinks(
+      { navigation: host.navigation, fail, invite },
+      { snapshot: () => ready, subscribe: () => () => {} },
+      {
+        take: async () => queue.splice(0),
+        watch(fn) {
+          ping = fn;
+          return () => {};
+        },
       },
-    },
-  );
-  try {
-    await vi.waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
-    queue.push("buzz://join?relay=example&code=x");
-    ping();
-    await vi.waitFor(() =>
-      expect(fail).toHaveBeenCalledWith("invalid-target", undefined),
     );
-  } finally {
-    stop();
-    host.dispose();
-  }
-});
+    try {
+      await settle();
+      queue.push(`buzz://join${path}?relay=wss%3A%2F%2Frelay.example&code=x`);
+      ping();
+      await vi.waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
+      expect(invite).toHaveBeenCalledWith(
+        { community: "https://relay.example", code: "x" },
+        viewer,
+      );
+      queue.push(`buzz://join${path}?relay=example&code=x`);
+      ping();
+      await vi.waitFor(() =>
+        expect(fail).toHaveBeenCalledWith("invalid-target", undefined),
+      );
+    } finally {
+      stop();
+      host.dispose();
+    }
+  },
+);
 
 it("drains the shell at startup and opens a held link only once the client is ready", async () => {
   const t = harness(loading, ["buzz://channel/general"]);

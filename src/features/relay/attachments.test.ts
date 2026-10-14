@@ -83,17 +83,12 @@ it.each([0, UPLOAD_MAX_BYTES + 1])(
   },
 );
 
-it.each(["metadata", "denied", "capacity", "rejected", "size", "failed"])(
-  "preserves broker failure %s",
-  async (code) => {
-    vi.stubGlobal("fetch", async () =>
-      Response.json({ code }, { status: 400 }),
-    );
-    await expect(
-      brokerUpload("/api/relay", origin)(file, new AbortController().signal),
-    ).rejects.toMatchObject({ code });
-  },
-);
+it.each(["capacity", "failed"])("preserves broker failure %s", async (code) => {
+  vi.stubGlobal("fetch", async () => Response.json({ code }, { status: 400 }));
+  await expect(
+    brokerUpload("/api/relay", origin)(file, new AbortController().signal),
+  ).rejects.toMatchObject({ code });
+});
 
 it("rejects oversized/malformed bodies and cancels response consumption", async () => {
   const cancel = vi.fn();

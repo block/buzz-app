@@ -12,10 +12,11 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
@@ -124,7 +125,9 @@ export type ChannelTimelineProps = {
   continuityKey?: string | undefined;
   window: ChannelWindow;
   launchPending?: boolean | undefined;
-  onOpenLink(url: string): boolean;
+  /** Sessions page history on scroll; retain an explicit button for errors. */
+  historyControl?: "button" | "scroll";
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   /** One inline exact visit: focus the verified mounted row, without a page navigation. */
@@ -168,6 +171,7 @@ function Timeline({
   queries,
   window,
   launchPending,
+  historyControl = "button",
   onOpenLink,
   canOpenLink,
   revealMessageId,
@@ -216,6 +220,17 @@ function Timeline({
   );
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
+  // Keep pagination space through EOF so removing its control cannot change
+  // Virtua's start margin in the same measurement cycle as a prepend.
+  const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
+  if (
+    !reserveHistorySpace &&
+    (window.hasMore ||
+      window.loadingOlder ||
+      window.historyLimited ||
+      window.error)
+  )
+    setReserveHistorySpace(true);
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
@@ -407,6 +422,15 @@ function Timeline({
         next.edgeHeight === measuredSize.edgeHeight
       )
         return;
+      // A growing composer shrinks the viewport. Pin a reader who was at the
+      // bottom before paint so history rises with it; the restore lands later.
+      if (
+        follow.current &&
+        settled.current &&
+        next.height < measuredSize.height &&
+        element.scrollHeight - measuredSize.height - element.scrollTop < 2
+      )
+        element.scrollTop = element.scrollHeight;
       measuredSize = next;
       settled.current = false;
       setSize(next);
@@ -731,11 +755,15 @@ function Timeline({
         loadNearTop(element);
       }}
     >
-      <div ref={edge} className={styles.edge}>
+      <div
+        ref={edge}
+        className={styles.edge}
+        data-history-space={reserveHistorySpace || undefined}
+      >
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
-        ) : window.hasMore ? (
+        ) : window.hasMore && (historyControl === "button" || window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}
@@ -746,8 +774,14 @@ function Timeline({
                 olderDemand.current = false;
             }}
           >
-            {window.loadingOlder ? "Loading older…" : "Load older messages"}
+            {window.loadingOlder
+              ? "Loading older…"
+              : window.error
+                ? "Retry older messages"
+                : "Load older messages"}
           </Button>
+        ) : window.loadingOlder ? (
+          <span role="status">Loading older…</span>
         ) : null}
       </div>
       <JumpToLatestButton
@@ -759,7 +793,9 @@ function Timeline({
         <Virtualizer
           ref={handle}
           scrollRef={scroller}
-          shift={prepend}
+          // Before Virtua measures its viewport there is no reading position
+          // to preserve; shifting then can freeze its initial empty range.
+          shift={prepend && !!handle.current?.viewportSize}
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
@@ -776,43 +812,48 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
-            return row.membership ? (
-              <MembershipRow
-                resolveName={resolveName}
-                names={queries.names}
-                key={row.id}
-                row={row}
-                profiles={profiles}
-                viewer={viewer}
-                media={queries.media}
-                agentPubkeys={agentPubkeys}
-                day={day}
-              />
-            ) : (
-              <MessageRow
-                layout={
-                  continuesMessageGroup(rows[index - 1], row)
-                    ? "continuation"
-                    : "timeline"
-                }
-                session={queries}
-                scope={scope}
-                key={row.id}
-                row={row}
-                unread={queries.unread}
-                extensions={extensions}
-                profile={profiles.get(row.authorId)}
-                participantProfiles={profiles}
-                agentPubkeys={agentPubkeys}
-                media={queries.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                onOpenThread={onOpenThread}
-                {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                retry={queries.outbox?.retry}
-                keepMounted={keepRowMounted}
-                day={day}
-              />
+            return (
+              <Fragment key={row.id}>
+                {row.membership ? (
+                  <MembershipRow
+                    resolveName={resolveName}
+                    names={queries.names}
+                    row={row}
+                    profiles={profiles}
+                    viewer={viewer}
+                    media={queries.media}
+                    agentPubkeys={agentPubkeys}
+                    day={day}
+                  />
+                ) : (
+                  <MessageRow
+                    layout={
+                      continuesMessageGroup(rows[index - 1], row)
+                        ? "continuation"
+                        : "timeline"
+                    }
+                    session={queries}
+                    scope={scope}
+                    row={row}
+                    unread={queries.unread}
+                    extensions={extensions}
+                    profile={profiles.get(row.authorId)}
+                    participantProfiles={profiles}
+                    agentPubkeys={agentPubkeys}
+                    media={queries.media}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
+                    onOpenThread={onOpenThread}
+                    {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                    retry={queries.outbox?.retry}
+                    keepMounted={keepRowMounted}
+                    day={day}
+                  />
+                )}
+                {index === rows.length - 1 && (
+                  <div className={styles.timelineEnd} aria-hidden="true" />
+                )}
+              </Fragment>
             );
           })}
         </Virtualizer>

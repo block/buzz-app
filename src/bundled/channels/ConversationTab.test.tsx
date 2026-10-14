@@ -34,7 +34,7 @@ vi.mock("./ChannelBody", () => ({
   ChannelBody: () => <div>Conversation content</div>,
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
-  MessageComposer: () => null,
+  MessageComposer: () => <div>Composer content</div>,
 }));
 const owners: ReturnType<typeof createOutbox>[] = [];
 afterEach(() => {

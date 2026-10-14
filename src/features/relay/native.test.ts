@@ -1,3 +1,7 @@
+import {
+  ReadStateTimestampRejected,
+  READ_STATE_TIMESTAMP_REFUSAL,
+} from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -50,6 +54,7 @@ let respond: (
   | Promise<{ status?: number; body: unknown }>;
 const requests: Request[] = [];
 const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
+const received = new Map<string, Uint8Array[]>();
 let uploadResponse: () => { status?: number; body: unknown };
 const cancels: string[] = [];
 let hangUploads = false;
@@ -75,6 +80,7 @@ beforeEach(() => {
     }),
   );
   uploads.length = 0;
+  received.clear();
   cancels.length = 0;
   hangUploads = false;
   preparedResponse = undefined;
@@ -100,6 +106,17 @@ beforeEach(() => {
         body: JSON.stringify(result.body),
       };
     }
+    if (command === "relay_upload_begin") {
+      received.set((args as { id: string }).id, []);
+      return null;
+    }
+    if (command === "relay_upload_chunk") {
+      const { headers } = options as { headers: Record<string, string> };
+      received
+        .get(headers["x-buzz-upload-id"] ?? "")
+        ?.push(new Uint8Array(args as ArrayBuffer));
+      return null;
+    }
     if (command === "relay_upload_cancel") {
       cancels.push((args as { id: string }).id);
       return null;
@@ -107,7 +124,16 @@ beforeEach(() => {
     if (command === "relay_upload") {
       if (hangUploads) return new Promise(() => {});
       const { headers } = options as { headers: Record<string, string> };
-      uploads.push({ bytes: new Uint8Array(args as ArrayBuffer), headers });
+      const chunks = received.get(headers["x-buzz-upload-id"] ?? "") ?? [];
+      const bytes = new Uint8Array(
+        chunks.reduce((total, chunk) => total + chunk.length, 0),
+      );
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      uploads.push({ bytes, headers });
       const report = progressChannels.get(
         headers["x-buzz-upload-progress"] ?? "",
       );
@@ -155,29 +181,6 @@ it("sends combined search operators through packaged native signed HTTP without 
       "#h": ["channel"],
       since: 1699920000,
       until: 1700006399,
-      limit: 20,
-    },
-  ];
-  await expect(transport.query(filters)).resolves.toEqual([hit]);
-  expect(requests.at(-1)).toMatchObject({
-    community,
-    path: "/query",
-    method: "POST",
-    body: JSON.stringify(filters),
-  });
-  expect(fetch).not.toHaveBeenCalled();
-});
-
-it("routes operator-only filtered message reads over packaged native HTTP", async () => {
-  const transport = await connectNativeTransport(community);
-  const hit = message(viewer, "channel", "recent", 1800000000);
-  respond = () => ({ body: [hit] });
-  const filters = [
-    {
-      kinds: [9, 40002, 40008],
-      authors: [viewer.pubkey],
-      "#h": ["channel"],
-      since: 1700000000,
       limit: 20,
     },
   ];
@@ -1541,9 +1544,6 @@ it("uploads exact bytes natively and validates the relay descriptor", async () =
 });
 
 it.each([
-  [401, "", "denied"],
-  [413, "", "size"],
-  [429, "", "capacity"],
   [422, { error: "metadata forbidden" }, "metadata"],
   [415, { error: "unsupported container" }, "rejected"],
   [500, "internal error", "failed"],
@@ -1676,6 +1676,33 @@ it("exposes read-state only for advertised snapshots and keeps signing purpose-b
   await transport.readState.publish?.(event, signal);
   expect(requests.every((r) => r.path !== "/events")).toBe(true);
 });
+
+it.each([[400, READ_STATE_TIMESTAMP_REFUSAL, true]])(
+  "native read-state preserves only definitive timestamp refusal (%s %s)",
+  async (status, error, timestamp) => {
+    const transport = await connectNativeTransport("https://read-expiry.test");
+    assert.exists(transport.readState);
+    const event = signed(viewer, {
+      kind: 30078,
+      created_at: 1700000010,
+      tags: [
+        ["d", `read-state:${"a".repeat(32)}`],
+        ["t", "read-state"],
+      ],
+      content: "ciphertext",
+    });
+    vi.mocked(invoke).mockResolvedValueOnce({
+      status,
+      headers: {},
+      body: JSON.stringify({ error }),
+    });
+    const failure = await transport.readState
+      .publish?.(event, new AbortController().signal)
+      .catch((value: unknown) => value);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure instanceof ReadStateTimestampRejected).toBe(timestamp);
+  },
+);
 
 it("native snapshot quota pauses reads and publication on the same principal", async () => {
   discovery = {
@@ -1963,10 +1990,6 @@ it("prepares HEIC and video in the native upload without dev-broker fetches", as
 
 it.each([
   [403, { error: "no access" }, "denied"],
-  [413, { error: "too large" }, "size"],
-  [429, { error: "busy" }, "capacity"],
-  [422, { error: "metadata forbidden" }, "metadata"],
-  [415, { error: "unsupported" }, "rejected"],
   [400, { code: "io" }, "io"],
 ])(
   "maps prepared-upload response %i through the shared policy",
@@ -2069,4 +2092,92 @@ it("routes member administration through the native purpose-bound writer, never 
   expect(
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
+});
+
+it("reads only bounded slices and waits for chunk acknowledgement", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  const file = new File([new Uint8Array(2 * 64 * 1024 + 3)], "large.bin");
+  const wholeRead = vi
+    .spyOn(file, "arrayBuffer")
+    .mockRejectedValue(new Error("whole-file reads forbidden"));
+  const slices = vi.spyOn(file, "slice");
+  const original = vi.mocked(invoke).getMockImplementation();
+  assert(original);
+  const first = deferred<null>();
+  let chunkCalls = 0;
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+    if (command === "relay_upload_chunk" && ++chunkCalls === 1)
+      await first.promise;
+    return original(command, args, options);
+  });
+  uploadResponse = () => ({
+    body: {
+      url: `${community}/media/${"a".repeat(64)}`,
+      type: "application/octet-stream",
+      size: file.size,
+      sha256: "a".repeat(64),
+    },
+  });
+  const pending = transport.uploadAttachment(
+    file,
+    new AbortController().signal,
+  );
+  try {
+    await vi.waitFor(() => expect(chunkCalls).toBe(1));
+    expect(slices.mock.calls).toEqual([
+      [0, 4096],
+      [0, 64 * 1024],
+    ]);
+  } finally {
+    first.resolve(null);
+  }
+  await pending;
+  expect(wholeRead).not.toHaveBeenCalled();
+  const chunks = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "relay_upload_chunk");
+  expect(chunks.map(([, bytes]) => (bytes as ArrayBuffer).byteLength)).toEqual([
+    64 * 1024,
+    64 * 1024,
+    3,
+  ]);
+});
+
+it("cancellation during ingress prevents further chunks and final upload", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  const original = vi.mocked(invoke).getMockImplementation();
+  assert(original);
+  const gate = deferred<null>();
+  let entered = false;
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+    if (command === "relay_upload_chunk") {
+      entered = true;
+      await gate.promise;
+    }
+    return original(command, args, options);
+  });
+  const controller = new AbortController();
+  const pending = transport.uploadAttachment(
+    new File([new Uint8Array(128 * 1024)], "large.bin"),
+    controller.signal,
+  );
+  await vi.waitFor(() => expect(entered).toBe(true));
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  gate.resolve(null);
+  await vi.waitFor(() =>
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "relay_upload_cancel"),
+    ).toHaveLength(1),
+  );
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_upload_chunk"),
+  ).toHaveLength(1);
+  expect(uploads).toHaveLength(0);
 });

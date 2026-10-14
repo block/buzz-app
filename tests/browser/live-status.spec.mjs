@@ -14,7 +14,9 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   await page.evaluate(() => {
     window.__bannerSeen = [];
     window.__bannerObserver = new MutationObserver(() => {
-      for (const status of document.querySelectorAll(".buzz-toast")) {
+      for (const status of document.querySelectorAll(
+        '[role="status"][aria-label="Live updates need attention"]',
+      )) {
         if (
           status.textContent.includes(
             "Only currently accessible messages remain readable.",
@@ -35,7 +37,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   const warning = page
-    .getByRole("dialog", { name: "Live updates need attention", exact: true })
+    .getByRole("status", { name: "Live updates need attention", exact: true })
     .filter({ hasText: "Only currently accessible messages remain readable." });
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await expect(warning).toHaveCount(0);
@@ -98,7 +100,7 @@ for (const target of ["alpha", "profiles"]) {
     ).toBeVisible();
     await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
     const warning = page
-      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .getByRole("status", { name: "Live updates need attention", exact: true })
       .filter({
         hasText: "Only currently accessible messages remain readable.",
       });
@@ -147,10 +149,29 @@ for (const target of ["alpha", "profiles"]) {
       await page
         .getByRole("textbox", { name: "Message #Alpha", exact: true })
         .fill("Unsent recovery draft");
-      await expect(warning).toHaveCount(1); // Diagnostics must not emit a second toast.
+      await expect(warning).toHaveCount(1); // Diagnostics must not duplicate recovery.
       await expect(warning).toHaveCSS("opacity", "1");
+      const composer = page
+        .getByRole("textbox", {
+          name: "Message #Alpha",
+          exact: true,
+        })
+        .locator("xpath=ancestor::form");
+      await expect
+        .poll(async () => {
+          const notice = await warning.boundingBox();
+          const form = await composer.boundingBox();
+          return notice && form ? notice.y + notice.height <= form.y : false;
+        })
+        .toBe(true);
+      await composer
+        .getByRole("button", {
+          name: "Send message",
+          exact: true,
+        })
+        .click({ trial: true });
       await page.screenshot({
-        path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
+        path: testInfo.outputPath(`recovery-app-${target}-${width}.png`),
       });
       await openChannelDetails(page);
       await openDiagnostics(page);
@@ -160,9 +181,12 @@ for (const target of ["alpha", "profiles"]) {
     await page
       .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Retry live updates", exact: true })
-      .click();
+    const retry = page.getByRole("button", {
+      name: "Retry live updates",
+      exact: true,
+    });
+    await retry.focus();
+    await retry.press("Enter");
     await openChannelDetails(page);
     await openDiagnostics(page);
     await expect(recovery).toBeVisible();
@@ -180,6 +204,70 @@ for (const target of ["alpha", "profiles"]) {
   });
 }
 
+// Browser layout: a long, unbroken relay reason must scroll inside recovery,
+// leaving the composer and keyboard retry reachable at enlarged text size.
+test("long recovery stays bounded above the composer at enlarged text size", async ({
+  page,
+  app,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await expect(input).toBeVisible();
+  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+  app.relay.failRoute(
+    "primary",
+    "alpha",
+    `error: ${"Unavailable".repeat(160)}`,
+  );
+  const warning = page.getByRole("status", {
+    name: "Live updates need attention",
+  });
+  await expect(warning).toBeVisible();
+  await input.fill("Unsent recovery draft");
+  const form = input.locator("xpath=ancestor::form");
+  await expect
+    .poll(async () => {
+      const notice = await warning.boundingBox();
+      const composer = await form.boundingBox();
+      return (
+        !!notice &&
+        !!composer &&
+        notice.y + notice.height <= composer.y &&
+        composer.y + composer.height <= 600
+      );
+    })
+    .toBe(true);
+  await expect
+    .poll(() => warning.evaluate((el) => el.scrollHeight > el.clientHeight))
+    .toBe(true);
+  await form
+    .getByRole("button", { name: "Send message", exact: true })
+    .click({ trial: true });
+  const retry = warning.getByRole("button", { name: "Retry live updates" });
+  await input.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(retry).toBeFocused();
+  await expect(retry).toBeInViewport();
+  await expect
+    .poll(() => warning.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  await page.screenshot({
+    path: testInfo.outputPath("recovery-long-enlarged.png"),
+  });
+  await retry.press("Enter");
+  await expect(warning).toHaveCount(0);
+  await expect(input).toHaveText("Unsent recovery draft");
+  await expect(input).toBeFocused();
+});
+
 async function openDiagnostics(page) {
   // A quick reopen can retain the outgoing settings DOM during its exit.
   const summary = page.getByText("Diagnostics", { exact: true });
@@ -187,3 +275,167 @@ async function openDiagnostics(page) {
     await summary.click();
   await expect(summary.locator("..")).toHaveAttribute("open", "");
 }
+
+test.describe("public preview recovery", () => {
+  test.use({ openSearch: true });
+  // Browser focus must survive both removal of Retry and replacement of the
+  // empty loading/error placeholder by the real timeline.
+  test("restores focus when empty preview catch-up fails before loading rows", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    const originalHistory = app.histories.get(`primary/${app.openChannelId}`);
+    app.histories.set(`primary/${app.openChannelId}`, []);
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    await page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ })
+      .click();
+    await expect(
+      page.getByRole("region", {
+        name: "Channel message history",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(() => app.relay.hasRoute("primary", app.openChannelId))
+      .toBe(true);
+    let failHead = true;
+    let retryRequested = false;
+    let releaseHead;
+    const headGate = new Promise((resolve) => {
+      releaseHead = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      const isPreviewHead = route
+        .request()
+        .postDataJSON()
+        .some(
+          (filter) =>
+            filter.top_level && filter["#h"]?.includes(app.openChannelId),
+        );
+      if (!isPreviewHead) return route.continue();
+      if (failHead) {
+        app.report.startupFailures ??= [];
+        app.report.startupFailures.push(route.request().url());
+        return route.fulfill({
+          status: 502,
+          json: { error: "Fixture preview head unavailable" },
+        });
+      }
+      retryRequested = true;
+      await headGate;
+      await route.continue();
+    });
+    try {
+      app.relay.failRoute(
+        "primary",
+        app.openChannelId,
+        "error: Preview stream interrupted",
+      );
+      await page
+        .getByRole("button", { name: "Retry live updates", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: "Retry messages", exact: true }),
+      ).toBeVisible();
+      const history = page.locator("[data-channel-history]");
+      await expect(history.locator("[data-message-scroller]")).toHaveCount(0);
+      const warning = page.getByRole("status", {
+        name: "Live updates need attention",
+        exact: true,
+      });
+      const retry = warning.getByRole("button", { name: "Retry live updates" });
+      await expect(retry).toBeVisible();
+      failHead = false;
+      app.histories.set(`primary/${app.openChannelId}`, originalHistory);
+      await retry.focus();
+      await retry.press("Enter");
+      await expect.poll(() => retryRequested).toBe(true);
+      await expect(history).toBeFocused();
+      await expect(history).toHaveAttribute("aria-label", "Channel history");
+      await expect(
+        history.getByText("Loading messages…", { exact: true }),
+      ).toBeVisible();
+      releaseHead();
+      await expect(history.locator("[data-message-scroller]")).toBeVisible();
+      await expect(history).toContainText("Public conversation root");
+      await expect(warning).toHaveCount(0);
+      await expect(history).toBeFocused();
+    } finally {
+      releaseHead();
+    }
+  });
+  // Real browser geometry and focus: the wrapped recovery must remain outside
+  // the floating invitation, and removing Retry must leave focus in history.
+  test("keeps wrapped recovery clear of Join and restores keyboard focus to history", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto(app.origin);
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    await page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ })
+      .click();
+    const notice = page.getByRole("region", {
+      name: "Channel preview",
+      exact: true,
+    });
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    await expect(notice).toBeVisible();
+    await expect
+      .poll(() => app.relay.hasRoute("primary", app.openChannelId))
+      .toBe(true);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "20px";
+    });
+    app.relay.failRoute(
+      "primary",
+      app.openChannelId,
+      "error: Live updates are temporarily unavailable. Try reconnecting to this channel.",
+    );
+    const warning = page.getByRole("status", {
+      name: "Live updates need attention",
+      exact: true,
+    });
+    const retry = warning.getByRole("button", { name: "Retry live updates" });
+    await expect(warning).toBeVisible();
+    await expect
+      .poll(async () => {
+        const capsule = await notice.boundingBox();
+        const recovery = await warning.boundingBox();
+        return (
+          !!capsule && !!recovery && capsule.y + capsule.height <= recovery.y
+        );
+      })
+      .toBe(true);
+    await retry.click({ trial: true });
+    app.relay.holdEose(app.openChannelId);
+    try {
+      await retry.focus();
+      await retry.press("Enter");
+      await expect(history).toBeFocused();
+    } finally {
+      app.relay.releaseEose(app.openChannelId);
+    }
+    await expect(warning).toHaveCount(0);
+    await expect(history).toBeFocused();
+    await expect(
+      notice.getByRole("button", { name: "Join", exact: true }),
+    ).toBeVisible();
+  });
+});

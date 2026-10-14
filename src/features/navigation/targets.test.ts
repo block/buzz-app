@@ -73,10 +73,6 @@ describe("open target boundary", () => {
     { ...conversation, scope: { communityOrigin: "https://relay.example" } },
     {
       ...conversation,
-      scope: { viewer, communityOrigin: "https://relay.example/path" },
-    },
-    {
-      ...conversation,
       scope: { viewer: "npub1wrong", communityOrigin: "https://relay.example" },
     },
     { ...conversation, messageId: "not-an-id" },

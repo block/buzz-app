@@ -1,30 +1,12 @@
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
+  formatCompactTime,
   formatFullTimestamp,
   formatItemTimestamp,
 } from "../../shared/datetime";
 import { useLocalDay } from "../../shared/use-local-day";
 import styles from "./Messages.module.css";
-
-// Retain only the current locale/zone pair, never message content. Resolve the
-// defaults on each render so a running app still follows OS timezone changes.
-let clockFormat:
-  | { locale: string; timeZone: string; clock: Intl.DateTimeFormat }
-  | undefined;
-function clock() {
-  const { locale, timeZone } = new Intl.DateTimeFormat().resolvedOptions();
-  if (clockFormat?.locale !== locale || clockFormat.timeZone !== timeZone)
-    clockFormat = {
-      locale,
-      timeZone,
-      clock: new Intl.DateTimeFormat(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-      }),
-    };
-  return clockFormat.clock;
-}
 
 /** The divider above a day's first row: "Today", "Monday", "June 20, 2025".
  * `data-day` carries the local calendar day. */
@@ -36,7 +18,35 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
     .join("-");
   return (
     <div className={styles.day}>
-      <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
+      <span className={styles.dayLabel}>
+        {/* Decorative calendar artwork; the adjacent label owns the date. */}
+        <svg
+          className={styles.dayCalendar}
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
+          <path
+            d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
+            fill="#f00"
+          />
+          <rect
+            x="0.5"
+            y="0.5"
+            width="23"
+            height="23"
+            rx="5.5"
+            fill="none"
+            stroke="var(--border-standard)"
+            strokeWidth="0.5"
+          />
+          <text x="12" y="19" textAnchor="middle" fontSize="12" fill="#111">
+            {date.getDate()}
+          </text>
+        </svg>
+        <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
+      </span>
     </div>
   );
 }
@@ -55,12 +65,7 @@ export function MessageTimestamp({
   useLocalDay();
   const date = new Date(createdAt * 1000);
   const label = compact
-    ? clock()
-        .formatToParts(date)
-        .filter((part) => part.type !== "dayPeriod")
-        .map((part) => part.value)
-        .join("")
-        .trim()
+    ? formatCompactTime(createdAt)
     : formatItemTimestamp(createdAt, { withTime: true });
   const fullDate = formatFullTimestamp(createdAt);
   return (
@@ -73,7 +78,9 @@ export function MessageTimestamp({
         className={compact ? styles.continuationTime : undefined}
       >
         <span aria-hidden="true">{label}</span>
-        <span className="sr-only">{fullDate}</span>
+        {/* Engines copy visually hidden text; a selection across rows would
+            otherwise repeat every clock as a date the reader never saw. */}
+        <span className="sr-only select-none">{fullDate}</span>
       </time>
     </Tooltip>
   );

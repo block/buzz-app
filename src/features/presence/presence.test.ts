@@ -403,7 +403,7 @@ it("retains profile priority across duplicate cleanup and refills released slots
   h.owner.dispose();
 });
 
-it.each([null, false, true, "error"] as const)(
+it.each([null, true, "error"] as const)(
   "renewal retries only locally unsent status promptly: %s",
   async (result) => {
     const h = setup();

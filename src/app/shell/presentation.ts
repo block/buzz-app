@@ -1,4 +1,5 @@
 import {
+  AlarmIcon,
   BellIcon,
   BestieIcon,
   BrowserIcon,
@@ -20,8 +21,10 @@ export const shellPresentation = {
 // Navigation order is host policy, never plugin activation timing. Match full
 // contribution keys so an external page's local ID cannot claim a bundled slot.
 const bundledOrder = [
+  "buzz.me/me",
   "buzz.channels/channels",
   "buzz.inbox/inbox",
+  "buzz.reminders/reminders",
   "buzz.bestie/bestie",
   "buzz.projects/projects",
 ];
@@ -43,6 +46,7 @@ export function orderPages(pages: readonly RegisteredPage[]) {
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
+  ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.bestie/bestie", BestieIcon],
   ["buzz.projects/projects", FolderSimpleIcon],
   ["buzz.agents/agents", RobotIcon],
@@ -65,4 +69,28 @@ export function pagePresentation(page: RegisteredPage): PagePresentation {
     tone,
     ...(page.icon === undefined ? {} : { image: page.icon }),
   };
+}
+
+// Header selection describes the area; sidebar selection and routes stay exact.
+export function headerPageSelection(
+  pages: readonly RegisteredPage[],
+  selected: string,
+): string {
+  const page = pages.find((page) => page.key === selected);
+  if (
+    selected !== "buzz.me/me" &&
+    page &&
+    // Placement applies only to primary pages.
+    (!page.primary ||
+      page.placement === undefined ||
+      page.placement === "sidebar") &&
+    pages.some(
+      (page) =>
+        page.key === "buzz.channels/channels" &&
+        page.primary &&
+        page.placement === "topbar",
+    )
+  )
+    return "buzz.channels/channels";
+  return selected;
 }

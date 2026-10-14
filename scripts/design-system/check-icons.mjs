@@ -18,6 +18,7 @@ const nonIconDependencies = new Set([
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",
   "@tailwindcss/postcss",
@@ -66,6 +67,7 @@ const nonIconDependencies = new Set([
   "remark-breaks",
   "remark-gfm",
   "rolldown",
+  "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
   "tailwindcss",
   "typescript",
   "undici",
@@ -185,14 +187,17 @@ export function checkIconSource(path, source) {
   visit(parsed.program);
   return errors;
 }
-export function checkIcons() {
-  const paths = execFileSync(
-    "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-    { cwd: root, encoding: "utf8" },
-  )
-    .split("\0")
-    .filter(Boolean);
+// Check the given repository-relative paths, or every tracked/untracked file.
+export function checkIcons(selected = []) {
+  const paths = selected.length
+    ? selected
+    : execFileSync(
+        "git",
+        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        { cwd: root, encoding: "utf8" },
+      )
+        .split("\0")
+        .filter(Boolean);
   const errors = [];
   for (const path of new Set(paths)) {
     if (!existsSync(`${root}${path}`)) continue;
@@ -212,4 +217,5 @@ export function checkIcons() {
   if (errors.length) throw new Error(errors.join("\n"));
   console.log("Icon dependencies and source import boundary checked.");
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) checkIcons();
+if (process.argv[1] === fileURLToPath(import.meta.url))
+  checkIcons(process.argv.slice(2));

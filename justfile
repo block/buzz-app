@@ -4,6 +4,10 @@
 default:
     @just --list
 
+# Install standard hooks once per clone when lhm is not managing them.
+hooks:
+    bin/lefthook install
+
 [private]
 install:
     pnpm install --frozen-lockfile

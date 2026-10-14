@@ -33,13 +33,13 @@ export default defineConfig(async ({ command, mode }) => {
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
-      (await import("./dev/developer-settings.ts")).developerSettingsPlugin(
+      (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(
         process.cwd(),
       ),
     );
   if (live)
     plugins.push(
-      (await import("./dev/relay-broker.mjs")).relayBrokerPlugin({
+      (await import("./browser-host/relay-broker.mjs")).relayBrokerPlugin({
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
@@ -75,12 +75,16 @@ export default defineConfig(async ({ command, mode }) => {
       ),
     },
     clearScreen: false,
+    // Keep build artifacts and coverage pages out of dependency discovery.
+    optimizeDeps: {
+      entries: ["**/*.html", "!**/target/**", "!**/coverage/**"],
+    },
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so
       // each worktree has its own stable default. The CLI's --port still wins.
       port: worktreePort(fileURLToPath(new URL(".", import.meta.url))),
       strictPort: false,
-      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+      watch: { ignored: ["**/src-tauri/**", "**/target/**", "**/.scratch/**"] },
     },
   };
 });

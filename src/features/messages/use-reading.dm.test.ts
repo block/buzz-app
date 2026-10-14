@@ -13,8 +13,11 @@ import {
   type ReadStateStorage,
 } from "../relay/read-state-storage";
 import { keypair, message, metadata, roster } from "../relay/testing";
-// @ts-expect-error Test the production Node codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 
 const stops: (() => void)[] = [];
 afterEach(() => {

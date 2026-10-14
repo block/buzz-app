@@ -1,0 +1,29 @@
+{
+  "id": "buzz.codex",
+  "name": "Codex",
+  "apiVersion": 1,
+  "host": {
+    "networkOrigins": ["https://releases.openai.com"],
+    "processes": [
+      {
+        "id": "workspace",
+        "program": "pwd"
+      },
+      {
+        "id": "codex-sh",
+        "program": "bash",
+        "args": ["-c"]
+      },
+      {
+        "id": "platform",
+        "program": "uname",
+        "args": ["-sm"]
+      },
+      {
+        "id": "read",
+        "program": "base64",
+        "args": ["-i"]
+      }
+    ]
+  }
+}

@@ -1,19 +1,17 @@
+import { createLocalAgentActivity } from "../features/agents/local-activity";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import {
   createIdentity,
   nativeIdentityEnabled,
 } from "../features/identity/service";
-import { AgentSecurityService } from "../features/agents/security";
 import { SettingsCardsService } from "../features/settings/service";
-import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
-import { bindAgentMentions } from "../features/agents/mention-wake";
-import { provideAgentControl } from "../features/agents/control-service";
+import { createLocalAgents } from "../features/agents/local";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
-import { bindSearchUsage } from "./shell/search-usage";
+import { bindSearchUsage } from "../features/search/usage";
 import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
 import {
@@ -22,6 +20,7 @@ import {
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
+import { AgentsService } from "../features/agents/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
@@ -46,8 +45,8 @@ export function createServices() {
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
-  const agentControl = provideAgentControl(ctx);
-  new AgentSecurityService(ctx);
+  const localAgents = createLocalAgents();
+  const localActivity = createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -57,24 +56,38 @@ export function createServices() {
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
-  const channelTemplates = new TemplateProvidersService(ctx);
-  const identityNames = new IdentityNamesService(ctx, agentControl);
+  const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
-    agentControl,
+    localAgents.agents,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
+    localActivity.reader,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
-  ctx.effect(() => bindAgentMentions(agentControl, communities));
+  const agents = new AgentsService(
+    ctx,
+    communities,
+    undefined,
+    undefined,
+    undefined,
+    localActivity,
+  );
+  ctx.effect(() =>
+    localAgents.bind({
+      snapshot: agents.local,
+      subscribe: agents.subscribe,
+      refresh: () => agents.refresh(),
+    }),
+  );
   const notifications = new NotificationsService(
     ctx,
     navigation,
@@ -105,17 +118,16 @@ export function createServices() {
   let disposal: Promise<void> | undefined;
   return {
     identity,
-    agentControl,
     browser,
     notifications,
     navigation,
     navigationHost,
     shortcuts,
+    agents,
     accountActions,
     shortcutBindings,
     conversation,
     settingsCards,
-    channelTemplates,
     pages,
     panels,
     plugins,

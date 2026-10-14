@@ -1,11 +1,7 @@
 @import "./composer.css" layer(components);
+@import "./tab-drag.css";
 
 @layer components {
-  /* Optical alignment: lift Robot face artwork without moving its layout box. */
-  .tabler-icon-robot-face {
-    translate: 0 -1px;
-  }
-
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -62,6 +58,20 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* Inline caption choices, such as the composer's model label. */
+  .buzz-button[data-size="inline"] {
+    @apply text-caption;
+    min-height: var(--space-6);
+    padding: 0 var(--space-1);
+  }
+  .buzz-button[data-size="inline"] .buzz-button-label {
+    gap: var(--space-1);
+  }
+  .buzz-button[data-size="inline"] .buzz-button-label > svg,
+  .buzz-button[data-size="inline"] .buzz-button-spinner {
+    width: var(--space-3);
+    height: var(--space-3);
+  }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
     min-height: var(--size-control-sm);
@@ -112,7 +122,8 @@
         [data-disabled],
         [data-icon-variant="chrome"],
         [data-icon-variant="avatar"],
-        [data-icon-variant="media"]
+        [data-icon-variant="media"],
+        [data-icon-variant="bare"]
       ) {
       background: var(--interaction-hover);
     }
@@ -140,7 +151,8 @@
   ):not(
     [data-disabled],
     [data-icon-variant="avatar"],
-    [data-icon-variant="media"]
+    [data-icon-variant="media"],
+    [data-icon-variant="bare"]
   ) {
     background: var(--interaction-pressed);
   }
@@ -253,6 +265,18 @@
     [data-disabled]
   ) {
     background: var(--interaction-selected);
+  }
+
+  /* Glyph-state toggles stay unfilled; their caller supplies outline/filled art.
+     Keep the 32px small hit area with slightly larger 20px artwork. */
+  .buzz-button[data-icon-variant="bare"] {
+    background: transparent;
+  }
+  .buzz-button[data-icon-variant="bare"][data-size="sm"]
+    .buzz-button-label
+    > svg {
+    width: var(--space-5);
+    height: var(--space-5);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */
@@ -388,6 +412,13 @@
     color: var(--text-subtle);
   }
 
+  /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
+  .buzz-avatar[data-size="compact"] {
+    @apply text-caption;
+    width: 1.3125rem;
+    height: 1.3125rem;
+  }
+
   .buzz-avatar[data-size="small"] {
     @apply text-caption;
     width: 1.5rem;
@@ -421,6 +452,8 @@
   .buzz-avatar-status {
     position: relative;
     display: inline-grid;
+    /* Artwork/fallback changes must not change the inline box's baseline. */
+    vertical-align: middle;
     flex: 0 0 auto;
     width: max-content;
     height: max-content;
@@ -464,8 +497,8 @@
   }
 
   /* A panel is the default opaque reading surface over the atmospheric
-     backdrop. Its border and threshold shadow arrive together: taking only
-     bg-panel would lose the boundary that lets it sit above the gradient. */
+     backdrop. A transparent border reserves its geometry; shadow-panel supplies
+     the shared translucent contour and elevation above the gradient. */
   /* One set of declarations, two selectors.
 
      A dockview group *is* a Panel — it is the movable, independently legible
@@ -485,10 +518,10 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border-standard);
-    border-radius: var(--radius-panel);
+    border: 1px solid transparent;
+    border-radius: var(--radius-container);
     background: var(--surface-panel);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-panel);
   }
 
   /* A joined surface keeps one outer edge; nested panels retain opaque
@@ -642,9 +675,16 @@
     color: var(--text-standard);
   }
 
+  /* The selection fills the tab box, so hover and selection are the same shape
+     in the same place. Inset top and bottom instead and a selected tab is drawn
+     8px shorter than the hover fill on the tab beside it: the two states stop
+     agreeing on where a tab is, and the pill reads as a smaller object floating
+     in padding rather than the tab itself turning solid. The container's own
+     `--space-1` is the only inset this control needs — that is how the glass
+     strip in the header read before it became a Tabs component. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
-    top: var(--space-1);
-    bottom: var(--space-1);
+    top: 0;
+    bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
     box-shadow: var(--shadow-xs);
@@ -662,10 +702,16 @@
     gap: var(--space-4);
   }
 
+  /* `overflow-x: auto` forces the block axis to `auto` too, so the list clips
+     the focus ring's top and bottom edges and a focused tab reads as two
+     vertical bars. The inset gives the ring its 4px, and the negative margin
+     cancels it so the strip's footprint is unchanged. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
     min-width: 0;
     overflow-x: auto;
     padding-inline: var(--space-1);
+    padding-block: var(--space-1);
+    margin-block: calc(var(--space-1) * -1);
     scroll-padding-inline: var(--space-1);
     gap: var(--space-5);
   }
@@ -694,11 +740,12 @@
     color: var(--text-standard);
   }
 
-  /* Sits on the container's bottom edge and spans the tab exactly. `height` is
+  /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
      the hairline; the indicator inherits its horizontal travel from the shared
-     rule above. */
+     rule above. The offset matches the list's block inset so the bar stays on
+     the tab edge rather than on the ring's. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-indicator {
-    bottom: 0;
+    bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
     background: var(--text-standard);
@@ -896,6 +943,37 @@
     color: var(--text-standard);
   }
 
+  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  .chrome-navigation {
+    @apply glass-primary;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    height: 2.5rem;
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"] {
+    width: auto;
+    min-height: 2rem;
+    height: 2rem;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+    @apply text-label;
+  }
+  .chrome-navigation
+    .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
+    background: var(--bg-glass-primary-hover);
+    color: var(--text-standard);
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
+  .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
+    background: var(--bg-chrome-selected);
+    color: var(--text-standard);
+    box-shadow: var(--shadow-xs);
+  }
+
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;
@@ -945,9 +1023,9 @@
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     display: flex;
     position: relative;
-    flex: 0 0 12rem;
-    width: 12rem;
-    max-width: 100%;
+    flex: 0 0 auto;
+    width: max-content;
+    max-width: min(12rem, 100%);
   }
   .buzz-tabs[data-variant="navigation"] .navigation-item {
     border-radius: var(--radius-icon-button);
@@ -998,11 +1076,21 @@
     justify-content: center;
   }
 
+  html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  /* The navigation list scrolls, so it clips: its first tab sits flush against
+     the inline start edge and an offset ring loses that side. Draw this ring
+     inside the tab, as the scrollable menu and popover lists already do. */
+  html[data-keyboard-navigation]
+    .buzz-tabs[data-variant="navigation"]
+    .navigation-item:focus-visible {
+    outline-offset: -2px;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1068,6 +1156,9 @@
     --text-metadata: var(--text-standard);
     background: var(--interaction-row-hover);
   }
+  .buzz-menu-item[data-selection="highlight"][data-checked] {
+    background: var(--affordance-popover-selected);
+  }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
   }
@@ -1103,6 +1194,9 @@
   .buzz-menu-group-label {
     padding: var(--space-2) var(--space-2) var(--space-1);
     color: var(--text-subtle);
+  }
+  .buzz-menu-group-label[data-emphasis="quiet"] {
+    color: var(--text-metadata);
   }
   .buzz-menu-separator {
     height: 1px;
@@ -1341,6 +1435,20 @@
   .buzz-select-option {
     justify-content: space-between;
     gap: var(--space-4);
+  }
+  .buzz-select-option-main {
+    display: flex;
+    align-items: start;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-row-gap);
+  }
+  .buzz-select-option-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
   }
   .buzz-select-option[data-highlighted] {
     outline: none;
@@ -1628,6 +1736,68 @@
   @media (prefers-reduced-motion: reduce) {
     .buzz-tabs-arrival {
       animation-timing-function: steps(1, end);
+    }
+  }
+
+  /* Activity arrival: a quiet fade. data-arrive="grow" (standalone pills)
+     also opens and closes its space with the same settle timing, so content
+     below moves instead of jumping. */
+  .buzz-arrive {
+    animation: buzz-arrive var(--duration-state) var(--easing-enter) both;
+  }
+  .buzz-arrive[data-arrive="grow"] {
+    display: grid;
+    grid-template-rows: 1fr;
+    animation: buzz-arrive-grow var(--duration-settle) var(--easing-settle) both;
+  }
+  .buzz-arrive[data-arrive="grow"] > * {
+    min-height: 0;
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      backwards;
+  }
+  @keyframes buzz-arrive {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes buzz-arrive-grow {
+    from {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+    to {
+      grid-template-rows: 1fr;
+    }
+  }
+  /* Clips only while the space animates (discrete, held for the duration), so
+     hidden content never adds scroll height and focus rings are unclipped at rest. */
+  @keyframes buzz-arrive-reveal {
+    from,
+    to {
+      overflow: clip;
+    }
+  }
+  /* Leaving: the owner keeps the element mounted until this finishes. */
+  .buzz-arrive[data-arrive="grow"][data-leaving] {
+    pointer-events: none;
+    animation: buzz-leave var(--duration-settle) var(--easing-settle) forwards;
+  }
+  .buzz-arrive[data-arrive="grow"][data-leaving] > * {
+    animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle)
+      reverse forwards;
+  }
+  @keyframes buzz-leave {
+    to {
+      grid-template-rows: 0fr;
+      margin-block: 0;
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-arrive,
+    .buzz-arrive[data-leaving] {
+      animation: none;
     }
   }
 }

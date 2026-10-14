@@ -3,10 +3,7 @@ import { LightningIcon } from "../../shared/design-system/icons";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  EnvelopeOpenIcon,
-  ListBulletsIcon,
-} from "../../shared/design-system/icons";
+import { EnvelopeOpenIcon } from "../../shared/design-system/icons";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -20,6 +17,7 @@ import {
   useState,
   useSyncExternalStore,
   type ReactElement,
+  type ComponentProps,
 } from "react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import type { Profile } from "../../features/relay/contracts";
@@ -29,6 +27,8 @@ import { Avatar } from "../../shared/Avatar";
 import { Avatar as WorkflowAvatar } from "../../shared/design-system/ui/Avatar";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Channels.module.css";
+import activityStyles from "../../features/agents/ActivityRows.module.css";
+import { AgentActivityRow } from "../../features/agents/AgentActivityRow";
 import { workingAgentDetails } from "./working-agents";
 
 const elapsed = (createdAt: number, now = Date.now()) => {
@@ -100,7 +100,9 @@ function ActivityRow({
     }
   };
   return (
-    <div className={`${styles.activityItem} ${styles.activityItemWithAction}`}>
+    <div
+      className={`${activityStyles.activityItem} ${activityStyles.activityItemWithAction}`}
+    >
       <NavigationItem
         type="button"
         aria-label={`Open unread thread from ${name}: ${item.preview}`}
@@ -120,15 +122,15 @@ function ActivityRow({
                 profile?.picture ? session.media(profile.picture) : undefined
               }
               shape={isAgent ? "squircle" : "circle"}
-              className={styles.activityAvatar ?? ""}
+              className={activityStyles.activityAvatar ?? ""}
             />
           )
         }
         label={
-          <span className={styles.activityItemBody}>
-            <span className={styles.activityItemHeading}>
+          <span className={activityStyles.activityItemBody}>
+            <span className={activityStyles.activityItemHeading}>
               <strong>{name}</strong>
-              <span className={styles.activityTimestamp}>
+              <span className={activityStyles.activityTimestamp}>
                 {elapsed(item.createdAt)}
               </span>
             </span>
@@ -136,7 +138,7 @@ function ActivityRow({
           </span>
         }
       />
-      <span className={styles.activityItemAction}>
+      <span className={activityStyles.activityItemAction}>
         <IconButton
           size="toolbar"
           icon={<EnvelopeOpenIcon />}
@@ -195,6 +197,11 @@ export function ChannelActivityPopover({
   const agentIds = activeAgents.join(",");
   const [open, setOpen] = useState(false);
   const triggerPointerType = useRef<string | null>(null);
+  const actions =
+    useRef<
+      NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
+    >(null);
+  const pressedOpen = useRef(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!open || !activeAgents.length) return;
@@ -220,7 +227,12 @@ export function ChannelActivityPopover({
       getTargets,
       getTargets,
     ),
-  ) as ({ startedAt: number; messageId?: string } | null)[];
+  ) as ({
+    startedAt: number;
+    messageId?: string;
+    label?: string;
+    local?: boolean;
+  } | null)[];
   // Typing alone lists an agent while the Agent Activity plugin is off, when
   // no activity panel is registered to open.
   const openAgentActivity = useSyncExternalStore(
@@ -232,13 +244,20 @@ export function ChannelActivityPopover({
   const keyLabels = publicKeyLabels(activeAgents);
   const hasActivity = items.length > 0 || activeAgents.length > 0;
   useEffect(() => {
-    if (!hasActivity) setOpen(false);
-  }, [hasActivity]);
+    if (!hasActivity && open) actions.current?.close();
+  }, [hasActivity, open]);
   const stale = items.length > 0 && snapshot.freshness === "stale";
+  // Row actions close through Base UI so its hover/press state resets; the
+  // sidebar trigger stays mounted after the navigation they start.
+  const close = () => {
+    if (actions.current) actions.current.close();
+    else setOpen(false);
+  };
   return (
     <PopoverRoot
       modal={false}
       open={open}
+      actionsRef={actions}
       onOpenChange={(next, details) => {
         if (next && !hasActivity) return;
         if (details.reason === "trigger-press") {
@@ -252,6 +271,16 @@ export function ChannelActivityPopover({
             return;
           }
         }
+        // A queued hover dismissal must not close a newer keyboard/touch opening.
+        if (
+          !next &&
+          details.reason === "trigger-hover" &&
+          pressedOpen.current
+        ) {
+          details.cancel();
+          return;
+        }
+        pressedOpen.current = next && details.reason === "trigger-press";
         setOpen(next);
         if (next) setNow(Date.now());
         if (next && items.length)
@@ -289,79 +318,58 @@ export function ChannelActivityPopover({
         aria-label={`Activity in ${channelName}`}
       >
         {open && (
-          <div className={styles.activityList}>
+          <div className={activityStyles.activityList}>
             {stale && (
               <p className={styles.activityStale}>May be out of date</p>
             )}
             {activeAgents.length > 0 && (
               <section aria-label="Agents working now">
-                <h2 className={styles.activitySectionLabel}>Working now</h2>
+                <h2 className={activityStyles.activitySectionLabel}>
+                  Working now
+                </h2>
                 {activeAgents.map((agent, index) => {
                   const profile = agentProfiles?.get(agent);
                   const name = profile?.name ?? keyLabels.get(agent) ?? "Agent";
-                  const { messageId, startedAt } = details[index] ?? {};
+                  const { messageId, startedAt, label, local } =
+                    details[index] ?? {};
                   return (
-                    <div
+                    <AgentActivityRow
                       key={agent}
-                      className={`${styles.activityItem} ${openAgentActivity ? styles.activityItemWithAction : ""}`}
-                    >
-                      <NavigationItem
-                        type="button"
-                        aria-label={`Open ${messageId ? "thread" : "conversation"} for ${name} in ${channelName}`}
-                        onClick={() => {
-                          setOpen(false);
-                          onOpenWorkingAgent?.(channelId, agent, messageId);
-                        }}
-                        icon={
-                          <Avatar
-                            name={name}
-                            src={
-                              profile?.picture
-                                ? session.media(profile.picture, "small")
-                                : undefined
-                            }
-                            shape="squircle"
-                            className={styles.activityAvatar ?? ""}
-                          />
-                        }
-                        label={
-                          <span className={styles.activityItemBody}>
-                            <span className={styles.activityItemHeading}>
-                              <strong>{name}</strong>
-                              <span className={styles.activityTimestamp}>
-                                {startedAt === undefined
-                                  ? "—"
-                                  : workingDuration(startedAt, now)}
-                              </span>
-                            </span>
-                            <span className={styles.activityItemMeta}>
-                              Working
-                            </span>
-                          </span>
-                        }
-                      />
-                      {openAgentActivity && (
-                        <span className={styles.activityItemAction}>
-                          <IconButton
-                            size="toolbar"
-                            icon={<ListBulletsIcon />}
-                            aria-label={`View ${name} activity`}
-                            title="View activity"
-                            onClick={() => {
-                              setOpen(false);
+                      name={name}
+                      picture={
+                        profile?.picture
+                          ? session.media(profile.picture, "small")
+                          : undefined
+                      }
+                      status={label ?? "Working"}
+                      meta={
+                        startedAt === undefined
+                          ? "—"
+                          : workingDuration(startedAt, now)
+                      }
+                      openLabel={`Open ${messageId ? "thread" : "conversation"} for ${name} in ${channelName}`}
+                      onOpen={() => {
+                        close();
+                        onOpenWorkingAgent?.(channelId, agent, messageId);
+                      }}
+                      onOpenActivity={
+                        openAgentActivity && !local
+                          ? () => {
+                              close();
                               openAgentActivity(channelId, agent);
-                            }}
-                          />
-                        </span>
-                      )}
-                    </div>
+                            }
+                          : undefined
+                      }
+                    />
                   );
                 })}
               </section>
             )}
             {items.length > 0 && (
               <section aria-label="Unread threads">
-                <h2 className={styles.activitySectionLabel}>Unread threads</h2>
+                <h2 className={activityStyles.activitySectionLabel}>
+                  Unread threads
+                </h2>
                 {items.map((item) => (
                   <ActivityRow
                     key={item.rootId}
@@ -369,7 +377,7 @@ export function ChannelActivityPopover({
                     session={session}
                     agents={activeAgents}
                     onOpen={(selected) => {
-                      setOpen(false);
+                      close();
                       onOpenThread(selected);
                     }}
                   />

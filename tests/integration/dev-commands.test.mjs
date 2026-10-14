@@ -15,9 +15,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { portForPath } from "../../scripts/worktree-port.mjs";
-import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
-function recipeWithRuntime(failRuntime, name, ...args) {
+function recipe(name, ...args) {
+  const settings = typeof args[0] === "object" ? args.shift() : {};
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-command-"));
   const callsFile = path.join(directory, "calls.jsonl");
   try {
@@ -37,16 +37,27 @@ function recipeWithRuntime(failRuntime, name, ...args) {
         new URL(`../../scripts/${file}`, import.meta.url),
         path.join(directory, "scripts", file),
       );
-    runtimeFixture(directory);
-    if (failRuntime) writeFileSync(path.join(directory, "fail-build"), "");
-    // Run the real recipes, adapter and preparation; never open a native app.
+    if (settings.local !== undefined)
+      writeFileSync(path.join(directory, ".env.local"), settings.local);
+    if (settings.mode !== undefined)
+      writeFileSync(path.join(directory, ".env.development"), settings.mode);
+    const vite = path.join(directory, "node_modules/vite");
+    mkdirSync(vite, { recursive: true });
+    writeFileSync(
+      path.join(vite, "package.json"),
+      JSON.stringify({ type: "module", exports: "./index.mjs" }),
+    );
+    writeFileSync(
+      path.join(vite, "index.mjs"),
+      `export { loadEnv } from ${JSON.stringify(import.meta.resolve("vite"))};\n`,
+    );
+    // Run the real recipes and adapter; never open a native app.
     symlinkSync(process.execPath, path.join(directory, "node"));
     writeFileSync(
       path.join(directory, "pnpm"),
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
-if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
-  if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
-}\n`,
+if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWER:" + JSON.stringify(process.env.BUZZ_DEV_VIEWER));
+\n`,
       { mode: 0o755 },
     );
     // Set PATH inside the recipe shell: Hermit proxies restore their own PATH.
@@ -71,6 +82,9 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
         env: {
           ...process.env,
           BUZZ_TEST_CALLS: callsFile,
+          // Do not inherit the operator's public pin in isolated launcher tests.
+          BUZZ_DEV_VIEWER: undefined,
+          ...settings.env,
         },
         encoding: "utf8",
         timeout: 10_000,
@@ -80,29 +94,14 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
     const calls = existsSync(callsFile)
       ? readFileSync(callsFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
-    const built = existsSync(path.join(directory, "build-calls.jsonl"));
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, built, port: portForPath(root) };
+    return { ...result, calls, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
-
-function recipe(name, ...args) {
-  return recipeWithRuntime(false, name, ...args);
-}
-
-test("runtime preparation failure prevents desktop launch, while help does not build", () => {
-  const result = recipeWithRuntime(true, "desktop");
-  assert.notEqual(result.status, 0);
-  assert.equal(result.built, true);
-  assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
-  const help = recipeWithRuntime(true, "desktop", "--help");
-  assert.equal(help.status, 0, help.stderr);
-  assert.equal(help.built, false);
-});
 
 function launched(target, ...args) {
   const result = recipe(target, ...args);
@@ -350,3 +349,36 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "dmg",
   ]);
 });
+
+for (const [name, settings, expected] of [
+  [
+    "local pin",
+    { local: "BUZZ_DEV_VIEWER=local-public-pin\n" },
+    "local-public-pin",
+  ],
+  [
+    "mode precedence",
+    { local: "BUZZ_DEV_VIEWER=local\n", mode: "BUZZ_DEV_VIEWER=mode\n" },
+    "mode",
+  ],
+  [
+    "process override",
+    { local: "BUZZ_DEV_VIEWER=local\n", env: { BUZZ_DEV_VIEWER: "process" } },
+    "process",
+  ],
+  [
+    "explicit native override",
+    { local: "BUZZ_DEV_VIEWER=local\n", env: { BUZZ_DEV_VIEWER: "" } },
+    "",
+  ],
+  ["no broker", {}, ""],
+]) {
+  test(`desktop passes Vite's effective viewer to native startup: ${name}`, () => {
+    const result = recipe("desktop", settings);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(
+      result.stdout.includes(`VIEWER:${JSON.stringify(expected)}`),
+      result.stdout,
+    );
+  });
+}

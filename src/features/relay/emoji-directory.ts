@@ -5,6 +5,7 @@ import {
   EMOJI_SET_KIND,
   emojiTags,
   emojiMatches,
+  linkPart,
   messageParts,
   normalizeShortcode,
   referencedEmoji,
@@ -302,7 +303,7 @@ export function createEmojiDirectory(
       }
       const used = new Map<string, string>();
       for (const part of messageParts(content)) {
-        if (part.startsWith("https://")) continue;
+        if (linkPart(part)) continue;
         for (const { emoji } of emojiMatches(part, snapshot.entries))
           used.set(emoji.shortcode, emoji.url);
       }

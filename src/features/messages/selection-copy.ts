@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { DOMParser as EditorDOMParser, Fragment } from "prosemirror-model";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
-import { safeMessageUrl } from "../relay/message-content";
+import { safeLinkUrl } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 
@@ -34,7 +34,7 @@ export function serializeSelection(
 
 /** Walk a DOM tree, clipped to `range` when given. The DOM is untrusted data:
  * identity travels only on validated `nostr:`, `buzz:` and credential-free
- * `https:` destinations, and only when a chip's whole text is selected.
+ * `http:` and `https:` destinations, and only when a chip's whole text is selected.
  * Unknown elements degrade to their text. */
 export function serializeNode(
   node: Node,
@@ -55,6 +55,7 @@ function serialize(
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
   if (!(node instanceof Element)) return children(node, format, range);
+  if (unselectable(node)) return "";
   // SVG tag names keep their case.
   const tag = node.tagName.toUpperCase();
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
@@ -135,6 +136,11 @@ function serialize(
     : inner;
 }
 
+/** Engines omit computed `user-select: none` chrome from copies; so do we. */
+export function unselectable(element: Element): boolean {
+  return getComputedStyle(element).userSelect === "none";
+}
+
 function anchor(node: Element, inner: string, format: CopyFormat): string {
   const href = safeHref(node.getAttribute("href") ?? "");
   if (!href) return inner;
@@ -153,9 +159,7 @@ function anchor(node: Element, inner: string, format: CopyFormat): string {
 }
 
 function safeHref(value: string): string | undefined {
-  return profileKey(value) || parseBuzzLink(value)
-    ? value
-    : safeMessageUrl(value);
+  return profileKey(value) || parseBuzzLink(value) ? value : safeLinkUrl(value);
 }
 
 function link(

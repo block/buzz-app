@@ -50,7 +50,7 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
     };
   });
   expect(geometry).toEqual({
-    rightInset: 2,
+    rightInset: 3,
     clipped: false,
     paddingTop: 8,
   });
@@ -100,7 +100,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
       ),
     );
     for (const row of geometry) {
-      expect(row.left).toBe(12);
+      expect(row.left).toBe(13);
       expect(row.right).toBe(row.left + row.gutter);
     }
   };
@@ -204,7 +204,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
   await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
@@ -282,18 +282,9 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
   const header = page.locator(".shell-header");
   await expect(header).toBeVisible();
   expect((await header.boundingBox()).height).toBe(48);
-  const controls = header.locator(".buzz-button[data-icon-variant]");
-  expect(await controls.count()).toBeGreaterThanOrEqual(5);
-  for (const control of await controls.all()) {
-    const box = await control.boundingBox();
-    expect([box.width, box.height]).toEqual([32, 32]);
-  }
-  const icons = header.locator(".buzz-button[data-icon-variant] svg");
-  expect(await icons.count()).toBeGreaterThanOrEqual(4);
-  for (const icon of await icons.all()) {
-    const box = await icon.boundingBox();
-    expect([box.width, box.height]).toEqual([16, 16]);
-  }
+  // The overflow trigger stays mounted but is hidden while header pages fit.
+  const controls = header.locator(".buzz-button[data-icon-variant]:visible");
+  const icons = controls.locator("svg");
   await expect(
     header.getByRole("button", { name: "Bestie", exact: true }),
   ).toHaveCount(0);
@@ -302,18 +293,65 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
     exact: true,
   });
   await expect(search).toHaveAttribute("data-icon-variant", "ghost");
-  const ghosts = header.locator('[data-icon-variant="ghost"]');
-  await page.mouse.move(700, 500);
-  for (const control of await ghosts.all())
-    await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const ghosts = header.locator('[data-icon-variant="ghost"]:visible');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 950 });
+    const overflow = header.locator("[data-shell-pages-overflow]");
+    const topbarPages = header.getByRole("navigation", {
+      name: "Topbar pages",
+      includeHidden: true,
+    });
+    if (width === 390) {
+      await expect(overflow).toBeVisible();
+      await expect(topbarPages).toBeHidden();
+    } else {
+      await expect(overflow).toBeHidden();
+      await expect(topbarPages).toBeVisible();
+    }
+    // The icon default is compact, but community identities keep their larger
+    // targets. Host CSS must not accidentally erase those explicit exceptions.
+    const rail = page.getByRole("navigation", {
+      name: "Communities",
+      exact: true,
+    });
+    for (const control of await rail.getByRole("button").all()) {
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([40, 40]);
+    }
+    await header
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    const profileMenu = page.locator(".buzz-menu-popup[data-profile-menu]");
+    const profileAvatar = profileMenu.getByRole("menuitem", {
+      name: "View your profile",
+    });
+    await expect(profileAvatar).toBeVisible();
+    // The popup enters through a translate transition; Chromium's transformed
+    // client rects carry float error, so measure the settled menu.
+    await expect(profileMenu).toHaveCSS("transform", "none");
+    const avatarBox = await profileAvatar.boundingBox();
+    expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
+    await page.keyboard.press("Escape");
+    await expect(profileAvatar).toHaveCount(0);
+    expect(await controls.count()).toBeGreaterThanOrEqual(5);
+    for (const control of await controls.all()) {
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([32, 32]);
+    }
+    expect(await icons.count()).toBeGreaterThanOrEqual(4);
+    for (const icon of await icons.all()) {
+      const box = await icon.boundingBox();
+      expect([box.width, box.height]).toEqual([16, 16]);
+    }
+    await page.mouse.move(700, 500);
+    for (const control of await ghosts.all())
+      await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     for (const [group, gap] of [
       [".shell-communities", 0],
       [".shell-actions", 8],
     ]) {
       const boxes = await header
-        .locator(`${group} .buzz-button[data-icon-variant]`)
+        .locator(`${group} .buzz-button[data-icon-variant]:visible`)
         .evaluateAll((nodes) =>
           nodes.map((node) => {
             const { x, width } = node.getBoundingClientRect();
@@ -378,7 +416,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   });
   const toggle = page.locator("[data-shell-sidebar-toggle]");
   await expect(toggle).toHaveCount(1);
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await expect(sidebar).not.toBeVisible();
   await toggle.click();
   await expect(sidebar).toBeVisible();
@@ -398,7 +436,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   await expect(sidebar).not.toBeVisible();
   await expect(toggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await toggle.click();
   await expect(sidebar).toBeVisible();
 });
@@ -477,7 +515,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
         duration: style.transitionDuration,
       };
     });
-    expect(track.width).toBe(expandedWidth + gutterWidth);
+    expect(track.width).toBe(expandedWidth + gutterWidth + 4);
     expect(track.property).toContain("grid-template-columns");
     expect(parseFloat(track.duration)).toBeGreaterThan(0);
     const openGap = await page.evaluate(() => {
@@ -490,7 +528,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
         sidebar.getBoundingClientRect().right
       );
     });
-    expect(openGap).toBe(gutterWidth);
+    expect(openGap).toBe(gutterWidth + 4);
     // Seek paused real transitions so runner speed cannot hide an immediate jump.
     // Pause them when the toggle commits, before any frame: transitionrun arrives
     // in a later frame, and a stalled WebKit frame can finish the 220ms transition
@@ -534,6 +572,10 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
               width: nav.getBoundingClientRect().width,
               sidebar: sidebar.getBoundingClientRect().width,
               clip: getComputedStyle(nav).clipPath,
+              visibility: getComputedStyle(nav).visibility,
+              trailingGap:
+                nav.getBoundingClientRect().right -
+                sidebar.getBoundingClientRect().right,
             };
           });
         } finally {
@@ -543,11 +585,12 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
           );
         }
       }, label);
-      const width = expandedWidth + gutterWidth;
+      const width = expandedWidth + gutterWidth + 4;
       const hiding = label.startsWith("Hide");
       // The track leaves its real extent on the first sampled step and crosses
       // the midpoint halfway through, instead of stalling behind a larger
-      // ceiling; the sidebar itself keeps its width and is only clipped.
+      // ceiling; the full-width panel slides with the track so its rounded
+      // trailing edge stays intact instead of being cropped square.
       expect(samples[0].width).toBe(hiding ? width : 0);
       expect(samples[1].width).toBeGreaterThan(0);
       expect(samples[1].width).toBeLessThan(width);
@@ -557,10 +600,18 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
         expect(hiding ? -step : step).toBeGreaterThan(0);
       }
       expect(samples.at(-1).width).toBe(hiding ? 0 : width);
-      for (const sample of samples) expect(sample.sidebar).toBe(expandedWidth);
-      for (const sample of samples.slice(1, -1))
-        expect(sample.clip).toBe("inset(0px)");
-      expect(samples.at(-1).clip).toBe(hiding ? "inset(0px)" : "none");
+      for (const sample of samples) {
+        expect(sample.sidebar).toBe(expandedWidth);
+        expect(sample.trailingGap).toBeCloseTo(gutterWidth + 4, 1);
+      }
+      for (const sample of samples.slice(1, -1)) {
+        expect(sample.clip).toBe("inset(-8px 0px -8px -8px)");
+        expect(sample.visibility).toBe("visible");
+      }
+      expect(samples.at(-1).clip).toBe(
+        hiding ? "inset(-8px 0px -8px -8px)" : "none",
+      );
+      expect(samples.at(-1).visibility).toBe(hiding ? "hidden" : "visible");
     }
 
     if (viewportWidth === 800) {
@@ -602,7 +653,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     .poll(() =>
       shellNavigation.evaluate((node) => node.getBoundingClientRect().width),
     )
-    .toBe(expandedWidth + gutterWidth);
+    .toBe(expandedWidth + gutterWidth + 4);
 
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
@@ -642,13 +693,29 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 
   await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
+
+  // Portalled comboboxes temporarily hide outside regions from assistive tech.
+  // That accessibility state must not override the shell's visible layout state.
+  const accessibilityHiddenWidth = await shellNavigation.evaluate(
+    async (node) => {
+      node.setAttribute("aria-hidden", "true");
+      const transitions = node.getAnimations();
+      for (const transition of transitions) transition.finish();
+      await Promise.all(transitions.map((transition) => transition.finished));
+      return node.getBoundingClientRect().width;
+    },
+  );
+  await expect(shellNavigation).toHaveAttribute("data-sidebar-open", "true");
+  expect(accessibilityHiddenWidth).toBe(expandedWidth + gutterWidth + 4);
+  await shellNavigation.evaluate((node) => node.removeAttribute("aria-hidden"));
+
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(sidebar).not.toBeVisible();
   await expect(rail).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
+    page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Show Channel sidebar" }).click();
@@ -723,7 +790,9 @@ test.extend({ companionFixture: true })(
       await pages.getByRole("button", { name, exact: true }).click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
-        body.getByRole("heading", { name, exact: true }),
+        name === "Inbox"
+          ? body.getByRole("button", { name: "Inbox filters", exact: true })
+          : body.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
       return body;
     };
@@ -818,7 +887,6 @@ fillSidebar(
       }),
       channel: sidebar.getByRole("button", { name: "Beta", exact: true }),
       dm: sidebar.getByRole("button", { name: "Alice Fixture", exact: true }),
-      session: sidebar.getByRole("button", { name: /Alpha, session in/ }),
     };
     const fillBounds = (row) =>
       row.evaluate((button) => {

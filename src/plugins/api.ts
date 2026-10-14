@@ -12,10 +12,19 @@ export type PluginManifest = Readonly<{
       id: string;
       program: string;
       args: readonly string[];
+      /** Opt-in UTF-8 stdin bound, at most 65536 bytes; absent means no input. */
+      maxInputBytes?: number;
       /** Maximum UTF-8 stdout bytes; defaults to 4096, bounded at 1048576. */
       maxOutputBytes?: number;
     }>[];
     networkOrigins?: readonly string[];
+    /** Programs the plugin may start with `host.spawn`; the caller's
+     * arguments follow the declared ones. */
+    processes?: readonly Readonly<{
+      id: string;
+      program: string;
+      args?: readonly string[];
+    }>[];
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.

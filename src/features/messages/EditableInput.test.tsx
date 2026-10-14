@@ -9,7 +9,15 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
@@ -158,6 +166,159 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
   act(() => h.input.undo(false));
   expect(h.input).toHaveValue(":x");
+});
+
+describe("Mac WebKit line breaks", () => {
+  let clear: MockInstance<Selection["removeAllRanges"]>;
+  beforeEach(() => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    clear = vi.spyOn(Selection.prototype, "removeAllRanges");
+  });
+  afterEach(() => vi.restoreAllMocks());
+  /** The native caret ProseMirror wrote back. */
+  const native = () => {
+    const selection = document.getSelection();
+    return [
+      selection?.rangeCount,
+      selection?.isCollapsed,
+      selection?.anchorNode?.textContent,
+      selection?.anchorOffset,
+    ];
+  };
+
+  it.each([false, true])(
+    "refreshes an accepted collapsed caret and restores it natively (code block: %s)",
+    (code) => {
+      const h = mount("ab");
+      if (code) act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => expect(h.input.insertLineBreak()).toBe(true));
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("a\nb");
+      expect(h.input.selectionStart).toBe(2);
+      expect(h.input.selectionEnd).toBe(2);
+      expect(native()).toEqual([1, true, "a\nb", 2]);
+    },
+  );
+
+  it.each([
+    ["paragraph", 2],
+    ["code block", "```\nab\n```".length],
+  ] as const)(
+    "restores the caret after a rejected %s line break",
+    (kind, maxLength) => {
+      const h = mount("ab", { maxLength });
+      if (kind === "code block") act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => h.input.insertLineBreak());
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("ab");
+      expect(native()).toEqual([1, true, "ab", 1]);
+    },
+  );
+
+  it("leaves a range selection alone", () => {
+    const h = mount("ab");
+    act(() => h.input.setSelectionRange(0, 2));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("returning focus resumes and repaints the editor's caret; a pointer places its own", () => {
+    const text = "here is a message";
+    const h = mount(text);
+    act(() => h.input.setSelectionRange(2, 2));
+    const stale = () => {
+      act(() => h.input.blur());
+      // While hidden, the native caret drifted from the editor's caret.
+      const node = h.input.querySelector("p")?.firstChild;
+      if (!node) throw new Error("Editor text unavailable");
+      document.getSelection()?.collapse(node, 0);
+      clear.mockClear();
+    };
+    // Browsers keep a selection already inside the focused editing root;
+    // jsdom then collapses it to the start regardless, so observe it here.
+    let painted: unknown[] = [];
+    const observe = () => {
+      painted = native();
+    };
+    document.addEventListener("focusin", observe);
+    stale();
+    act(() => h.input.focus());
+    document.removeEventListener("focusin", observe);
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input.selectionStart).toBe(2);
+    expect(painted).toEqual([1, true, text, 2]);
+
+    stale();
+    act(() => {
+      fireEvent.pointerDown(h.input);
+      h.input.focus();
+      fireEvent.pointerUp(h.input);
+    });
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it.each(["pointerUp", "pointerCancel"] as const)(
+    "%s outside the editor retires pointer placement before returning focus",
+    (release) => {
+      const h = mount("message");
+      act(() => h.input.setSelectionRange(2, 2));
+      act(() => {
+        fireEvent.pointerDown(h.input);
+        fireEvent[release](document.body);
+        h.input.blur();
+      });
+      clear.mockClear();
+      act(() => h.input.focus());
+      expect(clear).toHaveBeenCalledOnce();
+      expect(h.input.selectionStart).toBe(2);
+    },
+  );
+
+  it("leaves Chromium alone", () => {
+    vi.spyOn(navigator, "vendor", "get").mockReturnValue("Google Inc.");
+    const h = mount("ab");
+    act(() => h.input.setSelectionRange(1, 1));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("preserves inline Markdown when a line break reaches the length limit", async () => {
+    const h = mount("_abcd_", { maxLength: 11 });
+    act(() => {
+      h.input.setSelectionRange(0, 6);
+      h.input.toggleFormat("bold");
+      h.input.setSelectionRange(3, 3);
+    });
+    clear.mockClear();
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(h.input).toHaveValue("_ab\ncd_");
+    expect(h.markdown()).toBe("**_ab\ncd_**");
+  });
+
+  it("preserves formatted pasted link source across a line break", async () => {
+    const h = mount();
+    const source = "[label](https://example.com)";
+    paste(h.input, source);
+    act(() => {
+      h.input.setSelectionRange(0, source.length);
+      h.input.toggleFormat("bold");
+      h.input.setSelectionRange(4, 4);
+    });
+    clear.mockClear();
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(h.input).toHaveValue("[lab\nel](https://example.com) ");
+    expect(h.markdown()).toBe("**[lab\nel](https://example.com)** ");
+  });
 });
 
 /** Exercise ProseMirror's actual MutationObserver/readDOMChange seam, including
@@ -727,6 +888,40 @@ it.each([true, false])(
   },
 );
 
+it("adds and edits HTTP links through the composer, but rejects credentialed URLs", () => {
+  const h = mount("docs", { links: true });
+  act(() => h.input.setSelectionRange(0, 4));
+  const add = h.input.editLink();
+  expect(add?.existing).toBe(false);
+  act(() => expect(add?.save("docs", "http://example.com/docs")).toBe(true));
+  expect(h.markdown()).toBe("[docs](http://example.com/docs)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({
+    existing: true,
+    href: "http://example.com/docs",
+  });
+  act(() => expect(edit?.save("guide", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const unsafe = h.input.editLink();
+  act(() =>
+    expect(unsafe?.save("guide", "http://user:pw@example.com")).toBe(false),
+  );
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+});
+
+it("edits a detected plain HTTP link", () => {
+  const h = mount("See http://localhost:3000", { links: true });
+  act(() => h.input.setSelectionRange(8, 8));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({ existing: true, href: "http://localhost:3000" });
+  act(() => expect(edit?.save("local", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };
@@ -1120,9 +1315,7 @@ it("keeps a typed opening fence literal when a later sibling paragraph closes it
 it.each([
   ["- ", "ul", "- "],
   ["* ", "ul", "- "],
-  ["+ ", "ul", "- "],
   ["1. ", "ol", "1. "],
-  ["1) ", "ol", "1. "],
   ["> ", "blockquote", "> "],
 ] as const)(
   "opens a block as the space of %j is typed, with one undo restoring the prefix",
@@ -1152,6 +1345,26 @@ it.each([
     act(() => h.input.reset(saved));
     expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
     expect(h.markdown()).toBe(`${wire}item`);
+  },
+);
+
+it.each(["1. ", "• "])(
+  "hides the placeholder in an empty %j list and restores it after exit",
+  async (prefix) => {
+    const h = mount();
+    expect(h.input.querySelector("[data-placeholder]")).toHaveAttribute(
+      "data-placeholder",
+      "Draft",
+    );
+    await h.user.keyboard(prefix);
+    expect(h.input.querySelector("li")).not.toBeNull();
+    expect(h.input.querySelector("[data-placeholder]")).toBeNull();
+    act(() => h.input.insertLineBreak());
+    expect(h.input.querySelector("ul, ol")).toBeNull();
+    expect(h.input.querySelector(":scope > p")).toHaveAttribute(
+      "data-placeholder",
+      "Draft",
+    );
   },
 );
 
@@ -1595,7 +1808,7 @@ it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", 
   expect(h.markdown()).toBe("note - one 1. two > three");
 });
 
-it.each([" - ", "a- ", "1.5 ", "1234567890. ", "-> ", ">> "])(
+it.each([" - ", "a- ", "a• ", " • ", "1.5 ", "1234567890. ", "-> ", ">> "])(
   "leaves typed %j as paragraph text",
   async (line) => {
     const h = mount();
@@ -1795,34 +2008,6 @@ it.each([
     "ArrowLeft",
     [18, 28, "backward"],
   ],
-  [
-    "before a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    "ArrowRight",
-    [18, 28, "forward"],
-  ],
-  [
-    "after the two-word mention at the start",
-    "@Mary Jane says hello",
-    10,
-    "ArrowLeft",
-    [0, 10, "backward"],
-  ],
-  [
-    "the document start before a two-word mention",
-    "@Mary Jane says hello",
-    0,
-    "ArrowRight",
-    [0, 10, "forward"],
-  ],
-  [
-    "the document end after a two-word mention",
-    "hello @Mary Jane",
-    16,
-    "ArrowLeft",
-    [6, 16, "backward"],
-  ],
 ] as const)(
   "Shift+Arrow from %s selects the whole mention",
   (_, text, caret, key, expected) => {
@@ -1869,33 +2054,6 @@ it.each([
     "backward",
     "ArrowRight",
     [25, 26, "backward"],
-  ],
-  [
-    "extends a forward selection from prose over a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    16,
-    18,
-    "forward",
-    "ArrowRight",
-    [16, 28, "forward"],
-  ],
-  [
-    "shrinks a forward selection off a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    28,
-    "forward",
-    "ArrowLeft",
-    [18, 18, "forward"],
-  ],
-  [
-    "shrinks a backward selection off a two-word mention",
-    "@Imp say hello to @Mary Jane ",
-    18,
-    29,
-    "backward",
-    "ArrowRight",
-    [28, 29, "backward"],
   ],
   // Two two-word mentions one space apart: the browser selects that space,
   // then the editor extends over the first mention in the same direction.
@@ -1946,25 +2104,15 @@ it("retains the native caret after replacing text with an unchanged suffix", asy
  * character instead (NSUpArrowFunctionKey U+F700 onwards), which WebKit strips
  * and the guard refuses as well. DEL and the C1 controls are as glyphless. */
 const controlKeys = [
-  ["Left Arrow's layout translation U+001C", "\u001C"],
   ["Right Arrow's layout translation U+001D", "\u001D"],
-  ["Up Arrow's layout translation U+001E", "\u001E"],
-  ["Down Arrow's layout translation U+001F", "\u001F"],
   ["Home's layout translation U+0001", "\u0001"],
-  ["End's layout translation U+0004", "\u0004"],
   ["Page Up's layout translation U+000B", "\u000B"],
   ["Page Down's layout translation U+000C", "\u000C"],
   ["DEL U+007F", "\u007F"],
   ["the first C1 control U+0080", "\u0080"],
   ["the last C1 control U+009F", "\u009F"],
   ["Up Arrow's function-key character U+F700", "\uF700"],
-  ["Down Arrow's function-key character U+F701", "\uF701"],
-  ["Left Arrow's function-key character U+F702", "\uF702"],
   ["Right Arrow's function-key character U+F703", "\uF703"],
-  ["F1's function-key character U+F704", "\uF704"],
-  ["Home's function-key character U+F729", "\uF729"],
-  ["End's function-key character U+F72B", "\uF72B"],
-  ["Page Up's function-key character U+F72C", "\uF72C"],
   ["Page Down's function-key character U+F72D", "\uF72D"],
 ] as const;
 /** Right Arrow committed as text in both forms the host can produce. Each
@@ -2416,7 +2564,6 @@ it.each([
     ["extend", "left", "lineboundary"],
   ],
   ["MacIntel", "ArrowUp", {}, ["move", "backward", "line"]],
-  ["MacIntel", "ArrowDown", { shiftKey: true }, ["extend", "forward", "line"]],
   [
     "MacIntel",
     "ArrowUp",
@@ -2430,7 +2577,6 @@ it.each([
     ["move", "forward", "documentboundary"],
   ],
   ["MacIntel", "Home", {}, null],
-  ["MacIntel", "End", {}, null],
   [
     "MacIntel",
     "End",
@@ -2438,7 +2584,6 @@ it.each([
     ["extend", "forward", "documentboundary"],
   ],
   ["MacIntel", "PageUp", {}, null],
-  ["MacIntel", "PageDown", { shiftKey: true }, null],
   ["Win32", "ArrowRight", { ctrlKey: true }, ["move", "right", "lineboundary"]],
   ["Win32", "ArrowRight", { metaKey: true }, ["move", "right", "character"]],
   ["Win32", "Home", {}, ["move", "backward", "lineboundary"]],

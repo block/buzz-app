@@ -14,9 +14,15 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 ## Conversation UI (PR4; Drafts in PR5)
 
+### Archive conversations
+
+Archive in the conversation header, row button, or row context menu removes that conversation from the active Inbox. The filter menu groups Type, From, and Status, followed by Drafts. Status switches between Inbox and Archived using the same single-choice highlight as Type; activity and sender selections stay in effect in either view. The existing Unread only toggle stays independent. Status, activity, sender and attention choices are saved on this device for the current account and community, with each missing or invalid choice using its own default. Older saved combined status falls back to Inbox. The toolbar wraps on narrow screens. Choosing Archived opens the archived view, where Restore returns a conversation to Inbox. Archive/Restore row buttons appear on hover or keyboard focus and remain visible without a hover pointer; row actions do not open or mark an unselected conversation read. Archiving the selected conversation from its header, row button, or context menu advances the viewer to the next visible conversation (or the preceding one at the end), marking that conversation read as a normal selection would; with no remaining conversation, the viewer closes. Incoming replies and mentions preserve an open archived conversation and its composer draft. Archived + Unread only offers Show all archived conversations when empty, clearing only the attention restriction. Archive records a timestamp watermark and the message IDs already observed. A fresh incoming participating-thread reply or DM message at or beyond that watermark returns the conversation to its ordinary activity views (Threads or DMs, and All activity); Mentions still requires a fresh explicit mention. DM arrivals reopen the conversation whether they are replies or top-level messages. Already observed replies and replayed older mentions do not reopen it. Reply reopening persists without discarding the mention cutoff, so bounded evidence eviction cannot hide the reopened conversation or resurface its older mentions. A fresh explicit mention retires the saved cutoff; manual Restore clears it in every activity view. Sending a reply does not archive or restore a conversation; Inbox reuses the unchanged shared composer. Archive/filter/selection policy lives entirely in the Inbox plugin. The shared unread evidence owner supplies verified conversation-member facts (`id`, `createdAt`, `mentioned`) through the existing injected `session.unread.inbox()` capability, available to any plugin requesting `relay`. The Inbox plugin uses those facts to retire superseded archive intent; the shared contract contains no Archive state or cutoff policy.
+
+Archive applies only to conversations admitted by the shared Inbox projection; it does not override channel visibility policy or change channel archive state. Archive is personal view intent saved on this device, partitioned by the relay session's community and viewer scope. It persists across reloads and reconnects, with the same-window subscription and cross-window storage notifications as other view intent. Failed saves leave the conversation visible and expose Retry. Archive choices do not synchronize across devices or change unread or notification policy. It does not delete messages or claim a task has finished. The archived view uses the same bounded verified conversation evidence as Inbox, so it is not a permanent full-history archive browser.
+
 Inbox now renders chat-only DMs, mentions and participating threads through
 `session.unread.inbox()`, with independent Activity type and Sender filters and
-an Unread only toggle. Sender classification uses `session.agentChoices` and
+an independent Unread only toggle. Sender classification uses `session.agentChoices` and
 cached/profile-backed identity evidence, never a new inventory or name heuristic.
 Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
 specific group members awaiting their stored edit/deletion closure. Those rows
@@ -25,7 +31,7 @@ usable and the detail does not reveal an incomplete body. A failed read exposes
 Retry above both panes, including narrow detail. This is a visible completeness
 warning, not a guarantee that the relay did not change after verification.
 Retry stays focusable while pending. Successful recovery returns focus to the
-visible detail Close control (or the Activity type filter with no detail) only
+visible detail Close control (or the Show filter with no detail) only
 if Retry still owned focus when its alert was removed; moving focus away is
 respected. Revalidation hides and disables an already-admitted reader and its
 composer without unmounting them; incomplete bodies remain outside the visible
@@ -57,7 +63,7 @@ read lets its admitted save settle, then quietly cancels the remaining steps.
 Genuine storage/access failures remain visible, without reviving the cancelled
 Retry intent. Context menus allow device-local
 Mark unread. Focus returns to the invoking row, a surviving row, or the persistent
-Activity type filter on Close/Escape. Escape belongs to the detail, including in-head
+Show filter on Close/Escape. Escape belongs to the detail, including in-head
 DMs and incomplete previews; a keyboard-opened incomplete preview focuses its
 visible Close control once per visit, without refocusing on placeholder updates.
 Portalled media and controls retain their own dismissal. DM timelines share the
@@ -124,8 +130,18 @@ never become duplicate conversations. Current membership gates the feed's
 completeness targets and unread's rows; joining alone does not materialize
 pre-membership history without fresh shared admission. Inbox renders those shared
 conversation rows directly; there is no second project/approval row merge or
-feed-owned reconciliation buffer and deletion-count abort. PR4 owns only
-presentation, filtering and selection. No parallel signing or persistence is
+feed-owned reconciliation buffer and deletion-count abort.
+
+Channel-archived rooms are excluded from the shared Inbox projection in every
+activity view. Signed archive/unarchive metadata invalidates that projection even
+when membership and channel type stay unchanged. Archiving removes their rows and
+closes a selected Inbox detail, without clearing retained evidence or read/local-unread
+intent. Unarchiving makes retained conversations eligible again; it does not
+reopen the detail. Ordinary Channels/search retain member history access and
+archived posting restrictions. This is Inbox eligibility, not access revocation or
+notification policy.
+
+PR4 owns only presentation, filtering and selection. No parallel signing or persistence is
 added. Optional profile enrichment belongs to PR4; access, cache clear and
 session retirement fence these projections. Opening Inbox does not mark rows
 read; selecting an unread row does. Canonical Messages keeps its own reading
@@ -210,6 +226,14 @@ cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
 The fixture uses per-test isolated synthetic identities/servers, preserving the
 base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
 
+The counts above are historical PR-head counts. A later test prune removed two
+mounted cases whose assertions stronger cases already make: `InboxPage.test.tsx`
+"Retry repeats a rejected mark-unread mutation, not just evidence refresh"
+(kept by the failed mark-unread Retry cases) and `DraftsView.test.tsx` "a
+selected draft edits through the shared scoped composer without navigating or
+sending" (kept by the same-window editor, 128 KiB rich-editor and emptied-editor
+cases). `InboxPage.test.tsx` now collects 61 cases and `DraftsView.test.tsx` 29.
+
 ## Verification status
 
 `inbox-feed.test.ts` exercises the real session reader/visibility/unread owners
@@ -252,3 +276,42 @@ Independent changed-path re-review found no remaining blockers in the repairs.
 These are local fixture/service results, not checks on pushed PR heads or a future
 merged tree. Human, live-relay and attended native/packaged acceptance remain open;
 no full scan or shipping-readiness attestation is implied.
+
+
+## Visual-only pass (#770)
+
+Built on main's existing Inbox and Drafts: one filter menu, outline/filled unread
+toggle, trailing unread dots, adjacent list/detail with one header, and the shared
+centered draft-delete dialog. The list/detail divider reuses `usePanelSplit` and
+`ResizeHandle`: drag, arrows (Shift for larger steps), Home/End and double-click
+reset. The list defaults to 420px where space allows and can resize from 320px
+up to a 50/50 split with the conversation, which keeps at least 316px.
+Its chosen width is in memory across detail close/reopen and Inbox/Drafts switching,
+not persisted across restarts. At ≤700px available width, detail replaces the list
+and the divider is hidden.
+
+All matching **already-loaded** Inbox rows render without Show more. Optional
+profile enrichment remains bounded to the first 50 candidates; cached names still
+apply, and uncached later names may keep key fallbacks. No new history demand,
+profile loop, row cache, relay/session/unread/store or native changes.
+
+Main retains loading, representative People/Agents filters, grouped Mentions,
+selected-read visibility, read/retry, workflow attribution, thread follows, exact
+readers and draft persistence. Deletion retains consent and text-before-attachment
+cleanup. The former history/candidate/exact-mention work is excluded.
+
+**Separate engineering handoff:** diagnose missing older/agent conversations by
+tracing fetched events, participation evidence and filtering. Agree mixed/unknown
+sender behavior, mention policy and filter persistence separately. Coordinate
+John's archive/refresh/development work; progressive relay loading is not fixed here.
+
+**Evidence:** integration with main `ce2f66ea` preserves John's #757 archive
+retirement and #758 refresh status without shifting rows, plus main's #800 test
+pruning. It passes 116 Inbox tests, 2 shared-hook tests, TypeScript/build and 74
+Chromium/WebKit executions across Inbox, sidebar and existing panel journeys.
+Independent merge-resolution review found no blockers. The prior `5b4d45d0` head
+passed hosted CI and DCO; current-head hosted checks remain a separate gate.
+Common splitter checks stay in Inbox; Drafts keeps cross-view width, header
+alignment, narrow sizing, editing and modal/focus coverage. No browser cases were
+removed. Human confirmation and required review remain open; local synthetic
+checks do not attest native/live acceptance.

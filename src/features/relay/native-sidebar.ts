@@ -1,6 +1,8 @@
 import { projectSidebarRecord } from "./sidebar-registers";
 import {
   editSidebarAssignment,
+  editSidebarSectionRemoval,
+  validSidebarSectionRemoval,
   editSidebarSort,
   editSidebarToggle,
   validSidebarAssignment,
@@ -145,6 +147,31 @@ export function nativeSidebar(transport: ReadTransport) {
   }
   return {
     decodeSidebarPreferences: decode,
+    async removeSidebarSection(
+      sectionId: string,
+      signal: AbortSignal,
+    ): Promise<SidebarGroups> {
+      if (!validSidebarSectionRemoval(sectionId))
+        throw new Error("Invalid sidebar section removal intent");
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
+        const next = editSidebarSectionRemoval(current, createdAt, sectionId);
+        const { sections, assignments } = project("channel-sections", next);
+        return { next, result: { sections, assignments } };
+      };
+      return mutate(
+        "channel-sections",
+        signal,
+        prepare,
+        (value) => {
+          const { sections, assignments } = project("channel-sections", value);
+          return (
+            !sections.some(({ id }) => id === sectionId) &&
+            !Object.values(assignments).includes(sectionId)
+          );
+        },
+        "Sidebar groups changed on another device; reload and try again",
+      );
+    },
     async writeSidebarAssignment(
       intent: SidebarAssignmentIntent,
       signal: AbortSignal,

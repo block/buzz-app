@@ -1,7 +1,13 @@
+import { CanvasConflictError } from "./canvas-conflict";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { createChannelKit } from "./capability";
-import { coordinate, KIT_TAG, type KitRecord } from "./model";
+import {
+  coordinate,
+  KIT_TAG,
+  type KitRecord,
+  type PayloadRecord,
+} from "./model";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { ReadFilter, RelayEvent } from "../relay/events";
@@ -58,8 +64,9 @@ function fixture() {
   const delivered = vi.fn(async () => {});
   const canWrite = vi.fn(() => true);
   const host = {
-    prepare: vi.fn(async (value: KitRecord, _signal: AbortSignal) =>
-      JSON.stringify(value),
+    prepare: vi.fn(
+      async (value: KitRecord | PayloadRecord, _signal: AbortSignal) =>
+        JSON.stringify(value),
     ),
     decode: vi.fn(async (rows: readonly RelayEvent[]) =>
       rows.map((event) => ({
@@ -191,7 +198,7 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
   });
   f.events.push(head);
   await expect(f.canvas.save(channel, "New", undefined)).rejects.toThrow(
-    /changed/,
+    CanvasConflictError,
   );
   f.pending.push({ event: head, delivery: "unknown" });
   await expect(f.canvas.save(channel, "New", head.id)).rejects.toThrow(
@@ -254,6 +261,40 @@ it("fails visibly rather than exposing a partial or mismatched catalog", async (
   await f.capability.refresh();
   expect(f.capability.snapshot().error).toMatch(/Incomplete/);
   expect(f.capability.snapshot().entries).toEqual([]);
+});
+
+it("ignores retired personal groups without rejecting the catalog", async () => {
+  const f = fixture();
+  const kitEvent = (content: unknown, d: string) =>
+    signed(viewer, {
+      kind: 30078,
+      content: JSON.stringify(content),
+      tags: [
+        ["d", d],
+        ["t", KIT_TAG],
+      ],
+    });
+  f.events.push(
+    kitEvent(record, coordinate(record)),
+    kitEvent(
+      {
+        version: 1,
+        community,
+        deleted: false,
+        value: { type: "groups", id: "personal", groups: [], assignments: {} },
+      },
+      `${KIT_TAG}:${encodeURIComponent(community)}:groups:personal`,
+    ),
+  );
+  await f.capability.refresh();
+  expect(f.capability.snapshot()).toMatchObject({
+    status: "ready",
+    entries: [{ record }],
+  });
+  expect(f.host.decode).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: f.events[0]?.id })],
+    expect.any(AbortSignal),
+  );
 });
 
 it.each(["recipe", "Canvas"])(
@@ -489,7 +530,7 @@ it.each([false, true])(
     try {
       await expect(
         kit.canvas.save(channel, "Stale draft", before?.id),
-      ).rejects.toThrow(/Canvas changed.*draft is kept/);
+      ).rejects.toThrow(CanvasConflictError);
       expect(head).toBe(winner);
       expect(owner.outbox.snapshot()).toEqual([]);
       const saved = await kit.canvas.save(channel, "Reviewed draft", winner.id);
@@ -719,4 +760,18 @@ it("fences Canvas history after access loss or session retirement, including dur
   await expect(f.canvas.history(channel)).rejects.toMatchObject({
     name: "AbortError",
   });
+});
+
+it("keeps private catalog refresh and saves independent of native bindings", async () => {
+  const f = fixture();
+  const id = await f.capability.save(record.value, undefined);
+  await f.capability.refresh();
+  expect(f.capability.snapshot().status).toBe("ready");
+  expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
+  await expect(
+    f.capability.save(
+      { type: "team", id: "team", name: "Updated", agents: [] },
+      id,
+    ),
+  ).resolves.toBeTypeOf("string");
 });

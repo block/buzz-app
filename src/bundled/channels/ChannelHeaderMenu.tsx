@@ -1,12 +1,7 @@
 import { useRef, useState, type ReactNode, type RefObject } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import type {
-  TemplateProvider,
-  TemplateProviders,
-} from "../../features/channel-templates/provider";
-import type { Contribution } from "../../plugins/contributions";
-import { OwnedContribution } from "../../plugins/OwnedContribution";
+import type { RegisteredPanel } from "../../features/panels/service";
 import { useChannelReadAction } from "./useChannelReadAction";
 import {
   useChannelMenuActions,
@@ -34,20 +29,20 @@ export function ChannelHeaderMenu({
   channel,
   session,
   origin: lifetime,
-  providers,
-  templateProvider,
   trigger,
   openDetails,
   openCanvas,
+  menuPanels,
+  openMenuPanel,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
   origin?: AbortSignal | undefined;
-  providers: TemplateProviders;
-  templateProvider: Contribution<TemplateProvider> | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
   openCanvas(trigger: HTMLButtonElement): void;
+  menuPanels?: readonly RegisteredPanel[] | undefined;
+  openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [prepared, setPrepared] = useState(false);
@@ -76,7 +71,7 @@ export function ChannelHeaderMenu({
           }),
       })
     : undefined;
-  const popup = (lifecycle: ReactNode, saveAs?: ReactNode) => (
+  const popup = (lifecycle: ReactNode) => (
     <MenuPopup
       size="default"
       align="end"
@@ -102,7 +97,14 @@ export function ChannelHeaderMenu({
           View canvas
         </MenuItem>
       )}
-      {saveAs}
+      {menuPanels?.map((panel) => (
+        <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
+          <MenuIcon>
+            <InfoIcon size={16} />
+          </MenuIcon>
+          {panel.channelMenu?.label}
+        </MenuItem>
+      ))}
       {!!actions?.length && <MenuSeparator />}
       {actions}
       {readAction.state?.pending && <MenuNote role="status">Saving…</MenuNote>}
@@ -112,37 +114,6 @@ export function ChannelHeaderMenu({
       {lifecycle}
     </MenuPopup>
   );
-  // Keep the template owner outside the menu portal so dismissal cannot unmount
-  // its draft or an in-flight template read.
-  const withTemplate = (lifecycle: ReactNode) =>
-    prepared && channel && templateProvider ? (
-      <OwnedContribution
-        entry={templateProvider}
-        registry={providers}
-        fallback={popup(
-          lifecycle,
-          <MenuNote role="alert">Templates unavailable</MenuNote>,
-        )}
-      >
-        {(entry, active) => {
-          const SaveAs = entry.saveAs;
-          return (
-            <SaveAs
-              session={session}
-              channel={channel}
-              active={active}
-              menu={{
-                close: () => setOpen(false),
-                finalFocus: trigger,
-                render: (items) => popup(lifecycle, items),
-              }}
-            />
-          );
-        }}
-      </OwnedContribution>
-    ) : (
-      popup(lifecycle)
-    );
   return (
     <MenuRoot
       open={open}
@@ -172,8 +143,7 @@ export function ChannelHeaderMenu({
       handoff &&
       !channel.readOnly &&
       !channel.cached &&
-      !channel.archived &&
-      channel.channelType !== "session" ? (
+      !channel.archived ? (
         <ChannelLifecycleMenu
           channelId={channel.id}
           lifecycle={session.channelLifecycle}
@@ -188,10 +158,10 @@ export function ChannelHeaderMenu({
               lifetime,
             )
           }
-          render={withTemplate}
+          render={popup}
         />
       ) : (
-        withTemplate(null)
+        popup(null)
       )}
     </MenuRoot>
   );

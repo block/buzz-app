@@ -218,10 +218,9 @@ test("profiles primary actions through production broker and built app", async (
       ),
     });
     await page
-      .getByRole("button", {
-        name: /^Close (?:thread|Thread tab)$/,
-        exact: true,
-      })
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      )
       .click();
   }
   await settle(page, app);
@@ -308,7 +307,9 @@ test("profiles primary actions through production broker and built app", async (
     )
     .toBe(true);
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   const reconnectAt = performance.now();
   app.relay.disconnect("primary");
@@ -446,7 +447,7 @@ test("profiles primary actions through production broker and built app", async (
           "tests/browser/policy-relay.mjs",
           "tests/browser/build.mjs",
           "pnpm-lock.yaml",
-          "dev/relay-broker.mjs",
+          "browser-host/relay-broker.mjs",
           "src/features/relay/transport.ts",
           "src/features/relay/live.ts",
           "src/features/relay/broker-live.ts",

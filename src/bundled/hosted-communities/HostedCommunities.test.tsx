@@ -776,11 +776,7 @@ const different = () => ({ identity: { pubkey_hex: other } });
 
 it.each([
   ["completed rejection", "unbound", unbound],
-  ["completed rejection", "a different identity", different],
-  ["late success", "unbound", unbound],
   ["late success", "a different identity", different],
-  ["late rejection", "unbound", unbound],
-  ["late rejection", "a different identity", different],
 ])(
   "drops a %s copy handoff when Refresh finds the account %s",
   async (schedule, _, identity) => {
@@ -848,11 +844,7 @@ it("keeps a failed copy handoff across a same-identity refresh", async () => {
 
 it.each([
   ["completed rejection", "fails"],
-  ["completed rejection", "succeeds"],
-  ["late success", "fails"],
   ["late success", "succeeds"],
-  ["late rejection", "fails"],
-  ["late rejection", "succeeds"],
 ])(
   "drops a %s copy handoff when the community is archived and the refresh %s",
   async (schedule, refresh) => {

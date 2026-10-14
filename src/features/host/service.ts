@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {} from "../../plugins/api";
 import { nativeIdentityEnabled } from "../identity/service";
@@ -21,8 +21,36 @@ export type NipOaAuthorization = readonly [
   conditions: string,
   signature: string,
 ];
+export type HostProcessOptions = Readonly<{
+  /** Follow the arguments the manifest declares. */
+  args?: readonly string[];
+  /** An absolute directory or one under home written `~/…`; created if missing. */
+  cwd?: string;
+  /** Added to the app's environment; `null` removes a variable. */
+  env?: Readonly<Record<string, string | null>>;
+  onStdout?(data: string): void;
+  onStderr?(data: string): void;
+}>;
+export type HostProcess = Readonly<{
+  write(data: string): Promise<void>;
+  /** Writes any final `data`, then closes stdin. */
+  end(data?: string): Promise<void>;
+  /** Asks it to stop, then kills it and its descendants. */
+  kill(): Promise<void>;
+  /** The exit code once it exits; null when a signal ended it. */
+  exited: Promise<number | null>;
+}>;
+/** UTF-16 units per process write: at most 3 UTF-8 bytes each, so a piece
+ * stays under the host's 1 MiB write limit. */
+const WRITE_UNITS = 256 * 1024;
+type ProcessEvent =
+  | { type: "stdout" | "stderr"; data: string }
+  | { type: "exit"; code: number | null };
 export interface Host {
-  runCommand(id: string): Promise<string | null>;
+  runCommand(id: string, input?: string): Promise<string | null>;
+  /** Starts a process the manifest declares in `host.processes`. It lives until
+   * it exits, is killed, or the plugin unloads. Desktop only. */
+  spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
   request(input: HostRequest): Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
@@ -36,72 +64,78 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/** The signed-in owner's NIP-OA proof for `agentPubkey`, from native
+ * identity or the web relay proxy. */
+export async function prepareRemoteAgentAuthorization(
+  agentPubkey: string,
+  signal?: AbortSignal,
+): Promise<NipOaAuthorization> {
+  signal?.throwIfAborted();
+  if (!/^[0-9a-f]{64}$/.test(agentPubkey))
+    throw new Error("Agent pubkey must be 64 lowercase hex characters");
+  const native = nativeIdentityEnabled();
+  const owner = native
+    ? await invoke<string | null>("identity_restore")
+    : (
+        await (
+          await fetch("/api/relay/identity", { signal: signal ?? null })
+        ).json()
+      ).viewer;
+  signal?.throwIfAborted();
+  if (typeof owner !== "string" || !/^[0-9a-f]{64}$/.test(owner))
+    throw new Error("Set up your identity first");
+  if (owner === agentPubkey)
+    throw new Error("Owner and agent pubkeys must differ");
+  let tag: NipOaAuthorization;
+  if (native) {
+    try {
+      tag = await invoke<NipOaAuthorization>(
+        "identity_prepare_remote_agent_authorization",
+        { owner, agentPubkey },
+      );
+    } catch (error) {
+      throw typeof error === "string" ? new Error(error) : error;
+    }
+  } else {
+    const response = await fetch(
+      "/api/relay/prepare-remote-agent-authorization",
+      {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner, agentPubkey }),
+        signal: signal ?? null,
+      },
+    );
+    const result = await response.json();
+    if (!response.ok)
+      throw new Error(result.error ?? "Owner authorization failed");
+    tag = result;
+  }
+  signal?.throwIfAborted();
+  if (
+    !Array.isArray(tag) ||
+    tag.length !== 4 ||
+    tag[0] !== "auth" ||
+    tag[1] !== owner ||
+    tag[2] !== "" ||
+    typeof tag[3] !== "string" ||
+    !/^[0-9a-f]{128}$/.test(tag[3])
+  )
+    throw new Error("Invalid remote agent authorization");
+  return tag;
+}
+
 export class HostService extends Service implements Host {
   constructor(context: Context) {
     super(context, "host");
   }
 
-  async prepareRemoteAgentAuthorization(
-    agentPubkey: string,
-    signal?: AbortSignal,
-  ): Promise<NipOaAuthorization> {
-    signal?.throwIfAborted();
-    if (!/^[0-9a-f]{64}$/.test(agentPubkey))
-      throw new Error("Agent pubkey must be 64 lowercase hex characters");
-    const native = nativeIdentityEnabled();
-    const owner = native
-      ? await invoke<string | null>("identity_restore")
-      : (
-          await (
-            await fetch("/api/relay/identity", { signal: signal ?? null })
-          ).json()
-        ).viewer;
-    signal?.throwIfAborted();
-    if (typeof owner !== "string" || !/^[0-9a-f]{64}$/.test(owner))
-      throw new Error("Set up your identity first");
-    if (owner === agentPubkey)
-      throw new Error("Owner and agent pubkeys must differ");
-    let tag: NipOaAuthorization;
-    if (native) {
-      try {
-        tag = await invoke<NipOaAuthorization>(
-          "identity_prepare_remote_agent_authorization",
-          { owner, agentPubkey },
-        );
-      } catch (error) {
-        throw typeof error === "string" ? new Error(error) : error;
-      }
-    } else {
-      const response = await fetch(
-        "/api/relay/prepare-remote-agent-authorization",
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ owner, agentPubkey }),
-          signal: signal ?? null,
-        },
-      );
-      const result = await response.json();
-      if (!response.ok)
-        throw new Error(result.error ?? "Owner authorization failed");
-      tag = result;
-    }
-    signal?.throwIfAborted();
-    if (
-      !Array.isArray(tag) ||
-      tag.length !== 4 ||
-      tag[0] !== "auth" ||
-      tag[1] !== owner ||
-      tag[2] !== "" ||
-      typeof tag[3] !== "string" ||
-      !/^[0-9a-f]{128}$/.test(tag[3])
-    )
-      throw new Error("Invalid remote agent authorization");
-    return tag;
+  prepareRemoteAgentAuthorization(agentPubkey: string, signal?: AbortSignal) {
+    return prepareRemoteAgentAuthorization(agentPubkey, signal);
   }
 
-  async runCommand(id: string): Promise<string | null> {
+  async runCommand(id: string, input?: string): Promise<string | null> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri()) return null;
     try {
@@ -109,10 +143,89 @@ export class HostService extends Service implements Host {
         id: owner.id,
         revision: owner.revision,
         commandId: id,
+        ...(input === undefined ? {} : { input }),
       });
     } catch {
       return null;
     }
+  }
+
+  // A method, not a field: `this.ctx` is then the calling plugin's scope.
+  async spawn(
+    id: string,
+    { onStdout, onStderr, ...options }: HostProcessOptions = {},
+  ): Promise<HostProcess> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Processes require an installed desktop plugin");
+    let exit!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      exit = resolve;
+    });
+    const onEvent = new Channel<ProcessEvent>((event) => {
+      if (event.type === "exit") return exit(event.code);
+      // A throw here would stall the channel, so no later output or exit
+      // would arrive.
+      try {
+        if (event.type === "stdout") onStdout?.(event.data);
+        else onStderr?.(event.data);
+      } catch (error) {
+        console.error(`Process ${id} output handler failed`, error);
+      }
+    });
+    const handle = await invoke<number>("plugin_host_process_spawn", {
+      id: owner.id,
+      revision: owner.revision,
+      processId: id,
+      args: options.args ?? [],
+      cwd: options.cwd ?? null,
+      env: options.env ?? null,
+      onEvent,
+    });
+    // The host takes at most 1 MiB a write, so a longer one goes in pieces,
+    // queued so no other write lands between them.
+    let queue: Promise<unknown> = Promise.resolve();
+    const write = (data: string, close: boolean) => {
+      const written = queue.then(async () => {
+        let at = 0;
+        do {
+          let end = Math.min(data.length, at + WRITE_UNITS);
+          // A piece must not split a surrogate pair.
+          if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1] ?? ""))
+            end--;
+          await invoke<void>("plugin_host_process_write", {
+            id: owner.id,
+            handle,
+            data: data.slice(at, end),
+            close: close && end === data.length,
+          });
+          at = end;
+        } while (at < data.length);
+      });
+      queue = written.catch(() => undefined);
+      return written;
+    };
+    const kill = () =>
+      invoke<void>("plugin_host_process_kill", { id: owner.id, handle }).catch(
+        // Already gone.
+        () => undefined,
+      );
+    // The plugin's processes end with it, including one that started as it
+    // was unloading.
+    let release: () => void;
+    try {
+      release = this.ctx.effect(() => () => void kill(), `process ${id}`);
+    } catch (error) {
+      void kill();
+      throw error;
+    }
+    void exited.then(() => release());
+    return Object.freeze({
+      write: (data: string) => write(data, false),
+      end: (data = "") => write(data, true),
+      kill,
+      exited,
+    });
   }
 
   async request(input: HostRequest): Promise<HostResponse> {

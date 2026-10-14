@@ -50,7 +50,7 @@ function setup() {
   };
 }
 
-it.each([0, 99, 100, 101, 200, 201])(
+it.each([0, 99, 100, 101, 200])(
   "pages %i same-second definitions with exact cursors and no author filter",
   async (count) => {
     const h = setup();

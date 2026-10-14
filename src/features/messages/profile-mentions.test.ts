@@ -41,7 +41,6 @@ it.each([
   "`unfinished @Mic",
   "email@Mic",
   "https://example.test/@Mic",
-  "http://example.test/@Mic",
   "[label @Mic](https://example.test)",
   "![alt @Mic](https://example.test)",
   "[@Mic][reference]",
@@ -91,7 +90,6 @@ it.each([
   "   \t@Mic",
   "intro\n    @Mic\n\t@Mic",
   '```js\nconst marker = "```";\n@Mic\n```',
-  '~~~js\nconst marker = "~~~";\n@Mic\n~~~',
   "````\n```\n@Mic\n````",
   "```\n``` not a closer\n@Mic\n```",
   "```\n    ```\n@Mic\n```",
@@ -101,7 +99,6 @@ it.each([
 });
 it.each([
   "    @Mic\n\n@Mic",
-  "\t@Mic\n@Mic",
   '```js\nconst marker = "```";\n@Mic\n```\n@Mic',
   "  ~~~txt\n@Mic\n   ~~~~  \n@Mic",
   "```\r\n@Mic\r\n```\r\n@Mic",

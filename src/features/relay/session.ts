@@ -1,8 +1,10 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember, startAddedAgent } from "../channel-members/members";
-import type { AgentControl } from "../agents/control";
+import { addChannelMember } from "../channel-members/members";
+import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../projects/git";
 import { projectDestinations } from "../projects/destinations";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
@@ -10,7 +12,6 @@ import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
-  personalGroups,
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
@@ -53,17 +54,18 @@ import { createTyping } from "./typing";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
-import type { IncomingListener, IncomingMessage } from "./incoming";
+import type {
+  IncomingListener,
+  IncomingMessage,
+  LiveListener,
+} from "./incoming";
 import { objectBody } from "./body";
+import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
-import {
-  activeSidebarAssignment,
-  readActiveSidebarGroups,
-} from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
 import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
@@ -99,6 +101,7 @@ import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
+import { createReminders } from "./reminders";
 import {
   retainEvents,
   matchesEvent,
@@ -196,9 +199,8 @@ export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
     identityNames?: IdentityNames | undefined;
-    agentChoices?:
-      | Pick<AgentControl, "snapshot" | "subscribe" | "refresh">
-      | undefined;
+    agentChoices?: LocalAgents | undefined;
+    localAgents?: LocalAgentSource | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -229,7 +231,6 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
-  let resolveChannelAccess: (id: string) => Promise<void> = async () => {};
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -244,6 +245,7 @@ export function createRelaySession(
   );
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
+  const liveEventListeners = new Set<LiveListener>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
@@ -547,6 +549,8 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
+        activity.messagesChanged(visible);
+        if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
@@ -673,12 +677,15 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-    (channel) => resolveChannelAccess(channel),
     transport?.activityArchive
       ? {
           host: transport.activityArchive,
           canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
         }
+      : undefined,
+    (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    options.localAgents && transport
+      ? { source: options.localAgents, scope: transportPartition(transport) }
       : undefined,
   );
   const channelActivity = createChannelActivity(
@@ -716,10 +723,6 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
-  resolveChannelAccess = (id) =>
-    channels.queries.list().coverage === "partial"
-      ? (channels.queries.resolve?.([id]) ?? Promise.resolve())
-      : Promise.reject(new Error("Channel access is fully resolved"));
   retainedChannelEvent = channels.retainedEvent;
   const projects = projectDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
@@ -839,6 +842,9 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     workflowAuthority: transport?.archiveAuthority,
+    ...(transport?.archiveAuthority
+      ? { signingAuthority: transport.archiveAuthority }
+      : {}),
     notify,
     follows: browserThreadFollows(readScope),
   });
@@ -1149,6 +1155,20 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const mePreferences = createMePreferences(
+    channelKit.capability,
+    lifetime.signal,
+  );
+  const reminders =
+    transport?.reminders && writer
+      ? createReminders({
+          viewer: transport.viewer,
+          host: transport.reminders,
+          query: (filters, signal) => transport.query(filters, signal),
+          publish: (event, signal) => writer.publish(event, signal),
+          signal: lifetime.signal,
+        })
+      : undefined;
   const sidebarPreferences = createSidebarPreferencesStore(
     async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -1161,19 +1181,18 @@ export function createRelaySession(
         AbortSignal.timeout(10_000),
         ...(signal ? [signal] : []),
       ]);
-      const legacy = await readSidebarPreferences(
+      return readSidebarPreferences(
         preferenceReader,
         transport.viewer,
         decode,
         combined,
       );
-      return readActiveSidebarGroups(channelKit.capability, legacy, combined);
     },
     !!transport?.decodeSidebarPreferences,
     (() => {
       const write = transport?.writeSidebarAssignment;
       return write
-        ? activeSidebarAssignment(channelKit.capability, (intent, signal) =>
+        ? (intent, signal) =>
             write(
               intent,
               AbortSignal.any([
@@ -1181,8 +1200,7 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
-            ),
-          )
+            )
         : undefined;
     })(),
     (() => {
@@ -1231,15 +1249,30 @@ export function createRelaySession(
         : undefined;
     })(),
     options.persistence,
+    (() => {
+      const write = transport?.removeSidebarSection;
+      return write
+        ? (sectionId, signal) =>
+            write(
+              sectionId,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
   );
-  let groupHead: string | undefined;
-  const stopSidebarGroups = channelKit.capability.subscribe(() => {
+  let meHead: string | undefined;
+  const stopMeGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
-    const head = personalGroups(state.entries)?.eventId;
-    if (head === groupHead) return;
-    groupHead = head;
-    void sidebarPreferences.queries.refresh();
+    const nextMe = meGroups(state.entries)?.eventId;
+    if (nextMe !== meHead) {
+      meHead = nextMe;
+      void mePreferences.queries.refresh();
+    }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
   let setupNotices: readonly SetupNotice[] = [];
@@ -1308,18 +1341,9 @@ export function createRelaySession(
             if (!setup) return;
             parseLineup({ ...setup, teamIds: [] });
             if (
-              setup.groupSource !== undefined &&
-              setup.groupSource !== "legacy"
-            )
-              throw new Error("Invalid group source");
-            if (
               typeof setup.groupId !== "string" ||
-              setup.groupId.length >
-                (setup.groupSource === "legacy" ? 256 : 128) ||
-              (setup.groupId !== "" &&
-                (setup.groupSource === "legacy"
-                  ? !setup.groupId.trim()
-                  : !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.groupId))) ||
+              setup.groupId.length > 256 ||
+              (setup.groupId !== "" && !setup.groupId.trim()) ||
               typeof setup.templateId !== "string" ||
               (setup.templateId !== "" &&
                 !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.templateId))
@@ -1367,8 +1391,6 @@ export function createRelaySession(
               const state = sidebarPreferences.queries.snapshot();
               if (
                 !sidebarPreferences.queries.writable ||
-                (setup.groupSource === "legacy") !==
-                  (state.data?.groupSource !== "personal") ||
                 !state.data?.sections.some((g) => g.id === setup.groupId)
               )
                 throw new Error(
@@ -1376,13 +1398,11 @@ export function createRelaySession(
                 );
             }
           },
-          async place(id, groupId, source) {
+          async place(id, groupId) {
             await sidebarPreferences.queries.refresh();
             const state = sidebarPreferences.queries.snapshot();
             if (
               !sidebarPreferences.queries.writable ||
-              (source === "legacy") !==
-                (state.data?.groupSource !== "personal") ||
               !state.data?.sections.some((g) => g.id === groupId)
             )
               throw new Error(
@@ -1523,16 +1543,6 @@ export function createRelaySession(
         writes?.local,
       );
     },
-    async (channelId, pubkey, control, retryStart): Promise<void> => {
-      await startAddedAgent(
-        control,
-        session,
-        channelId,
-        pubkey,
-        lifetime.signal,
-        retryStart,
-      );
-    },
     writes?.local,
   );
   const session = Object.freeze({
@@ -1550,6 +1560,16 @@ export function createRelaySession(
       incomingListeners.add(listener);
       return () => {
         incomingListeners.delete(listener);
+      };
+    },
+    /** Verified, access-filtered live-phase events of any kind, after reconciliation.
+     * Never replay, finite reads or local intent. Includes the viewer's own echoes.
+     * Overlapping routes can deliver one event more than once; listeners dedupe by id. */
+    subscribeLive(listener: LiveListener) {
+      if (closed) return () => {};
+      liveEventListeners.add(listener);
+      return () => {
+        liveEventListeners.delete(listener);
       };
     },
     typing: typing.capability,
@@ -1601,6 +1621,9 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    mePreferences: mePreferences.queries,
+    mePlacement: mePreferences.placement,
+    reminders: reminders?.capability,
     live,
     profiling,
     attachments:
@@ -1694,54 +1717,49 @@ export function createRelaySession(
         throw new Error("Relay view capacity unavailable");
       if (!/^[0-9a-f]{64}$/.test(messageId))
         throw new Error("Thread needs a valid message ID");
+      // Exact selection is available to an existing ordinary thread too; its
+      // raw evidence keeps the same access, cap and atomic-admission checks.
+      const targetReader: RelayReader = {
+        async read(filters, settings) {
+          if (!canReadRemote(channelId))
+            throw new ReadError(
+              "unavailable",
+              "Reconnect to refresh conversation access.",
+            );
+          const epoch = accessEpoch;
+          let events: readonly RelayEvent[];
+          try {
+            events = await requests.reader.read(filters, settings);
+          } catch (error) {
+            if (
+              !closed &&
+              epoch === accessEpoch &&
+              readErrorKind(error) === "denied"
+            )
+              channels.denyChannel(channelId, error);
+            throw error;
+          }
+          if (closed || epoch !== accessEpoch || !canReadRemote(channelId))
+            throw new DOMException("Stale thread target", "AbortError");
+          settings?.signal?.throwIfAborted();
+          // A capped raw target/overlay read cannot establish a safe fold.
+          if (
+            !filters.some((filter) => filter.depth_limit) &&
+            events.length >= 500
+          )
+            throw new Error("Selected message exceeded its evidence limit");
+          // The thread owner admits the complete target fold atomically.
+          return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
+        },
+      };
       const thread = createThreadView({
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
         signingAuthority: transport?.archiveAuthority,
-        reader: options?.exact
-          ? {
-              async read(filters, settings) {
-                if (!canReadRemote(channelId))
-                  throw new ReadError(
-                    "unavailable",
-                    "Reconnect to refresh conversation access.",
-                  );
-                const epoch = accessEpoch;
-                let events: readonly RelayEvent[];
-                try {
-                  events = await requests.reader.read(filters, settings);
-                } catch (error) {
-                  if (
-                    !closed &&
-                    epoch === accessEpoch &&
-                    readErrorKind(error) === "denied"
-                  )
-                    channels.denyChannel(channelId, error);
-                  throw error;
-                }
-                if (
-                  closed ||
-                  epoch !== accessEpoch ||
-                  !canReadRemote(channelId)
-                )
-                  throw new DOMException("Stale thread target", "AbortError");
-                settings?.signal?.throwIfAborted();
-                // A capped raw target/overlay read cannot establish a safe fold.
-                if (
-                  !filters.some((filter) => filter.depth_limit) &&
-                  events.length >= 500
-                )
-                  throw new Error(
-                    "Selected message exceeded its evidence limit",
-                  );
-                // The thread owner admits the complete target fold atomically.
-                return events.filter(
-                  (event) => event.kind !== PRODUCT_FEEDBACK_KIND,
-                );
-              },
-            }
-          : verified,
+        reader: options?.exact ? targetReader : verified,
+        targetReader,
+        admitTarget: (events) => accept(events, false),
         exact: options?.exact ?? false,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
@@ -1792,7 +1810,6 @@ export function createRelaySession(
     channelDetails: details.capability,
     memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
-    agentManagement: activity.management,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
@@ -2228,6 +2245,7 @@ export function createRelaySession(
     captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
+      reminders?.receive(events);
       const candidates = new Set(
         provenance?.phase === "live" && provenance.channelId
           ? events
@@ -2294,6 +2312,27 @@ export function createRelaySession(
       )
         channelActivity.accept(visible);
       if (
+        provenance?.phase === "live" &&
+        liveEventListeners.size &&
+        visible.length &&
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration
+      ) {
+        const batch = Object.freeze({
+          events: Object.freeze([...visible]),
+          ...(provenance?.channelId ? { channelId: provenance.channelId } : {}),
+        });
+        for (const listener of liveEventListeners) {
+          if (closed || epoch !== accessEpoch) break;
+          try {
+            listener(batch);
+          } catch (error) {
+            console.error("Live listener failed", error);
+          }
+        }
+      }
+      if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
@@ -2317,6 +2356,7 @@ export function createRelaySession(
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
+              ...(agentAudience(event) ? { audience: "agents" as const } : {}),
             }),
           ];
         }),
@@ -2341,12 +2381,15 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       ) {
         liveGeneration++;
+        // Reminder catch-up waits for the recovery read after re-establishment.
+        reminders?.stale();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();
         catchupQueue.clear();
         dropHintConfirmations();
         requests.invalidate();
+        projects.clearHomes();
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -2391,9 +2434,11 @@ export function createRelaySession(
         if (refreshedGeneration !== liveGeneration) {
           refreshedGeneration = liveGeneration;
           refreshRoster();
+          const generation = liveGeneration;
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
@@ -2401,6 +2446,9 @@ export function createRelaySession(
               statuses.reconnect();
               unread.reconnect();
               inboxFeed.reconnect();
+              // Only while this same connection is still up.
+              if (generation === liveGeneration && memoryConnected)
+                void reminders?.recover();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -2492,6 +2540,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
+        mePreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2504,6 +2553,7 @@ export function createRelaySession(
         unread.clear();
         inboxFeed.clear();
         requests.invalidate();
+        projects.clearHomes();
         profiles.clear();
         emoji.clear();
         statuses.clear();
@@ -2522,8 +2572,9 @@ export function createRelaySession(
       }
     },
     dispose() {
-      stopSidebarGroups();
+      stopMeGroups();
       closed = true;
+      projects.clearHomes();
       typing.dispose();
       lifetime.abort();
       activity.dispose();
@@ -2533,6 +2584,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
+      mePreferences.dispose();
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();
@@ -2542,6 +2594,7 @@ export function createRelaySession(
       traffic?.dispose();
       liveListeners.clear();
       incomingListeners.clear();
+      liveEventListeners.clear();
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();

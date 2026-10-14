@@ -12,16 +12,19 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ChannelSummary } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
+import {
+  pickerText,
+  readSearchUsage,
+  recordChoice,
+  recordVisit,
+} from "../search/usage";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
 import { createAgentChoices } from "../agents/choices";
-import type {
-  AgentControl,
-  AgentControlState,
-  AgentView,
-} from "../agents/control";
+import type { LocalAgentsSnapshot } from "../agents/local";
 
 composerDOMFixture();
 
@@ -55,7 +58,7 @@ function setup() {
   const empty: never[] = [];
   const emoji = { status: "ready", entries: empty };
   const profiles = new Map();
-  const channels = { channels: [] };
+  const channels: { channels: ChannelSummary[] } = { channels: [] };
   const agents = { status: "ready", identities: empty };
   const directMessages = {
     available: true,
@@ -139,20 +142,17 @@ function setup() {
   } as unknown as RelaySession;
   const onOpened = vi.fn();
   const onStarted = vi.fn();
-  let controlState = {
+  let controlState: LocalAgentsSnapshot = {
     status: "ready",
-    data: {
-      agents: [
-        {
-          pubkey: people[1]?.pubkey,
-          relayUrl: "https://relay.example",
-        } as AgentView,
-      ],
-      runtimeAvailable: true,
-    },
-    busy: false,
-    error: null,
-  } as AgentControlState;
+    agents: [
+      {
+        pubkey: people[1]?.pubkey ?? "",
+        name: people[1]?.name ?? "",
+        relayUrl: "https://relay.example",
+        owner: "f".repeat(64),
+      },
+    ],
+  };
   const listeners = new Set<() => void>();
   const control = {
     snapshot: () => controlState,
@@ -160,8 +160,8 @@ function setup() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    refresh: vi.fn(async () => {}),
-  } as unknown as AgentControl;
+    refresh: async () => {},
+  };
   Object.assign(session, {
     agentChoices: createAgentChoices({
       scope,
@@ -181,6 +181,7 @@ function setup() {
     );
   return {
     session,
+    channels,
     directMessages,
     messages,
     outbox,
@@ -188,7 +189,7 @@ function setup() {
     onStarted,
     mount,
     control,
-    updateControl(next: AgentControlState) {
+    updateControl(next: LocalAgentsSnapshot) {
       controlState = next;
       act(() => {
         for (const listener of listeners) listener();
@@ -201,7 +202,7 @@ const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
 
-it("offers only controlled agents in this community, including cached searches after control changes", async () => {
+it("offers only local agents in this community, including cached searches after their list changes", async () => {
   const t = setup();
   const foreign = {
     pubkey: "a".repeat(64),
@@ -216,16 +217,15 @@ it("offers only controlled agents in this community, including cached searches a
   const state = t.control.snapshot();
   t.updateControl({
     ...state,
-    data: {
-      runtimeAvailable: true,
-      agents: [
-        ...(state.data?.agents ?? []),
-        {
-          pubkey: otherCommunity.pubkey,
-          relayUrl: "https://elsewhere.example",
-        } as AgentView,
-      ],
-    },
+    agents: [
+      ...state.agents,
+      {
+        pubkey: otherCommunity.pubkey,
+        name: otherCommunity.name,
+        relayUrl: "https://elsewhere.example",
+        owner: "f".repeat(64),
+      },
+    ],
   });
   t.directMessages.people.mockResolvedValue({
     people: [...people, foreign, otherCommunity],
@@ -280,6 +280,257 @@ it("appends background pages without reshuffling and ranks new search results", 
   await t.user.type(recipient(), "avery");
   await screen.findByRole("option", { name: "Avery" });
   expect(names()).toEqual(["Avery", "Adam Avery"]);
+});
+
+it("highlights the first typed match, so Enter adds it, and keeps it as results arrive", async () => {
+  const t = setup();
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  const ava = { pubkey: "b".repeat(64), name: "Ava" };
+  let release = () => {};
+  const later = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // An unfinished directory sends typed text to the relay.
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query)
+      return page === 1 ? { people, hasMore: true } : new Promise(() => {});
+    if (page === 1) return { people: [avery], hasMore: true };
+    await later;
+    return { people: [ava], hasMore: false };
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.type(recipient(), "av");
+  const first = await screen.findByRole("option", { name: "Avery" });
+  await waitFor(() => expect(first).toHaveAttribute("aria-selected", "true"));
+  expect(recipient()).toHaveAttribute("aria-activedescendant", first.id);
+  // A later page adds a better-sorting name; it lands below and Enter stays.
+  await waitFor(() =>
+    expect(t.directMessages.people).toHaveBeenCalledWith(
+      "av",
+      2,
+      expect.any(AbortSignal),
+    ),
+  );
+  release();
+  await screen.findByRole("option", { name: "Ava" });
+  expect(first).toHaveAttribute("aria-selected", "true");
+  await t.user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Remove Avery" })).toBeVisible();
+});
+
+it("orders typed matches by exact name, earlier choice, relationship, then usage, and underlines them", async () => {
+  const t = setup();
+  const person = (letter: string, name: string) => ({
+    pubkey: letter.repeat(64),
+    name,
+  });
+  const sam = person("a", "Sam");
+  const samantha = person("b", "Samantha");
+  const sami = person("c", "Sami");
+  const sammy = person("d", "Sammy");
+  const samuel = person("e", "Samuel");
+  t.directMessages.people.mockResolvedValue({
+    people: [samuel, sammy, sami, samantha, sam],
+    hasMore: false,
+  });
+  t.channels.channels = [samantha, sami].map(
+    ({ pubkey }, index) =>
+      ({
+        id: `dm-${index}`,
+        name: "",
+        channelType: "dm",
+        participants: [pubkey],
+      }) as ChannelSummary,
+  );
+  for (let visit = 0; visit < 5; visit++) recordVisit(scope, "channel:dm-1");
+  recordChoice(scope, pickerText("dm", "sam"), `person:${sammy.pubkey}`);
+  // Command-K's choice for the same text belongs to Command-K.
+  recordChoice(scope, "sam", `person:${samuel.pubkey}`);
+  t.mount();
+  await screen.findByRole("option", { name: "Samuel" });
+  await t.user.type(recipient(), "sam");
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.getAttribute("aria-label")),
+    ).toEqual(["Sam", "Sammy", "Sami", "Samantha", "Samuel"]),
+  );
+  expect(
+    screen.getByRole("option", { name: "Samantha" }).querySelector("mark"),
+  ).toHaveTextContent(/^Sam$/);
+  // Choosing remembers the person for this text, and the same message uses
+  // it the next time the text is typed.
+  await t.user.click(screen.getByRole("option", { name: "Samuel" }));
+  expect(
+    readSearchUsage(scope).pick(
+      pickerText("dm", "sam"),
+      new Set([`person:${samuel.pubkey}`, `person:${sammy.pubkey}`]),
+    ),
+  ).toBe(`person:${samuel.pubkey}`);
+  await t.user.click(screen.getByRole("button", { name: "Remove Samuel" }));
+  await t.user.type(recipient(), "sam");
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Sam", "Samuel"]),
+  );
+});
+
+it("matches accented names the way the directory finds them", async () => {
+  const t = setup();
+  const jose = { pubkey: "a".repeat(64), name: "José" };
+  const joseph = { pubkey: "b".repeat(64), name: "Joseph" };
+  const paros = { pubkey: "c".repeat(64), name: "ΠΑΡΟΣ" };
+  const parosKostas = { pubkey: "d".repeat(64), name: "παρος Κώστας" };
+  t.directMessages.people.mockResolvedValue({
+    people: [joseph, jose, parosKostas, paros],
+    hasMore: false,
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "José" });
+  await t.user.type(recipient(), "jose");
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.getAttribute("aria-label")),
+    ).toEqual(["José", "Joseph"]),
+  );
+  expect(
+    screen.getByRole("option", { name: "José" }).querySelector("mark"),
+  ).toHaveTextContent(/^José$/);
+  // A final sigma: typed as shown or in lowercase, the exact name leads.
+  for (const text of ["ΠΑΡΟΣ", "παρος"]) {
+    await t.user.clear(recipient());
+    await t.user.type(recipient(), text);
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("option")
+          .map((row) => row.getAttribute("aria-label")),
+      ).toEqual(["ΠΑΡΟΣ", "παρος Κώστας"]),
+    );
+  }
+});
+
+it("completes with Space only for one exact name, and with Tab", async () => {
+  const t = setup();
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  const averyChen = { pubkey: "b".repeat(64), name: "Avery Chen" };
+  const jose = { pubkey: "c".repeat(64), name: "José" };
+  const josefa = { pubkey: "d".repeat(64), name: "Josefa" };
+  t.directMessages.people.mockResolvedValue({
+    people: [avery, averyChen, jose, josefa],
+    hasMore: false,
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "José" });
+  // Exact without accents, and no longer name continues it: Space picks.
+  await t.user.type(recipient(), "jose");
+  await screen.findByRole("option", { name: "Josefa" });
+  await t.user.keyboard(" ");
+  expect(
+    await screen.findByRole("button", { name: "Remove José" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveValue("");
+  // "Avery Chen" continues "avery", so Space is a normal space.
+  await t.user.type(recipient(), "avery");
+  await screen.findByRole("option", { name: "Avery Chen" });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("avery ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+  // Tab picks the highlighted row.
+  await t.user.keyboard("c");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Avery Chen" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    ),
+  );
+  await t.user.keyboard("{Tab}");
+  expect(
+    await screen.findByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveFocus();
+  // With nothing typed there is no highlight, so Tab leaves the field.
+  await t.user.keyboard("{Tab}");
+  expect(recipient()).not.toHaveFocus();
+  expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
+});
+
+it("Space waits for a longer name after any word break", async () => {
+  const t = setup();
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  const averyChen = { pubkey: "b".repeat(64), name: "Avery-Chen" };
+  t.directMessages.people.mockImplementation(async (_query, page) => {
+    if (page === 1) return { people: [avery], hasMore: true };
+    if (page === 2) return { people: [averyChen], hasMore: false };
+    throw new Error("relay down");
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Avery" });
+  await t.user.type(recipient(), "avery");
+  await screen.findByRole("option", { name: "Avery-Chen" });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("avery ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+});
+
+it("Space does not pick while the rest of the list failed to load", async () => {
+  const t = setup();
+  const kim = { pubkey: "a".repeat(64), name: "Kim" };
+  t.directMessages.people.mockImplementation(async (_query, page) => {
+    if (page === 1) return { people: [kim], hasMore: true };
+    throw new Error("relay down");
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Kim" });
+  await t.user.type(recipient(), "kim");
+  await screen.findByRole("option", { name: "Kim" });
+  await screen.findByRole("button", { name: /retry|try again/i });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("kim ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Kim" }),
+  ).not.toBeInTheDocument();
+});
+
+it("reveals the highlighted person on every arrow key and when the list reopens", async () => {
+  const t = setup();
+  const scrolled = vi.mocked(Element.prototype.scrollIntoView);
+  t.directMessages.people.mockResolvedValue({ people, hasMore: false });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.keyboard("{ArrowUp}");
+  const last = screen.getAllByRole("option").at(-1);
+  await waitFor(() => expect(last).toHaveAttribute("aria-selected", "true"));
+  // At the last row, Down keeps the highlight but still reveals it.
+  scrolled.mockClear();
+  await t.user.keyboard("{ArrowDown}");
+  await waitFor(() => expect(scrolled).toHaveBeenCalled());
+  expect(scrolled.mock.contexts.at(-1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // Closing and reopening the list reveals it again.
+  await t.user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("option")).toBeNull());
+  scrolled.mockClear();
+  await t.user.click(recipient());
+  await waitFor(() => expect(scrolled).toHaveBeenCalled());
+  expect(scrolled.mock.contexts.at(-1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 it("opens blank and focused, adds multiple recipients, deduplicates, and enforces eight", async () => {
@@ -373,6 +624,55 @@ it("matches an exact public key without exposing short key substrings", async ()
       ).not.toBeInTheDocument(),
     );
   }
+});
+
+it("matches names from the start of a word, like mentions", async () => {
+  const t = setup();
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+
+  await t.user.type(recipient(), "erson");
+  await waitFor(() =>
+    expect(screen.queryAllByRole("option", { name: /^Person/ })).toHaveLength(
+      0,
+    ),
+  );
+  await t.user.clear(recipient());
+  await t.user.type(recipient(), "1");
+  expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "Person 10" })).toBeVisible();
+  expect(
+    screen.queryByRole("option", { name: "Person 3" }),
+  ).not.toBeInTheDocument();
+});
+
+it("finds and completes a managed agent by its own name when its profile name differs", async () => {
+  const t = setup();
+  t.updateControl({
+    status: "ready",
+    agents: [
+      {
+        pubkey: people[1]?.pubkey ?? "",
+        name: "José",
+        relayUrl: "https://relay.example",
+        owner: "f".repeat(64),
+      },
+    ],
+  });
+  t.mount();
+  // Browsing caches the agent under its profile name, Person 2.
+  await screen.findByRole("option", { name: "Person 2, Agent" });
+  await t.user.type(recipient(), "jose");
+  expect(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Person 1" })).toBeNull();
+  // Space completes the agent's own name, as it does a profile name.
+  await t.user.keyboard(" ");
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 2" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveValue("");
 });
 
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {
@@ -679,27 +979,6 @@ it("preserves the preview on background failure and retries the same page withou
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("resumes an uncertain first send after reopening without creating a new message", async () => {
-  const t = setup();
-  const view = t.mount();
-  t.directMessages.delivery.mockReturnValue("unknown");
-  t.directMessages.delivered.mockRejectedValueOnce(
-    new Error("Connection lost"),
-  );
-  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Recover exactly once");
-  await t.user.click(send());
-  await screen.findByRole("alert");
-  view.unmount();
-  t.mount();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Recover exactly once");
-  await waitFor(() => expect(send()).toBeEnabled());
-  await t.user.click(send());
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).toHaveBeenCalledOnce();
-  expect(t.directMessages.open).toHaveBeenCalledOnce();
-});
-
 it("cancels opening on page exit and does not send after a late response", async () => {
   const t = setup();
   let release: (id: string) => void = () => {};
@@ -735,7 +1014,7 @@ it.each(["removed", "loading", "error"] as const)(
     t.updateControl({
       ...current,
       status: state === "removed" ? "ready" : state,
-      data: { agents: [], runtimeAvailable: true },
+      agents: [],
     });
     await t.user.click(send());
     await screen.findByRole("alert");
@@ -751,7 +1030,7 @@ it.each(["removed", "loading", "error"] as const)(
   },
 );
 
-it("checks agent control again after opening and leaves queued retries alone", async () => {
+it("checks local agents again after opening and leaves queued retries alone", async () => {
   const t = setup();
   let opened: (id: string) => void = () => {};
   t.directMessages.open.mockImplementationOnce(

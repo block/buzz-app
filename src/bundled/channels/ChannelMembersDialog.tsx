@@ -4,8 +4,10 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -13,13 +15,17 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type PointerEvent,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { AgentControl } from "../../features/agents/control";
+import type { Agents, Team } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
+import { matchPerson } from "../../features/search/person-match";
+import { MatchedLabel } from "../../features/search/MatchedLabel";
+import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
@@ -47,6 +53,25 @@ import {
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
+
+/** How a name matches typed text: the shared person name rule, the same as
+ * mentions and New message. */
+const typedMatch = (name: string, needle: string) =>
+  needle ? matchPerson(name, needle) : undefined;
+
+/** Typed text, lowercased. A context, so a query change redraws only the
+ * names and not every memoized row. */
+const TypedText = createContext("");
+
+function MemberName({ name }: { name: string }) {
+  const needle = useContext(TypedText);
+  return (
+    <MatchedLabel
+      label={name}
+      positions={typedMatch(name, needle)?.positions}
+    />
+  );
+}
 
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
@@ -112,6 +137,9 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add,
   busy,
   addDisabled,
+  highlightId,
+  highlighted,
+  onHighlightMove,
 }: {
   session: RelaySession;
   channelId: string;
@@ -144,6 +172,10 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add(key: string): Promise<void>;
   busy: boolean;
   addDisabled: boolean;
+  /** Set on rows the search highlight can choose. */
+  highlightId?: string | undefined;
+  highlighted?: boolean | undefined;
+  onHighlightMove?: ((key: string, event: PointerEvent) => void) | undefined;
 }) {
   const npub = npubEncode(pubkey);
 
@@ -185,7 +217,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
           <span className={styles.identity}>
             <span className={styles.identityName}>
               <span className={`${styles.name} text-body-sm`}>
-                {name}
+                {adding ? <MemberName name={name} /> : name}
                 {pubkey === session.viewer ? " (you)" : ""}
               </span>
             </span>
@@ -249,6 +281,15 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
         onSendMessage ? () => void onSendMessage(pubkey) : undefined
       }
       messagePending={messagePending}
+      highlight={
+        highlightId && onHighlightMove
+          ? {
+              id: highlightId,
+              active: !!highlighted,
+              onPointerMove: (event) => onHighlightMove(pubkey, event),
+            }
+          : undefined
+      }
       invitationAction={
         adding ? (
           <span className={styles.addAction}>
@@ -294,15 +335,15 @@ type MemberNavigation = {
 export function ChannelMembersButton({
   session,
   channelId,
-  control,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
   presentation,
+  agents,
 }: {
   session: RelaySession;
   channelId: string;
-  control?: AgentControl | undefined;
+  agents?: Agents | undefined;
   presentation?:
     | { open: boolean; onOpenChange(open: boolean): void }
     | undefined;
@@ -328,10 +369,10 @@ export function ChannelMembersButton({
           key={channelId}
           session={session}
           channelId={channelId}
-          control={control}
           canOpenLink={canOpenLink}
           onOpenLink={onOpenLink}
           onOpenConversation={onOpenConversation}
+          {...(agents ? { agents } : {})}
           close={() => setOpen(false)}
           trigger={trigger}
         />
@@ -341,21 +382,72 @@ export function ChannelMembersButton({
 }
 
 /** Members are shared relay truth; only search and in-progress presentation belong to this dialog. */
+const noTeams = () => () => {};
+const noSnapshot = () => undefined;
+
+/** A team of the owner's agents, added to the channel with one button. */
+function TeamRow({
+  team,
+  names,
+  busy,
+  disabled,
+  onAdd,
+}: {
+  team: Team;
+  /** The members not yet in the channel. */
+  names: readonly string[];
+  busy: boolean;
+  disabled: boolean;
+  onAdd(): void;
+}) {
+  return (
+    <li className={styles.member}>
+      <div className={styles.profileContent}>
+        <div className={styles.staticProfile}>
+          <Avatar alt="" fallback={team.name} size="small" shape="squircle" />
+          <span className="min-w-0 flex-1">
+            <span className={`${styles.name} text-body-sm`}>
+              <MemberName name={team.name} />
+            </span>
+            <span className="block truncate text-caption text-subtle">
+              {names.join(", ")}
+            </span>
+          </span>
+        </div>
+      </div>
+      <span className={styles.addAction}>
+        <Button
+          variant="prominent"
+          size="xs"
+          aria-label={`Add team ${team.name}`}
+          aria-disabled={busy || undefined}
+          disabled={disabled}
+          onClick={() => {
+            if (!busy) onAdd();
+          }}
+        >
+          {busy ? "Adding…" : "Add team"}
+        </Button>
+      </span>
+    </li>
+  );
+}
+
 export function ChannelMembersDialog({
   session,
   channelId,
-  control,
   close,
   trigger,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
+  agents,
 }: {
   session: RelaySession;
   channelId: string;
-  control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  agents?: Agents;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
   const presenceId = useId();
@@ -437,7 +529,12 @@ export function ChannelMembersDialog({
     session.archives.snapshot,
     session.archives.snapshot,
   );
-  const agents = useAgentChoices(session);
+  const agentChoices = useAgentChoices(session);
+  const agentsSnapshot = useSyncExternalStore(
+    agents?.subscribe ?? noTeams,
+    agents?.snapshot ?? noSnapshot,
+    agents?.snapshot ?? noSnapshot,
+  );
   const resolveName = useIdentityNames(session.names);
   const channel =
     list.channels.find((item) => item.id === channelId) ??
@@ -557,8 +654,9 @@ export function ChannelMembersDialog({
   }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
   const initialLoading = revealedFor !== session;
   const known = useMemo(
-    () => new Map(agents.identities.map((agent) => [agent.pubkey, agent])),
-    [agents.identities],
+    () =>
+      new Map(agentChoices.identities.map((agent) => [agent.pubkey, agent])),
+    [agentChoices.identities],
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
@@ -570,10 +668,21 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
+  // Filters the fully loaded member list.
   const matches = (key: string, name: string) =>
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
+  // People to add use the shared name rule, like the relay's people page; a
+  // whole key or npub finds its owner.
+  const addable = (key: string, ...names: (string | undefined)[]) => {
+    const typed = query.trim().toLowerCase();
+    return (
+      names.some((name) => name && matchPerson(name, query)) ||
+      typed === key ||
+      typed === npubEncode(key)
+    );
+  };
   const currentMembers = [...members].sort(
     (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
   );
@@ -617,19 +726,26 @@ export function ChannelMembersDialog({
     search.people.map((person) => [person.pubkey, person]),
   );
   if (query.trim())
-    for (const agent of agents.identities) {
-      if (matches(agent.pubkey, label(agent.pubkey, agent.name)))
+    for (const agent of agentChoices.identities) {
+      if (addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name))
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
           name: agent.name,
           isAgent: true,
         });
     }
-  const available = [...candidates.values()].filter(
-    (person) =>
-      !members.has(person.pubkey) &&
-      !archiveHides(session.archives, person.pubkey, session.viewer),
-  );
+  const needle = text.toLowerCase();
+  // The relay ranks each page exact, then prefix, then other. Rank merged
+  // agents the same way; the stable sort keeps the relay's order within a rank.
+  const candidateRank = (person: { pubkey: string; name: string }) =>
+    typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
+  const available = [...candidates.values()]
+    .filter(
+      (person) =>
+        !members.has(person.pubkey) &&
+        !archiveHides(session.archives, person.pubkey, session.viewer),
+    )
+    .sort((a, b) => candidateRank(a) - candidateRank(b));
   // Known agents supplement the server page, not its rendering bound. Keep all
   // matches reachable through the existing More action without mounting them all.
   const invitationSize =
@@ -639,6 +755,7 @@ export function ChannelMembersDialog({
   const visibleCandidates =
     roleFilter === "All" ? available.slice(0, invitationSize) : [];
   const moreCandidates = available.length > invitationSize;
+  const offering = !initialLoading && canAdd && roleFilter === "All" && !!text;
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -684,7 +801,7 @@ export function ChannelMembersDialog({
     administration.status === "loading" ||
     namesBusy ||
     search.loading ||
-    agents.pending ||
+    agentChoices.pending ||
     agentsBusy ||
     archives.status === "loading";
   const mutationPending =
@@ -713,6 +830,18 @@ export function ChannelMembersDialog({
     void session.archives.refresh();
     search.refresh();
   };
+  // Teams match by name; each adds its members in this community not here yet.
+  const teamNames = new Map(
+    (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
+  );
+  const teams = (agentsSnapshot?.teams ?? []).flatMap((team) => {
+    const missing = team.members.filter(
+      (key) => teamNames.has(key) && !members.has(key),
+    );
+    return missing.length && matchPerson(team.name, query)
+      ? [{ team, missing }]
+      : [];
+  });
   const keys = publicKeyLabels([...members, ...candidates.keys()]);
   // A confirmed addition replaces its focused Add button with a member row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
@@ -732,7 +861,7 @@ export function ChannelMembersDialog({
       if (!signal) return;
       setNotice("");
       try {
-        await session.memberAdditions.add(channelId, key, control);
+        await session.memberAdditions.add(channelId, key);
         if (!signal.aborted)
           setNotice(
             `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? formatPublicKey(key) ?? "Unknown member")} is in the channel.`,
@@ -741,7 +870,43 @@ export function ChannelMembersDialog({
         // Session-owned recovery remains visible if this dialog closes and reopens.
       }
     },
-    [session, channelId, control],
+    [session, channelId],
+  );
+
+  const addTeam = useCallback(
+    async (team: Team, missing: readonly string[]) => {
+      const signal = lifetime.current?.signal;
+      if (!signal) return;
+      setNotice("");
+      const added = await Promise.allSettled(
+        missing.map((key) => session.memberAdditions.add(channelId, key)),
+      );
+      // A failed member shows its own error and Retry below.
+      if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
+        setNotice(`${team.name} is in the channel.`);
+    },
+    [session, channelId],
+  );
+
+  // Typed text highlights the first person not in the channel, so Enter adds
+  // them. Rows keep their own buttons; the highlight only marks one of them.
+  const highlight = useSearchHighlight({
+    query,
+    keys: offering ? visibleCandidates.map((person) => person.pubkey) : [],
+    onChoose: (key) => {
+      if (!busy.has(key) && !rosterBusy && !rosterError) void add(key);
+    },
+  });
+  const latestHighlight = useRef(highlight);
+  latestHighlight.current = highlight;
+  // Stable, so a highlight move does not rebuild every memoized row.
+  const moveHighlight = useCallback(
+    (key: string, event: PointerEvent) =>
+      latestHighlight.current.rowProps(key).onPointerMove(event),
+    [],
+  );
+  const highlightedPerson = visibleCandidates.find(
+    (person) => person.pubkey === highlight.active,
   );
 
   const searchAgents = search.people
@@ -886,6 +1051,9 @@ export function ChannelMembersDialog({
         add={add}
         busy={busy.has(key)}
         addDisabled={rosterBusy || !!rosterError}
+        highlightId={adding ? highlight.rowId(key) : undefined}
+        highlighted={adding && highlight.active === key}
+        onHighlightMove={adding ? moveHighlight : undefined}
       />
     );
   };
@@ -894,7 +1062,7 @@ export function ChannelMembersDialog({
     (known.has(selection.pubkey) || profiles.get(selection.pubkey)?.isAgent);
   const removalTarget = selectedAgent ? "agent" : "member";
   const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
-  return (
+  const dialog = (
     <Dialog
       open
       dismissOnOutsideClick
@@ -1031,8 +1199,16 @@ export function ChannelMembersDialog({
                   setQuery(value);
                   if (value.length > 0) setSelectedRole("All");
                 }}
+                onKeyDown={(event) => {
+                  highlight.keyDown(event);
+                }}
                 maxLength={256}
               />
+              <span className="sr-only" role="status">
+                {highlightedPerson
+                  ? `${label(highlightedPerson.pubkey, highlightedPerson.name)}. Press Enter to add.`
+                  : ""}
+              </span>
             </div>
             {!initialLoading && presentGroups.length > 1 && (
               <motion.div
@@ -1155,12 +1331,29 @@ export function ChannelMembersDialog({
                 <section
                   className={styles.memberGroup}
                   aria-label="Not in this channel"
+                  {...highlight.listProps}
                 >
                   <h3
                     className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
                   >
                     Not in this channel
                   </h3>
+                  {teams.length > 0 && (
+                    <ul aria-label="Teams">
+                      {teams.map(({ team, missing }) => (
+                        <TeamRow
+                          key={team.id}
+                          team={team}
+                          names={missing.map((key) =>
+                            label(key, teamNames.get(key)),
+                          )}
+                          busy={missing.some((key) => busy.has(key))}
+                          disabled={rosterBusy || !!rosterError}
+                          onAdd={() => void addTeam(team, missing)}
+                        />
+                      ))}
+                    </ul>
+                  )}
                   {visibleCandidates.map((person) =>
                     row(
                       person.pubkey,
@@ -1221,7 +1414,7 @@ export function ChannelMembersDialog({
                 Some agent managers or their names could not load. Try again.
               </p>
             )}
-            {agents.error && (
+            {agentChoices.error && (
               <p role="alert" className="text-body-sm text-danger">
                 Some agents could not load.
               </p>
@@ -1234,15 +1427,13 @@ export function ChannelMembersDialog({
             {Object.entries(errors).map(([key, error]) => (
               <p role="alert" key={key} className="text-body-sm text-danger">
                 {label(key)}: {error}{" "}
-                {!additions.find((item) => item.pubkey === key)?.removed && (
-                  <Button
-                    variant="outline"
-                    disabled={busy.has(key) || !canAdd}
-                    onClick={() => void add(key)}
-                  >
-                    {busy.has(key) ? "Retrying…" : "Retry"}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  disabled={busy.has(key) || !canAdd}
+                  onClick={() => void add(key)}
+                >
+                  {busy.has(key) ? "Retrying…" : "Retry"}
+                </Button>
               </p>
             ))}
             {openingMessage && (
@@ -1265,4 +1456,5 @@ export function ChannelMembersDialog({
       )}
     </Dialog>
   );
+  return <TypedText.Provider value={needle}>{dialog}</TypedText.Provider>;
 }

@@ -43,7 +43,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const draft = () =>
       page.getByRole("textbox", { name: /Message #general|Reply to thread/ });
     const picker = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFS",
       exact: true,
     });
     await expect(
@@ -215,9 +215,70 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       text: "Quote :party:\n\ncode\n",
       trusted: true,
     });
+    // Across rows, the handler must omit the same user-select: none row chrome
+    // engines do: the hovered action bars and the hidden full dates.
+    const brokenBody = page.getByText("Broken :missing:", { exact: true });
+    await historic.hover();
+    await brokenBody.hover();
+    await historic.evaluate(
+      (image, end) => {
+        const range = document.createRange();
+        range.setStartBefore(image.closest("p"));
+        range.setEndAfter(end);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      },
+      await brokenBody.elementHandle(),
+    );
+    await observeCopyPayload();
+    await copySelection();
+    await expect
+      .poll(copyPayload)
+      .toMatchObject({ prevented: true, trusted: true });
+    const { text: rowsText } = await copyPayload();
+    expect(rowsText).toMatch(
+      /^Historic :unknown:party: and https:\/\/example\.test\/:party:\n/,
+    );
+    expect(rowsText).toMatch(
+      /\nFixture ReaderJan 1, 1970 at 12:00 AM\nBroken :missing:$/,
+    );
+    expect(rowsText).not.toMatch(/Thursday|👍|❤️|😂/u);
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.
     await draft().fill(":party:");
+    await expect(draft()).toHaveAttribute("data-emoji-images-only", "true");
+    await expect(draft().locator("img[data-copy-emoji]")).toHaveCSS(
+      "width",
+      "42px",
+    );
+    await expect(draft()).toHaveCSS("font-size", "14px");
+    const separator = draft().locator("img.ProseMirror-separator");
+    if (await separator.count()) {
+      const bounds = await separator.boundingBox();
+      expect(bounds.width).toBeLessThanOrEqual(1);
+      expect(bounds.height).toBeLessThanOrEqual(1);
+    }
+    // The native caret follows the atomic inline host's height, not its artwork.
+    await expect(draft().locator("[data-source=':party:']")).toHaveCSS(
+      "height",
+      "14px",
+    );
+    await draft().press("ArrowLeft");
+    await draft().press("ArrowRight");
+    await draft().screenshot({
+      path: test.info().outputPath("custom-emoji-caret.png"),
+      caret: "initial",
+    });
+    // A lone custom emoji is enlarged without enlarging the editor's separator.
+    await expect(draft().locator('img[alt=":party:"]')).toHaveCSS(
+      "width",
+      "42px",
+    );
+    await expect(draft().locator("img.ProseMirror-separator")).toHaveCSS(
+      "width",
+      "0px",
+    );
     await draft().press("ControlOrMeta+a");
     await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
@@ -225,6 +286,17 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(draft()).toHaveJSProperty("value", ":party:");
     // One Shift+Left selects one rendered custom emoji, not its trailing colon.
     await draft().press("Shift+ArrowLeft");
+    expect(
+      await draft()
+        .locator("img[data-copy-emoji]")
+        .evaluate((image) => {
+          const selected = image.closest("[data-editor-selected]");
+          return (
+            selected !== null &&
+            getComputedStyle(image).backgroundColor !== "rgba(0, 0, 0, 0)"
+          );
+        }),
+    ).toBe(true);
     expect(
       await draft().evaluate((element) =>
         element.value.slice(element.selectionStart, element.selectionEnd),
@@ -289,7 +361,14 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       await largeCustom
         .locator("img[data-copy-emoji]")
         .last()
-        .evaluate((image) => image.offsetTop),
+        .evaluate(
+          (image) =>
+            image.getBoundingClientRect().top -
+            image
+              .closest('[role="textbox"]')
+              .querySelector("img[data-copy-emoji]")
+              .getBoundingClientRect().top,
+        ),
     ).toBeGreaterThan(0);
     await page.screenshot({
       path: test.info().outputPath("large-custom-emoji-draft.png"),

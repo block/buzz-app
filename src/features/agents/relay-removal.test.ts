@@ -1,19 +1,23 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
-import { removeRelayAgent } from "./relay-removal";
+import {
+  publishAgentRecord,
+  removeAgentFromChannels,
+  removeRelayAgent,
+} from "./relay-removal";
 
 const viewer = keypair(),
   relay = keypair(),
   agent = keypair(),
   stranger = keypair();
-const owners: ReturnType<typeof createRelaySession>[] = [];
-afterEach(() => {
-  for (const owner of owners.splice(0)) owner.dispose();
+const owners: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const dispose of owners.splice(0)) await dispose();
 });
 function attested(owner: Key) {
   const digest = createHash("sha256")
@@ -44,10 +48,40 @@ function setup(
   const instance = createRelaySession(fixture.transport, {
     outboxStorage: { load: () => [], save: () => {} },
   });
-  owners.push(instance);
-  const remove = (signal = new AbortController().signal) =>
-    removeRelayAgent(instance.session, viewer.pubkey, agent.pubkey, signal);
-  return { fixture, instance, remove };
+  const operations: {
+    controller: AbortController;
+    release(): void;
+    outcome: Promise<PromiseSettledResult<void>[]>;
+  }[] = [];
+  const dispose = async () => {
+    for (const operation of operations) {
+      operation.controller.abort();
+      operation.release();
+    }
+    await Promise.all(operations.map(({ outcome }) => outcome));
+    instance.dispose();
+  };
+  owners.push(dispose);
+  const remove = (
+    signal = new AbortController().signal,
+    release = () => {},
+  ) => {
+    const controller = new AbortController();
+    const removal = removeRelayAgent(
+      instance.session,
+      viewer.pubkey,
+      agent.pubkey,
+      AbortSignal.any([signal, controller.signal]),
+    );
+    // Observe rejection immediately; retain it for the caller's assertion.
+    operations.push({
+      controller,
+      release,
+      outcome: Promise.allSettled([removal]),
+    });
+    return removal;
+  };
+  return { fixture, instance, remove, dispose };
 }
 const coordinate = () => `30177:${viewer.pubkey}:${agent.pubkey}`;
 
@@ -113,6 +147,37 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
+it("signs a new channel removal instead of resending one the relay would refuse as stale", async () => {
+  const { fixture, instance } = setup();
+  const removeFromChannels = () =>
+    removeAgentFromChannels(
+      instance.session,
+      agent.pubkey,
+      new AbortController().signal,
+    );
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 9001;
+  await expect(removeFromChannels()).rejects.toThrow();
+  const [stale] = instance.session.outbox?.snapshot() ?? [];
+  expect(stale?.event.kind).toBe(9001);
+  delete fixture.removal.fail;
+  // Past the relay's 15-minute timestamp bound, resending `stale` can never land.
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 20 * 60_000 });
+  try {
+    await removeFromChannels();
+  } finally {
+    vi.useRealTimers();
+  }
+  const [sent] = fixture.published;
+  expect(fixture.published).toHaveLength(1);
+  expect(sent?.id).not.toBe(stale?.event.id);
+  expect(sent?.created_at).toBeGreaterThan(
+    (stale?.event.created_at ?? 0) + 15 * 60,
+  );
+  expect(Object.values(fixture.channels).flat()).not.toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
 it("waits for every channel removal before finishing, and leaves no outbox work", async () => {
   const [first, second] = ["first", "second"].map(
     (name) => `${name.padEnd(8, "x")}-channel`,
@@ -150,7 +215,8 @@ it("waits for every channel removal before finishing, and leaves no outbox work"
   );
   let finished = false;
   try {
-    const removal = remove().then(() => {
+    const removal = remove(undefined, release);
+    void Promise.allSettled([removal]).then(() => {
       finished = true;
     });
     await expect.poll(() => fixture.deleted.size).toBe(1);
@@ -219,7 +285,8 @@ it("settles already enqueued channel removals when a later enqueue throws", asyn
     outbox.snapshot().filter(({ event }) => event.kind === 9001);
   let finished = false;
   try {
-    const removal = remove().then(() => {
+    const removal = remove(undefined, release);
+    void Promise.allSettled([removal]).then(() => {
       finished = true;
     });
     // One removal is enqueued and still sending; the next enqueue threw.
@@ -237,6 +304,49 @@ it("settles already enqueued channel removals when a later enqueue throws", asyn
   expect(outbox.snapshot()).toHaveLength(255);
 });
 
+it("settles a gated removal before disposing its session after early assertion failure", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const { fixture, instance, remove, dispose } = setup(
+    viewer,
+    undefined,
+    ({ transport }) => {
+      const query = transport.query;
+      transport.query = async (filters, signal) => {
+        if (filters.some(({ kinds }) => kinds?.includes(0))) {
+          started();
+          await held;
+          signal?.throwIfAborted();
+        }
+        return query(filters, signal);
+      };
+    },
+  );
+  const removal = remove(undefined, release);
+  let archiveStatusAtSettlement: string | undefined;
+  const outcome = Promise.allSettled([removal]).then(([result]) => {
+    archiveStatusAtSettlement = instance.session.archives.snapshot().status;
+    return result;
+  });
+  await reading;
+  try {
+    expect("early failure").toBe("completed removal");
+  } catch {
+    // Exercise the fixture teardown directly, independently of callback finally.
+    await dispose();
+  }
+  expect(await outcome).toMatchObject({ status: "rejected" });
+  expect(archiveStatusAtSettlement).toBe("idle");
+  expect(instance.session.archives.snapshot().status).toBe("unavailable");
+  expect(fixture.published).toEqual([]);
+});
+
 it("a cancelled removal signs and publishes nothing", async () => {
   const { fixture, remove } = setup();
   const controller = new AbortController();
@@ -244,4 +354,82 @@ it("a cancelled removal signs and publishes nothing", async () => {
   await expect(remove(controller.signal)).rejects.toBeDefined();
   expect(fixture.published).toEqual([]);
   expect(fixture.signedBy).toEqual([]);
+});
+
+it("publishes the owner's record of an agent with its runtime", async () => {
+  const { fixture, instance } = setup();
+  await publishAgentRecord(
+    instance.session,
+    {
+      pubkey: agent.pubkey,
+      name: "Agent",
+      picture: "https://example.test/a.png",
+      runtime: "example/echo",
+    },
+    new AbortController().signal,
+  );
+  const [listed] = fixture.published;
+  expect(listed).toMatchObject({ kind: 30177, pubkey: viewer.pubkey });
+  expect(JSON.parse(listed?.content ?? "")).toEqual({
+    name: "Agent",
+    picture: "https://example.test/a.png",
+    parallelism: 1,
+    respond_to: "owner-only",
+  });
+  expect(listed?.tags).toEqual([
+    ["d", agent.pubkey],
+    ["runtime", "example/echo"],
+    ["client-id", expect.any(String)],
+  ]);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("keeps the settings and tags of the record it replaces", async () => {
+  const { fixture, instance } = setup();
+  const written = await publishAgentRecord(
+    instance.session,
+    {
+      pubkey: agent.pubkey,
+      name: "Renamed",
+      runtime: "example/echo",
+      prior: {
+        content: {
+          name: "Agent",
+          picture: "https://example.test/old.png",
+          parallelism: 3,
+          respond_to: "anyone",
+          persona_id: "p1",
+        },
+        tags: [
+          ["d", agent.pubkey],
+          ["runtime", "example/old"],
+          ["a", "30175:owner:p1"],
+          ["client-id", "old"],
+        ],
+      },
+    },
+    new AbortController().signal,
+  );
+  const [listed] = fixture.published;
+  const content = {
+    name: "Renamed",
+    parallelism: 3,
+    respond_to: "anyone",
+    persona_id: "p1",
+  };
+  expect(JSON.parse(listed?.content ?? "")).toEqual(content);
+  expect(listed?.tags).toEqual([
+    ["d", agent.pubkey],
+    ["runtime", "example/echo"],
+    ["a", "30175:owner:p1"],
+    ["client-id", expect.any(String)],
+  ]);
+  expect(written).toEqual({
+    content,
+    tags: [
+      ["d", agent.pubkey],
+      ["runtime", "example/echo"],
+      ["a", "30175:owner:p1"],
+    ],
+  });
 });

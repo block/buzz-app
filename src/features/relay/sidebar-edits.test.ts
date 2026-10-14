@@ -1,9 +1,46 @@
 import { expect, it } from "vitest";
+import { projectSidebarRecord } from "./sidebar-registers";
 import {
+  editSidebarSectionRemoval,
+  validSidebarSectionRemoval,
   validSidebarAssignment,
   validSidebarChannelId,
   validSidebarSort,
 } from "./sidebar-edits";
+
+it("validates sidebar removal identifiers without normalizing their wire value", () => {
+  for (const id of ["work", " work ", "x".repeat(256)])
+    expect(validSidebarSectionRemoval(id)).toBe(true);
+  for (const id of ["", " ", "x".repeat(257)])
+    expect(validSidebarSectionRemoval(id)).toBe(false);
+});
+
+it("tombstones one legacy section and clears only its channel assignments", () => {
+  const current = {
+    version: 1,
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { alpha: "work", beta: "later", orphan: "missing" },
+  };
+  const next = editSidebarSectionRemoval(current, 1_700_000_000, "work", 42);
+  expect(current.sections).toHaveLength(2);
+  expect(current.assignments.alpha).toBe("work");
+  expect(next.meta).toMatchObject({
+    s: { work: { live: [expect.any(Number), expect.any(String), false] } },
+    a: {
+      alpha: [expect.any(Number), expect.any(String), null],
+      beta: [1_700_000_000_000, "0000000000000000", "later"],
+    },
+  });
+  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+    sections: [{ id: "later", name: "Later", order: 0 }],
+    assignments: { beta: "later" },
+  });
+  expect(editSidebarSectionRemoval(next, 0, "work", 43)).toBe(next);
+  expect(editSidebarSectionRemoval(current, 0, "missing", 42)).toBe(current);
+});
 
 it("bounds sidebar identifiers without normalizing their wire value", () => {
   for (const id of ["c", " c ", "x".repeat(256), "😀".repeat(128)])

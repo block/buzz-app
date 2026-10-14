@@ -132,9 +132,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgba(40, 40, 40, 0.9)" : "rgba(255, 255, 255, 0.9)",
+      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
     );
-    await expect(dialog).toHaveCSS("backdrop-filter", "blur(8px)");
+    await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
   }
   for (const [mode, colors] of Object.entries(palettes)) {
@@ -201,7 +201,7 @@ test("storage denial is visible and retryable; another window updates a live con
   await composer.fill("Unsent appearance draft");
   const before = await anchor(page);
   const node = await composer.elementHandle();
-  await button(page, "Insert emoji").click();
+  await button(page, "Emoji and GIFS").click();
   const emojiSearch = page.getByRole("searchbox", {
     name: "Search emoji",
     exact: true,

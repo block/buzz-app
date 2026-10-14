@@ -78,9 +78,10 @@ export function emojiTags(
   }
   return Object.freeze([...entries.values()]);
 }
-/** Share token boundaries with the renderer: never substitute inside HTTPS links. */
+/** Share token boundaries with the renderer: never substitute inside HTTP(S) links. */
 export const messageParts = (content: string) =>
-  content.split(/(https:\/\/[^\s<>"`]+)/g);
+  content.split(/(https?:\/\/[^\s<>"`]+)/g);
+export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(
   content: string,
@@ -101,7 +102,7 @@ export function referencedEmoji(content: string): string[] {
   return [
     ...new Set(
       messageParts(content).flatMap((part) =>
-        part.startsWith("https://")
+        linkPart(part)
           ? []
           : [...part.matchAll(shortcodePattern())].map((m) =>
               (m[2] ?? "").toLowerCase(),

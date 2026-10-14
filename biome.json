@@ -13,6 +13,8 @@
       "!!.hermit",
       "!!dist",
       "!!dist-author",
+      "!!dist-plugins",
+      "!!dist-buzz-mcp",
       "!!.profiles",
       "!!src-tauri/target",
       "!!src-tauri/gen",

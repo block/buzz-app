@@ -1601,15 +1601,14 @@ it("prevents duplicate writes across both menus while the clipboard is pending",
 });
 
 // Explicit gates expose focus during in-flight recovery rather than relying on timing.
-it.each(["discussion", "reviews"] as const)(
+it.each(["discussion"] as const)(
   "retains %s Retry focus through deferred repeated failure",
   async (source) => {
     const user = userEvent.setup();
     let finish: ((response: Response) => void) | undefined;
     let calls = 0;
     const fetch = vi.fn((target: string) => {
-      if (!target.includes(source === "reviews" ? "/reviews?" : "/comments?"))
-        return Promise.resolve(response([]));
+      if (!target.includes("/comments?")) return Promise.resolve(response([]));
       calls++;
       if (calls === 1)
         return Promise.resolve(new Response("", { status: 500 }));
@@ -1643,8 +1642,6 @@ it.each(["discussion", "reviews"] as const)(
 it.each([
   ["discussion", false],
   ["discussion", true],
-  ["reviews", false],
-  ["reviews", true],
 ] as const)(
   "hands off %s focus only when the completed source action still owns it (moved=%s)",
   async (source, moved) => {
@@ -1653,7 +1650,7 @@ it.each([
     vi.stubGlobal(
       "fetch",
       vi.fn((target: string) => {
-        if (!target.includes(source === "reviews" ? "/reviews?" : "/comments?"))
+        if (!target.includes("/comments?"))
           return Promise.resolve(response([]));
         if (target.includes("page=2"))
           return new Promise<Response>((resolve) => {
@@ -1670,7 +1667,7 @@ it.each([
               },
             ],
             {
-              link: `<https://api.github.com/repositories/123/${source === "reviews" ? "pulls/1/reviews" : "issues/1/comments"}?per_page=30&page=2>; rel="next"`,
+              link: `<https://api.github.com/repositories/123/issues/1/comments?per_page=30&page=2>; rel="next"`,
             },
           ),
         );

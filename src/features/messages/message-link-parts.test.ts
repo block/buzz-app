@@ -68,6 +68,29 @@ it("recognizes bare and wrapped URL schemes case-insensitively", () => {
   }
 });
 
+it("recognizes credential-free HTTP links for any host shape, but still requires a scheme", () => {
+  for (const url of [
+    "http://localhost:3000",
+    "http://localhost",
+    "http://localhost:3000/path",
+    "http://127.0.0.1:8080",
+    "http://my-host:3000",
+    "http://example.com/path",
+  ]) {
+    const parts = messageLinkParts(`See ${url}.`);
+    expect(parts.filter((part) => part.url)).toEqual([{ text: url, url }]);
+    expect(parts.map((part) => part.text).join("")).toBe(`See ${url}.`);
+  }
+  for (const content of [
+    "See localhost:3000.",
+    "See http://user:pw@localhost:3000/.",
+  ]) {
+    const parts = messageLinkParts(content);
+    expect(parts.some((part) => part.url)).toBe(false);
+    expect(parts.map((part) => part.text).join("")).toBe(content);
+  }
+});
+
 it("removes only paired autolink brackets and preserves surrounding punctuation", () => {
   const parts = messageLinkParts(
     "See <https://drive.google.com/file/d/example>, then <https://example.com/path?q=hello!>.",

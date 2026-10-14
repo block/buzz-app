@@ -101,6 +101,34 @@ confirmation; recipe head and catalog reads remain replica-eligible. For
 writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
 the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
 
+## Managed-agent registration (kind 30177)
+
+Plugins publish through `session.outbox.send()` after checking
+`session.outbox?.supports(30177)`. The host signs as the current viewer (the
+owner); the caller supplies `["d", agentPubkey]` and JSON `content`, which the
+transport preserves.
+
+Publish the complete intended **instance-state projection**. Another Buzz desktop
+can apply the event to an existing local agent with the same `d` public key,
+replacing its name, `persona_id`, `parallelism`, `respond_to`, and allowlist.
+When reusing a key, preserve its existing configuration in the projection;
+a valid but incomplete projection can clear omitted optional settings.
+
+The content parser requires `name`, `parallelism`, and `respond_to`. Literal
+name-only JSON such as `{"name":"x"}` fails parsing before local application.
+If it becomes the latest verified owner policy, discovery excludes the agent
+rather than falling back to legacy permissions. See the pinned
+[content parser](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/managed_agents/agent_events.rs#L38-L59)
+and [discovery policy](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/nostr_convert/agent_directory.rs#L73-L98).
+
+For definition-linked instances, prompt/model/provider fields resolve through
+kind 30175 and are omitted from new 30177 events. Definition-less instances must
+keep those fields, including intended empty values: readers can apply absent
+values as clears. See [NIP-AP's instance-state rules](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/nips/NIP-AP.md#slimming-kind30177-instance-state).
+Registration seeds discovery; it does not prove ownership or membership. See
+[authenticated owned-agent discovery](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/owned-agent-discovery.md)
+for those separate requirements.
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
@@ -242,6 +270,24 @@ inserting isolated rows into channel history. Explicit denial revokes the owning
 channel; access loss, cache clear and disposal purge the view. There is no separate
 reader owner, subscription or persistence.
 
+An open thread can call `view.retarget(messageId, signal)` to select another
+message without reallocating its reader. The same bounded exact-read path verifies
+the candidate's signed ancestry against the already-known root; navigation hints
+never establish identity. A same-root selection preserves traversal rows/cursors
+and publishes only after its overlays are complete. A different root, unavailable
+message or read failure leaves the prior selection intact. Selection requests
+supersede each other independently of history paging and repair; cancellation,
+access loss, cache clear and disposal fence late results. All evidence remains
+inside the existing view budget and session authority.
+
+Channel thread panels opt into this retained lifetime. Same-thread links preserve
+the mounted editor, reply target and expansion state; a different verified thread
+still replaces the current view. Failed link selection keeps the existing reply and
+shows one notice in the thread's status area. A message that no longer exists has
+no retry; other failures offer Try again, which stays focused while a fresh
+navigation request runs. Other embedded/preview consumers
+retain their previous lifetime. This does not yet add main-pane tabs or dragging.
+
 ## Global message search and public previews
 
 Global message searches (`kinds: [9, 40002]`, no `#h`) keep the relay's order.
@@ -282,10 +328,13 @@ still requires fresh signed membership, not metadata, to reverse it.
 ### Public channel name search and Join
 
 The relay has no text search for channel metadata. For a typed, unscoped palette
-query, `channels.searchPublic(query)` reads one page (500) of relay-authored
-`39000` metadata without applying it, matches names locally and keeps only
-explicit active public channels the viewer has not joined. It then resolves at
-most eight matches through the same exact `resolve` path as message hits, so
+or `#` completion query, `channels.searchPublic(query)` reads one page (500) of
+relay-authored `39000` metadata without applying it, matches names locally and
+keeps only explicit active public channels the viewer has not joined. Later
+queries in the same session epoch reuse that page for 30 seconds, so typing
+reads it once. Matches are ranked exact, prefix, word start, then substring,
+and the best eight are resolved through the same exact `resolve` path as
+message hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
 joined-only. A full page reports partial coverage; read failures show a retry.
 The search waits for a ready channel list.
@@ -298,6 +347,26 @@ metadata may be joined. Success is the viewer in a fresh relay-signed `39002`
 roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
+
+### Channel links
+
+A channel-only link (`buzz://channel/<id>`) shows what the reader may see about
+that channel. `channels.describe(id)` answers from local evidence and never
+reads: `found` with the name and flags, `withheld`, or `unknown`. `joined`
+comes from the viewer in the roster, so a channel restored from cache counts.
+A public channel the viewer left is `found` from its signed open metadata; that
+names it but does not restore member reads. `channels.refer(id)` demands a
+background lookup once the list is ready, until the returned release; a
+mounted link holds that demand, and the store rechecks demanded links itself
+when an answer expires or a backoff ends. The store coalesces lookups into
+exact `resolve` reads of at most 128 channels. A completed read that admits
+nothing is `withheld`: the relay hides a private channel's metadata from
+non-members, so private, deleted and invalid channels look the same. A
+`withheld` answer is kept for five minutes and stays shown while it is
+rechecked. A failed read is never `withheld`; it waits at least 30 seconds (or
+the relay's `retryAfterMs`) before another try. Clearing the cache or
+losing access forgets every answer and drops replies still in flight; mounted
+links are notified and looked up again. Composer decorations never ask.
 
 ## Ownership and reconciliation
 
@@ -454,8 +523,9 @@ server-side. The opt-in dev broker accepts bounded Nostr kinds and event-ID read
 
 ## Current scope and validation
 
-Channels supports top-level text messages and direct thread replies, Enter to send,
-Shift+Enter for a newline,
+Channels supports top-level text messages and direct thread replies, Enter to send ordinary prose,
+Shift+Enter for a newline. Inside a formatted list, Enter continues the list or exits an
+empty item; the Send button sends while the caret is in the list. Channels also supports
 immediate rows and shared preview data (not currently rendered in the sidebar),
 delivery status, and retry. The dev broker
 advertises kind 9 writes and signs bounded channel messages, including exactly one
@@ -601,7 +671,7 @@ check. It is not an event/query cache or authorization proof; WebSocket and othe
 `eventDto` callers remain uncached. `event-proof.test.ts` covers tampering,
 connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
 to the dev broker's native-config import graph: new runtime imports there must
-retain explicit extensions and pass `dev/vite-config.test.mjs`.
+retain explicit extensions and pass `browser-host/vite-config.test.mjs`.
 
 ## WebSocket-first publication
 
@@ -648,7 +718,7 @@ command receipt text stays ephemeral; it is never journaled or replaced by an ec
   appropriate existing protocols. Presence polling/lease semantics are not changed
   by this publication slice; moving a periodic query onto WS would not make it reactive.
 
-`live.test.ts`, `broker-live.test.ts` and `dev/relay-broker-live.test.mjs` cover
+`live.test.ts`, `broker-live.test.ts` and `browser-host/relay-broker-live.test.mjs` cover
 AUTH/OK correlation, admission, bounded failures, no replay, in-place interests,
 owner fencing, real broker/session-outbox reconciliation, workflow receipts and
 encrypted read-state publication with ephemeral keys and injected sockets. These
@@ -773,6 +843,13 @@ Long pauses surface recoverable errors rather than occupying queued-read deadlin
 Admission is local coordination, not a reservation of the relay's account-wide
 budget: other processes/clients can still cause a refusal. Ambiguous publication
 outcomes retain their exact signed event and are never transparently re-signed.
+
+The relay WebSocket keeps retrying transient disconnects and authentication
+timeouts while its session is active. Its exponential delay starts at 250–500ms
+and caps at 15–30s, with jitter on each attempt. A full minute authenticated resets
+that backoff; a brief successful authentication does not. Authentication rejection
+or signing failure remains terminal until explicit retry. Disconnect recovery
+re-establishes interests and finite catch-up; it never replays publications.
 
 The browser broker streams SSE over POST with bounded interests and owner-scoped
 retry/priority/interest controls. Retry and interest changes preserve the upstream

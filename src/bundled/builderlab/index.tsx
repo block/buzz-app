@@ -1,4 +1,3 @@
-import { communityDestination } from "../../features/communities/destination";
 import type { PluginModule } from "../../plugins/api";
 import { Login } from "./login/Login";
 import {
@@ -9,8 +8,11 @@ import {
 import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
+import { builderlabType } from "./adapter-type";
+import type { AgentProviderSnapshot } from "../../features/agents/service";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 
-export const inject = ["host", "settingsCards", "communityReader"];
+export const inject = ["host", "settingsCards", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -21,16 +23,60 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  const session = createOAuthSession((signal) =>
-    browserCredential(ctx.host, signal),
-  );
-  ctx.effect(() => () => session.dispose());
-  const agents = createAgentClient(ctx.host, session, () => {
-    const selected = ctx.communityReader.snapshot().selected;
-    return selected
-      ? communityDestination(selected).url.replace(/^https:/, "wss:")
-      : undefined;
+  const session = createOAuthSession((signal) => {
+    if (!browserLoginAvailable())
+      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
+    return browserCredential(ctx.host, signal);
   });
+  ctx.effect(() => () => session.dispose());
+  const agents = createAgentClient(ctx.host, session);
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  if (!unavailable) {
+    let providerState: AgentProviderSnapshot = {
+      readiness: "attention",
+      attentionLabel: "Log in to Builderlab",
+    };
+    const providerListeners = new Set<() => void>();
+    const updateProvider = () => {
+      const state = session.snapshot();
+      providerState = Object.freeze(
+        state.status === "signed-in"
+          ? { readiness: "ready" }
+          : state.status === "pending"
+            ? { readiness: "checking", blocking: true }
+            : {
+                readiness: "attention",
+                attentionLabel: "Log in to Builderlab",
+              },
+      );
+      for (const listener of providerListeners) listener();
+    };
+    const stopProvider = session.subscribe(updateProvider);
+    const ProviderDialogBody = () => (
+      <div className="grid gap-3">
+        <InlineHeader level={3} title="Connection" />
+        <Login
+          session={session}
+          available={loginAvailable}
+          active={() => true}
+          showHeading={false}
+        />
+      </div>
+    );
+    ctx.agents.register({
+      ...builderlabType(agents, session),
+      provider: {
+        snapshot: () => providerState,
+        subscribe: (listener) => {
+          providerListeners.add(listener);
+          return () => providerListeners.delete(listener);
+        },
+        check: updateProvider,
+        DialogBody: ProviderDialogBody,
+      },
+    });
+    ctx.effect(() => () => stopProvider());
+  }
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
@@ -39,7 +85,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <>
         <Login
           session={session}
-          available={browserLoginAvailable() && !unavailable}
+          available={loginAvailable}
           unavailableReason={
             browserLoginAvailable()
               ? unavailable

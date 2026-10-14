@@ -12,6 +12,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MediaAttachment } from "./MediaAttachment";
 
+// No media listener: `media_stream_base` reports none.
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -138,6 +141,18 @@ it("shows unavailable treatment when received video playback errors", () => {
   fireEvent.error(video);
 
   expect(screen.getByRole("status")).toHaveTextContent("Video unavailable");
+  expect(container.querySelector("video")).toBeNull();
+});
+
+it("shows unavailable treatment for a native video without the media listener", async () => {
+  const native = `buzz-media://localhost/${encodeURIComponent("https://relay.test/media/" + "a".repeat(64) + ".mp4")}`;
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={() => native} />,
+  );
+
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Video unavailable",
+  );
   expect(container.querySelector("video")).toBeNull();
 });
 
@@ -376,3 +391,36 @@ it.each(["while withheld", "after recovery"])(
     expect(video.currentTime).toBe(12);
   },
 );
+
+it("keeps fallback or valid geometry when decoded video dimensions are unavailable", () => {
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  const video = container.querySelector("video");
+  if (!video) throw new Error("Missing video");
+  Object.defineProperty(video, "currentTime", { configurable: true, value: 1 });
+  const dimensions = (width: number, height: number) => {
+    Object.defineProperty(video, "videoWidth", {
+      configurable: true,
+      value: width,
+    });
+    Object.defineProperty(video, "videoHeight", {
+      configurable: true,
+      value: height,
+    });
+    fireEvent.loadedData(video);
+  };
+  dimensions(0, 0);
+  expect(video.style.getPropertyValue("--media-ratio")).toBe("");
+  dimensions(640, 360);
+  expect(video.style.getPropertyValue("--media-ratio")).toBe("640 / 360");
+  for (const [width, height] of [
+    [0, 0],
+    [640, 0],
+    [NaN, 360],
+    [640, Infinity],
+  ] as const) {
+    dimensions(width, height);
+    expect(video.style.getPropertyValue("--media-ratio")).toBe("640 / 360");
+  }
+});

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import { openPage } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
@@ -25,13 +25,6 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     localStorage.setItem("buzz-appearance.v1", "dark"),
   );
   await page.goto(app.origin);
-  await openPage(page, "Settings");
-  await selectSettingsSection(page, "Plugins");
-  const templatesEnabled = page.getByRole("switch", {
-    name: "Enable Templates & teams",
-    exact: true,
-  });
-  await templatesEnabled.check();
   await openPage(page, "Messages");
   await page
     .locator('button[data-channel-id="11111111-1111-4111-8111-111111111111"]')
@@ -82,8 +75,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   for (const label of [
     "View channel details",
     "View canvas",
-    "Save as template…",
-    "New session",
+
     "Archive channel",
     "Delete channel",
   ]) {
@@ -365,19 +357,6 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await page.keyboard.press("Escape");
   await expect(canvas).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  await trigger.click();
-  await menu
-    .getByRole("menuitem", { name: "Save as template…", exact: true })
-    .click();
-  const template = page.getByRole("dialog", {
-    name: "New template",
-    exact: true,
-  });
-  await expect(template).toBeVisible();
-  await expect(menu).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await expect(template).toHaveCount(0);
-  await expect(trigger).toBeFocused();
   for (const label of ["Archive channel", "Delete channel"]) {
     await trigger.click();
     await menu.getByRole("menuitem", { name: label, exact: true }).click();
@@ -408,7 +387,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
 // without stealing header focus, and hand modal/session focus to the existing owners.
 test.describe("sidebar actions in the header", () => {
   test.use({ channelLifecycle: false, savedSidebar: true, readState: true });
-  test("shares move, mute, read and session actions without transferring focus to the sidebar", async ({
+  test("shares move, mute and read actions without transferring focus to the sidebar", async ({
     page,
     app,
   }) => {
@@ -479,15 +458,12 @@ test.describe("sidebar actions in the header", () => {
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
-    await menu
-      .getByRole("menuitem", { name: "New session", exact: true })
-      .click();
+    await expect(menu).toBeFocused();
     await expect(
-      page.getByRole("textbox", { name: "Message this session", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("textbox", { name: "Message this session", exact: true }),
-    ).toBeFocused();
+      menu.getByRole("menuitem", { name: "New session", exact: true }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
     expect(app.report.unexpected).toEqual([]);
   });
 });

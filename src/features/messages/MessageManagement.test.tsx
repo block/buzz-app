@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
@@ -13,6 +15,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useSyncExternalStore } from "react";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import {
   MenuRoot,
   MenuTrigger,
@@ -22,6 +25,7 @@ import {
   MessageManagement,
   MessageManagementItems,
   MessageManagementStatus,
+  MessageReadStateItem,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
@@ -36,8 +40,11 @@ import {
   signed,
 } from "../relay/testing";
 import type { ReadStateSigning } from "../relay/read-state-host";
-// @ts-expect-error Exercise the production codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Exercise the production codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import type { RelayEvent } from "../relay/events";
 
 composerDOMFixture();
@@ -61,6 +68,7 @@ async function fixture(
   withAttachments = false,
   originalAttachment = false,
   originalMention = false,
+  agentOwner: "viewer" | "other" | undefined = undefined,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -72,9 +80,16 @@ async function fixture(
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const viewer = keypair(),
     relay = keypair(),
-    peer = keypair();
+    peer = keypair(),
+    agent = agentOwner ? keypair() : undefined,
+    agentOwnerKey =
+      agentOwner === "viewer"
+        ? viewer
+        : agentOwner === "other"
+          ? keypair()
+          : undefined;
   const original = message(
-    own ? viewer : peer,
+    own ? viewer : (agent ?? peer),
     "room",
     originalAttachment
       ? "Original message\n\n[original.pdf](https://fixture.test/media/original.pdf)"
@@ -82,18 +97,46 @@ async function fixture(
         ? "@Honey Original message"
         : "Original message",
     1700000000,
-    originalAttachment
-      ? [
-          [
-            "imeta",
-            "url https://fixture.test/media/original.pdf",
-            "m application/pdf",
-          ],
-        ]
-      : originalMention
-        ? [["p", peer.pubkey]]
-        : [],
+    [
+      ...(originalAttachment
+        ? [
+            [
+              "imeta",
+              "url https://fixture.test/media/original.pdf",
+              "m application/pdf",
+            ],
+          ]
+        : []),
+      ...(originalMention ? [["p", peer.pubkey]] : []),
+    ],
   );
+  const agentProfile =
+    agent && agentOwnerKey
+      ? signed(agent, {
+          kind: 0,
+          content: JSON.stringify({ name: "Test agent" }),
+          tags: [
+            [
+              "auth",
+              agentOwnerKey.pubkey,
+              "kind=0&created_at<1700000001",
+              bytesToHex(
+                schnorr.sign(
+                  new Uint8Array(
+                    await crypto.subtle.digest(
+                      "SHA-256",
+                      new TextEncoder().encode(
+                        `nostr:agent-auth:${agent.pubkey}:kind=0&created_at<1700000001`,
+                      ),
+                    ),
+                  ),
+                  agentOwnerKey.secret,
+                ),
+              ),
+            ],
+          ],
+        })
+      : undefined;
   const publications: {
     event: RelayEvent;
     result: ReturnType<typeof deferred<void>>;
@@ -135,7 +178,14 @@ async function fixture(
             roster(relay, "room", [viewer.pubkey, peer.pubkey]),
           ];
         if (filter.kinds?.includes(0))
-          return originalMention ? [profile(peer, { name: "Honey" })] : [];
+          return [
+            ...(originalMention && filter.authors?.includes(peer.pubkey)
+              ? [profile(peer, { name: "Honey" })]
+              : []),
+            ...(agent && agentProfile && filter.authors?.includes(agent.pubkey)
+              ? [agentProfile]
+              : []),
+          ];
         if (filter.kinds?.includes(9))
           return [
             original,
@@ -187,40 +237,45 @@ async function fixture(
       ),
     );
   }
-  function Surface() {
+  function Surface({ presented = true }: { presented?: boolean }) {
     const snapshot = useSyncExternalStore(
       (listener) => owner.session.channels.subscribeWindow("room", listener),
       () => owner.session.channels.window("room"),
     );
     return (
-      <MessageManagement session={owner.session} channelId="room">
-        <MessageManagementStatus />
-        {snapshot.rows.map((row) => (
-          <div key={row.id}>
-            <p>{row.content}</p>
-            <MenuRoot>
-              <MenuTrigger>Message actions</MenuTrigger>
-              <MenuPopup>
-                <MessageManagementItems row={row} session={owner.session} />
-              </MenuPopup>
-            </MenuRoot>
-          </div>
-        ))}
-        <MessageComposer
-          session={owner.session}
-          scope="management-test"
-          channelId="room"
-          channelName="Room"
-        />
-      </MessageManagement>
+      <ConversationPresentation value={presented}>
+        <MessageManagement session={owner.session} channelId="room">
+          <MessageManagementStatus />
+          {snapshot.rows.map((row) => (
+            <div key={row.id}>
+              <p>{row.content}</p>
+              <MenuRoot>
+                <MenuTrigger>Message actions</MenuTrigger>
+                <MenuPopup>
+                  <MessageReadStateItem row={row} session={owner.session} />
+                  <MessageManagementItems row={row} session={owner.session} />
+                </MenuPopup>
+              </MenuRoot>
+            </div>
+          ))}
+          <MessageComposer
+            session={owner.session}
+            scope="management-test"
+            channelId="room"
+            channelName="Room"
+          />
+        </MessageManagement>
+      </ConversationPresentation>
     );
   }
-  render(<Surface />);
+  const view = render(<Surface />);
   fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
   return {
     owner,
     original,
     publications,
+    present: (presented: boolean) =>
+      view.rerender(<Surface presented={presented} />),
     publication(index: number) {
       const item = publications[index];
       assert.exists(item);
@@ -277,6 +332,33 @@ it("edits in the composer, retains a rejected change and retries the same operat
   expect(h.owner.session.channels.window("room").rows[0]?.content).toBe(
     "Corrected message",
   );
+});
+
+it("offers a confirmed NIP-09 deletion for an agent owned by the viewer", async () => {
+  const h = await fixture(false, false, false, false, false, "viewer");
+  const item = await screen.findByRole("menuitem", { name: "Delete message" });
+  expect(item).toBeVisible();
+  fireEvent.click(item);
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  expect(confirmation).toHaveTextContent(
+    "This requests removal of this message from Buzz’s relay.",
+  );
+  expect(confirmation).toHaveTextContent("People may still have copies.");
+  expect(h.publications).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publication(0).event.kind).toBe(5);
+  expect(h.publication(0).event.pubkey).toBe(h.owner.session.viewer);
+  expect(h.publication(0).event.tags).toContainEqual(["e", h.original.id]);
+  await act(async () => h.publication(0).result.resolve());
+});
+
+it("does not offer agent-message deletion to a non-owner", async () => {
+  await fixture(false, false, false, false, false, "other");
+  await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
+  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
 });
 
 it("does not expose edit or delete for another person's message", async () => {
@@ -756,7 +838,7 @@ async function heldUnreadAction(action: "read" | "unread") {
       <MenuRoot>
         <MenuTrigger>Read actions</MenuTrigger>
         <MenuPopup>
-          <MessageManagementItems row={row} session={current} />
+          <MessageReadStateItem row={row} session={current} />
         </MenuPopup>
       </MenuRoot>
     </MessageManagement>
@@ -913,4 +995,35 @@ it("keeps one unread visit until the last channel or thread view closes", async 
   expect(enterChannel).toHaveBeenCalledTimes(2);
   revisit.unmount();
   expect(leaveChannel).toHaveBeenCalledTimes(2);
+});
+
+it("keeps a withheld empty-edit deletion recoverable and restores the draft only after retry succeeds", async () => {
+  const h = await fixture();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Edit message" }), {
+    key: "Escape",
+  });
+  fill("Unsent reply draft");
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  await edit();
+  fill("");
+  submit();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  h.present(false);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await act(async () =>
+    h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+  );
+  expect(editor()).toHaveValue("");
+  expect(screen.getByText("Message deletion: Deletion refused")).toBeVisible();
+  h.present(true);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
+  await waitFor(() => expect(h.publications).toHaveLength(2));
+  expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+  expect(editor()).toHaveValue("");
+  await act(async () => h.publication(1).result.resolve());
+  await waitFor(() => expect(screen.queryByText("Editing message")).toBeNull());
+  expect(screen.getByRole("textbox")).toHaveValue("Unsent reply draft");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });

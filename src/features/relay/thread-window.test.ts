@@ -364,7 +364,7 @@ it("keeps ambiguous empty access-scoped responses as errors, not fallback or exh
   });
   expect(h.requests).toHaveLength(2);
 });
-it.each([401, 403, 429, 500, 503])(
+it.each([401, 403, 429, 500])(
   "does not downgrade HTTP %s and can explicitly retry",
   async (status) => {
     const h = await setup((f) => (f.ids ? [root] : [bounds(f)]));

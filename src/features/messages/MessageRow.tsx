@@ -1,23 +1,38 @@
+import { AgentAvatar } from "../agents/AgentAvatar";
+import {
+  TypingPresentation,
+  useReplacedTypers,
+} from "../conversation/typing-presentation";
+import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { LightningIcon } from "../../shared/design-system/icons";
+import {
+  ArrowRightIcon,
+  LightningIcon,
+} from "../../shared/design-system/icons";
+import { messagePreviewText } from "../conversation/message-preview-text";
+import { profileMentionParts } from "./profile-mentions";
+import { addressedMessage } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
+import { threadWorkingAgents } from "../agents/thread-working";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
+import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
-import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  useMemo,
   useId,
   useRef,
   useState,
   useEffect,
   useCallback,
-  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
@@ -27,13 +42,18 @@ import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
-import { profileTarget } from "../profiles/target";
+import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
@@ -44,14 +64,22 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
-import { MessageManagementItems } from "./MessageManagement";
+import {
+  MessageManagementItems,
+  MessageReadStateItem,
+} from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
-import { FlagIcon } from "../../shared/design-system/icons";
-import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuSeparator,
+} from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 
+export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
@@ -64,7 +92,8 @@ export type MessageRowProps = {
   agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string, size?: "small"): string | undefined;
-  onOpenLink(url: string): boolean;
+  /** Receives the thread the link was opened from: the row's root, or the row. */
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
   /** Pins this row in a virtualized list; returns the release. */
@@ -132,8 +161,23 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
   else if (rect.left < start) strip.scrollLeft -= start - rect.left;
 }
 
-export const MessageRow = memo(function MessageRow({
+const FullMessageRow = memo(function MessageRow(
+  props: MessageRowProps & { shownRow?: ChannelMessage },
+) {
+  return props.session && props.scope && props.extensions?.accessories ? (
+    <TypingPresentation
+      active
+      key={`${props.scope}:${props.row.channelId}:${props.row.id}`}
+    >
+      <MessageRowContent {...props} />
+    </TypingPresentation>
+  ) : (
+    <MessageRowContent {...props} />
+  );
+});
+function MessageRowContent({
   row,
+  shownRow,
   getThreadRoot,
   session,
   scope,
@@ -160,18 +204,31 @@ export const MessageRow = memo(function MessageRow({
   onMediaTime,
   onOpenMediaReview,
   agentPubkeys,
-}: MessageRowProps) {
+}: MessageRowProps & {
+  /** The message as its body shows, when that differs from `row`. */
+  shownRow?: ChannelMessage;
+}) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
+  const reactions = row.reactions;
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
   );
-  const threadAgents = useThreadAgents(
-    row.replyCount > 0 && onOpenThread ? session : undefined,
+  const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
+    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
+      ? session
+      : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
+    row.id,
+    row.threadRootId,
+  );
+  const rootId = row.threadRootId ?? row.id;
+  const openLink = useCallback(
+    (url: string) => onOpenLink(url, { rootId }),
+    [onOpenLink, rootId],
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -205,8 +262,13 @@ export const MessageRow = memo(function MessageRow({
   const workingLabel = threadAgents.length
     ? `${threadAgents
         .map(({ pubkey, name }) => resolveName(pubkey, name))
-        .join(", ")} working`
+        .join(", ")} ${threadWaiting ? "waiting" : "working"}`
     : undefined;
+  const firstThreadAgent = threadAgents[0];
+  const threadWorkingLabel =
+    threadAgents.length === 1 && firstThreadAgent
+      ? `${resolveName(firstThreadAgent.pubkey, firstThreadAgent.name)} is ${threadWaiting ? "waiting" : "working"}`
+      : `${threadAgents.length} agents are ${threadWaiting ? "waiting" : "working"}`;
   const name = resolveName(
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
@@ -225,6 +287,32 @@ export const MessageRow = memo(function MessageRow({
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
   });
   const clickable = target && canOpenLink?.(target);
+  const activityView = profileActivityViewTarget(row.authorId);
+  const canViewActivity =
+    !!(
+      row.agentEnvelope ||
+      agentPubkeys?.has(row.authorId) ||
+      profile?.isAgent
+    ) &&
+    activityView &&
+    canOpenLink?.(activityView) &&
+    canOpenLink(activityTarget(row.authorId, row.channelId));
+  const activityItem = canViewActivity && (
+    <MenuItem
+      onClick={() => {
+        if (
+          canOpenLink?.(activityView) &&
+          canOpenLink(activityTarget(row.authorId, row.channelId))
+        )
+          onOpenLink(activityView);
+      }}
+    >
+      <MenuIcon>
+        <ListBulletsIcon />
+      </MenuIcon>
+      View activity
+    </MenuItem>
+  );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -236,9 +324,11 @@ export const MessageRow = memo(function MessageRow({
     row.authorId,
   );
   const presenceId = useId();
-  const thinkingId = useId();
-  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
-  const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
+  const shown = shownRow ?? row;
+  const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
+  const displayRow = timeReply
+    ? { ...shown, content: timeReply.content }
+    : shown;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -254,14 +344,35 @@ export const MessageRow = memo(function MessageRow({
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
-  const reportActive = reporting !== undefined;
+  const registeredActions = useSyncExternalStore(
+    extensions?.actions?.subscribe ?? noSubscribe,
+    extensions?.actions?.snapshot ?? noActions,
+    extensions?.actions?.snapshot ?? noActions,
+  );
+  const actions = session
+    ? registeredActions.filter((action) => {
+        try {
+          return action.matches(row, session);
+        } catch {
+          return false; // A broken optional action leaves the menu usable.
+        }
+      })
+    : [];
+  // The instance, not its key: a reinstalled plugin must not reopen a dialog.
+  const [openAction, setOpenAction] = useState<(typeof actions)[number]>();
+  const opened =
+    openAction && actions.includes(openAction) ? openAction : undefined;
+  useEffect(() => {
+    if (openAction && !opened) setOpenAction(undefined);
+  }, [openAction, opened]);
+  const keepAlive = reporting !== undefined || !!opened;
   // The dialog, pending submit and notice live in this row; eviction loses them.
   useEffect(() => {
-    const release = reportActive ? keepMounted?.(row.id) : undefined;
+    const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
     // task later lets restored focus keep the row mounted instead.
     return release && (() => void setTimeout(release));
-  }, [reportActive, keepMounted, row.id]);
+  }, [keepAlive, keepMounted, row.id]);
   const keepRowMounted = useMemo(
     () => keepMounted && (() => keepMounted(row.id)),
     [keepMounted, row.id],
@@ -272,16 +383,31 @@ export const MessageRow = memo(function MessageRow({
       ? session?.messages.report
       : undefined;
   const reportItem = report && (
-    <MenuItem
-      disabled={reporting === "open"}
-      onClick={() => setReporting("open")}
-    >
-      <MenuIcon>
-        <FlagIcon />
-      </MenuIcon>
-      Report
-    </MenuItem>
+    <>
+      <MenuSeparator />
+      <MenuItem
+        disabled={reporting === "open"}
+        onClick={() => setReporting("open")}
+      >
+        <MenuIcon>
+          <FlagIcon />
+        </MenuIcon>
+        Report
+      </MenuItem>
+    </>
   );
+  const actionItems = actions.map((action) => (
+    <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
+      {action.icon && (
+        <MenuIcon>
+          <ContributionBoundary key={contributionKey(action)} fallback={null}>
+            <action.icon />
+          </ContributionBoundary>
+        </MenuIcon>
+      )}
+      {action.title}
+    </MenuItem>
+  ));
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
@@ -324,7 +450,7 @@ export const MessageRow = memo(function MessageRow({
       row={displayRow}
       extensions={extensions}
       media={media}
-      onOpenLink={onOpenLink}
+      onOpenLink={openLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
       largeEmoji={emojiOnly}
@@ -357,34 +483,23 @@ export const MessageRow = memo(function MessageRow({
             size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
-            aria-describedby={
-              [
-                presence !== "unknown" && presenceId,
-                avatarShape === "squircle" && thinkingId,
-              ]
-                .filter(Boolean)
-                .join(" ") || undefined
-            }
+            aria-describedby={presence !== "unknown" ? presenceId : undefined}
             onClick={(event) => {
               event.currentTarget.focus();
-              onOpenLink(target);
+              openLink(target);
             }}
             icon={
               <>
-                <AgentAvatar
-                  session={session}
-                  agentPubkey={row.authorId}
-                  channelId={row.channelId}
+                <Avatar
                   src={picture}
                   alt=""
-                  thinkingDescriptionId={thinkingId}
                   fallback={name}
                   size={compactAvatar ? "small" : "fill"}
                   shape={avatarShape}
                   statusBadge={presence === "unknown" ? undefined : presence}
                 />
                 {presence !== "unknown" && (
-                  <span className="sr-only" id={presenceId}>
+                  <span className="sr-only select-none" id={presenceId}>
                     Presence: {presence}
                   </span>
                 )}
@@ -393,10 +508,7 @@ export const MessageRow = memo(function MessageRow({
           />
         ) : (
           <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
-            <AgentAvatar
-              session={session}
-              agentPubkey={row.authorId}
-              channelId={row.channelId}
+            <Avatar
               src={picture}
               alt={
                 presence === "unknown"
@@ -419,6 +531,15 @@ export const MessageRow = memo(function MessageRow({
           </span>
         )}
         <div className={styles.messageBody}>
+          {opened && session && (
+            <ContributionBoundary key={contributionKey(opened)} fallback={null}>
+              <opened.component
+                message={row}
+                session={session}
+                close={() => setOpenAction(undefined)}
+              />
+            </ContributionBoundary>
+          )}
           {report && reporting === "open" && (
             <ReportMessageDialog
               report={(type, note) => report(row.id, type, note)}
@@ -497,19 +618,32 @@ export const MessageRow = memo(function MessageRow({
                     />
                   ) : undefined)
                 }
+                leadingItems={
+                  session ? (
+                    <MessageReadStateItem row={row} session={session} />
+                  ) : undefined
+                }
                 overflowItems={
                   <>
                     {overflowItems ??
                       (session ? (
                         <MessageManagementItems row={row} session={session} />
                       ) : undefined)}
+                    {actionItems}
+                    {activityItem}
                     {reportItem}
                   </>
                 }
               />
             )}
+            {/* Screen-reader text stays out of selections: the clipboard carries
+                what the reader saw, so a continuation copies without a byline. */}
             <div
-              className={layout === "continuation" ? "sr-only" : styles.byline}
+              className={
+                layout === "continuation"
+                  ? "sr-only select-none"
+                  : styles.byline
+              }
             >
               {row.workflowOwnerId && workflowOwnerName ? (
                 <WorkflowByline
@@ -517,7 +651,7 @@ export const MessageRow = memo(function MessageRow({
                   ownerName={workflowOwnerName}
                   signer={row.signerId ?? row.authorId}
                   canOpenLink={canOpenLink}
-                  onOpenLink={onOpenLink}
+                  onOpenLink={openLink}
                 />
               ) : (
                 <strong className={styles.author}>{name}</strong>
@@ -525,6 +659,18 @@ export const MessageRow = memo(function MessageRow({
               {layout !== "continuation" && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}
+              {session &&
+                actions.map(
+                  (action) =>
+                    action.marker && (
+                      <ContributionBoundary
+                        key={contributionKey(action)}
+                        fallback={null}
+                      >
+                        <action.marker message={row} session={session} />
+                      </ContributionBoundary>
+                    ),
+                )}
             </div>
           </div>
           {row.sentFromThread && (
@@ -535,7 +681,7 @@ export const MessageRow = memo(function MessageRow({
                 registry={extensions?.links}
                 session={session}
                 scope={scope}
-                onOpenLink={onOpenLink}
+                onOpenLink={openLink}
                 label={
                   row.sentFromThread.excerpt
                     ? `Thread — ${row.sentFromThread.excerpt}`
@@ -580,7 +726,7 @@ export const MessageRow = memo(function MessageRow({
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
-                    onOpenLink={onOpenLink}
+                    onOpenLink={openLink}
                   />
                 );
               if (attachment.kind === "audio") {
@@ -588,7 +734,20 @@ export const MessageRow = memo(function MessageRow({
                   source &&
                   (isProxySource(source) || isNativeMediaSource(source))
                 )
-                  return (
+                  return extensions?.attachments ? (
+                    <AttachmentView
+                      key={url}
+                      registry={extensions.attachments}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                      fallback={
+                        <AudioAttachment
+                          attachment={{ ...attachment, url }}
+                          source={source}
+                        />
+                      }
+                    />
+                  ) : (
                     <AudioAttachment
                       key={url}
                       attachment={{ ...attachment, url }}
@@ -600,7 +759,7 @@ export const MessageRow = memo(function MessageRow({
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
-                    onOpenLink={onOpenLink}
+                    onOpenLink={openLink}
                   />
                 );
               }
@@ -688,6 +847,29 @@ export const MessageRow = memo(function MessageRow({
               items
             );
           })}
+          {active && session && scope && extensions?.accessories && (
+            <ComposerAccessories
+              registry={extensions.accessories}
+              session={session}
+              scope={scope}
+              channelId={row.channelId}
+              threadRootId={row.threadRootId}
+              message={row}
+              onFocusedRemoval={() =>
+                menuTrigger.current?.focus({ preventScroll: true })
+              }
+              openThread={
+                onOpenThread
+                  ? () => {
+                      onOpenThread(row.id, row.threadRootId ?? row.id);
+                      return true;
+                    }
+                  : undefined
+              }
+              canOpen={canOpenLink ?? (() => false)}
+              open={onOpenLink}
+            />
+          )}
           {session && scope && extensions ? (
             <MessageReactions
               onFocusedRemoval={() => menuTrigger.current?.focus()}
@@ -703,9 +885,9 @@ export const MessageRow = memo(function MessageRow({
               }
             />
           ) : (
-            row.reactions.length > 0 && (
+            reactions.length > 0 && (
               <div className={`${styles.reactions} ${styles.reactionFallback}`}>
-                {row.reactions.map((reaction) => (
+                {reactions.map((reaction) => (
                   <span
                     key={JSON.stringify([
                       reaction.content,
@@ -734,50 +916,208 @@ export const MessageRow = memo(function MessageRow({
               </div>
             )
           )}
-          {row.replyCount > 0 && onOpenThread && (
-            <Button
-              variant="ghost"
-              size="sm"
-              data-thread-summary=""
-              data-first-participant-shape={
-                agentPubkeys?.has(row.participants[0] ?? "")
-                  ? "squircle"
-                  : "circle"
-              }
-              type="button"
-              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`}
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onOpenThread(row.id, row.threadRootId ?? row.id);
-              }}
-            >
-              <ReplySummary
-                count={row.replyCount}
-                participants={row.participants}
-                profiles={participantProfiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={media}
-                unreadLabel={unreadLabel}
-              />
-              {threadAgents.length > 0 && (
-                <span
-                  className={styles.threadWorking}
-                  data-thread-working=""
-                  aria-hidden="true"
-                >
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              )}
-            </Button>
-          )}
+          {(row.replyCount > 0 ||
+            (!row.threadRootId && threadAgents.length > 0)) &&
+            onOpenThread && (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-thread-summary=""
+                data-first-participant-shape={
+                  agentPubkeys?.has(row.participants[0] ?? "")
+                    ? "squircle"
+                    : "circle"
+                }
+                type="button"
+                aria-label={
+                  row.replyCount > 0
+                    ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`
+                    : `View thread: ${threadWorkingLabel}`
+                }
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onOpenThread(row.id, row.threadRootId ?? row.id);
+                }}
+              >
+                {row.replyCount > 0 && (
+                  <ReplySummary
+                    count={row.replyCount}
+                    participants={row.participants}
+                    profiles={participantProfiles}
+                    agentPubkeys={agentPubkeys}
+                    resolveName={resolveName}
+                    media={media}
+                    unreadLabel={unreadLabel}
+                  />
+                )}
+                {threadAgents.length > 0 && (
+                  <span
+                    className={`${styles.threadWorking} buzz-arrive`}
+                    data-thread-working=""
+                    aria-hidden="true"
+                  >
+                    {threadAgents.slice(0, 2).map((agent) => {
+                      const name = resolveName(agent.pubkey, agent.name);
+                      return (
+                        <Avatar
+                          key={agent.pubkey}
+                          src={
+                            agent.avatar ? media(agent.avatar, "small") : null
+                          }
+                          alt=""
+                          fallback={name}
+                          size="compact"
+                          shape="squircle"
+                        />
+                      );
+                    })}
+                    {threadAgents.length > 2 && (
+                      <span>+{threadAgents.length - 2}</span>
+                    )}
+                    <TypingDots state={threadWaiting ? "waiting" : "working"} />
+                  </span>
+                )}
+                {threadAgents.length > 0 && row.replyCount === 0 && (
+                  <span>View thread</span>
+                )}
+              </Button>
+            )}
         </div>
       </div>
     </div>
   );
+}
+/** Coordination between agents reads as one quiet line in time order: who
+ * wrote it, who it is for, and its first paragraph. Opening the line shows
+ * the whole message. The mentions it opens with become the line's recipients,
+ * so they are not repeated in its text. */
+export const MessageRow = memo(function AudienceMessageRow(
+  props: MessageRowProps,
+) {
+  return props.row.audience === "agents" ? (
+    <AgentsMessageRow {...props} />
+  ) : (
+    <FullMessageRow {...props} />
+  );
 });
+
+function AgentsMessageRow(props: MessageRowProps) {
+  const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const [open, setOpen] = useState(false);
+  const resolveName = useChannelIdentityNames(session, row.channelId);
+  const directory = useReferenceDirectory(session, participantProfiles);
+  const { recipients, body } = useMemo(
+    () =>
+      addressedMessage(
+        row,
+        profileMentionParts(row, directory.profiles, directory.agents),
+      ),
+    [row, directory.profiles, directory.agents],
+  );
+  const person = (pubkey: string, profile: Profile | undefined) => {
+    const name = resolveName(pubkey, profile?.name ?? pubkey.slice(0, 10));
+    const agent =
+      agentPubkeys?.has(pubkey) ||
+      !!profile?.isAgent ||
+      directory.agents.some((item) => item.pubkey === pubkey);
+    return {
+      pubkey,
+      name,
+      picture: profile?.picture ? media(profile.picture, "small") : undefined,
+      shape: agent ? ("squircle" as const) : ("circle" as const),
+    };
+  };
+  const author = person(row.authorId, props.profile);
+  const to = recipients.map((pubkey) =>
+    person(pubkey, directory.profiles.get(pubkey)),
+  );
+  const preview = messagePreviewText(body.content);
+  const avatar = (who: typeof author) => (
+    <span key={who.pubkey} className={styles.audienceAvatar} title={who.name}>
+      <AgentAvatar
+        session={session}
+        agentPubkey={who.pubkey}
+        channelId={row.channelId}
+        src={who.picture}
+        alt=""
+        fallback={who.name}
+        size="fill"
+        shape={who.shape}
+      />
+    </span>
+  );
+  return (
+    <div
+      className={styles.audienceRow}
+      data-audience="agents"
+      data-open={open || undefined}
+    >
+      {props.day && <DayDivider createdAt={row.createdAt} />}
+      {/* Open, the message starts beside its addresses and the whole entry
+          stays highlighted, so it reads as one box that folds back. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: folding by click is a pointer shortcut; the line's button folds it from the keyboard. */}
+      <div
+        className={styles.audienceEntry}
+        // Collapsed, the entry stands in for the message as a scroll anchor.
+        // Not the button: revealing an anchor takes it out of the Tab order.
+        data-message-id={open ? undefined : row.id}
+        // Open, a click anywhere in the box folds it, except on its own
+        // controls and links or at the end of a text selection.
+        onClick={(event) => {
+          const target = event.target as Element;
+          if (
+            !open ||
+            !event.currentTarget.contains(target) ||
+            target.closest(
+              "a, button, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true']",
+            ) ||
+            !target.ownerDocument.getSelection()?.isCollapsed
+          )
+            return;
+          setOpen(false);
+        }}
+      >
+        <button
+          type="button"
+          data-buzz-ui=""
+          className={styles.audienceLine}
+          aria-expanded={open}
+          aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
+          onClick={() => setOpen(!open)}
+        >
+          {avatar(author)}
+          {to.length > 0 && (
+            <>
+              <ArrowRightIcon
+                size={12}
+                aria-hidden="true"
+                className={styles.audienceArrow}
+              />
+              {to.map(avatar)}
+            </>
+          )}
+          {!open && (
+            <>
+              <span className={styles.audiencePreview}>{preview}</span>
+              <MessageTimestamp createdAt={row.createdAt} />
+            </>
+          )}
+        </button>
+        {open && (
+          <div className={styles.audienceBody}>
+            <FullMessageRow
+              {...props}
+              shownRow={body}
+              day={false}
+              layout="continuation"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Subscribe only for mounted thread buttons. Evidence and reading remain session-owned;
 // rendering a row must not initiate per-thread reads or acknowledge unseen replies.
 function useThreadUnread(
@@ -798,8 +1138,10 @@ function useThreadUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 const noSubscribe = () => () => {};
+const none: readonly never[] = [];
+const noActions = () => none;
 const noLibrary = () => undefined;
-// App-managed agents publish typing, not observer telemetry, while they work.
+// Confirmed lifecycle evidence wins; legacy agents retain public typing fallback.
 // A joined-key snapshot keeps unrelated typing from re-rendering the row. Like
 // the sidebar, only the viewer's own agents count: the library is read while
 // someone types here, so an agent no loaded row names yet is still recognized.
@@ -807,7 +1149,14 @@ function useThreadAgents(
   session: RelaySession | undefined,
   channelId: string,
   rootId: string,
+  messageId: string,
+  messageThreadRootId: string | undefined,
 ) {
+  const represented = useReplacedTypers(
+    session,
+    channelId,
+    messageThreadRootId,
+  );
   const get = () =>
     session?.typing
       .snapshot()
@@ -822,14 +1171,46 @@ function useThreadAgents(
     get,
     get,
   );
-  const getLibrary = (keys && session?.agentChoices.snapshot) || noLibrary;
+  // Subscribe to this thread's working agents, not every activity step.
+  const getWork = () => {
+    const activity = session?.agentActivity?.snapshot();
+    const typers = threadWorkingAgents(
+      activity,
+      keys ? keys.split(",") : [],
+      channelId,
+      rootId,
+      { messageId, agents: represented },
+    );
+    const local = localActivity(
+      {
+        local: (activity?.local ?? []).filter(
+          (row) => row.messageId !== messageId || !represented.has(row.agent),
+        ),
+      },
+      channelId,
+      rootId,
+    );
+    const waiting =
+      typers.length > 0 && typers.every((agent) => breathing(local.get(agent)));
+    return `${waiting ? "waiting" : "working"}:${typers.join(",")}`;
+  };
+  const work = useSyncExternalStore(
+    session?.agentActivity?.subscribe ?? noSubscribe,
+    getWork,
+    getWork,
+  );
+  const [state, joined = ""] = work.split(/:(.*)/s);
+  const typers = joined ? joined.split(",") : [];
+  const hasWork = typers.length > 0;
+  const getLibrary = (hasWork && session?.agentChoices.snapshot) || noLibrary;
   const library = useSyncExternalStore(
-    (keys && session?.agentChoices.subscribe) || noSubscribe,
+    (hasWork && session?.agentChoices.subscribe) || noSubscribe,
     getLibrary,
     getLibrary,
   );
-  const typers = keys.split(",");
-  return (
-    library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? []
-  );
+  return {
+    agents:
+      library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
+    waiting: state === "waiting",
+  };
 }

@@ -46,6 +46,8 @@ type Props = {
   link?: string | undefined;
   copyText(): string;
   quickControls?: ReactNode;
+  /** Menu items rendered above the built-in actions. */
+  leadingItems?: ReactNode;
   overflowItems?: ReactNode;
 };
 
@@ -77,6 +79,7 @@ function MessageActionBarControls({
   link,
   copyText,
   quickControls,
+  leadingItems,
   overflowItems,
   messageId,
   menuTriggerRef,
@@ -211,6 +214,7 @@ function MessageActionBarControls({
                   afterClose.current = action;
                 }}
               >
+                {leadingItems}
                 <MenuItem
                   disabled={copying}
                   onClick={() => void copy(copyText, "Message")}

@@ -4,6 +4,17 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+pub(crate) const MAX_PROFILE_CONTENT_BYTES: usize = 128 * 1024;
+
+/// Count the JSON content bytes, not the unescaped field lengths.
+pub(crate) fn bounded_content(content: Map<String, Value>) -> Result<String> {
+    let serialized = Value::Object(content).to_string();
+    if serialized.len() > MAX_PROFILE_CONTENT_BYTES {
+        return Err("Profile content exceeds the readable limit".into());
+    }
+    Ok(serialized)
+}
+
 #[derive(Deserialize)]
 struct Profile {
     id: String,
@@ -38,7 +49,7 @@ pub(crate) fn current(events: &[Value], author: &str) -> Result<Option<CurrentPr
         if event.pubkey != author
             || event.kind != 0
             || event.created_at > now + 60
-            || event.content.len() > 128 * 1024
+            || event.content.len() > MAX_PROFILE_CONTENT_BYTES
         {
             return Err("Current profile identity or timestamp is invalid".into());
         }

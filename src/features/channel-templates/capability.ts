@@ -2,19 +2,22 @@ import type { RelayReader } from "../relay/reader";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { ChannelKitHost } from "./host";
-import { isDefinitiveCanvasConflict } from "./canvas-conflict";
+import {
+  CanvasConflictError,
+  isDefinitiveCanvasConflict,
+} from "./canvas-conflict";
 import {
   CANVAS_BYTES,
   coordinate,
   KIT_TAG,
+  ME_KIT_TAG,
+  kitTag,
   parseKitRecord,
   type KitEntry,
   type KitRecord,
   type KitValue,
 } from "./model";
-
-const canvasConflict =
-  "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.";
+import { TEAM_MANIFEST_TAG } from "./team-payload";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -69,30 +72,23 @@ export function createChannelKit({
   };
   const fresh = (filters: readonly ReadFilter[], readSignal = signal) =>
     reader.read(filters, { signal: readSignal, fresh: true });
-  async function readRecord(record: KitRecord, readSignal = signal) {
-    return selectedHead(
-      await fresh(
-        [
-          {
-            kinds: [30078],
-            authors: [viewer],
-            "#d": [coordinate(record)],
-            limit: 1,
-          },
-        ],
-        readSignal,
-      ),
-    );
-  }
-  async function refresh() {
+  /** `after: true` never joins a read that began before this call, so the
+   * result reflects every change visible when the caller asked. */
+  async function refresh({ after = false } = {}) {
     if (!host) return;
+    if (pending && after) await pending;
     if (pending) return pending;
     const generation = epoch;
     update({ ...state, status: "loading", error: undefined });
     pending = (async () => {
       try {
         const events = await fresh([
-          { kinds: [30078], authors: [viewer], "#t": [KIT_TAG], limit: 500 },
+          {
+            kinds: [30078],
+            authors: [viewer],
+            "#t": [KIT_TAG, TEAM_MANIFEST_TAG, ME_KIT_TAG],
+            limit: 500,
+          },
         ]);
         if (events.length >= 500)
           throw new Error(
@@ -101,7 +97,14 @@ export function createChannelKit({
         const heads = new Map<string, RelayEvent>();
         for (const event of events) {
           const d = event.tags.find((t) => t[0] === "d")?.[1];
-          if (!d?.startsWith(`${KIT_TAG}:${encodeURIComponent(community)}:`))
+          if (
+            !d ||
+            ![KIT_TAG, TEAM_MANIFEST_TAG, ME_KIT_TAG].some((tag) =>
+              d?.startsWith(`${tag}:${encodeURIComponent(community)}:`),
+            ) ||
+            // Retired personal groups: ignore saved records, never reject the catalog.
+            d === `${KIT_TAG}:${encodeURIComponent(community)}:groups:personal`
+          )
             continue;
           const old = heads.get(d);
           if (!old || selectedHead([event, old])?.id === event.id)
@@ -129,7 +132,19 @@ export function createChannelKit({
             });
           }
         }
-        if (generation === epoch) update({ status: "ready", entries });
+        // A portable record supersedes an ordinary record for the same team.
+        const portable = new Set(
+          entries.flatMap((entry) =>
+            entry.record.version === 2 ? [entry.record.value.id] : [],
+          ),
+        );
+        const current = entries.filter(
+          (entry) =>
+            entry.record.version === 2 ||
+            entry.record.value.type !== "team" ||
+            !portable.has(entry.record.value.id),
+        );
+        if (generation === epoch) update({ status: "ready", entries: current });
       } catch (error) {
         if (!signal.aborted && generation === epoch)
           update({ ...state, status: "error", error: String(error) });
@@ -168,9 +183,93 @@ export function createChannelKit({
       if (outbox && isDefinitiveCanvasConflict(failed)) {
         // Refused before mutation. Release the pending gate, not uncertain saves.
         await outbox.dismiss(id);
-        throw new Error(canvasConflict);
+        throw new CanvasConflictError();
       }
       throw error;
+    }
+  }
+  /** One replaceable private-record write: fresh head check, unresolved-save
+   * guard, enqueue, exact confirmation and selected-head readback. With
+   * `resume.id` it confirms that earlier event instead of enqueueing again. */
+  async function publish(
+    record: KitRecord,
+    d: string,
+    tag: string,
+    expected: string | undefined,
+    resume: Resume | undefined,
+    operationSignal: AbortSignal | undefined,
+  ) {
+    // Before enqueue, the caller can cancel preparation. After enqueue, the
+    // durable outbox and session own delivery; caller cancellation cannot undo it.
+    const preparing = operationSignal
+      ? AbortSignal.any([signal, operationSignal])
+      : signal;
+    preparing.throwIfAborted();
+    if (!host || !outbox || saving)
+      throw new Error("Recipe saving is unavailable or already in progress");
+    saving = true;
+    try {
+      await ready;
+      const head = async (readSignal = signal) =>
+        selectedHead(
+          await fresh(
+            [
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [d],
+                limit: 1,
+              },
+            ],
+            readSignal,
+          ),
+        );
+      let id = resume?.id;
+      if (!id) {
+        preparing.throwIfAborted();
+        const current = await head(preparing);
+        preparing.throwIfAborted();
+        if (current?.id !== expected)
+          throw new Error(
+            "This saved recipe changed. Refresh the catalog and review your draft before replacing it.",
+          );
+        const previous = local
+          ?.snapshot()
+          .find(
+            (e) =>
+              e.event.kind === 30078 &&
+              e.event.tags.some((t) => t[0] === "d" && t[1] === d) &&
+              !["accepted", "seen"].includes(e.delivery),
+          );
+        if (previous)
+          throw new Error(
+            "A save for this recipe is unresolved. Inspect Outbox and refresh before replacing it.",
+          );
+        // Replaceable records use seconds. Do not create an ambiguous equal-time replacement.
+        if (current && current.created_at >= Math.floor(Date.now() / 1000))
+          throw new Error(
+            "Please wait a second before saving this recipe again",
+          );
+        const content = await host.prepare(record, preparing);
+        preparing.throwIfAborted();
+        id = outbox.send({
+          kind: 30078,
+          content,
+          tags: [
+            ["d", d],
+            ["t", tag],
+          ],
+        });
+        resume?.enqueued(id);
+      }
+      await confirm(id);
+      if ((await head())?.id !== id)
+        throw new Error(
+          "Another recipe save is selected. Your draft is kept; refresh and review before saving again.",
+        );
+      return id;
+    } finally {
+      saving = false;
     }
   }
   const capability = Object.freeze({
@@ -191,68 +290,27 @@ export function createChannelKit({
       expected: string | undefined,
       deleted = false,
       operationSignal?: AbortSignal,
+      resume?: Resume,
     ) {
-      // Before enqueue, the caller can cancel preparation. After enqueue, the
-      // durable outbox and session own delivery; caller cancellation cannot undo it.
-      const preparing = operationSignal
-        ? AbortSignal.any([signal, operationSignal])
-        : signal;
-      preparing.throwIfAborted();
-      if (!host || !outbox || saving)
-        throw new Error("Recipe saving is unavailable or already in progress");
       const record = parseKitRecord(
-        { version: 1, community, value, deleted },
+        {
+          version: value.type === "team" && value.portable ? 2 : 1,
+          community,
+          value,
+          deleted,
+        },
         community,
       );
-      saving = true;
-      try {
-        await ready;
-        preparing.throwIfAborted();
-        const head = await readRecord(record, preparing);
-        preparing.throwIfAborted();
-        if (head?.id !== expected)
-          throw new Error(
-            "This saved recipe changed. Refresh the catalog and review your draft before replacing it.",
-          );
-        const previous = local
-          ?.snapshot()
-          .find(
-            (e) =>
-              e.event.kind === 30078 &&
-              e.event.tags.some(
-                (t) => t[0] === "d" && t[1] === coordinate(record),
-              ) &&
-              !["accepted", "seen"].includes(e.delivery),
-          );
-        if (previous)
-          throw new Error(
-            "A save for this recipe is unresolved. Inspect Outbox and refresh before replacing it.",
-          );
-        // Replaceable records use seconds. Do not create an ambiguous equal-time replacement.
-        if (head && head.created_at >= Math.floor(Date.now() / 1000))
-          throw new Error(
-            "Please wait a second before saving this recipe again",
-          );
-        const content = await host.prepare(record, preparing);
-        preparing.throwIfAborted();
-        const id = outbox.send({
-          kind: 30078,
-          content,
-          tags: [
-            ["d", coordinate(record)],
-            ["t", KIT_TAG],
-          ],
-        });
-        await confirm(id);
-        if ((await readRecord(record))?.id !== id)
-          throw new Error(
-            "Another recipe save is selected. Your draft is kept; refresh and review before saving again.",
-          );
-        await refresh();
-        return id;
-      } finally {
-        saving = false;
-      }
+      const id = await publish(
+        record,
+        coordinate(record),
+        kitTag(record),
+        expected,
+        resume,
+        operationSignal,
+      );
+      await refresh();
+      return id;
     },
   });
   const canvas = Object.freeze({
@@ -325,7 +383,7 @@ export function createChannelKit({
       await ready;
       signal.throwIfAborted();
       const head = await canvas.read(channel);
-      if (head?.id !== expected) throw new Error(canvasConflict);
+      if (head?.id !== expected) throw new CanvasConflictError();
       const pending = local
         ?.snapshot()
         .find(
@@ -386,5 +444,7 @@ export function createChannelKit({
     },
   };
 }
+/** Lets a retry confirm the exact event an earlier attempt enqueued. */
+export type Resume = { id?: string | undefined; enqueued(id: string): void };
 export type ChannelKit = ReturnType<typeof createChannelKit>["capability"];
 export type ChannelCanvas = ReturnType<typeof createChannelKit>["canvas"];

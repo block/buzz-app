@@ -12,7 +12,7 @@ import { createServer, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { assert, expect, it, vi } from "vitest";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import { keypair } from "./testing";

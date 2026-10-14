@@ -3,7 +3,7 @@ import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "@playwright/test";
 import { preview } from "vite";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
-import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { brokerSocket } from "../broker-socket.mjs";
 import { fixtureAliases, fixtureRelayUrl } from "../relay-config.ts";
 import { buildApp } from "./build.mjs";
@@ -14,9 +14,9 @@ import { watchPageErrors } from "./page-errors.mjs";
 const test = base.extend({
   developmentReact: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
-  agentManagement: [false, { scope: "worker" }],
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
+  localAgentActivity: [false, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async ({ compiledApp, page, context }, use) => {
     const key = generateSecretKey(),
@@ -388,7 +388,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       .getByRole("textbox", { name: "New message", exact: true })
       .locator("[data-placeholder]"),
   ).toHaveAttribute("data-placeholder", "");
-  for (const name of ["Mention a member", "Insert emoji"]) {
+  for (const name of ["Mention a member", "Emoji and GIFS"]) {
     const tool = page.getByRole("button", { name, exact: true });
     await expect(tool).toBeDisabled();
     await expect(tool).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -422,7 +422,17 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       16;
     return list.scrollTop;
   });
-  await partial.dispatchEvent("pointermove", { pointerType: "mouse" });
+  // Only a real pointer move highlights a row, so move between two points.
+  await partial.dispatchEvent("pointermove", {
+    pointerType: "mouse",
+    clientX: 20,
+    clientY: 20,
+  });
+  await partial.dispatchEvent("pointermove", {
+    pointerType: "mouse",
+    clientX: 21,
+    clientY: 20,
+  });
   await expect(partial).toHaveAttribute("aria-selected", "true");
   await expect
     .poll(() => picker.evaluate((element) => element.scrollTop))

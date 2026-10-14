@@ -27,7 +27,11 @@ import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
 import * as messageContent from "../relay/message-content";
-import { MAX_MARKDOWN_LENGTH, safeMessageUrl } from "../relay/message-content";
+import {
+  MAX_MARKDOWN_LENGTH,
+  safeLinkUrl,
+  safeMessageUrl,
+} from "../relay/message-content";
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
@@ -167,22 +171,60 @@ second
     expect(html).not.toContain("<script");
     expect(html).not.toContain("<b>");
     expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+    expect(html).toContain("before &lt;b&gt;raw&lt;/b&gt;");
     expect(html).toContain("remote alt");
   });
 
-  it("allows credential-free HTTPS links and makes other destinations non-clickable", () => {
-    expect(safeMessageUrl("https://example.com/path?q=1")).toBe(
+  it("shows angle-bracket prose as the exact typed text", () => {
+    expect(render("<harness stuff goes here>")).toContain(
+      "<p>&lt;harness stuff goes here&gt;</p>",
+    );
+    expect(render("run the <harness> now")).toContain(
+      "<p>run the &lt;harness&gt; now</p>",
+    );
+    expect(render("**<harness>** and _<b>x</b>_")).toContain(
+      "<strong>&lt;harness&gt;</strong> and <em>&lt;b&gt;x&lt;/b&gt;</em>",
+    );
+    const block = render(
+      '<div onclick="x()">\n**not bold** :party:\n</div>\n\n<!-- note -->',
+    );
+    expect(block).toContain(
+      "<p>&lt;div onclick=&quot;x()&quot;&gt;<br/>\n**not bold** :party:<br/>\n&lt;/div&gt;</p>",
+    );
+    expect(block).not.toContain("note");
+    expect(block).not.toContain("<div onclick");
+    expect(block).not.toContain("<strong>");
+  });
+
+  it("hides complete HTML comments, such as Buzz Desktop's wave marker", () => {
+    const wave = render("<!-- buzz:wave:v1 -->\nLogan waved at you.");
+    expect(wave).toContain("<p>Logan waved at you.</p>");
+    expect(wave).not.toContain("buzz:wave");
+    expect(render("a <!-- hidden --> b")).toContain("<p>a  b</p>");
+    expect(render("<!-- x --> <harness>")).toContain("<p> &lt;harness&gt;</p>");
+    expect(render("an <!-- unclosed comment")).toContain(
+      "<p>an &lt;!-- unclosed comment</p>",
+    );
+  });
+
+  it("allows credential-free HTTP(S) links and makes other destinations non-clickable", () => {
+    expect(safeLinkUrl("https://example.com/path?q=1")).toBe(
       "https://example.com/path?q=1",
     );
+    expect(safeLinkUrl("http://example.com")).toBe("http://example.com/");
     for (const url of [
-      "http://example.com",
       "javascript:alert(1)",
       "data:text/html,x",
       "file:///tmp/x",
       "/relative",
       "https://user:secret@example.com",
+      "http://user:secret@example.com",
     ])
-      expect(safeMessageUrl(url)).toBeUndefined();
+      expect(safeLinkUrl(url)).toBeUndefined();
+    // Projected attachments keep the stricter HTTPS-only rule.
+    expect(safeMessageUrl("https://example.com")).toBe("https://example.com/");
+    expect(safeMessageUrl("http://example.com")).toBeUndefined();
 
     const safe = render("[Example](https://example.com/path)");
     expect(safe).toContain('href="https://example.com/path"');
@@ -194,6 +236,15 @@ second
     expect(unsafe).not.toContain("<a");
     expect(unsafe).toContain("bad");
     expect(unsafe).toContain("local");
+  });
+
+  it("links plain HTTP URLs with sentence punctuation left outside the anchor", () => {
+    expect(render("See http://localhost:3000 now")).toContain(
+      '<a href="http://localhost:3000/"',
+    );
+    const sentence = render("see http://localhost:3000.");
+    expect(sentence).toContain('href="http://localhost:3000/"');
+    expect(sentence).toContain(">http://localhost:3000</a>.");
   });
 
   it("falls back to literal text before recursively rendering deeply nested inbound content", () => {
@@ -355,7 +406,7 @@ describe("mounted Markdown preparation", () => {
     view.rerender(
       <MessageMarkdown
         {...initial}
-        row={{ ...initial.row, attachmentContentRemoved: true }}
+        row={{ ...initial.row, attachmentSeams: [12] }}
         participantProfiles={new Map([[mic, { name: "Renamed" }]])}
       />,
     );
@@ -682,6 +733,20 @@ describe("Markdown inline extensions", () => {
     expect(html).toContain("PLUGIN :party_parrot: @Mic</span>");
   });
 
+  it.each(["http", "https"])(
+    "keeps emoji shortcodes and encoded punctuation verbatim inside bare %s links",
+    (scheme) => {
+      const url = `${scheme}://a.test/:party_parrot:/&#58;x`;
+      const html = render(url, {
+        emoji: [party],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      });
+      expect(html).not.toContain("<img");
+      expect(html).toContain(`>${url.replace("&", "&amp;")}</a>`);
+    },
+  );
+
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };
     const html = render(":party_parrot:", {
@@ -802,7 +867,7 @@ it("renders tagged agent library names and profile names with the same agent ico
   for (const patch of [
     { mentions: [] },
     { edited: true as const },
-    { attachmentContentRemoved: true as const },
+    { attachmentSeams: [3] },
   ])
     expect(
       render("@Fast Fizz", {
@@ -924,6 +989,26 @@ describe("text spoilers", () => {
     expect(view.container.querySelector("[inert]")).toHaveTextContent(
       "changed",
     );
+  });
+
+  it("keeps angle-bracket text inline inside a spoiler through reveal and hide", () => {
+    expect(render("Before ||<harness>|| after").match(/<p[\s>]/g)).toHaveLength(
+      1,
+    );
+    const view = renderDom(
+      <MessageMarkdown {...props("Before ||<harness>|| after")} />,
+    );
+    const paragraph = () => view.container.querySelectorAll("p");
+    expect(paragraph()).toHaveLength(1);
+    expect(paragraph()[0]).toHaveTextContent("Before <harness> after");
+    expect(view.container.querySelector("[inert]")).toHaveTextContent(
+      "<harness>",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+    expect(paragraph()).toHaveLength(1);
+    expect(paragraph()[0]).toHaveTextContent("Before <harness> after");
+    fireEvent.click(screen.getByRole("button", { name: "Hide spoiler" }));
+    expect(paragraph()).toHaveLength(1);
   });
 
   it.each([

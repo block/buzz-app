@@ -51,11 +51,12 @@ async function expectPaintedRing(page, list, row) {
           color.every((value, index) => Math.abs(value - pixel[index]) < 30)
         );
       };
+      // Sample the center of the 2px stroke, beyond its 2px offset.
       return {
         top: sample(rect.left + rect.width / 2, rect.top - 3),
-        bottom: sample(rect.left + rect.width / 2, rect.bottom + 2),
+        bottom: sample(rect.left + rect.width / 2, rect.bottom + 3),
         left: sample(rect.left - 3, rect.top + rect.height / 2),
-        right: sample(rect.right + 2, rect.top + rect.height / 2),
+        right: sample(rect.right + 3, rect.top + rect.height / 2),
       };
     },
     {
@@ -91,7 +92,11 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   await single.getByRole("button", { name: "One" }).focus();
   await expectPaintedRing(page, single, single.getByRole("button"));
 
-  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await page
+    .locator(
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+    )
+    .click();
   await page
     .getByRole("article", { name: "Conversation", exact: true })
     .getByRole("button", { name: "View Viewer profile" })

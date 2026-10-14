@@ -1,7 +1,12 @@
-import { expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
 import { apply } from "./index";
 import { meTarget } from "./routes";
 
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.body.replaceChildren();
+});
 const scope = `https://relay.test:${"c".repeat(64)}`;
 function host(snapshot: { scope?: string }) {
   const shortcuts = { register: vi.fn() };
@@ -31,4 +36,17 @@ it("leaves Mod+N alone without a community", () => {
   expect(shortcut.when()).toBe(false);
   shortcut.run();
   expect(open).not.toHaveBeenCalled();
+});
+it.each([
+  ["Win32", false],
+  ["MacIntel", true],
+])("in a terminal on %s, Mod+N is eligible=%s", (platform, eligible) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  const terminal = document.createElement("div");
+  terminal.className = "xterm";
+  const input = document.createElement("textarea");
+  terminal.append(input);
+  document.body.append(terminal);
+  input.focus();
+  expect(host({ scope }).shortcut.when()).toBe(eligible);
 });

@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { isApplePlatform } from "../../features/shortcuts/format";
 import { SessionsPage } from "../sessions/SessionsPage";
 import { isMeRoute, meTarget } from "./routes";
 
@@ -20,7 +21,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     binding: { key: "n", mod: true },
     order: 10,
     allowInEditable: true,
-    when: () => !!relay.snapshot().scope,
+    // Off Apple platforms, Ctrl+N is shell history in the terminal.
+    when: () =>
+      !!relay.snapshot().scope &&
+      (isApplePlatform(window.navigator.platform) ||
+        !document.activeElement?.closest(".xterm")),
     run: () => {
       const { scope } = relay.snapshot();
       if (scope) void navigator.open(meTarget(scope));

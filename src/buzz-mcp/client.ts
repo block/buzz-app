@@ -69,6 +69,13 @@ export interface BuzzClient {
   readonly pubkey: string;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Finds profiles whose `name` or `display_name` matches `query`, best
+   * match first. `undefined` when the community has no profile name search;
+   * NIP-50 search, which matches the whole profile, is the fallback. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+  ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
   publish(event: Template): Promise<BuzzEvent>;
   upload(data: Uint8Array, mime: string): Promise<Upload>;

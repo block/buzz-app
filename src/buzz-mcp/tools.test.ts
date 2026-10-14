@@ -1395,3 +1395,37 @@ it("lists, opens and closes tabs for the working channel's threads", async () =>
     }),
   ).rejects.toThrow("action must be open, close or rename.");
 });
+
+it("finds users through the community's name search, in its order", async () => {
+  const { client } = fake(community);
+  // Name search ranks Bob's exact match above a later Alice match.
+  client.searchProfiles = vi.fn(async () => [
+    profile(bob, "Wes"),
+    profile(alice, "Wesley"),
+  ]);
+  const found = await callTool(client, {}, "users", { q: "Wes" });
+  expect(found).toBe(`${bob} Wes\n${alice} Wesley`);
+  expect(client.searchProfiles).toHaveBeenCalledWith("wes", 100);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("finds users with NIP-50 search where the community has no name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => undefined);
+  // The fake ignores `search`; the name filter keeps only matching names.
+  expect(await callTool(client, {}, "users", { q: "alice" })).toBe(
+    `${alice} Alice Smith`,
+  );
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: "alice", limit: 100 },
+  ]);
+});
+
+it("reads users by id without the name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  expect(await callTool(client, {}, "users", { ids: [bob] })).toBe(
+    `${bob} Bob`,
+  );
+  expect(client.searchProfiles).not.toHaveBeenCalled();
+});

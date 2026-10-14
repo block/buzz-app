@@ -205,6 +205,12 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Finds profiles by `name` or `display_name`, as the agent, best match
+   * first. `undefined` when its community has no profile name search. */
+  searchProfiles(
+    query: string,
+    limit: number,
+  ): Promise<RelayEvent[] | undefined>;
   /** Uploads base64 `data`, an image or MP4 video, as the agent. */
   upload(data: string, mime: string): Promise<AgentUpload>;
   /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,

@@ -42,6 +42,10 @@ export function appClient(
       check();
       return agent.query(filters);
     },
+    searchProfiles: (query, limit) => {
+      check();
+      return agent.searchProfiles(query, limit);
+    },
     publish: (event) => {
       check();
       return agent.publish(event);

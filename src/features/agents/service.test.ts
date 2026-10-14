@@ -398,6 +398,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
     ),
     publishProfile: vi.fn(async (_: string) => {}),
     query: vi.fn(async () => []),
+    searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ""),
     remember: vi.fn(async (pubkey: string) =>

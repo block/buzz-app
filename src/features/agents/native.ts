@@ -114,6 +114,14 @@ export type AgentsNative = {
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Finds profiles by `name` or `display_name` in the agent's community, as
+   * the agent, best match first. `undefined` when the community has no
+   * profile name search. */
+  searchProfiles(
+    pubkey: string,
+    query: string,
+    limit: number,
+  ): Promise<RelayEvent[] | undefined>;
   /** Uploads base64 `data` (an image or MP4) as the agent. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
   /** Downloads one of its community's media blobs as the agent, as base64. */
@@ -169,6 +177,14 @@ export const nativeAgents = (): AgentsNative | undefined =>
           }),
         query: async (pubkey, filters) =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
+        searchProfiles: async (pubkey, query, limit) => {
+          const found = await invoke("app_agent_search_profiles", {
+            pubkey,
+            query,
+            limit,
+          });
+          return found == null ? undefined : eventsDto(found);
+        },
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
         media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),

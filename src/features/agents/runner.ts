@@ -369,6 +369,7 @@ export type RunnerHost = {
         | "release"
         | "publish"
         | "query"
+        | "searchProfiles"
         | "upload"
         | "media"
         | "remember"
@@ -1736,6 +1737,8 @@ export class AgentRunners {
       publish: (event: AgentEventTemplate) => this.publish(runner, event),
       query: (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
+      searchProfiles: (query: string, limit: number) =>
+        this.require().searchProfiles(agent.pubkey, query, limit),
       upload: (data: string, mime: string) =>
         this.require().upload(agent.pubkey, data, mime),
       media: (url: string) => this.require().media(agent.pubkey, url),

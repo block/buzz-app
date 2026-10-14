@@ -132,6 +132,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "app_agent_publish",
         "app_agent_publish_profile",
         "app_agent_query",
+        "app_agent_search_profiles",
         "app_agent_upload",
         "app_agent_media",
         "app_agent_remember",

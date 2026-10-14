@@ -67,13 +67,16 @@ impl AppAgent {
     fn credential_id(&self) -> String {
         agent_id(&self.pubkey, &self.relay)
     }
-    /// The community's HTTP endpoints for writes, reads, uploads and media;
-    /// nothing else is ever sent to.
+    /// The community's HTTP endpoints for writes, reads, profile name search,
+    /// uploads and media; nothing else is ever sent to.
     pub fn events_url(&self) -> String {
         self.endpoint("/events")
     }
     pub fn query_url(&self) -> String {
         self.endpoint("/query")
+    }
+    pub fn profile_search_url(&self) -> String {
+        self.endpoint("/profiles/search")
     }
     pub fn upload_url(&self) -> String {
         self.endpoint("/upload")
@@ -191,12 +194,13 @@ impl AppAgent {
         Ok(tags)
     }
     /// NIP-98 authorization for posting `body` to this agent's community, as
-    /// a write (`/events`) or a read (`/query`).
+    /// a write (`/events`), a read (`/query`) or a profile name search
+    /// (`/profiles/search`).
     pub fn http_auth(&self, key: &Secret, url: &str, body: &[u8]) -> Result<serde_json::Value> {
         if key.pubkey() != self.pubkey {
             return Err("Agent identity changed".into());
         }
-        if url != self.events_url() && url != self.query_url() {
+        if url != self.events_url() && url != self.query_url() && url != self.profile_search_url() {
             return Err("Agents post only to their community".into());
         }
         key.profile_auth(url, body)

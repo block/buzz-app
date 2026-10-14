@@ -22,6 +22,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { validWorkspace } from "../codex/config";
 import {
   type Config,
   DEFAULT_CONFIG,
@@ -259,6 +260,22 @@ export function createTabs({
     const entered = Object.fromEntries(
       Object.entries(draft).filter(([, text]) => text.trim()),
     );
+    const ready = !disabled && !saving && Object.keys(entered).length > 0;
+    const submit = async () => {
+      setSaving(true);
+      setError("");
+      try {
+        await setup.save(provider.id, entered);
+        setDraft({});
+        setChanging(false);
+        reread();
+        onSaved();
+      } catch (reason) {
+        setError(message(reason));
+      } finally {
+        setSaving(false);
+      }
+    };
     if (provider.signsIn && !provider.configured)
       return (
         <p className="m-0 text-body-sm">
@@ -309,6 +326,12 @@ export function createTabs({
                 onValueChange={(text) =>
                   setDraft({ ...draft, [key.name]: text })
                 }
+                // Enter saves the key, not the agent settings around it.
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (ready) void submit();
+                }}
               />
             </Field>
           );
@@ -317,21 +340,7 @@ export function createTabs({
           <Button
             disabled={disabled || !Object.keys(entered).length}
             loading={saving}
-            onClick={async () => {
-              setSaving(true);
-              setError("");
-              try {
-                await setup.save(provider.id, entered);
-                setDraft({});
-                setChanging(false);
-                reread();
-                onSaved();
-              } catch (reason) {
-                setError(message(reason));
-              } finally {
-                setSaving(false);
-              }
-            }}
+            onClick={submit}
           >
             Save to goose
           </Button>
@@ -619,7 +628,6 @@ export function createTabs({
         }}
         title="Provider and model"
         description="goose's own config is the default. Keys are saved in goose, for every agent and the goose CLI."
-        finalFocus={false}
         actions={
           <>
             <Button onClick={onClose}>Cancel</Button>
@@ -692,11 +700,10 @@ export function createTabs({
       setSaving(true);
       setError("");
       try {
-        await save({
-          ...draft,
-          model: draft.model.trim(),
-          workspace: draft.workspace.trim() || DEFAULT_CONFIG.workspace,
-        });
+        const workspace = draft.workspace.trim() || DEFAULT_CONFIG.workspace;
+        if (!validWorkspace(workspace))
+          throw new Error("Enter an absolute or ~/… workspace path.");
+        await save({ ...draft, model: draft.model.trim(), workspace });
       } catch (reason) {
         setError(message(reason));
       } finally {

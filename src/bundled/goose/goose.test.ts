@@ -288,6 +288,51 @@ describe("GooseProcess", () => {
     await expect(settled).resolves.toEqual({ ok: true });
   });
 
+  it("ends work that only read or failed to send with what goose wrote", async () => {
+    const failed: ToolServer = async (conversation, message) =>
+      (message.params as { name?: string }).name === "send"
+        ? {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { content: [{ type: "text", text: "no" }], isError: true },
+          }
+        : ok(conversation, message);
+    const { goose, process } = await start(failed);
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const settled = session.send("hello");
+    await flush();
+    await process.mcp(session.id, "tools/call", { name: "read" });
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi" },
+    });
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Here is the answer." },
+    });
+    await flush();
+    process.turns[0]?.finish();
+    await expect(settled).resolves.toEqual({
+      ok: true,
+      text: "Here is the answer.",
+    });
+  });
+
+  it("ends work whose turn ended while a steer into it was answered", async () => {
+    const { goose, process } = await start();
+    process.hold = true;
+    process.endOnSteer = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const first = session.send("one");
+    await flush();
+    const second = session.send("two");
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true });
+    expect(process.turns[0]?.steered).toEqual(["two"]);
+    expect(session.busy).toBe(false);
+  });
+
   it("allows what goose asks permission for", async () => {
     const { process } = await start();
     const response = await process.ask("session/request_permission", {

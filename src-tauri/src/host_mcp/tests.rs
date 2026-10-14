@@ -133,6 +133,94 @@ async fn accepts_a_notification_without_a_body() {
     assert_eq!(status(&client.await.unwrap()), "202");
 }
 
+/// The `Mcp-Session-Id` a response names.
+fn session(response: &str) -> Option<&str> {
+    response
+        .split("\r\n")
+        .find_map(|line| line.strip_prefix("mcp-session-id: "))
+}
+
+/// Sends `request` and answers the message it carries with `reply`.
+async fn exchange(
+    servers: &HostMcpServers,
+    info: &McpServerInfo,
+    events: &mut mpsc::UnboundedReceiver<serde_json::Value>,
+    request: String,
+    reply: Option<&str>,
+) -> String {
+    let client = tokio::spawn({
+        let info = info.clone();
+        async move { send(&info, request).await }
+    });
+    let event = next(events).await;
+    servers
+        .reply(
+            "plugin",
+            info.handle,
+            event["request"].as_u64().unwrap(),
+            reply.map(Into::into),
+        )
+        .unwrap();
+    client.await.unwrap()
+}
+
+#[tokio::test]
+async fn admits_only_the_session_that_initialized() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel)
+        .unwrap();
+    // Before `initialize`, a message needs no session, and joins none.
+    let discover = r#"{"jsonrpc":"2.0","id":0,"method":"server/discover"}"#;
+    let not_found = r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"No"}}"#;
+    let response = exchange(
+        &servers,
+        &info,
+        &mut events,
+        post(&info, &info.token, "", discover),
+        Some(not_found),
+    )
+    .await;
+    assert_eq!(status(&response), "200");
+    assert_eq!(session(&response), None);
+    let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+    let initialized = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+    let response = exchange(
+        &servers,
+        &info,
+        &mut events,
+        post(&info, &info.token, "", initialize),
+        Some(initialized),
+    )
+    .await;
+    assert_eq!(status(&response), "200");
+    let id = session(&response).expect("a session id").to_owned();
+    // The token alone, as read from where the agent saved it, admits nothing
+    // more: not another `initialize`, nor a guessed session.
+    let ping = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
+    for (extra, body) in [
+        ("", ping),
+        ("", initialize),
+        ("Mcp-Session-Id: guess\r\n", ping),
+    ] {
+        let request = post(&info, &info.token, extra, body);
+        assert_eq!(status(&send(&info, request).await), "404");
+    }
+    assert!(events.try_recv().is_err());
+    let named = format!("Mcp-Session-Id: {id}\r\n");
+    let response = exchange(
+        &servers,
+        &info,
+        &mut events,
+        post(&info, &info.token, &named, ping),
+        None,
+    )
+    .await;
+    assert_eq!(status(&response), "202");
+    assert_eq!(session(&response), Some(id.as_str()));
+}
+
 #[tokio::test]
 async fn refuses_without_starting_oauth() {
     let servers = HostMcpServers::default();

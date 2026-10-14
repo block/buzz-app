@@ -180,6 +180,62 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   expect(modelButton()).toHaveTextContent("Anthropic · claude-opus-5-5");
 });
 
+it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", async () => {
+  const saved = new Map<string, Set<string>>();
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    saved,
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake.spawn),
+    ...unused,
+  });
+  const save = vi.fn(async (_config: Config) => undefined);
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+      save={save}
+    />,
+  );
+  const user = userEvent.setup();
+  await choose("Provider", "Anthropic");
+  await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");
+  expect(
+    await screen.findByText("Anthropic is set up in goose."),
+  ).toBeVisible();
+  expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
+  expect(save).not.toHaveBeenCalled();
+
+  const workspace = screen.getByLabelText("Workspace");
+  await user.clear(workspace);
+  await user.type(workspace, "projects/goose");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Enter an absolute or ~/… workspace path.",
+  );
+  expect(save).not.toHaveBeenCalled();
+  await user.clear(workspace);
+  await user.type(workspace, "~/projects/goose");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        workspace: "~/projects/goose",
+      }),
+    ),
+  );
+});
+
 it("shows what the provider said when the test fails", async () => {
   created({ reply: "Authentication failed: invalid x-api-key" });
   const dialog = await openChoices();

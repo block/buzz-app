@@ -43,6 +43,8 @@ export type FakeGoose = {
   env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
   hold: boolean;
+  /** When set, a turn takes a steer and ends before goose answers the steer. */
+  endOnSteer: boolean;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -170,6 +172,7 @@ export function fakeSpawn(
       deleted: [],
       env: process.env ?? {},
       hold: options.hold ?? false,
+      endOnSteer: false,
       killed: false,
       ask: (method, params) => {
         const requestId = `goose-${++requests}`;
@@ -281,6 +284,7 @@ export function fakeSpawn(
               .map((block) => block.text)
               .join(""),
           );
+          if (fake.endOnSteer) turn.finish();
           return reply(id, { runId: turn.runId, messageId: "m" });
         }
         case "session/cancel":

@@ -65,17 +65,31 @@ const spawn: Spawn = async (_id, options: HostProcessOptions = {}) => {
 /** The HTTP requests the MCP servers received, by method and status. */
 const hits: { method: string; status: number }[] = [];
 
+const method = (body: string): unknown => {
+  try {
+    return (JSON.parse(body) as { method?: unknown } | null)?.method;
+  } catch {
+    return undefined;
+  }
+};
+
 /** What the app's native listener does: a token per server, 404 for a wrong
- * one, 405 for `GET`, and a JSON reply or 202 for each `POST /mcp`. */
+ * one, 405 for `GET`, and a JSON reply or 202 for each `POST /mcp`. The
+ * `initialize` claims the server's one session; later requests must name it. */
 const serve: ServeMcp = async (handler) => {
   const token = randomBytes(32).toString("base64url");
+  const session = randomBytes(32).toString("base64url");
+  let claimed = false;
   const server = createServer((request, response) => {
+    let joined = false;
     const end = (status: number, body?: string) => {
       hits.push({ method: request.method ?? "", status });
-      response.writeHead(
-        status,
-        body ? { "Content-Type": "application/json" } : {},
-      );
+      response.writeHead(status, {
+        ...(joined && (status === 200 || status === 202)
+          ? { "Mcp-Session-Id": session }
+          : {}),
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      });
       response.end(body);
     };
     if (
@@ -84,9 +98,17 @@ const serve: ServeMcp = async (handler) => {
     )
       return end(404);
     if (request.method !== "POST") return end(405);
+    const named = request.headers["mcp-session-id"];
+    if (named !== undefined && named !== session) return end(404);
     let body = "";
     request.setEncoding("utf8").on("data", (data) => (body += data));
     request.on("end", async () => {
+      if (named === undefined) {
+        // Before it, a message needs no session (goose first asks
+        // `server/discover`).
+        if (claimed) return end(404);
+        if (method(body) === "initialize") claimed = joined = true;
+      } else joined = true;
       const reply = await answerMcp(handler, body);
       end(reply === undefined ? 202 : 200, JSON.stringify(reply));
     });
@@ -190,6 +212,20 @@ describe.skipIf(!BIN)("goose-acp", () => {
       // refused.
       expect(hits.some((hit) => hit.status === 200)).toBe(true);
       expect(hits.filter((hit) => hit.status === 404)).toEqual([]);
+      // goose saves the token with the session; alone, it admits nothing.
+      const server = session.server;
+      if (!server) throw new Error("no Buzz MCP server");
+      const stolen = await fetch(server.url, {
+        method: "POST",
+        headers: {
+          ...Object.fromEntries(
+            server.headers.map(({ name, value }) => [name, value]),
+          ),
+          "Content-Type": "application/json",
+        },
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+      });
+      expect(stolen.status).toBe(404);
       expect(
         calls.find((call) => call.method === "tools/call")?.conversation,
       ).toBe("channel/root");

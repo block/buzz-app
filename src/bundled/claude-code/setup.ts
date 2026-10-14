@@ -281,7 +281,7 @@ export class ClaudeSetup {
     this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
   }
 
-  async check(refreshModels = true) {
+  async check(refreshModels = false) {
     if (!this.spawn) {
       this.set({
         status: {

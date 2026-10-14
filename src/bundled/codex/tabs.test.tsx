@@ -1043,3 +1043,23 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   expect(provider.snapshot()).not.toHaveProperty("blocking");
   provider.dispose();
 });
+
+it("cancels a Codex login from its card and kills the process", async () => {
+  const f = fixture({ signedIn: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+  const cancel = await screen.findByRole("button", { name: "Cancel" });
+  const index = f.spawn.mock.calls.findIndex(
+    ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
+  );
+  const process = await f.spawn.mock.results[index]?.value;
+  fireEvent.click(cancel);
+  await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
+});

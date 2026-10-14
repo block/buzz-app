@@ -79,12 +79,16 @@ const CATALOG = [
     resolvedModel: "claude-sonnet-5-5",
     displayName: "Sonnet",
     description: "Sonnet 5.5 · Efficient for routine tasks",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     value: "haiku",
     resolvedModel: "claude-haiku-4-5",
     displayName: "Haiku",
     description: "Haiku 4.5 · Fastest for quick answers",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "high"],
   },
 ];
 
@@ -395,6 +399,7 @@ it("is an agent type on the desktop app", () => {
   expect(
     type.carry?.({
       model: "opus",
+      effort: "high",
       instructions: "Triage.",
       workspace: "~/code",
       scope: "channel",
@@ -402,6 +407,7 @@ it("is an agent type on the desktop app", () => {
   ).toEqual({ instructions: "Triage.", workspace: "~/code" });
   expect(type.describeMigration?.(DEFAULT_CONFIG)).toEqual([
     { id: "model", label: "Model", isOverride: false },
+    { id: "thinking", label: "Thinking", isOverride: false },
     {
       id: "sessions",
       label: "Sessions",
@@ -413,10 +419,12 @@ it("is an agent type on the desktop app", () => {
     type.describeMigration?.({
       ...DEFAULT_CONFIG,
       model: "opus",
+      effort: "high",
       scope: "channel",
     }),
   ).toEqual([
     { id: "model", label: "Model", isOverride: true },
+    { id: "thinking", label: "Thinking", isOverride: true },
     {
       id: "sessions",
       label: "Sessions",
@@ -656,6 +664,53 @@ it("saves settings as one config", async () => {
     model: "sonnet",
     workspace: "~/.buzz",
   });
+});
+
+it("offers the model's thinking levels, dropping one the next model lacks", async () => {
+  const Settings = tab(installed().type, 0);
+  const save = vi.fn(async () => undefined);
+  render(<Settings agent={agent()} save={save} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  await user.click(await screen.findByRole("option", { name: "Sonnet 5.5" }));
+  await user.click(screen.getByRole("combobox", { name: "Thinking" }));
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Claude default", "Low", "Medium", "High", "Extra high"]);
+  await user.click(screen.getByRole("option", { name: "Extra high" }));
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Claude default");
+  await user.click(thinking);
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "haiku",
+    effort: "high",
+  });
+});
+
+it("keeps a saved thinking level changeable without Claude's model list", async () => {
+  const Settings = tab(installed({ catalog: { listed: false } }).type, 0);
+  const save = vi.fn(async () => undefined);
+  render(
+    <Settings
+      agent={agent({ ...DEFAULT_CONFIG, effort: "high" })}
+      save={save}
+    />,
+  );
+  const user = userEvent.setup();
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("High");
+  expect(thinking).not.toHaveTextContent("unavailable");
+  await user.click(thinking);
+  await user.click(
+    await screen.findByRole("option", { name: "Claude default" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });
 
 it("keeps Save focused while saving, and lets a failed save be retried", async () => {

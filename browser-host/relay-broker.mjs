@@ -307,6 +307,10 @@ async function relayAuthority(fetch, relay) {
     relayAuthor: author,
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
+    // NIP-CL: the relay keeps channel labels and answers label lookups.
+    channelIdentity:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("nip-cl"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -315,6 +319,39 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
+/**
+ * Mirrors native `media_url` (src-tauri/src/relay.rs): an absolute URL on this
+ * relay naming one `/media/<sha256>[.ext]` blob, with no credentials, query or
+ * fragment. The broker stands in for the native proxy, so it must not accept
+ * URLs that the packaged app rejects.
+ */
+function relayMediaTarget(raw, relay) {
+  let target;
+  try {
+    target = new URL(raw ?? "");
+  } catch {
+    return undefined;
+  }
+  const name = target.pathname.startsWith("/media/")
+    ? target.pathname.slice("/media/".length)
+    : undefined;
+  if (name === undefined) return undefined;
+  const dot = name.indexOf(".");
+  const hash = dot < 0 ? name : name.slice(0, dot);
+  const extension = dot < 0 ? "" : name.slice(dot + 1);
+  // `href` keeps an empty `?` or `#`, which native also rejects.
+  return target.origin === relay &&
+    !target.username &&
+    !target.password &&
+    !/[?#]/.test(target.href) &&
+    /^[0-9a-f]{64}$/.test(hash) &&
+    (extension === "" ||
+      extension === "thumb.jpg" ||
+      /^[a-z0-9]{1,8}$/.test(extension))
+    ? target
+    : undefined;
+}
+
 export function validProductFeedback(event, mediaOrigin) {
   if (
     event?.kind !== 42000 ||
@@ -1376,6 +1413,7 @@ export function relayBrokerPlugin({
               channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,
+              channelIdentity: (await getAuthority(relay)).channelIdentity,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
@@ -1788,11 +1826,8 @@ export function relayBrokerPlugin({
             return;
           }
           if (route === "/api/relay/media" && req.method === "GET") {
-            const target = new URL(url.searchParams.get("url") ?? "", relay);
-            if (
-              target.origin !== relay ||
-              !target.pathname.startsWith("/media/")
-            )
+            const target = relayMediaTarget(url.searchParams.get("url"), relay);
+            if (!target)
               return json(res, 403, { error: "Media target rejected" });
             const now = Math.floor(Date.now() / 1000);
             const auth = finalizeEvent(

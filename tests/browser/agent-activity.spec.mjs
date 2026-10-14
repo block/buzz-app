@@ -239,6 +239,11 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(popup).toBeVisible();
+  // Keyboard opening focuses the first row a frame later. Rows can be in either
+  // order, so wait for that focus, then Tab to this agent's icon.
+  await expect(
+    popup.getByRole("button", { name: /^Open conversation for / }).first(),
+  ).toBeFocused();
   const firstAction = agentActivityAction(popup, first);
   for (let step = 0; step < 3 && !(await isFocused(firstAction)); step++)
     await page.keyboard.press("Tab");
@@ -1024,16 +1029,17 @@ test.describe("thread activity", () => {
       .click();
     // Activity and Thread share the detail pane; return to the thread.
     await openThread();
+    // The activity detour can outlast thread typing's 8s freshness on slow
+    // runners; refresh it, as each later section does, before using the trigger.
+    sendTyping(root.id);
     // Popup semantics and keyboard operation need real browsers.
     await threadTrigger.focus();
     await page.keyboard.press("Enter");
     await expect(popup).toBeVisible();
     await expect(agentRow(popup, agent)).toBeVisible();
-    // WebKit focuses the first row on open; Chromium leaves it one Tab away.
-    const keyboardRow = agentRow(popup, agent);
-    for (let step = 0; step < 2 && !(await isFocused(keyboardRow)); step++)
-      await page.keyboard.press("Tab");
-    await expect(keyboardRow).toBeFocused();
+    // Keyboard opening focuses the first row a frame later. Tabbing before then
+    // can skip past it and leave the non-modal popup, which closes it.
+    await expect(agentRow(popup, agent)).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(popup).toHaveCount(0);
     await expect(

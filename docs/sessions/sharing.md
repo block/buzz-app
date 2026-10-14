@@ -47,9 +47,12 @@ Profiles load on expansion. This display read is separate from the fresh frozen
 audience used on submission, and a later count change does not change retry
 recipients. Confirmed grants record the original channel snapshot separately as
 device-local display history, not proof of link delivery. The grant remains a
-snapshot: future joins/departures are not synchronized. **Share & post link** grants the
+snapshot: future joins/departures are not synchronized. **Share** grants the
 union of directly selected keys and one fresh relay-confirmed destination roster,
 including bots, then posts one ordinary kind-9 link without notification tags.
+Its hover/focus hint explains that channel sharing grants access and posts a link; the compact **Share**
+label keeps Copy link and Share together in the trailing footer group. At enlarged
+text sizes, that group scrolls horizontally and focus reveals the selected action.
 People-only **Share** grants access without posting or sending a DM. These
 recipients use ordinary membership-based discovery; immediate recipient visibility
 has not been validated across accounts. **Copy link** provides an explicit manual

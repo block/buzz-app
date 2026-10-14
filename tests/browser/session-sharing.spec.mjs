@@ -220,7 +220,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
   await participants.press("Enter");
   await expect(participants).toHaveAttribute("aria-expanded", "false");
   const share = dialog.getByRole("button", {
-    name: "Share & post link",
+    name: "Share",
     exact: true,
   });
   for (const mode of ["light", "dark"]) {
@@ -240,7 +240,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
         },
         { mode, scale },
       );
-      const footer = dialog.locator(".buzz-dialog-actions");
+      const footer = dialog.locator(".buzz-dialog-actions > div:last-child");
       const copy = dialog.getByRole("button", {
         name: /^(Copy link|Link copied)$/,
       });

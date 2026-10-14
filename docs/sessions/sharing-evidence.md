@@ -38,6 +38,20 @@ now rendered individually, leaving 15. The mounted solo-agent case failed before
 repair; channel-only/direct-history overlap remains covered. No cases were added
 or removed. Hosted checks remain a separate gate reported in the pull request.
 
+## Selected-channel footer correction
+
+On the stacked `ae5796e94` tree plus this correction, 54 owner tests in five files
+passed (14.65s wall; 16.36s execution), then all 18 Chromium/WebKit Me/sharing
+journeys passed (45.8s, two workers, no retries). The existing Me case demonstrated
+52px action-row separation before the compact **Share** label and trailing group;
+its 390px/2× extension demonstrated 104px separation before non-wrapping grouping.
+Native Tab then exposed nested overflow clipping; bounded group scrolling and a
+physically contained focus-reveal handler passed the unchanged center hit tests.
+Hover/focus tooltip, tooltip Escape, exact held grant/link ordering, both themes
+and default/enlarged layouts passed. No cases added/removed or permissions changed.
+Normal-width actions stay on one row; narrow enlarged controls scroll as one group.
+Screenshots were inspected; human/native/hosted acceptance remains separate.
+
 ## Discriminating regressions
 
 Mounted React uses real collaborating owners and held external operations, not

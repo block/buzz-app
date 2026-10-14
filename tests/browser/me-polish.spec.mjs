@@ -298,10 +298,132 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   await page.getByRole("option", { name: /Aria/ }).click();
   await search.fill("Team");
   await page.getByRole("option", { name: "Team", exact: true }).click();
+  const primary = dialog.getByRole("button", {
+    name: "Share",
+    exact: true,
+  });
+  const copy = dialog.getByRole("button", { name: "Copy link", exact: true });
+  const convert = dialog.getByRole("button", {
+    name: "Convert to channel",
+    exact: true,
+  });
+  // Me has a leading conversion action as well as Copy/Share. Real flex wrapping
+  // in that selected-channel state is invisible to mounted DOM tests.
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate(
+      (value) => (document.documentElement.dataset.colorMode = value),
+      mode,
+    );
+    for (const width of [950, 1280]) {
+      await page.setViewportSize({ width, height: 850 });
+      await expect
+        .poll(async () => {
+          const rows = await Promise.all(
+            [convert, copy, primary].map((control) =>
+              control.evaluate((element) => {
+                const bounds = element.getBoundingClientRect();
+                return bounds.top + bounds.height / 2;
+              }),
+            ),
+          );
+          return Math.max(...rows) - Math.min(...rows);
+        })
+        .toBeLessThanOrEqual(1);
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`share-channel-footer-${mode}-${width}.png`),
+      });
+    }
+  }
+  // At a narrow viewport Convert may wrap, but Copy and Share stay together,
+  // including enlarged text. The existing footer may scroll instead of splitting.
+  await page.setViewportSize({ width: 390, height: 850 });
+  for (const scale of [1, 2]) {
+    await page.evaluate((value) => {
+      document.documentElement.style.setProperty(
+        "--buzz-text-scale",
+        String(value),
+      );
+    }, scale);
+    await expect
+      .poll(async () => {
+        const centers = await Promise.all(
+          [copy, primary].map((control) =>
+            control.evaluate((element) => {
+              const bounds = element.getBoundingClientRect();
+              return bounds.top + bounds.height / 2;
+            }),
+          ),
+        );
+        return Math.abs(centers[0] - centers[1]);
+      })
+      .toBeLessThanOrEqual(1);
+    if (scale === 2) {
+      const actions = dialog.locator(".buzz-dialog-actions > div:last-child");
+      await expect
+        .poll(() => actions.evaluate((el) => getComputedStyle(el).overflowX))
+        .toBe("auto");
+      await expect
+        .poll(() => actions.evaluate((el) => el.scrollWidth > el.clientWidth))
+        .toBe(true);
+      // Focus the preceding body control, then let native Tab reveal each action.
+      await search.focus();
+      for (const action of [copy, primary]) {
+        for (
+          let step = 0;
+          !(await action.evaluate((el) => el === document.activeElement));
+          step++
+        ) {
+          expect(step).toBeLessThan(12);
+          await page.keyboard.press("Tab");
+        }
+        await expect(action).toBeInViewport();
+        await expect
+          .poll(() =>
+            action.evaluate((element) => {
+              const r = element.getBoundingClientRect();
+              return element.contains(
+                document.elementFromPoint(
+                  r.x + r.width / 2,
+                  r.y + r.height / 2,
+                ),
+              );
+            }),
+          )
+          .toBe(true);
+      }
+    }
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`share-channel-footer-dark-390-text-${scale}.png`),
+    });
+  }
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await page.setViewportSize({ width: 1280, height: 850 });
+  const hint = page.getByRole("tooltip").filter({
+    hasText: "Sharing grants access and posts a link in the selected channel.",
+  });
+  await primary.hover();
+  await expect(hint).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(hint).not.toBeVisible();
+  await copy.focus();
+  await page.keyboard.press("Tab");
+  await expect(primary).toBeFocused();
+  await expect(hint).toBeVisible();
+  await expect(primary).toHaveAccessibleDescription(
+    "Sharing grants access and posts a link in the selected channel.",
+  );
+  // Tooltip dismissal consumes only its own Escape, not the enclosing modal.
+  await page.keyboard.press("Escape");
+  await expect(hint).not.toBeVisible();
+  await expect(dialog).toBeVisible();
   try {
-    await dialog
-      .getByRole("button", { name: "Share & post link", exact: true })
-      .click();
+    await page.keyboard.press("Enter");
     await requestedReadback;
     await expect(dialog).toBeVisible();
     await expect(

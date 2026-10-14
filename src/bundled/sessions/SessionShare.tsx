@@ -527,9 +527,7 @@ export function SessionShare({
       setError("This share is already in progress in another view.");
       return;
     }
-    setPendingLabel(
-      saved ? "Retry share" : destination ? "Share & post link" : "Share",
-    );
+    setPendingLabel(saved ? "Retry share" : "Share");
     exact.running = true;
     setBusy(true);
     setError("");
@@ -761,7 +759,17 @@ export function SessionShare({
           )
         }
         actions={
-          <>
+          <div
+            className={styles.actions}
+            onFocusCapture={(event) => {
+              // Native Tab can focus a clipped child without revealing nested overflow.
+              if (event.currentTarget.contains(event.target))
+                event.target.scrollIntoView?.({
+                  block: "nearest",
+                  inline: "nearest",
+                });
+            }}
+          >
             <Tooltip content="Copying a link does not grant access.">
               <Button onClick={() => void copy()}>
                 <span aria-live="polite">
@@ -776,6 +784,11 @@ export function SessionShare({
             )}
             <Button
               variant="prominent"
+              title={
+                destination && !saved
+                  ? "Sharing grants access and posts a link in the selected channel."
+                  : undefined
+              }
               loading={busy}
               disabled={
                 !eligible && (!!saved || !!destination || !!people.length)
@@ -786,13 +799,11 @@ export function SessionShare({
                 ? pendingLabel
                 : saved
                   ? "Retry share"
-                  : destination
-                    ? "Share & post link"
-                    : people.length
-                      ? "Share"
-                      : "Done"}
+                  : destination || people.length
+                    ? "Share"
+                    : "Done"}
             </Button>
-          </>
+          </div>
         }
       >
         <div className={styles.form}>

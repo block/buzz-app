@@ -461,12 +461,8 @@ it("shares a frozen channel snapshot to confirmed destination members, reports o
   await user.click(screen.getByRole("button", { name: "Share" }));
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
-  expect(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  ).toBeEnabled();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Session invite refused",
   );
@@ -499,9 +495,7 @@ it("keeps exact selected session recipients over close/reopen after posting fail
     "Aria",
   );
   await user.click(await screen.findByRole("option", { name: /Aria/ }));
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Post refused",
   );
@@ -539,23 +533,19 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
   });
   t.holdLink(held);
   try {
-    await user.click(
-      within(dialog).getByRole("button", { name: "Share & post link" }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
     await waitFor(() =>
       expect(t.publish.mock.calls.some(([event]) => event.kind === 9)).toBe(
         true,
       ),
     );
     expect(
-      within(dialog).getByRole("button", { name: "Share & post link" }),
+      within(dialog).getByRole("button", { name: "Share" }),
     ).toHaveAttribute("aria-busy", "true");
     expect(
-      within(dialog).getByRole("button", { name: "Share & post link" }),
+      within(dialog).getByRole("button", { name: "Share" }),
     ).toHaveAttribute("aria-disabled", "true");
-    await user.click(
-      within(dialog).getByRole("button", { name: "Share & post link" }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
     expect(
       t.publish.mock.calls.filter(([event]) => event.kind === 9),
     ).toHaveLength(1);
@@ -604,9 +594,7 @@ it("serializes the same submitted attempt across two mounted entry points", asyn
     const fresh = screen.getByRole("dialog", { name: "Share session" });
     expect(within(fresh).getByRole("button", { name: "Done" })).toBeEnabled();
     await chooseDestination(user, fresh);
-    expect(
-      within(fresh).getByRole("button", { name: "Share & post link" }),
-    ).toBeEnabled();
+    expect(within(fresh).getByRole("button", { name: "Share" })).toBeEnabled();
   } finally {
     release();
     t.holdLink(undefined);
@@ -676,9 +664,7 @@ it.each(["abort", "unmount"] as const)(
     const held = { promise, resolve, reject };
     t.holdLink(held.promise);
     try {
-      await user.click(
-        within(dialog).getByRole("button", { name: "Share & post link" }),
-      );
+      await user.click(within(dialog).getByRole("button", { name: "Share" }));
       await waitFor(() =>
         expect(t.publish.mock.calls.some(([event]) => event.kind === 9)).toBe(
           true,
@@ -718,9 +704,7 @@ it("freezes an oversized channel audience across Retry until Start over chooses 
   await user.click(screen.getByRole("button", { name: "Share" }));
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     /100.*recipients/,
   );
@@ -766,9 +750,7 @@ it("starting over preserves access and lets Outbox finish the exact link before 
   await user.click(screen.getByRole("button", { name: "Share" }));
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Post refused",
   );
@@ -824,9 +806,7 @@ it("starting over preserves access and lets Outbox finish the exact link before 
   await user.click(screen.getByRole("button", { name: "Share" }));
   const next = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, next);
-  await user.click(
-    within(next).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(next).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(next).not.toBeInTheDocument());
   expect(t.published.filter((event) => event.kind === 9)).toHaveLength(2);
   expect(t.published.filter((event) => event.kind === 9000)).toHaveLength(1);
@@ -867,9 +847,7 @@ it("retries a rejected, expired grant only after its failed Outbox item is dismi
   await user.click(screen.getByRole("button", { name: "Share" }));
   let dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Session invite refused",
   );
@@ -1067,9 +1045,7 @@ it("unions direct people and one channel snapshot, retains confirmed partial acc
   );
   expect(screen.queryByRole("option", { name: "Planning" })).toBeNull();
   await user.keyboard("{Escape}");
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Access confirmed for 2 recipients",
   );
@@ -1165,9 +1141,7 @@ it("blocks a combined audience over 100 distinct keys before granting anyone", a
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await choosePerson(user, dialog, "Aria");
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "100 distinct recipients",
   );
@@ -1195,9 +1169,7 @@ it("excludes known agents from people but includes channel bots without waking t
   expect(screen.queryByRole("option", { name: /Helper/ })).toBeNull();
   await user.clear(input);
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
   expect(t.published[0]?.tags).toContainEqual(["role", "bot"]);
@@ -1396,9 +1368,7 @@ it("never posts a zero-recipient channel share and allows choosing a real person
   await user.click(screen.getByRole("button", { name: "Share" }));
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
-  await user.click(
-    within(dialog).getByRole("button", { name: "Share & post link" }),
-  );
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "no other current members",
   );
@@ -1589,9 +1559,7 @@ it("keeps completed access/link work out of Retry when device-local history cann
       original.call(this, key, value);
     });
   try {
-    await user.click(
-      within(dialog).getByRole("button", { name: "Share & post link" }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "history couldn’t be saved",
     );

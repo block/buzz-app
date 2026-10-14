@@ -608,10 +608,10 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
     await screen.findByRole("option", {
-      name: "Model A",
-      description: "Following the provider's model default",
+      name: "Model A · Default",
+      description: "Model A description.",
     }),
-  ).toHaveAccessibleDescription("Following the provider's model default");
+  ).toHaveAccessibleDescription("Model A description.");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
   await user.click(model);
@@ -686,8 +686,8 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
   await user.click(modelControl);
   await user.click(
     await screen.findByRole("option", {
-      name: "Model A",
-      description: "Following the provider's model default",
+      name: "Model A · Default",
+      description: "Model A description.",
     }),
   );
   expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
@@ -810,8 +810,8 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   await user.click(await screen.findByRole("combobox", { name: "Model" }));
   await user.click(
     await screen.findByRole("option", {
-      name: "Model A",
-      description: "Following the provider's model default",
+      name: "Model A · Default",
+      description: "Model A description.",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({

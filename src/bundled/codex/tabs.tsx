@@ -376,6 +376,12 @@ export function createTabs(
         {...props}
         models={choices(data)}
         value={current.model}
+        defaultModel={
+          data?.models.find((model) => model.model === providerDefaults.model)
+            ?.model ??
+          data?.models.find((model) => model.isDefault)?.model ??
+          providerDefaults.model
+        }
         defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
         defaultDescription="Following the provider's model default"
         loading={checking}
@@ -868,6 +874,13 @@ export function createTabs(
             allowCustomModel={false}
             models={choices(data)}
             value={draft.model}
+            defaultModel={
+              data?.models.find(
+                (model) => model.model === providerDefaults.model,
+              )?.model ??
+              data?.models.find((model) => model.isDefault)?.model ??
+              providerDefaults.model
+            }
             defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
             defaultDescription="Following the provider's model default"
             loading={checking}

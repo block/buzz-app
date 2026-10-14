@@ -108,6 +108,7 @@ export function ModelPicker({
   allowCustomModel = false,
   value,
   defaultLabel,
+  defaultModel,
   defaultDescription,
   onChange,
   loading = false,
@@ -125,6 +126,7 @@ export function ModelPicker({
   includeDefault?: boolean;
   value: string;
   defaultLabel: string;
+  defaultModel?: string | undefined;
   defaultDescription?: string;
   onChange(value: string): void;
   loading?: boolean;
@@ -133,21 +135,25 @@ export function ModelPicker({
 }) {
   const [customModel, setCustomModel] = useState<string | null>(null);
   const control = useRef<HTMLDivElement>(null);
+  const defaultChoice = models.find((model) => model.id === defaultModel);
   const fallback: ModelChoice = {
     id: "",
-    label: defaultLabel,
-    description: defaultDescription,
+    label: defaultChoice?.label ?? defaultLabel,
+    description: defaultChoice?.description ?? defaultDescription,
   };
   const items: ModelChoice[] = includeDefault
-    ? [fallback, ...models]
+    ? [fallback, ...models.filter((model) => model.id !== defaultModel)]
     : [...models];
-  if (value && !items.some((model) => model.id === value))
+  const selectedValue =
+    includeDefault && defaultModel && value === defaultModel ? "" : value;
+  if (selectedValue && !items.some((model) => model.id === selectedValue))
     items.push({
       id: value,
       label: value,
       description: allowCustomModel ? "Custom model" : "Unavailable model",
     });
-  const selected = items.find((model) => model.id === value) ?? fallback;
+  const selected =
+    items.find((model) => model.id === selectedValue) ?? fallback;
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {
@@ -172,7 +178,10 @@ export function ModelPicker({
               label: "",
               options: choices.map((model) => ({
                 value: model.id,
-                label: model.label,
+                label:
+                  includeDefault && model.id === ""
+                    ? `${model.label} · Default`
+                    : model.label,
                 description: model.description,
                 leading: <ModelIcon model={`${model.id} ${model.label}`} />,
               })),

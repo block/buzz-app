@@ -7,6 +7,7 @@ export function CreateModelChoices({
   models,
   value,
   defaultLabel,
+  defaultModel,
   defaultDescription,
   includeDefault = true,
   onChange,
@@ -19,6 +20,7 @@ export function CreateModelChoices({
   models: readonly ModelChoice[];
   value: string;
   defaultLabel: string;
+  defaultModel?: string | undefined;
   defaultDescription?: string;
   includeDefault?: boolean;
   onChange(value: string): void;
@@ -32,6 +34,7 @@ export function CreateModelChoices({
       <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
         <ModelPicker
           includeDefault={includeDefault}
+          defaultModel={defaultModel}
           appearance={modelAppearance ?? "outlined"}
           {...{ models, value, defaultLabel, onChange, loading, disabled }}
           {...(defaultDescription && { defaultDescription })}

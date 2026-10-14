@@ -8,7 +8,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -37,9 +36,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
-import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
 import {
-  CircleNotchIcon,
   DotsThreeIcon,
   DownloadIcon,
   StorefrontIcon,
@@ -57,12 +54,8 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   MenuPopup,
-  MenuIcon,
   MenuItem,
   MenuRoot,
-  MenuSubmenu,
-  MenuSubmenuPopup,
-  MenuSubmenuTrigger,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -211,8 +204,6 @@ export function AgentsPage({
       </MenuPopup>
     </MenuRoot>
   );
-  const openTeams = () => setTab("teams");
-  const more = useRef<HTMLButtonElement>(null);
 
   const yours = (() => {
     if (snapshot.status === "unavailable")
@@ -340,37 +331,6 @@ export function AgentsPage({
                     ]}
                   />
                 }
-                actions={
-                  snapshot.status === "ready" ? (
-                    <MenuRoot>
-                      <MenuTrigger
-                        render={
-                          <IconButton
-                            ref={more}
-                            aria-label="More agent actions"
-                            title="More agent actions"
-                            size="sm"
-                            icon={
-                              <DotsThreeIcon size={16} aria-hidden="true" />
-                            }
-                          />
-                        }
-                      />
-                      <MenuPopup align="end">
-                        <ProviderSubmenu
-                          types={types}
-                          onSelect={setProviderKey}
-                        />
-                        <MenuItem
-                          onClick={openTeams}
-                          disabled={tab === "teams"}
-                        >
-                          Teams
-                        </MenuItem>
-                      </MenuPopup>
-                    </MenuRoot>
-                  ) : undefined
-                }
               />
               <div className="min-h-0 flex-1">{body}</div>
             </div>
@@ -445,145 +405,11 @@ export function AgentsPage({
       {providerKey && (
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
-          finalFocus={more}
+          finalFocus={newAgentButton}
           onClose={() => setProviderKey(undefined, true)}
         />
       )}
     </div>
-  );
-}
-
-/** A quick device-wide health view. Controls stay in each provider's dialog. */
-function ProviderSubmenu({
-  types,
-  onSelect,
-}: {
-  types: readonly RegisteredAgentType[];
-  onSelect(key: string): void;
-}) {
-  const check = () => {
-    for (const { provider } of types) if (provider) checkProvider(provider);
-  };
-  return (
-    <MenuSubmenu>
-      <MenuSubmenuTrigger onFocus={check} onPointerEnter={check}>
-        Provider settings
-      </MenuSubmenuTrigger>
-      <MenuSubmenuPopup aria-label="Provider settings">
-        {types.map((type) => {
-          const fallback = (
-            <MenuItem aria-label={`${type.title}, unavailable`} disabled>
-              <ProviderIcon type={type} />
-              {type.title}
-            </MenuItem>
-          );
-          return (
-            <ContributionBoundary key={type.key} fallback={fallback}>
-              <ProviderMenuItem
-                type={type}
-                onSelect={() => onSelect(type.key)}
-              />
-            </ContributionBoundary>
-          );
-        })}
-      </MenuSubmenuPopup>
-    </MenuSubmenu>
-  );
-}
-
-function checkProvider(provider: NonNullable<RegisteredAgentType["provider"]>) {
-  try {
-    void Promise.resolve(provider.check()).catch(() => {});
-  } catch {
-    // A failed contribution does not break host-owned provider controls.
-  }
-}
-
-function ProviderIcon({ type }: { type: RegisteredAgentType }) {
-  const Icon = type.icon;
-  return Icon ? (
-    <MenuIcon>
-      <Icon size={17} />
-    </MenuIcon>
-  ) : null;
-}
-
-function ProviderMenuItem({
-  type,
-  onSelect,
-}: {
-  type: RegisteredAgentType;
-  onSelect(): void;
-}) {
-  const provider = type.provider;
-  if (!provider)
-    return (
-      <MenuItem aria-label={`${type.title}, unavailable`} disabled>
-        <ProviderIcon type={type} />
-        {type.title}
-      </MenuItem>
-    );
-  return (
-    <ProviderHealthMenuItem
-      type={type}
-      provider={provider}
-      onSelect={onSelect}
-    />
-  );
-}
-
-function ProviderHealthMenuItem({
-  type,
-  provider,
-  onSelect,
-}: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
-  onSelect(): void;
-}) {
-  const state = useSyncExternalStore(
-    provider.subscribe,
-    provider.snapshot,
-    provider.snapshot,
-  );
-  const checking = state.readiness === "checking";
-  const label =
-    state.readiness === "attention"
-      ? (state.attentionLabel ?? `Set up ${type.title}`)
-      : type.title;
-  const select = () => {
-    if (state.readiness === "attention") {
-      const action = provider.attentionAction;
-      if (action)
-        try {
-          action();
-          return;
-        } catch {
-          // Fall back to the provider's recovery guidance.
-        }
-    }
-    onSelect();
-  };
-  return (
-    <MenuItem
-      aria-label={`${label}, ${state.readiness}`}
-      aria-busy={checking || undefined}
-      onClick={select}
-      disabled={checking}
-    >
-      {checking ? (
-        <MenuIcon>
-          <CircleNotchIcon
-            size={17}
-            aria-hidden="true"
-            className="motion-safe:animate-spin"
-          />
-        </MenuIcon>
-      ) : (
-        <ProviderIcon type={type} />
-      )}
-      {label}
-    </MenuItem>
   );
 }
 

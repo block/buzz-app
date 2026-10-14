@@ -771,11 +771,11 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5",
+      name: "Opus 5.5 · Default",
       description: "Best for everyday, complex tasks",
     }),
   );
-  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
   expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
   fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Plan." },

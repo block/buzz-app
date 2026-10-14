@@ -193,3 +193,32 @@ it("keeps compact choices finite and includes rich model descriptions", async ()
   await user.click(opus);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });
+
+it.each(["", "opus"])(
+  "lists the default once with its catalog copy for saved value %s",
+  async (value) => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        models={models}
+        value={value}
+        defaultModel="opus"
+        defaultLabel="Opus"
+        onChange={onChange}
+      />,
+    );
+    expect(control()).toHaveTextContent("Opus");
+    expect(control()).not.toHaveTextContent("Default");
+    await user.click(control());
+    const options = await screen.findAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(options[0]).toHaveAccessibleName("Opus · Default");
+    expect(options[1]).toHaveAccessibleName("Sonnet");
+    expect(options[0]).toHaveAccessibleDescription("Most capable");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("option", { name: "Sonnet" }));
+    expect(onChange).toHaveBeenCalledWith("sonnet");
+  },
+);

@@ -78,6 +78,30 @@ const modelChoices = (models: readonly ClaudeModel[]) =>
 const modelName = (model: string, models: readonly ClaudeModel[]) =>
   modelChoices(models).find((choice) => choice.id === model)?.label ??
   resolvedModelName(model);
+const providerDefaultModel = (
+  model: string,
+  models: readonly ClaudeModel[],
+) => {
+  if (model)
+    return (
+      models.find(
+        (candidate) =>
+          candidate.value !== "default" &&
+          (candidate.value === model || candidate.resolvedModel === model),
+      )?.value ?? model
+    );
+  const resolved = models.find(
+    (candidate) => candidate.value === "default",
+  )?.resolvedModel;
+  return resolved
+    ? models.find(
+        (candidate) =>
+          candidate.value !== "default" &&
+          (candidate.resolvedModel === resolved ||
+            candidate.value === resolved),
+      )?.value
+    : undefined;
+};
 const providerDefaultLabel = (
   model: string,
   models: readonly ClaudeModel[],
@@ -342,6 +366,10 @@ export function createTabs({
         {...props}
         models={modelChoices(state.models)}
         value={current.model}
+        defaultModel={providerDefaultModel(
+          providerDefaults.model,
+          state.models,
+        )}
         defaultLabel={providerDefaultLabel(
           providerDefaults.model,
           state.models,
@@ -827,6 +855,10 @@ export function createTabs({
           allowCustomModel
           models={modelChoices(setupState.models)}
           value={draft.model}
+          defaultModel={providerDefaultModel(
+            providerDefaults.model,
+            setupState.models,
+          )}
           defaultLabel={providerDefaultLabel(
             providerDefaults.model,
             setupState.models,

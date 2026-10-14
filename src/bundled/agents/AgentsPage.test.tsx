@@ -35,6 +35,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
+import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
 afterEach(cleanup);
@@ -406,7 +407,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   );
 });
 
-it("checks active providers in a health submenu and opens their host-owned dialogs", async () => {
+it("checks providers in AI defaults and opens their host-owned dialogs", async () => {
   const user = userEvent.setup();
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const relay = {
@@ -444,44 +445,51 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     provider: checkingProvider.contribution,
   } as unknown as RegisteredAgentType;
   try {
-    const { echoProvider } = setup([agent("Ada", 1)], {
+    const { echoProvider, agents } = setup([agent("Ada", 1)], {
       more: [relay, broken, checking],
     });
-    const more = screen.getByRole("button", { name: "More agent actions" });
-
-    await user.click(more);
-    const trigger = await screen.findByRole("menuitem", {
-      name: "Provider settings",
-    });
-    await user.hover(trigger);
-    const menu = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await vi.waitFor(() =>
-      expect(menu).not.toHaveAttribute("data-starting-style"),
+    expect(
+      screen.queryByRole("button", { name: "More agent actions" }),
+    ).toBeNull();
+    const defaults = render(
+      <AgentSettings
+        agents={agents}
+        active={false}
+        archive={<div>Archived agents</div>}
+      />,
     );
-    expect(screen.getAllByRole("menu")).toHaveLength(2);
-    const echo = within(menu).getByRole("menuitem", {
+    expect(echoProvider.check).not.toHaveBeenCalled();
+    expect(screen.queryByText("AI defaults")).toBeNull();
+    defaults.rerender(
+      <AgentSettings agents={agents} archive={<div>Archived agents</div>} />,
+    );
+    expect(
+      screen
+        .getByText("AI defaults")
+        .compareDocumentPosition(screen.getByText("Archived agents")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const menu = defaults.container;
+    const echo = within(menu).getByRole("button", {
       name: "Echo, ready",
     });
-    const relayRow = within(menu).getByRole("menuitem", {
+    const relayRow = within(menu).getByRole("button", {
       name: "Relay, unavailable",
     });
-    expect(relayRow).toHaveAttribute("aria-disabled", "true");
+    expect(relayRow).toBeDisabled();
     expect(
-      within(menu).getByRole("menuitem", {
+      within(menu).getByRole("button", {
         name: "Repair Broken, attention",
       }),
     ).toBeEnabled();
-    const checkingRow = within(menu).getByRole("menuitem", {
+    const checkingRow = within(menu).getByRole("button", {
       name: "Checking, checking",
     });
-    expect(checkingRow).toHaveAttribute("aria-disabled", "true");
+    expect(checkingRow).toBeDisabled();
     expect(checkingRow).toHaveAttribute("aria-busy", "true");
     expect(
       checkingRow.querySelector(".motion-safe\\:animate-spin"),
     ).toBeVisible();
-    expect(echo.querySelector("svg")).toBeInTheDocument();
     expect(checkingProvider.check).toHaveBeenCalled();
 
     fireEvent.click(echo);
@@ -498,18 +506,7 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const reopenedProviders = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    fireEvent.click(
-      within(reopenedProviders).getByRole("menuitem", {
-        name: "Echo, ready",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Echo, ready" }));
     const reopenedDialog = await screen.findByRole("dialog", { name: "Echo" });
     act(() => echoProvider.set({ readiness: "attention" }));
     expect(
@@ -535,50 +532,27 @@ it("checks active providers in a health submenu and opens their host-owned dialo
         attentionLabel: "Log in to Echo",
       }),
     );
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const actionableProviders = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await vi.waitFor(() =>
-      expect(actionableProviders).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(actionableProviders).getByRole("menuitem", {
-        name: "Log in to Echo, attention",
-      }),
+    await user.click(
+      screen.getByRole("button", { name: "Log in to Echo, attention" }),
     );
     expect(attentionAction).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
 
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const providers = await screen.findByRole("menu", {
-      name: "Provider settings",
+    const brokenTrigger = screen.getByRole("button", {
+      name: "Repair Broken, attention",
     });
-    await vi.waitFor(() =>
-      expect(providers).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(providers).getByRole("menuitem", {
-        name: "Repair Broken, attention",
-      }),
-    );
+    await user.click(brokenTrigger);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Provider controls are unavailable.",
     );
     await user.keyboard("{Escape}");
-    await vi.waitFor(() => expect(more).toHaveFocus());
+    await vi.waitFor(() => expect(brokenTrigger).toHaveFocus());
   } finally {
     errors.mockRestore();
   }
 });
 
-it("restores a provider dialog from page history and writes open and close visits", async () => {
+it("restores legacy provider links and writes close visits", async () => {
   const user = userEvent.setup();
   const base = {
     version: 1,
@@ -622,18 +596,6 @@ it("restores a provider dialog from page history and writes open and close visit
   );
   const page = { navigator, navigation: request() };
   const view = setup([agent("Ada", 1)], { page });
-
-  await user.click(screen.getByRole("button", { name: "More agent actions" }));
-  await user.hover(
-    await screen.findByRole("menuitem", { name: "Provider settings" }),
-  );
-  const providers = await screen.findByRole("menu", {
-    name: "Provider settings",
-  });
-  fireEvent.click(
-    within(providers).getByRole("menuitem", { name: "Echo, ready" }),
-  );
-  expect(open).toHaveBeenLastCalledWith(routed);
 
   current = { id: "provider", target: routed };
   view.unmount();

@@ -1,4 +1,3 @@
-import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
@@ -18,17 +17,14 @@ export function AgentInstructions({
 }) {
   return (
     <Field label="Instructions" description={description}>
-      <SettingsGroup>
-        <Textarea
-          appearance="content"
-          surface="inset"
-          rows={8}
-          value={value}
-          disabled={disabled}
-          placeholder={EXAMPLE}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      </SettingsGroup>
+      <Textarea
+        surface="inset"
+        rows={8}
+        value={value}
+        disabled={disabled}
+        placeholder={EXAMPLE}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </Field>
   );
 }

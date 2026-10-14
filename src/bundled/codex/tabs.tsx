@@ -312,7 +312,7 @@ function CodexSignIn({
           Sign in
         </Button>
         {running && (
-          <Button size="sm" onClick={login.cancel}>
+          <Button size="sm" onClick={() => void login.cancel()}>
             Cancel
           </Button>
         )}

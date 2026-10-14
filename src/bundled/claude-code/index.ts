@@ -65,11 +65,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } = createTabs({
-    setup,
-    defaults: providerDefaults,
-    runtime,
-  });
+  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
+    createTabs({
+      setup,
+      defaults: providerDefaults,
+      runtime,
+    });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",

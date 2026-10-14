@@ -881,3 +881,64 @@ it("offers an update before discovering models on a pre-safe-mode Claude copy", 
     ),
   ).toHaveLength(0);
 });
+
+it.each([
+  { available: true, action: "Sign in", title: "Sign in to Claude" },
+  { available: false, action: "Install Claude", title: "Set up Claude" },
+])(
+  "keeps failed Claude $action output in its open dialog",
+  async ({ available, action, title }) => {
+    const { type, spawn } = installed({ loggedIn: false, available });
+    const Model = type.CreateModel;
+    if (!Model) throw new Error("Missing model field");
+    render(
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />,
+    );
+    const signIn = await screen.findByRole("button", { name: action });
+    await waitFor(() => expect(signIn).toBeEnabled());
+    const original = spawn.getMockImplementation();
+    if (!original) throw new Error("Missing spawn implementation");
+    spawn.mockImplementation(async (id, options = {}) => {
+      if (
+        options.args?.includes("install") ||
+        options.args?.slice(-2).join(" ") === "auth login"
+      )
+        throw new Error("Setup could not start");
+      return original(id, options);
+    });
+    fireEvent.click(signIn);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: action })).toBeEnabled(),
+    );
+    const dialog = await screen.findByRole("dialog", { name: title });
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "Setup details" }),
+    );
+    expect(await within(dialog).findByRole("log")).toHaveTextContent(
+      "Setup could not start",
+    );
+  },
+);
+
+it("keeps the shared Claude catalog across repeated provider checks", async () => {
+  const { type, spawn } = installed();
+  const Model = type.CreateModel;
+  if (!Model || !type.provider) throw new Error("Missing provider");
+  render(
+    <>
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />
+    </>,
+  );
+  await screen.findAllByRole("combobox", { name: "Model" });
+  for (let i = 0; i < 3; i++)
+    await act(async () => {
+      await type.provider?.check();
+    });
+  expect(
+    spawn.mock.calls.filter(([, options]) =>
+      options?.args?.includes("--input-format"),
+    ),
+  ).toHaveLength(1);
+  expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2);
+});

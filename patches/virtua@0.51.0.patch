@@ -94,8 +94,8 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..e641a5661230f2578eb1e23d66144085
 +                    // an inverted range that renders nothing for a frame; the
 +                    // offset lands at the top, so hold as many rows from there.
 +                    if (z) {
-+                        const d = l[0] - itemCount();
-+                        k = k[0] + d < 0 ? [ 0, k[1] - k[0] ] : [ k[0] + d, k[1] + d ];
++                        const delta = l[0] - itemCount();
++                        k = k[0] + delta < 0 ? [ 0, k[1] - k[0] ] : [ k[0] + delta, k[1] + delta ];
 +                    }
 +                    L(c(l[0], !0)), y = 2, h = 1;
 +                } else c(l[0]), h = 1;

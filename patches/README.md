@@ -180,9 +180,11 @@ The store moves the held range by the shift's item delta, so the rows it kept
 mounted stay mounted and the scroll event's live range is computed as before.
 A shift can also remove rows from the head, since the timeline reports one
 whenever the first row changes and the last does not; a removal past the held
-rows would move the range above the list, an inverted range that renders no
-row for a frame, so the range then holds the same number of rows from the top,
-where the clamped offset lands. Nothing changes when no jump is pending, for
+range's start would move the range above the list, so it then holds the same
+number of rows from the top instead. A partial removal holds a range wider
+than the live one for that frame; a removal of every held row, which would
+otherwise leave an inverted range that renders no row, lands with the
+corrected offset at the top. Nothing changes when no jump is pending, for
 appends, or for the correction itself. The installed-store regressions hold a
 correction's range across a second prepend and across such a removal, and
 require the live range that follows to lie inside it.

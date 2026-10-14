@@ -495,6 +495,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
       row(page, "alpha").locator("[data-channel-unread]"),
     ).toHaveAttribute("aria-label", "Marked unread on this device only");
     await scroll(page, 1800);
+    await page.clock.runFor(100);
     await expect(cue(page, "above")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
     const refreshed = page.waitForResponse(
@@ -519,6 +520,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await releaseReadingFocus(page);
   } finally {
     release();
+    await page.clock.resume();
     await Promise.all(pendingRoutes);
     await page.unroute("**/api/relay/secondary/sidebar-preferences");
   }

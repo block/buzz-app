@@ -299,7 +299,9 @@ test.describe("DM archive delivery", () => {
     await expect(rows).toHaveCount(1);
     await rows.getByRole("button", { name: /^Open / }).click();
     await expect(
-      inbox.getByText("Earlier DM reply", { exact: true }),
+      inbox
+        .getByRole("complementary", { name: "Thread", exact: true })
+        .getByText("Earlier DM reply", { exact: true }),
     ).toBeVisible();
     await inbox.getByRole("button", { name: "Archive conversation" }).click();
     await expect(rows).toHaveCount(0);

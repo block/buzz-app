@@ -142,18 +142,20 @@ export function ModelPicker({
     description: defaultChoice?.description ?? defaultDescription,
   };
   const items: ModelChoice[] = includeDefault
-    ? [fallback, ...models.filter((model) => model.id !== defaultModel)]
+    ? [
+        fallback,
+        ...models.filter(
+          (model) => model.id !== defaultModel || model.id === value,
+        ),
+      ]
     : [...models];
-  const selectedValue =
-    includeDefault && defaultModel && value === defaultModel ? "" : value;
-  if (selectedValue && !items.some((model) => model.id === selectedValue))
+  if (value && !items.some((model) => model.id === value))
     items.push({
       id: value,
       label: value,
       description: allowCustomModel ? "Custom model" : "Unavailable model",
     });
-  const selected =
-    items.find((model) => model.id === selectedValue) ?? fallback;
+  const selected = items.find((model) => model.id === value) ?? fallback;
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {

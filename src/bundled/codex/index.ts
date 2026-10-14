@@ -43,16 +43,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
     needed = running.length > 0;
     if (spawn && (was === undefined || (needed && !was))) {
       const updated = setup.update(needed);
-      // Then a usable copy's server starts, so the first mention skips its
-      // startup; one being installed meanwhile is left to the mention.
+      // Then, after the check that follows it (two first starts of Codex
+      // race on its state), a usable copy's server starts so the first
+      // mention skips its startup. One being installed is left to the mention.
       if (needed)
-        void updated.then(
-          () => {
-            const { running, status } = setup.snapshot();
-            if (needed && !running && status?.state === "ready") runtime.warm();
-          },
-          () => undefined,
-        );
+        void updated
+          .then(() => providerController.check())
+          .then(
+            () => {
+              if (
+                needed &&
+                !setup.snapshot().running &&
+                providerController.snapshot().readiness === "ready"
+              )
+                runtime.warm();
+            },
+            () => undefined,
+          );
     }
   };
   const offAgents = ctx.agents.subscribe(sync);

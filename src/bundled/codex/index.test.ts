@@ -141,30 +141,48 @@ it("stops agents that stop running even when the agent list could not be read", 
   expect(sync).toHaveBeenLastCalledWith([]);
 });
 
-it("starts the server once Buzz's copy is current, only while a Codex agent runs", async () => {
-  let updated: () => void = () => undefined;
-  let pending = Promise.resolve();
-  /** What the update leaves behind, as `CodexSetup.snapshot` reports it. */
-  let after: object = { status: { state: "ready", version: "1" } };
+it("starts the server once Codex is updated and checked, only while a Codex agent runs", async () => {
+  /** What the next update and check leave behind. */
+  let left: { running?: "install"; readiness: string } = { readiness: "ready" };
+  /** Held updates and checks, released in order. */
+  const held: (() => void)[] = [];
+  const hold = (target: object, change: () => object) =>
+    new Promise<void>((resolve) => {
+      held.push(() => {
+        const own = target as { state: object };
+        own.state = { ...own.state, ...change() };
+        resolve();
+      });
+    });
   const update = vi
     .spyOn(CodexSetup.prototype, "update")
     .mockImplementation(function (this: CodexSetup) {
-      pending = new Promise<void>((resolve) => {
-        updated = () => {
-          const own = this as unknown as { state: object };
-          own.state = { ...own.state, ...after };
-          resolve();
-        };
-      });
-      return pending;
+      return hold(this, () => ({ running: left.running }));
+    });
+  const check = vi
+    .spyOn(CodexProvider.prototype, "check")
+    .mockImplementation(function (this: CodexProvider) {
+      return hold(this, () => ({ readiness: left.readiness }));
     });
   const warm = vi
     .spyOn(CodexRuntime.prototype, "warm")
     .mockImplementation(() => undefined);
   vi.spyOn(CodexRuntime.prototype, "sync").mockImplementation(() => undefined);
+  const release = async () => {
+    await vi.waitFor(() => expect(held.length).toBeGreaterThan(0));
+    held.shift()?.();
+  };
+  // Every step is a microtask, so a macrotask has seen the chain through.
+  const settled = () => new Promise((resolve) => setTimeout(resolve));
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };
   let state = { status: "ready", agents: [agent], running: [agent] };
   let notify = () => undefined;
+  const restart = () => {
+    state = { ...state, running: [] };
+    notify();
+    state = { ...state, running: [agent] };
+    notify();
+  };
   let cleanup: () => void = () => undefined;
   apply({
     pluginOwner: { id: "buzz.codex" },
@@ -183,48 +201,41 @@ it("starts the server once Buzz's copy is current, only while a Codex agent runs
     },
   } as never);
   expect(update).toHaveBeenLastCalledWith(true);
-  // An install or update in progress would be raced, so the server waits.
+  await release();
+  // Two first starts of Codex race on its state, so the check goes first.
+  await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
+  await settled();
   expect(warm).not.toHaveBeenCalled();
-  updated();
+  await release();
   await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
 
-  // An agent that stops before its copy is current leaves no server.
+  // An agent that stops meanwhile, a Codex that needs attention, and an
+  // install in progress all leave the start to the mention.
+  restart();
   state = { ...state, running: [] };
   notify();
-  state = { ...state, running: [agent] };
-  notify();
-  expect(update).toHaveBeenCalledTimes(2);
-  state = { ...state, running: [] };
-  notify();
-  updated();
-  // The plugin's continuation was attached first, so it has run.
-  await pending;
-  expect(warm).toHaveBeenCalledOnce();
-
-  // Nor a copy that is missing, or still being installed.
-  for (const left of [
-    { status: { state: "missing" } },
-    { status: { state: "ready", version: "1" }, running: "install" },
+  await release();
+  await release();
+  await settled();
+  expect(warm, "stopped").toHaveBeenCalledOnce();
+  for (const next of [
+    { readiness: "attention" },
+    { readiness: "ready", running: "install" as const },
   ]) {
-    after = left;
-    state = { ...state, running: [] };
-    notify();
-    state = { ...state, running: [agent] };
-    notify();
-    updated();
-    await pending;
-    expect(warm).toHaveBeenCalledOnce();
+    left = next;
+    restart();
+    await release();
+    await release();
+    await settled();
+    expect(warm, JSON.stringify(next)).toHaveBeenCalledOnce();
   }
-  after = { status: { state: "ready", version: "1" }, running: undefined };
-
-  // Nor does one whose plugin was disposed meanwhile.
-  state = { ...state, running: [] };
-  notify();
-  state = { ...state, running: [agent] };
-  notify();
-  expect(update).toHaveBeenCalledTimes(5);
+  // Nor does a plugin disposed meanwhile start one.
+  left = { readiness: "ready" };
+  restart();
+  await release();
   cleanup();
-  updated();
-  await pending;
+  await release();
+  await settled();
+  expect(update).toHaveBeenCalledTimes(5);
   expect(warm).toHaveBeenCalledOnce();
 });

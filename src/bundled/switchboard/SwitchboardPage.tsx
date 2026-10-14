@@ -1,13 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useReducer,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
-import type { NavigationScope } from "../../features/navigation/targets";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -67,10 +60,6 @@ export function SwitchboardPage({
               key={`${scope}:${connection.generation}`}
               session={connection.session}
               partition={scope}
-              scope={{
-                viewer,
-                communityOrigin: scope.slice(0, -(viewer.length + 1)),
-              }}
               agents={agents}
               navigator={navigator}
             />
@@ -96,28 +85,38 @@ export function SwitchboardPage({
 function SwitchboardView({
   session,
   partition,
-  scope,
   agents,
   navigator,
 }: {
   session: RelaySession;
   partition: string;
-  scope: NavigationScope;
   agents: Agents;
   navigator: Navigation;
 }) {
-  // Sessions are read on render; every source they come from re-renders.
-  const [, refresh] = useReducer((n: number) => n + 1, 0);
   const types = agents.types();
-  useEffect(() => {
-    const stops = [
-      agents.subscribe(refresh),
-      ...types.flatMap((type) => type.sessions?.subscribe(refresh) ?? []),
-    ];
-    return () => {
-      for (const stop of stops) stop();
-    };
-  }, [agents, types]);
+  const subscribeSessions = useCallback(
+    (listener: () => void) => {
+      const stops = [
+        agents.subscribe(listener),
+        ...types.flatMap((type) => type.sessions?.subscribe(listener) ?? []),
+      ];
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
+    [agents, types],
+  );
+  // Compared by value, so a change between render and subscribing is not lost.
+  useSyncExternalStore(subscribeSessions, () =>
+    JSON.stringify(
+      sessionRows(agents).map(({ id, agent, session }) => [
+        id,
+        agent.name,
+        agent.picture,
+        session,
+      ]),
+    ),
+  );
   const { channels } = useChannelList(session.channels);
   const subscribe = useCallback(
     (listener: () => void) => subscribeView(partition, listener),
@@ -220,7 +219,7 @@ function SwitchboardView({
                       </span>
                     }
                     onClick={() =>
-                      void navigator.open(targetOf(scope, item, channel))
+                      void navigator.open(targetOf(partition, item, channel))
                     }
                   />
                   <span className={styles.rowArchive}>
@@ -246,7 +245,7 @@ function SwitchboardView({
           <EmptyState
             icon={<ArchiveIcon size={24} />}
             title="No archived sessions"
-            description="Archived sessions return here until their agent starts another turn."
+            description="Archived sessions stay here until they have new activity."
           />
         ) : (
           <EmptyState

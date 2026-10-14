@@ -3,17 +3,15 @@ import type {
   Agents,
   AgentSession,
 } from "../../features/agents/service";
-import type {
-  NavigationScope,
-  OpenTarget,
-} from "../../features/navigation/targets";
+import type { OpenTarget } from "../../features/navigation/targets";
+import { splitPartition } from "../../features/relay/partition";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { replaceView, viewRevision } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
 
 export type Row = Readonly<{ id: string; agent: Agent; session: AgentSession }>;
 
-/** The selected community's agent sessions, most recent turn first. */
+/** The selected community's agent sessions, most recent activity first. */
 export function sessionRows(agents: Agents): Row[] {
   const types = new Map(agents.types().map((type) => [type.key, type]));
   return agents
@@ -35,10 +33,12 @@ export function sessionRows(agents: Agents): Row[] {
 
 /** Where to message the session: its thread, Me chat, or channel or DM. */
 export function targetOf(
-  scope: NavigationScope,
+  partition: string,
   { channelId, root }: AgentSession,
   channel: ChannelSummary | undefined,
 ): OpenTarget {
+  const scope = splitPartition(partition);
+  if (!scope) throw new Error("Invalid Switchboard destination");
   if (root)
     return {
       version: 1,
@@ -48,8 +48,7 @@ export function targetOf(
       messageId: root,
       threadRootId: root,
     };
-  if (channel?.channelType === "session")
-    return meTarget(`${scope.communityOrigin}:${scope.viewer}`, channelId);
+  if (channel?.channelType === "session") return meTarget(partition, channelId);
   return { version: 1, kind: "conversation", scope, channelId };
 }
 
@@ -73,7 +72,7 @@ export function readArchives(revision: string | null | undefined): Archives {
   return {};
 }
 
-/** Archived until a turn starts after it was archived. */
+/** Archived until the session is active after it was archived. */
 export const isArchived = (archives: Archives, { id, session }: Row) =>
   id in archives && (archives[id] ?? 0) >= (session.at ?? 0);
 

@@ -54,6 +54,7 @@ function setup(
   options: Readonly<{
     /** Channels filed in the owner's Me; the owner is the viewer. */
     me?: Set<string>;
+    channelType?: "stream" | "session";
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
@@ -82,7 +83,13 @@ function setup(
     channels: {
       list: () => ({
         channels: [
-          { id: channel, name: "general", channelType: "stream", members: [] },
+          {
+            id: channel,
+            name: "general",
+            channelType:
+              options.channelType ?? (options.me ? "session" : "stream"),
+            members: [],
+          },
         ],
       }),
     },
@@ -274,8 +281,30 @@ describe("GooseRuntime", () => {
     ]);
   });
 
-  it("fails a mention it cannot place until the placement can be read", async () => {
-    const { deliver, fake, placement, published } = setup();
+  it("keeps a converted stream threaded despite the owner's retained Me entry", async () => {
+    const { deliver, goose, placement, published } = setup({
+      me: new Set([channel]),
+      channelType: "stream",
+      reply: "Converted answer",
+    });
+    // Verified ordinary metadata does not depend on private filing reads.
+    placement.state = { status: "error", error: "Recipe read failed" };
+    await deliver(message("1", "@Gander converted"));
+    await flush(100);
+    expect(goose()?.turns[0]?.text).toContain("Scope: thread");
+    expect(placement.refresh).not.toHaveBeenCalled();
+    expect(published.map((event) => event.tags)).toEqual([
+      [
+        ["h", channel],
+        ["e", "1".repeat(64), "", "reply"],
+      ],
+    ]);
+  });
+
+  it("fails a session mention it cannot place until the placement can be read", async () => {
+    const { deliver, fake, placement, published } = setup({
+      channelType: "session",
+    });
     placement.state = { status: "error", error: "Recipe read failed" };
     await expect(deliver(message("1", "@Gander hi"))).rejects.toThrow(
       "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",

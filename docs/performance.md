@@ -45,12 +45,28 @@ input: JavaScript invoked directly through the automation protocol can be absent
 from `ScriptDuration`, even when included in `TaskDuration`. Categories overlap: do not
 sum them or interpret them as CPU percentages. No forced GC is performed.
 
-`channel-open` measures two independent cases. Cold opening clicks a never-opened,
-never-hovered channel and requires a head read during opening. Prepared opening
-hovers that channel, waits for its head response and a browser idle opportunity,
-then clicks. Preparation cost is outside that window. Each target has 120 mixed
-height text messages; the existing app chooses how many it initially loads.
-The corpus content and timestamps are fixed; signing identities are ephemeral.
+`channel-open` measures two independent cases with fresh state:
+
+- `channel-open-cold` clicks a never-opened, never-hovered channel and requires a
+  head read during opening.
+- `channel-open-hover` gives the same unopened channel a 150ms hover head start,
+  then clicks whether preparation is finished or still running. CPU throttling
+  applies during hover too. There is no response-completion or idle wait.
+
+Both cases measure click-to-first-rows and browser work during opening plus
+settling. Work completed before the click earns the hover case a head start;
+remaining preparation can contribute to the measured work. Hover work is outside
+these metric windows. `work.hoverMs` records the requested lead and raw
+`recording.hoverLeadMs` records the actual browser hover-to-click interval, which
+can exceed 150ms due to browser scheduling and protocol dispatch. Head-read counts
+before and during opening are diagnostic evidence; hover does not require zero
+new reads. Each target has 120 mixed-height text messages; the existing app chooses
+how many it initially loads. The corpus content and timestamps are fixed; signing
+identities are ephemeral.
+
+The hover case replaces `channel-open-prepared`, which waited for a completed head
+response and an idle opportunity. Those older results are a different workload;
+collect a new baseline rather than comparing them as equivalent.
 
 ## Scrolling
 

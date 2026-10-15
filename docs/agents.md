@@ -100,7 +100,7 @@ selections take precedence. Local Codex configuration does not supply model or
 thinking preferences to Buzz; unrelated configuration is still used where needed.
 Preview and execution resolve the same concrete model and thinking level, and
 execution passes both explicitly rather than falling through to host preferences.
-Composer discovery shares concurrent reads but refreshes on subsequent lookups.
+Composer discovery caches reads until effective model or thinking settings change.
 Each outgoing composer message carries the concrete displayed model and known
 effort for that turn; this does not rewrite the saved provider preferences or the
 agent's overrides.

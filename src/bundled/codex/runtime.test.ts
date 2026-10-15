@@ -839,12 +839,40 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   expect(f.starts()).toEqual([]);
   expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
   expect(f.process.end).not.toHaveBeenCalled();
-  await expect(f.runtime.preview(agent)).resolves.toMatchObject({
-    current: "test-model",
-  });
+  expect(f.runtime.preview(agent)).toBe(one);
   f.runtime.sync([]);
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
+});
+it("refreshes model discovery only when effective model or effort changes", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  await one;
+  expect(
+    f.runtime.preview({ ...agent, config: { workspace: "/tmp/other" } }),
+  ).toBe(one);
+  const two = f.runtime.preview({ ...agent, config: { model: "deep-model" } });
+  expect(two).not.toBe(one);
+  await expect(two).resolves.toMatchObject({ current: "deep-model" });
+  const three = f.runtime.preview({
+    ...agent,
+    config: { model: "deep-model", effort: "xhigh" },
+  });
+  expect(three).not.toBe(two);
+  await expect(three).resolves.toMatchObject({
+    current: "deep-model",
+    models: expect.arrayContaining([
+      expect.objectContaining({ id: "deep-model", effort: "xhigh" }),
+    ]),
+  });
+  expect(
+    f.runtime.preview({
+      ...agent,
+      config: { model: "deep-model", effort: "xhigh" },
+    }),
+  ).toBe(three);
+  expect(f.sent.filter((wire) => wire.method === "model/list")).toHaveLength(3);
 });
 it("shares model discovery with active turns and another agent", async () => {
   const f = fixture();

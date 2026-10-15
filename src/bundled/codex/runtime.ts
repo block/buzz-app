@@ -154,7 +154,7 @@ export class CodexRuntime {
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  /** Share concurrent discovery; later lookups reread Codex's configuration. */
+  /** Read-only model discovery, kept until effective model settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   private memoryReads = new MemoryReads();
   constructor(
@@ -174,11 +174,7 @@ export class CodexRuntime {
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
-    const key = JSON.stringify([
-      settings.workspace,
-      settings.model,
-      settings.effort,
-    ]);
+    const key = JSON.stringify([settings.model, settings.effort]);
     const existing = this.previews.get(agent.pubkey);
     if (existing?.key === key) return existing.ready;
     const server = this.open();
@@ -213,11 +209,10 @@ export class CodexRuntime {
     })();
     const entry = { key, ready };
     this.previews.set(agent.pubkey, entry);
-    const release = () => {
+    void ready.catch(() => {
       if (this.previews.get(agent.pubkey) === entry)
         this.previews.delete(agent.pubkey);
-    };
-    void ready.then(release, release);
+    });
     return ready;
   }
 

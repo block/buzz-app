@@ -10,6 +10,10 @@ import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
 import { readSelectedAssistant } from "./selected-assistant";
+import { createWorkSessions } from "../relay/work-sessions";
+import { createOutbox } from "../relay/outbox";
+import { keypair, signed } from "../relay/testing";
+import { sessionDescription } from "./metadata";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -221,6 +225,8 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     "Fresh start",
     undefined,
     undefined,
+    undefined,
+    false,
   );
 });
 
@@ -1395,7 +1401,8 @@ it.each(
       "My chosen title",
       undefined,
       600,
-      { explicit: true },
+      { automatic: "New project chat", explicit: true },
+      true,
     );
   },
 );
@@ -1577,7 +1584,9 @@ it.each(["", "Make contrast accessible"])(
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
     for (const call of h.workSessions.create.mock.calls) {
       expect(call[1]).toBe(name || "Original prompt");
-      expect(call[4]).toEqual(name ? { explicit: true } : undefined);
+      expect(call[4]).toEqual(
+        name ? { automatic: "Original prompt", explicit: true } : undefined,
+      );
     }
     expect(h.messages.send).toHaveBeenCalledOnce();
   },
@@ -1683,6 +1692,122 @@ it.each([
       started,
     ]) {
       expect(operation).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it.each(
+  [false, true].flatMap((personal) =>
+    [false, true].map((explicit) => ({ personal, explicit })),
+  ),
+)(
+  "naming crosses the real composer → creation/outbox boundary with frozen intent (personal=$personal, explicit=$explicit)",
+  async ({ personal, explicit }) => {
+    const h = setup();
+    const viewer = keypair();
+    const publish = vi.fn(async (_event: Parameters<typeof signed>[1]) => {});
+    const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+      signed(viewer, template),
+    );
+    const outbox = createOutbox(
+      viewer.pubkey,
+      { kinds: [9, 9007], sign, publish },
+      { load: () => [], save() {} },
+    );
+    const lifetime = new AbortController();
+    const namespace = personal ? "me" : "sessions";
+    writeView("real-creation", `${namespace}:settings`, {
+      name: explicit ? "Chosen title" : "",
+      ttlSeconds: 600,
+    });
+    writeView("real-creation", `${namespace}:new-draft`, "Original prompt");
+    let observed = outbox.outbox.snapshot();
+    let channelList = {
+      status: "ready" as const,
+      channels: [] as {
+        id: string;
+        name: string;
+        channelType: "session";
+        members: string[];
+      }[],
+    };
+    const channels = {
+      ...h.session.channels,
+      list: () => {
+        const next = outbox.outbox.snapshot();
+        if (next !== observed) {
+          observed = next;
+          channelList = {
+            status: "ready",
+            channels: next
+              .filter(({ event }) => event.kind === 9007)
+              .map(({ event }) => ({
+                id: event.tags.find(([key]) => key === "h")?.[1] ?? "",
+                name: "Chosen title",
+                channelType: "session",
+                members: [viewer.pubkey],
+              })),
+          };
+        }
+        return channelList;
+      },
+    };
+    const workSessions = createWorkSessions(
+      outbox.outbox,
+      channels,
+      { read: async () => [] },
+      lifetime.signal,
+    );
+    const session = {
+      ...h.session,
+      viewer: viewer.pubkey,
+      channels,
+      workSessions,
+      messages: {
+        ...h.session.messages,
+        send: (id: string, text: string) =>
+          outbox.outbox.send({ kind: 9, content: text, tags: [["h", id]] }),
+      },
+    } as RelaySession;
+    const started = vi.fn();
+    const mounted = render(
+      <NewSessionComposer
+        personal={personal}
+        session={session}
+        scope="real-creation"
+        onStarted={started}
+      />,
+    );
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      const created = publish.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.kind === 9007);
+      expect(created?.tags).toContainEqual([
+        "name",
+        explicit ? "Chosen title" : "Original prompt",
+      ]);
+      expect(created?.tags).toContainEqual([
+        "about",
+        sessionDescription(undefined, {
+          personal,
+          ...(explicit
+            ? { naming: { automatic: "Original prompt", explicit: true } }
+            : {}),
+        }),
+      ]);
+      expect(created?.tags).toContainEqual(["ttl", "600"]);
+      expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
+        9007, 9,
+      ]);
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      mounted.unmount();
+      lifetime.abort();
+      outbox.dispose();
     }
   },
 );

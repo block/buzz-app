@@ -15,6 +15,14 @@
     {
       "name": "Quoted",
       "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"A \\\"quoted\\\" prompt\",\"explicit\":true}"
+    },
+    {
+      "name": "Named Solo",
+      "about": "Buzz session (buzz.sessions/v1)\npersonal\nnaming:{\"automatic\":\"First prompt\",\"explicit\":true}"
+    },
+    {
+      "name": "First prompt",
+      "about": "Buzz session (buzz.sessions/v1)\npersonal\nnaming:{\"automatic\":\"First prompt\",\"explicit\":false}"
     }
   ],
   "rejected": [
@@ -49,6 +57,10 @@
     {
       "name": "Named",
       "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"explicit\":true}\nextra"
+    },
+    {
+      "name": "Named Solo",
+      "about": "Buzz session (buzz.sessions/v1)\nnaming:{\"automatic\":\"First prompt\",\"explicit\":true}\npersonal"
     }
   ]
 }

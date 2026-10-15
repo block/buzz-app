@@ -284,13 +284,10 @@ export function NewSessionComposer({
             [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
           parent?.id,
           current.ttlSeconds,
-          ...(current.automaticName !== undefined && current.explicitName
-            ? [
-                {
-                  explicit: true,
-                },
-              ]
-            : []),
+          current.automaticName !== undefined && current.explicitName
+            ? { automatic: current.automaticName, explicit: true }
+            : undefined,
+          personal,
         );
         save({ ...current });
       }

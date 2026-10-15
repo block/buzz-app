@@ -554,6 +554,7 @@ export function createWorkSessions(
       parentId?: string,
       ttlSeconds?: number,
       naming?: SessionNaming,
+      personal = false,
     ) {
       writer();
       identifier(id);
@@ -585,7 +586,7 @@ export function createWorkSessions(
           ["name", title],
           ["visibility", "private"],
           ["channel_type", "stream"],
-          ["about", sessionDescription(parentId, { naming })],
+          ["about", sessionDescription(parentId, { personal, naming })],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
         ],
       });

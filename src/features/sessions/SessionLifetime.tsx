@@ -174,6 +174,7 @@ export function useSessionLifetime({
             const description = nameChanged
               ? normalized || naming?.automatic || naming?.explicit
                 ? sessionDescription(undefined, {
+                    personal: !!metadata.personal,
                     naming: {
                       ...(naming?.automatic
                         ? { automatic: naming.automatic }

@@ -950,3 +950,41 @@ it("automatic sessions can change only lifetime while the name field stays blank
     ["ttl", ""],
   ]);
 });
+
+it("renaming and resetting a personal session preserve its signed personal marker", async () => {
+  const h = combined({
+    personal: true,
+    naming: { automatic: "First prompt", explicit: true },
+  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "Solo title" } },
+  );
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "Solo title"],
+  ]);
+  expect(await h.details.capability.load(h.id)).toMatchObject({
+    description: sessionDescription(undefined, {
+      personal: true,
+      naming: { automatic: "First prompt", explicit: true },
+    }),
+  });
+  h.mounted.unmount();
+  render(h.view());
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    { target: { value: "" } },
+  );
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledTimes(2));
+  expect(await h.details.capability.load(h.id)).toMatchObject({
+    name: "First prompt",
+    description: sessionDescription(undefined, {
+      personal: true,
+      naming: { automatic: "First prompt", explicit: false },
+    }),
+  });
+});

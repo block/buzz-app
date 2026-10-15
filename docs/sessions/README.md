@@ -184,9 +184,13 @@ Old Canvas-only settings and pending receipts still load without a migration or
 another creation/rename operation.
 
 New session `about` metadata retains the existing marker, optional parent line,
-and one optional canonical `naming:` JSON line. Its `automatic` title is immutable
-through session settings; `explicit` records whether the signed channel name is a
-chosen name. Clear sets that same channel's name to the retained automatic title,
+and the `personal` line for Solo chats. Automatic/default creation omits naming
+metadata. Explicit creation includes one canonical `naming:` JSON line with the
+already-frozen automatic fallback; the real creation service, not just the form,
+validates that payload. Name/lifetime edits preserve `personal`; only Share's
+existing conversion clears it. The recorded `automatic` title is immutable through
+session settings; `explicit` records whether the signed channel name is a chosen
+name. Clear sets that same channel's name to the retained automatic title,
 never an empty wire name. Historical markers have unknown naming provenance:
 renaming records `explicit:true` without inventing an automatic fallback. Clearing
 when that fallback is unavailable keeps the last confirmed title and its existing

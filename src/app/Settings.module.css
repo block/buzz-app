@@ -128,6 +128,8 @@
 
 .essentialBadge {
   display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: var(--space-half) var(--space-2);
   border-radius: var(--radius-capsule);
   background: var(--affordance-accent);

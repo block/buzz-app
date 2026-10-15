@@ -352,7 +352,7 @@ export function Settings({
                           aria-pressed={essentialsOnly}
                           onClick={() => setEssentialsOnly((value) => !value)}
                         >
-                          Essentials only
+                          <span aria-hidden="true">✨</span> Essentials only
                         </Button>
                         {essentialsOnly && pluginGroups.length === 0 && (
                           <p role="status" className="text-body-sm text-subtle">
@@ -386,6 +386,7 @@ export function Settings({
                                 <span>{plugin.manifest.name}</span>
                                 {isEssentialPlugin(plugin) && (
                                   <span className={styles.essentialBadge}>
+                                    <span aria-hidden="true">✨</span>
                                     Essential
                                   </span>
                                 )}

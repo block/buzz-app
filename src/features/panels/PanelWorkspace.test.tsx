@@ -694,6 +694,7 @@ test("a tab context menu dismisses without closing a tab and supports keyboard c
   const thread = tab("Thread");
   await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
   await screen.findByRole("menuitem", { name: "Close all tabs" });
+  await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
   expect(thread).toHaveAttribute("aria-selected", "true");
   await user.keyboard("{Escape}");
   expect(await screen.findByRole("tab", { name: "Ada" })).toHaveFocus();

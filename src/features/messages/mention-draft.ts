@@ -1,3 +1,4 @@
+import { canonicalSessionCard } from "./session-cards";
 import {
   projectComposerDocument,
   readComposerSnapshot,
@@ -53,14 +54,8 @@ export function mentionDraft(value: unknown): MentionDraft {
     ...(Array.isArray(record.sessionCards) && record.sessionCards.length
       ? {
           sessionCards: record.sessionCards
-            .filter(
-              (item): item is string =>
-                typeof item === "string" &&
-                item.length <= 16000 &&
-                /^\[Session(?::| ·)\s+[^\r\n]+\]\(buzz:\/\/channel\/[^\s()]+\)$/.test(
-                  item,
-                ),
-            )
+            .map(canonicalSessionCard)
+            .filter((item): item is string => item !== undefined)
             .slice(0, 32),
         }
       : {}),

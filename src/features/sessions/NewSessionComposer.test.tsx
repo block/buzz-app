@@ -1859,3 +1859,20 @@ it("starts a new chat with a session card and no caption", async () => {
     ["a".repeat(64)],
   );
 });
+
+it("names a captioned new chat from its caption before staged cards", async () => {
+  const h = setup(),
+    started = vi.fn(),
+    user = userEvent.setup();
+  const link =
+    "[Session: Fix](buzz://channel/11111111-1111-4111-8111-111111111111)";
+  writeView("test", "sessions:new-draft", `${link}\n\nPlease review the fixes`);
+  render(
+    <NewSessionComposer session={h.session} scope="test" onStarted={started} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  expect(h.workSessions.create.mock.calls[0]?.[1]).toBe(
+    "Please review the fixes",
+  );
+});

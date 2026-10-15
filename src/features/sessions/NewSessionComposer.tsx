@@ -157,7 +157,10 @@ export function NewSessionComposer({
           name:
             typeof draftSettings.name === "string"
               ? canonicalDetailsName(draftSettings.name) ||
-                automaticTitle(composerMarkdown(draft))
+                automaticTitle(
+                  composerMarkdown({ ...draft, sessionCards: [] }).trim() ||
+                    composerMarkdown(draft),
+                )
               : draftSettings.name,
           text: composerMarkdown(draft),
           draft,

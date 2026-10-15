@@ -4,6 +4,32 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
 import type { ReferenceChannel } from "./ReferenceText";
 
+/** One durable representation for cards admitted by staging or draft restoration. */
+export function canonicalSessionCard(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 16000) return;
+  const scan = scanMarkdown(value);
+  const paragraph = scan.tree.children?.[0];
+  const link = paragraph?.children?.[0];
+  if (
+    scan.tooDeep ||
+    scan.tree.children?.length !== 1 ||
+    paragraph?.type !== "paragraph" ||
+    paragraph.children?.length !== 1 ||
+    link?.type !== "link" ||
+    !link.url
+  )
+    return;
+  const target = parseBuzzLink(link.url);
+  if (target?.format !== "legacy" || target.messageId || target.threadRootId)
+    return;
+  const text = (node: typeof scan.tree): string =>
+    node.value ?? node.children?.map(text).join("") ?? "";
+  const label = text(link);
+  if (!/^Session(?::| ·)\s+/.test(label) || /[\r\n]/.test(label)) return;
+  const escaped = label.replace(/[\\`[\]*_~<>&|]/g, "\\$&");
+  return `[${escaped}](buzz://channel/${encodeURIComponent(target.channelId)})`;
+}
+
 /** Project presentation only. Actions, copy and replies keep the original row. */
 export function separateSessionCards(
   row: ChannelMessage,

@@ -7376,3 +7376,20 @@ it("restores and sends an older session-link draft with its selected mention int
     [],
   );
 });
+
+it("does not publish an unchanged inline session edit, including reverting a caption change", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const content =
+    "please review [Session: Fix](buzz://channel/session-id) before merge";
+  h.setRows([editableMessage({ content })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const caption = h.input().textContent ?? "";
+  h.fill("Changed caption");
+  h.fill(caption);
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});

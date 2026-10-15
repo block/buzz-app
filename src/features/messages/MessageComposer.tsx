@@ -815,7 +815,13 @@ function Composer({
       restore: input.current.checkpoint(),
     };
     const next = stageSessionCards(
-      mentionDraft(editing.start(current)),
+      mentionDraft(
+        editing.start(current, (body) =>
+          composerMarkdown(
+            stageSessionCards(mentionDraft(body), list.channels),
+          ),
+        ),
+      ),
       list.channels,
     );
     valueRef.current = next;

@@ -8,7 +8,7 @@ import {
   readComposerDocument,
 } from "./composer-document";
 import type { MentionDraft } from "./mention-draft";
-import { separateSessionCards } from "./session-cards";
+import { canonicalSessionCard, separateSessionCards } from "./session-cards";
 import type { ReferenceChannel } from "./ReferenceText";
 import type { ChannelMessage } from "../relay/contracts";
 
@@ -76,11 +76,16 @@ export function stageSessionCards(
     sessionCards: [
       ...new Set([
         ...(draft.sessionCards ?? []),
-        ...cards.map((card) => {
-          if (/^\[Session(?::| ·)\s+/.test(card.content)) return card.content;
+        ...cards.flatMap((card) => {
+          const canonical = canonicalSessionCard(card.content);
+          if (canonical) return canonical;
           const url = scanMarkdown(card.content).links[0]?.url ?? card.content;
           const target = parseBuzzLink(url);
-          return `[Session: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "session"}](${url})`;
+          return (
+            canonicalSessionCard(
+              `[Session: ${target?.format === "legacy" ? target.channelId.slice(0, 8) : "session"}](${url})`,
+            ) ?? []
+          );
         }),
       ]),
     ],

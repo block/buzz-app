@@ -114,3 +114,31 @@ it("keeps a partially spoiler-marked label hidden instead of staging a masked ca
   expect(staged.sessionCards).toBeUndefined();
   expect(composerMarkdown(staged)).toBe(composerMarkdown(draft));
 });
+
+it.each([
+  '[Session: Fix](buzz://channel/session-id "title")',
+  "[Session: Fix](<buzz://channel/session-id>)",
+  "[Session: Fix](BUZZ://channel/session-id)",
+])("restores every admitted card after serialization: %s", (text) => {
+  expect(
+    mentionDraft({ text: "Caption", recipients: [], sessionCards: [text] })
+      .sessionCards,
+  ).toEqual([link]);
+  const staged = stageSessionCards(mentionDraft(`${text}\n\nCaption`), []);
+  expect(staged.sessionCards).toEqual([link]);
+  const restored = mentionDraft(JSON.parse(JSON.stringify(staged)));
+  expect(restored.sessionCards).toEqual([link]);
+  expect(composerMarkdown(restored)).toBe(composerMarkdown(staged));
+  expect(restored.text.trim()).toBe("Caption");
+});
+
+it("preserves literal label punctuation across repeated card restoration", () => {
+  const name = "PR *45* _fix_ `code` &amp; <fix> [a] \\ ok";
+  const escaped = name.replace(/[\\`[\]*_~<>&|]/g, "\\$&");
+  const card = `[Session: ${escaped}](buzz://channel/session-id)`;
+  let draft = stageSessionCards(mentionDraft(card), []);
+  for (let i = 0; i < 3; i++) {
+    draft = mentionDraft(JSON.parse(JSON.stringify(draft)));
+    expect(draft.sessionCards).toEqual([card]);
+  }
+});

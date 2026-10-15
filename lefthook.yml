@@ -1,7 +1,7 @@
-# Stock runners must stop before their unsafe partial-staging guard runs.
-# Under lhm, activate Hermit (source bin/activate-hermit) before committing.
-# Temporary gate: reassess before adopting any new upstream release.
-min_version: 2.1.18-buzz.3
+# Lefthook 2.2.1 isolates partial-staging patches per linked worktree and 2.2.2
+# drops only its own backup stash; older runners must stop before hiding unstaged
+# edits. lhm selects `lefthook` from PATH: activate Hermit or keep Homebrew current.
+min_version: 2.2.2
 lefthook: bin/lefthook
 # Without lhm, `bin/lefthook install` writes shims that fail instead of silently
 # skipping when they cannot find Lefthook. lhm users install nothing: lhm merges

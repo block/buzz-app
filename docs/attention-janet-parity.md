@@ -24,10 +24,9 @@ Terms:
 | Watch tags are sent in the catch-up read | Yes | No. The relay applies most tag filters after its page limit, so a tagged read can return an empty page while older matches remain. The watch's own match still checks the tags, so results are the same. | Intended difference |
 | Catch-up order | Newest page first, oldest first inside each page | Reads the whole window, then delivers strictly oldest first | Intended difference |
 | Catch-up delivery | One event per turn | Batches of up to 64 messages or 64 Ki JSON characters (about 16k–32k tokens) per turn | Intended difference |
-| The agent is told that an event comes from catch-up | Yes | Claude Code: yes. Codex: no, see below. | Gap (Codex) |
-| Codex catch-up | Not applicable | Codex has no catch-up turn. It runs each missed event as a separate watch turn, oldest first. | Gap |
-| Codex timers | Not applicable | Not supported. A timer turn fails. | Gap |
-| Watch events from people other than the owner | The watch sees them | Claude Code: sees them as data. Codex: ignores them, because it applies its mention owner check (`fromOwner`) to watches too. | Gap (Codex) |
+| The agent is told that an event comes from catch-up | Yes | Yes, for every agent type with standalone turns (Claude Code and Codex) | Same |
+| Timers | Yes | Yes, for every agent type with standalone turns (Claude Code and Codex) | Same |
+| Watch events from people other than the owner | The watch sees them | The watch sees them as data. The owner check (`fromOwner`) applies only to mentions. | Same |
 
 ## Not yet compared
 

@@ -22,16 +22,20 @@ export type TeamSource = Readonly<{
   members: readonly string[];
 }>;
 
-export type StartInput<C extends { instructions: string }> = Readonly<{
+export type StartInput<C extends object> = Readonly<{
   store: AgentConfigStore;
   /** This device's row: the launch source in `local`/`migrating`, and the
    * only source of `workspace` and unsynced fields in every mode. */
   local: C;
   agentType: string;
-  schema: SettingsSchema;
-  withSynced: (config: C, settings: Readonly<Record<string, string>>) => C;
-  settings: Readonly<{ mode: Mode; subject: Subject }>;
-  instructions: Readonly<{ mode: Mode; subject: Subject }>;
+  /** Absent while the agent has no config channel: the type is `local`. */
+  settings?: Readonly<{
+    mode: Mode;
+    subject: Subject;
+    schema: SettingsSchema;
+    withSynced: (config: C, settings: Readonly<Record<string, string>>) => C;
+  }>;
+  instructions?: Readonly<{ mode: Mode; subject: Subject }>;
   /** Teams from the synced store; `undefined` while teams are still local. */
   teams?: readonly TeamSource[];
 }>;
@@ -67,31 +71,33 @@ const blocked = (
  * A transport failure never changes a stored state, so a confirmed `present`
  * head keeps serving while the relay is unreachable (offline rule, §4.4);
  * `invalid`, `deleted` and lost access block. */
-export function resolveStart<C extends { instructions: string }>(
-  input: StartInput<C>,
-): Start<C> {
+export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
   const { store } = input;
-  const synced = (side: StartInput<C>["settings"]) =>
-    side.mode === "synced" || store.hadVersion(side.subject);
+  const synced = (
+    side: StartInput<C>["instructions"],
+  ): side is Readonly<{ mode: Mode; subject: Subject }> =>
+    !!side && (side.mode === "synced" || store.hadVersion(side.subject));
   const revisions: string[] = [];
   let config = input.local;
 
-  if (synced(input.settings)) {
-    const entry = store.state(input.settings.subject);
+  const { settings } = input;
+  if (settings && synced(settings)) {
+    const entry = store.state(settings.subject);
     if (entry.state !== "present" || !entry.head)
       return blocked(entry.state, entry.problem, "Settings");
     const read = syncedSettings(
       entry.head.content,
       input.agentType,
-      input.schema,
+      settings.schema,
     );
     if ("problem" in read) return blocked("invalid", read.problem, "Settings");
-    config = input.withSynced(config, read.settings);
+    config = settings.withSynced(config, read.settings);
     revisions.push(entry.head.id);
   }
-  if (synced(input.instructions)) {
-    const entry = store.state(input.instructions.subject);
-    const text = store.instructions(input.instructions.subject);
+  const { instructions } = input;
+  if (synced(instructions)) {
+    const entry = store.state(instructions.subject);
+    const text = store.instructions(instructions.subject);
     if (!text.ok) return blocked(text.state, text.problem, "Instructions");
     config = { ...config, instructions: text.text };
     if (entry.head) revisions.push(entry.head.id);

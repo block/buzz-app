@@ -61,6 +61,11 @@ function install(
   );
 }
 
+const plugin = {
+  schema: syncedSettingsSchema,
+  withSynced: withSyncedSettings,
+};
+
 function input(
   store: AgentConfigStore,
   mode: Mode = "synced",
@@ -70,9 +75,7 @@ function input(
     store,
     local,
     agentType: "claude-code",
-    schema: syncedSettingsSchema,
-    withSynced: withSyncedSettings,
-    settings: { mode, subject: settings },
+    settings: { mode, subject: settings, ...plugin },
     instructions: { mode, subject: instructions },
     ...extra,
   };
@@ -194,7 +197,7 @@ describe("start resolution", () => {
     expect(
       resolveStart(
         input(fresh, "migrating", {
-          settings: { mode: "local", subject: settings },
+          settings: { mode: "local", subject: settings, ...plugin },
         }),
       ),
     ).toMatchObject({ ok: false, state: "unavailable" });

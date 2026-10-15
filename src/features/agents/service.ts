@@ -1,4 +1,6 @@
 import { createLocalAgentActivity } from "./local-activity";
+import { AgentConfigStore } from "./agent-config";
+import { resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -325,6 +327,8 @@ export type Delivery<Config = unknown> = Readonly<{
   agent: AgentHandle;
   /** The agent's config when this run started. */
   config: Config;
+  /** The synced config revisions this run started from; empty when local. */
+  revisions?: readonly string[];
   /** The model the owner asked for in the triggering message: one of the
    * type's `models`. Absent means the agent's own model. */
   model?: string;
@@ -882,6 +886,8 @@ export class AgentsService extends Service implements Agents {
       unable?: boolean;
     }
   >();
+  /** Confirmed synced config copies, the only synced launch source. */
+  private readonly configStore: AgentConfigStore;
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -913,6 +919,7 @@ export class AgentsService extends Service implements Agents {
       running: [],
       teams: this.teamList,
     });
+    this.configStore = new AgentConfigStore(storage);
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
     );
@@ -935,6 +942,13 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(identity);
       },
       write: (record) => this.write(record),
+      // No agent has a config channel yet, so every type starts `local`.
+      start: (agent) =>
+        resolveStart({
+          store: this.configStore,
+          local: agent.config as object,
+          agentType: agent.type,
+        }),
       team: (pubkey) =>
         teamPrompt(
           this.teamList,

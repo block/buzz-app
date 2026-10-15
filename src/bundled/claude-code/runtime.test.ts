@@ -1529,7 +1529,7 @@ it("gives a tool the partial listing a slow native read answers", async () => {
   }
 });
 
-it("launches a session with zero relay requests beyond the message's own sender lookup", async () => {
+it("launches a session with no config requests; the only call is the conversation's name lookup", async () => {
   const f = setup();
   // Every relay-facing call the runtime can make, by name.
   const requests = {
@@ -1562,9 +1562,9 @@ it("launches a session with zero relay requests beyond the message's own sender 
   await flush(10);
   expect(f.claudes()).toHaveLength(1);
   expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
-  // The counter counts: it sees the names lookup for the message's sender and
-  // mentioned agent, and that is the only request. The launch itself asked
-  // the relay nothing.
+  // The start makes no config requests. The only call is the conversation's
+  // name lookup for the sender and mentioned agent, which requests only
+  // profiles missing from the cache (none when both are cached).
   expect(made()).toEqual({
     "profiles.ensure": [[[alice, self], "foreground"]],
   });

@@ -1595,6 +1595,18 @@ it("keeps the in-flight run and the queue across edits; each job reads the agent
   expect(queued?.agent.name).toBe("Echo two");
 });
 
+it("starts each run from the start resolver, local with no synced revisions", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { config: { reply: "local" } });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0]).toMatchObject({
+    config: { reply: "local" },
+    revisions: [],
+  });
+});
+
 it("keeps queued work across a disconnect and runs it once on reconnect", async () => {
   const { service, run, emit, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

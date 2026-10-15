@@ -336,6 +336,8 @@ export class AgentSessions {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
+    // Removed meanwhile: a goose started now would outlive it.
+    if (this.disposed) throw new Error("goose was stopped");
     const [process, cwd] = await Promise.all([
       this.options.process.get(),
       absolute(spawn, launch.workspace),

@@ -343,6 +343,40 @@ describe("AgentSessions", () => {
     });
   });
 
+  it("starts no goose for an agent removed while its sessions open", async () => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const launch = vi.fn(async () => {
+      await held;
+      return { workspace: "/w", systemPrompt: "" };
+    });
+    const sessions = new AgentSessions({
+      spawn: fake.spawn,
+      tools,
+      process: new SharedProcess(fake.spawn, fake.serve),
+      pool: new ServerPool(),
+      launch,
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const delivering = sessions.deliver("a", "one", 1);
+    const once = sessions.runOnce("watch/x", () => "look");
+    await flush(30);
+    expect(launch).toHaveBeenCalledTimes(2);
+    sessions.dispose();
+    release();
+    await expect(delivering).resolves.toEqual({
+      ok: false,
+      error: "goose was stopped",
+    });
+    await expect(once).resolves.toMatchObject({ ok: false });
+    await flush(30);
+    expect(fake.geese).toEqual([]);
+  });
+
   it("runs a one-off turn in a session it then closes", async () => {
     const { fake, sessions } = setup();
     await expect(sessions.runOnce("watch/x", () => "look")).resolves.toEqual({

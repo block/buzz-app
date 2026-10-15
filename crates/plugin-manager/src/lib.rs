@@ -348,7 +348,7 @@ impl Default for Registry {
     }
 }
 #[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Artifact {
     manifest: Manifest,
     code: String,

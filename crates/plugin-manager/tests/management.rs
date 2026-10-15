@@ -98,7 +98,7 @@ fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
     let mut artifact: serde_json::Value =
         serde_json::from_slice(&fs::read(source.join("plugin.artifact.json")).unwrap()).unwrap();
     use base64::Engine as _;
-    artifact["icon_jpg"] =
+    artifact["iconJpg"] =
         serde_json::json!(base64::engine::general_purpose::STANDARD.encode(&first_jpg));
     fs::write(
         source.join("plugin.artifact.json"),

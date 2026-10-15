@@ -173,8 +173,8 @@ export function ModelPicker({
         <Select
           label="Model"
           value={selected.id}
-          valueLabel={selectedLabel}
-          valueTitle={selectedLabel}
+          valueLabel={loading ? "Loading models…" : selectedLabel}
+          valueTitle={loading ? "Loading models…" : selectedLabel}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           variant={compact ? "compact" : "preference"}
           appearance={appearance}
@@ -200,7 +200,6 @@ export function ModelPicker({
             else onChange(model);
           }}
         />
-        {loading && <p className="buzz-field-description">Loading models…</p>}
       </div>
       {allowCustomModel && customModel !== null && (
         <CustomModelDialog

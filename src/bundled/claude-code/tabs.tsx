@@ -577,9 +577,8 @@ export function createTabs({
                 ],
               },
             ]}
-            {...(state.modelsChecking
-              ? { description: "Loading Claude's models…" }
-              : {})}
+            disabled={state.modelsChecking}
+            valueLabel={state.modelsChecking ? "Loading models…" : undefined}
             {...(state.modelsError
               ? { error: `Couldn't load Claude's models: ${state.modelsError}` }
               : {})}
@@ -863,6 +862,7 @@ export function createTabs({
             setupState.models,
           )}
           defaultDescription="Following the provider's model default"
+          loading={setupState.modelsChecking}
           onChange={(model) => {
             // An effort the new model does not list goes back to the default;
             // without Claude's list, the effort is kept.

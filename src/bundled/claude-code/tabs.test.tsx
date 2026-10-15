@@ -110,7 +110,7 @@ function applied({
   version?: string;
   files?: Record<string, string>;
   /** Whether Claude lists its models when asked. */
-  catalog?: { listed: boolean };
+  catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
@@ -194,6 +194,7 @@ function applied({
           request?: { subtype?: string };
         };
         if (message.request?.subtype !== "initialize") return;
+        await catalog.ready;
         queueMicrotask(() =>
           options.onStdout?.(
             `${JSON.stringify({
@@ -479,6 +480,39 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   expect(
     screen.getByText(/None\. A conversation's session starts/),
   ).toBeInTheDocument();
+});
+
+it("loads provider models inside a disabled picker without a loading subtitle", async () => {
+  let finish!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const Provider = providerSetup(
+    installed({ catalog: { listed: true, ready } }).type,
+  );
+  render(<Provider onClose={vi.fn()} />);
+  try {
+    const picker = await screen.findByRole("combobox", {
+      name: "Default model",
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Loading models…"));
+    expect(picker).toBeDisabled();
+    expect(picker).toContainElement(screen.getByText("Loading models…"));
+    expect(
+      screen.queryByText("Loading Claude's models…"),
+    ).not.toBeInTheDocument();
+    await userEvent.setup().click(picker);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await act(async () => finish());
+    await waitFor(() => expect(picker).toBeEnabled());
+    expect(screen.getByRole("combobox", { name: "Default model" })).toBe(
+      picker,
+    );
+    expect(picker).toHaveTextContent("Recommended · Opus 5.5");
+    expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  } finally {
+    finish();
+  }
 });
 
 it("saves a provider model default explicitly and leaves blank agent config inherited", async () => {

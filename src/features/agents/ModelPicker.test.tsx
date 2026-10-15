@@ -152,19 +152,35 @@ it("is disabled as a whole", () => {
   expect(control()).toBeDisabled();
 });
 
-it("shows that models are loading", () => {
-  render(
+it("keeps loading inside the disabled picker and restores the selected value", () => {
+  const onChange = vi.fn();
+  const view = render(
     <ModelPicker
       models={[]}
       allowCustomModel={false}
       value=""
       defaultLabel="Default model"
-      onChange={vi.fn()}
+      onChange={onChange}
       loading
     />,
   );
-  expect(control()).toBeDisabled();
-  expect(screen.getByText("Loading models…")).toBeVisible();
+  const picker = control();
+  expect(picker).toBeDisabled();
+  expect(picker).toContainElement(screen.getByText("Loading models…"));
+  view.rerender(
+    <ModelPicker
+      models={models}
+      allowCustomModel={false}
+      value="opus"
+      defaultLabel="Default model"
+      onChange={onChange}
+    />,
+  );
+  expect(control()).toBe(picker);
+  expect(picker).toBeEnabled();
+  expect(picker).toHaveTextContent("Opus");
+  expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
 });
 
 it("keeps compact choices finite and includes rich model descriptions", async () => {

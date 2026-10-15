@@ -252,6 +252,7 @@ export function Select({
         <PreferenceRow
           title={label}
           subtitle={description}
+          disabled={disabled}
           trailing={control}
         />
         {error && (

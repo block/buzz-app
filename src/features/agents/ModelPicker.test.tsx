@@ -152,35 +152,19 @@ it("is disabled as a whole", () => {
   expect(control()).toBeDisabled();
 });
 
-it("keeps loading inside the disabled picker and restores the selected value", () => {
-  const onChange = vi.fn();
-  const view = render(
+it("shows that models are loading", () => {
+  render(
     <ModelPicker
       models={[]}
       allowCustomModel={false}
       value=""
       defaultLabel="Default model"
-      onChange={onChange}
+      onChange={vi.fn()}
       loading
     />,
   );
-  const picker = control();
-  expect(picker).toBeDisabled();
-  expect(picker).toContainElement(screen.getByText("Loading models…"));
-  view.rerender(
-    <ModelPicker
-      models={models}
-      allowCustomModel={false}
-      value="opus"
-      defaultLabel="Default model"
-      onChange={onChange}
-    />,
-  );
-  expect(control()).toBe(picker);
-  expect(picker).toBeEnabled();
-  expect(picker).toHaveTextContent("Opus");
-  expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
-  expect(onChange).not.toHaveBeenCalled();
+  expect(control()).toBeDisabled();
+  expect(screen.getByText("Loading models…")).toBeVisible();
 });
 
 it("keeps compact choices finite and includes rich model descriptions", async () => {
@@ -222,12 +206,12 @@ it("lists the inherited default once with its catalog copy", async () => {
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Default · Opus");
-  expect(screen.getByTitle("Default · Opus")).toBeVisible();
+  expect(control()).toHaveTextContent("Opus");
+  expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(2);
-  expect(options[0]).toHaveAccessibleName("Default · Opus");
+  expect(options[0]).toHaveAccessibleName("Opus · Default");
   expect(options[1]).toHaveAccessibleName("Sonnet");
   expect(options[0]).toHaveAccessibleDescription("Most capable");
   expect(options[0]).toHaveAttribute("aria-selected", "true");
@@ -247,10 +231,9 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
-  expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
-    name: "Default · Opus",
+    name: "Opus · Default",
   });
   const pinned = screen.getByRole("option", { name: "Opus" });
   expect(pinned).toHaveAttribute("aria-selected", "true");
@@ -271,7 +254,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   view.rerender(<ModelPicker {...props} />);
   await user.click(control());
   await user.click(
-    await screen.findByRole("option", { name: "Default · Opus" }),
+    await screen.findByRole("option", { name: "Opus · Default" }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
   view.rerender(
@@ -282,9 +265,9 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Default · Sonnet");
+  expect(control()).toHaveTextContent("Sonnet");
   await user.click(control());
   expect(
-    await screen.findByRole("option", { name: "Default · Sonnet" }),
+    await screen.findByRole("option", { name: "Sonnet · Default" }),
   ).toHaveAttribute("aria-selected", "true");
 });

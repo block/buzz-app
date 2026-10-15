@@ -156,7 +156,7 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   );
   expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
 
-  await choose("Model", "Claude Opus 5.5");
+  await choose("Model", "claude-opus-5-5");
   await user.click(
     within(dialog).getByRole("button", { name: "Test connection" }),
   );

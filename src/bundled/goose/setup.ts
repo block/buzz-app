@@ -50,7 +50,14 @@ type Entry = {
     oauthFlow?: boolean;
     deviceCodeFlow?: boolean;
   })[];
-  models?: { id: string; name?: string; recommended?: boolean }[];
+  models?: { id: string; recommended?: boolean }[];
+};
+
+/** goose's catalog keeps one endpoint per model name, which on Databricks can
+ * be another team's (`auto-labeler-…-gpt-6-luna` for GPT-6 Luna). Offer the
+ * provider's own list, only the workspace's endpoints. */
+const PREFIXES: Readonly<Record<string, string>> = {
+  databricks: "databricks-",
 };
 
 const TEST_PROMPT = "Reply with exactly: OK";
@@ -123,8 +130,17 @@ export class GooseSetup {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
-    if (listed?.models.length || !listed?.configured)
-      return listed?.models ?? [];
+    const prefix = PREFIXES[id];
+    const models =
+      listed?.configured && (prefix || !listed.models.length)
+        ? await this.supported(id)
+        : (listed?.models ?? []);
+    return prefix
+      ? models.filter((model) => model.id.startsWith(prefix))
+      : models;
+  }
+
+  private supported(id: string): Promise<readonly ModelChoice[]> {
     let models = this.live.get(id);
     if (!models) {
       models = this.with(async (goose) => {
@@ -254,13 +270,8 @@ function provider(entry: Entry): Provider {
       })),
     signsIn: keys.some((key) => key.oauthFlow || key.deviceCodeFlow),
     steps: entry.setupSteps ?? [],
-    models: models.map((model) => ({
-      id: model.id,
-      label: model.name ?? model.id,
-      ...(model.name && model.name !== model.id
-        ? { description: model.id }
-        : {}),
-    })),
+    // The exact ID: a catalog name can stand for several models.
+    models: models.map((model) => ({ id: model.id, label: model.id })),
   };
 }
 

@@ -90,12 +90,8 @@ describe("GooseSetup", () => {
       signsIn: false,
       steps: ["Create a key at console.anthropic.com"],
       models: [
-        {
-          id: "claude-opus-5-5",
-          label: "Claude Opus 5.5",
-          description: "claude-opus-5-5",
-        },
-        { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+        { id: "claude-opus-5-5", label: "claude-opus-5-5" },
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5" },
       ],
     });
     expect(fake.geese.every((goose) => goose.killed)).toBe(true);
@@ -127,6 +123,30 @@ describe("GooseSetup", () => {
     expect(await goose.models("databricks")).toEqual([]);
   });
 
+  it("lists only the workspace's own Databricks endpoints", async () => {
+    const { setup: goose } = setup({
+      providers: PROVIDERS.map((entry) =>
+        entry.providerId === "databricks"
+          ? {
+              ...entry,
+              configured: true,
+              models: [{ id: "auto-labeler-builderbot-gpt-6-luna" }],
+            }
+          : entry,
+      ),
+      supported: [
+        "auto-labeler-builderbot-gpt-6-luna",
+        "databricks-gpt-6-1-sol",
+        "kgoose-gpt-6-luna",
+        "databricks-gpt-6-luna",
+      ],
+    });
+    expect(await goose.models("databricks")).toEqual([
+      { id: "databricks-gpt-6-1-sol", label: "databricks-gpt-6-1-sol" },
+      { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
+    ]);
+  });
+
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
     await expect(
@@ -135,8 +155,8 @@ describe("GooseSetup", () => {
       current: "claude-sonnet-5-5",
       models: [
         { id: "claude-sonnet-5-5", label: "claude-sonnet-5-5", efforts: [] },
-        { id: "claude-opus-5-5", label: "Claude Opus 5.5", efforts: [] },
-        { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", efforts: [] },
+        { id: "claude-opus-5-5", label: "claude-opus-5-5", efforts: [] },
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
       ],
     });
     await expect(

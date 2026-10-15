@@ -124,8 +124,18 @@ impl Manifest {
             }
             let mut tags = std::collections::HashSet::new();
             for tag in &discovery.tags {
-                valid_id(tag)?;
-                if !tags.insert(tag) {
+                if tag.trim().is_empty() || tag.len() > 80 || tag.chars().any(char::is_control) {
+                    return Err(
+                        "Discovery tags must contain 1–80 bytes of text without control characters"
+                            .into(),
+                    );
+                }
+                let key = tag
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                if !tags.insert(key) {
                     return Err("Duplicate discovery tag".into());
                 }
             }
@@ -1391,9 +1401,6 @@ mod tests {
         let mut duplicate = parsed.clone();
         duplicate.discovery.as_mut().unwrap().tags = vec!["finance".into(), "finance".into()];
         assert!(duplicate.validate().is_err());
-        let mut invalid_tag = parsed.clone();
-        invalid_tag.discovery.as_mut().unwrap().tags = vec!["Accounting".into()];
-        assert!(invalid_tag.validate().is_err());
         let mut too_many = parsed.clone();
         too_many.discovery.as_mut().unwrap().tags =
             (0..17).map(|index| format!("tag-{index}")).collect();
@@ -1406,6 +1413,54 @@ mod tests {
             "futureSecurityField": true
         });
         assert!(serde_json::from_value::<Manifest>(unknown_top_level).is_err());
+    }
+
+    #[test]
+    fn discovery_tags_accept_readable_text_and_preserve_display_spelling() {
+        let text = serde_json::json!({
+            "id": "example.page", "name": "Example", "apiVersion": 1,
+            "discovery": {
+                "category": "finance",
+                "tags": ["Programming Language", "  Café  Tools  ", "编程", "C++", "🛠️"]
+            }
+        });
+        let manifest: Manifest = serde_json::from_value(text.clone()).unwrap();
+        assert!(manifest.validate().is_ok());
+        assert_eq!(serde_json::to_value(&manifest).unwrap(), text);
+        let bytes = artifact_from_text(&text.to_string(), "export const code = 1".into()).unwrap();
+        let artifact: super::Artifact = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(artifact.manifest, manifest);
+
+        for tag in ["x".repeat(80), "é".repeat(40)] {
+            let mut valid = manifest.clone();
+            valid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(valid.validate().is_ok());
+        }
+        for tag in [
+            "".into(),
+            "   ".into(),
+            "\u{a0}".into(),
+            "x".repeat(81),
+            "é".repeat(41),
+            "Programming\nLanguage".into(),
+            "Programming\tLanguage".into(),
+            "Bad\0Tag".into(),
+            "Bad\u{7f}Tag".into(),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(invalid.validate().is_err());
+        }
+        for pair in [
+            ["Programming Language", "programming language"],
+            ["Programming Language", "  Programming   Language  "],
+            ["Programming Language", "Programming\u{a0}Language"],
+            ["Café", "CAFÉ"],
+        ] {
+            let mut duplicate = manifest.clone();
+            duplicate.discovery.as_mut().unwrap().tags = pair.map(String::from).to_vec();
+            assert!(duplicate.validate().is_err());
+        }
     }
 
     #[test]

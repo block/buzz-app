@@ -16,7 +16,6 @@ import { CodexRuntime, codexStep, programs } from "./runtime";
 import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
-import { RECOMMENDED_MODEL } from "./config";
 
 // The plugin registers only in the Mac/Linux desktop app.
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
@@ -46,7 +45,7 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
-  configured: { model?: string } = {},
+  configured: { model?: string; model_reasoning_effort?: string } = {},
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -861,11 +860,11 @@ it("shares model discovery with active turns and another agent", async () => {
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
-it("rereads configured models when the composer asks again", async () => {
+it("ignores changes to local Codex model preferences in the composer", async () => {
   const configured = { model: "deep-model" };
   const f = fixture([], undefined, false, configured);
   const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
-  expect((await f.runtime.preview(agent)).current).toBe("deep-model");
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
   configured.model = "test-model";
   expect((await f.runtime.preview(agent)).current).toBe("test-model");
 });
@@ -893,25 +892,36 @@ it("previews each model at the configured effort when it has it", async () => {
   expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
 });
 it.each([
-  ["", "deep-model"],
-  [RECOMMENDED_MODEL, "test-model"],
-  ["test-model", "test-model"],
+  ["", "", "test-model", "medium"],
+  ["buzz:recommended", "", "test-model", "medium"],
+  ["test-model", "high", "test-model", "high"],
+  ["deep-model", "", "deep-model", "high"],
+  ["deep-model", "xhigh", "deep-model", "xhigh"],
 ])(
-  "resolves model policy %s consistently for preview and execution",
-  async (policy, expected) => {
-    const f = fixture([], undefined, false, { model: "deep-model" });
+  "resolves Buzz model %s and thinking %s independently of local Codex preferences",
+  async (model, effort, expected, expectedEffort) => {
+    const f = fixture([], undefined, false, {
+      model: "deep-model",
+      model_reasoning_effort: "xhigh",
+    });
     const delivery = {
       ...f.delivery("work"),
-      config: { workspace: "/tmp/codex-test", model: policy },
+      config: { workspace: "/tmp/codex-test", model, effort },
     };
     const preview = await f.runtime.preview({
       pubkey,
       config: delivery.config,
     } as Agent);
     expect(preview.current).toBe(expected);
+    expect(preview.models.find((row) => row.id === expected)?.effort).toBe(
+      expectedEffort,
+    );
     await f.runtime.run(delivery);
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    expect(f.starts()[0]?.params).toMatchObject({ model: expected });
+    expect(f.starts()[0]?.params).toMatchObject({
+      model: expected,
+      effort: expectedEffort,
+    });
     expect(
       f.sent.find((wire) => wire.method === "thread/start")?.params,
     ).toMatchObject({ model: expected });

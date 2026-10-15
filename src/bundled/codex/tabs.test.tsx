@@ -21,7 +21,7 @@ import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { RelayData } from "../../features/relay/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
-import { defaults, RECOMMENDED_MODEL, type Config } from "./config";
+import { defaults, type Config } from "./config";
 import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
@@ -63,7 +63,7 @@ function fixture({
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
-  configured?: { model?: string };
+  configured?: { model?: string; model_reasoning_effort?: string };
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   // Buzz's copy, as its launcher answers: `codex login` runs until it ends.
@@ -517,24 +517,30 @@ it("applies provider precedence without rewriting records and falls back for inc
   const invalid = new CodexProvider(f.spawn, localStorage);
   expect(invalid.resolve(defaults)).toEqual(defaults);
 });
-it("saves distinct configured and recommended policies and refreshes the configured label", async () => {
-  const configured = { model: "model-b" };
+it("offers recommendation and explicit models without inheriting local Codex preferences", async () => {
+  const configured = { model: "model-b", model_reasoning_effort: "high" };
   const f = fixture({ configured });
   await f.provider.check();
   const user = userEvent.setup();
   const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Codex configured · Model B",
+    "Codex recommended · Model A",
+  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "Default · Low",
   );
   await user.click(screen.getByLabelText("Default model"));
-  expect(
-    await screen.findByRole("option", { name: "Codex configured · Model B" }),
-  ).toHaveAccessibleDescription("Follows your local Codex configuration.");
-  await user.click(
-    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
-  );
+  const options = await screen.findAllByRole("option");
+  expect(options).toHaveLength(3);
+  for (const [index, name] of [
+    "Codex recommended · Model A",
+    "Model A",
+    "Model B",
+  ].entries())
+    expect(options[index]).toHaveAccessibleName(name);
+  await user.click(screen.getByRole("option", { name: "Model B" }));
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
-  expect(f.provider.resolve(defaults).model).toBe(RECOMMENDED_MODEL);
+  expect(f.provider.resolve(defaults).model).toBe("model-b");
   expect(
     (
       await f.runtime.preview({
@@ -542,20 +548,18 @@ it("saves distinct configured and recommended policies and refreshes the configu
         config: { ...defaults, workspace: "/tmp/codex-test" },
       } as Parameters<CodexRuntime["preview"]>[0])
     ).current,
-  ).toBe("model-a");
+  ).toBe("model-b");
   const reopened = new CodexProvider(f.spawn, localStorage);
-  expect(reopened.resolve(defaults).model).toBe(RECOMMENDED_MODEL);
+  expect(reopened.resolve(defaults).model).toBe("model-b");
   expect(f.provider.resolve({ ...defaults, model: "model-b" }).model).toBe(
     "model-b",
   );
   view.unmount();
   render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
-  expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Codex recommended · Model A",
-  );
+  expect(screen.getByLabelText("Default model")).toHaveTextContent("Model B");
   await user.click(screen.getByLabelText("Default model"));
   await user.click(
-    await screen.findByRole("option", { name: "Codex configured · Model B" }),
+    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(f.provider.resolve(defaults).model).toBe("");
@@ -566,14 +570,29 @@ it("saves distinct configured and recommended policies and refreshes the configu
         config: { ...defaults, workspace: "/tmp/codex-test" },
       } as Parameters<CodexRuntime["preview"]>[0])
     ).current,
-  ).toBe("model-b");
+  ).toBe("model-a");
+  expect(new CodexProvider(f.spawn, localStorage).resolve(defaults).model).toBe(
+    "",
+  );
   configured.model = "model-a";
   await f.provider.check();
   await waitFor(() =>
     expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Codex configured · Model A",
+      "Codex recommended · Model A",
     ),
   );
+});
+it("normalizes the earlier recommendation marker while preserving explicit Buzz preferences", () => {
+  localStorage.setItem(
+    "buzz.codex.provider-defaults.v1",
+    JSON.stringify({ version: 1, model: "buzz:recommended", effort: "high" }),
+  );
+  const f = fixture();
+  expect(f.provider.snapshot().defaults).toEqual({ model: "", effort: "high" });
+  expect(f.provider.resolve(defaults)).toMatchObject({
+    model: "",
+    effort: "high",
+  });
 });
 it("falls back for an unavailable provider default and restores it when the catalog recovers", async () => {
   localStorage.setItem(
@@ -659,14 +678,14 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
     "Default · Low",
   );
 });
-it("shows the configured inherited model and thinking in the closed agent controls", async () => {
-  const f = fixture({ configured: { model: "model-b" } });
+it("shows the recommended model and default thinking despite different local Codex preferences", async () => {
+  const f = fixture({
+    configured: { model: "model-b", model_reasoning_effort: "high" },
+  });
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  expect(screen.getByLabelText("Model")).toHaveTextContent("Default · Model B");
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Default · Medium",
-  );
+  expect(screen.getByLabelText("Model")).toHaveTextContent("Default · Model A");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Default · Low");
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();

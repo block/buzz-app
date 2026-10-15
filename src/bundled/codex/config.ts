@@ -13,19 +13,9 @@ export type Model = {
   defaultReasoningEffort: string;
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 };
-/** Provider policy, never a model ID sent to Codex. Blank retains configured behavior. */
-export const RECOMMENDED_MODEL = "buzz:recommended";
-
-/** Resolve a provider policy in the same workspace used for the turn. */
-export function resolveModel(
-  selected: string,
-  configured: string | null | undefined,
-  models: readonly Model[],
-) {
-  const recommended = models.find((model) => model.isDefault)?.model;
-  return selected === RECOMMENDED_MODEL
-    ? recommended
-    : selected || configured || recommended;
+/** Buzz owns model preferences; an unset choice follows Codex's recommendation. */
+export function resolveModel(selected: string, models: readonly Model[]) {
+  return selected || models.find((model) => model.isDefault)?.model;
 }
 export const defaults: Config = {
   model: "",
@@ -38,7 +28,11 @@ export function config(raw: unknown): Config {
   const value =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
-    model: typeof value.model === "string" ? value.model : "",
+    // Normalize the recommendation marker used by an earlier local build.
+    model:
+      typeof value.model === "string" && value.model !== "buzz:recommended"
+        ? value.model
+        : "",
     effort: typeof value.effort === "string" ? value.effort : "",
     instructions:
       typeof value.instructions === "string" ? value.instructions : "",

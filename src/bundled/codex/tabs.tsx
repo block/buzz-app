@@ -32,7 +32,6 @@ import { Select } from "../../shared/design-system/ui/Select";
 import {
   config as readConfig,
   defaults,
-  RECOMMENDED_MODEL,
   resolveModel,
   effortName,
   validWorkspace,
@@ -54,7 +53,6 @@ type Read =
 type Catalog = {
   models: Model[];
   account: string;
-  configuredModel: string | null | undefined;
 };
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
@@ -84,12 +82,8 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     }>("account/read");
     if (!account.account) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
-    const normalized = await rpc.request<{
-      config: { model?: string | null };
-    }>("config/read");
     return {
       models,
-      configuredModel: normalized.config.model,
       account: account.account.email ?? account.account.type,
     };
   } finally {
@@ -210,10 +204,7 @@ export class CodexProvider {
     const explicit = readConfig(raw);
     const inheritedModel = this.state.defaults.model;
     const unavailable = Boolean(
-      inheritedModel &&
-        inheritedModel !== RECOMMENDED_MODEL &&
-        this.state.data &&
-        !this.model(inheritedModel),
+      inheritedModel && this.state.data && !this.model(inheritedModel),
     );
     const model = explicit.model || (unavailable ? "" : inheritedModel);
     if (explicit.effort) return { ...explicit, model };
@@ -258,11 +249,11 @@ export class CodexProvider {
         typeof (value as { effort?: unknown }).effort === "string"
       )
         return Object.freeze({
-          model: (value as { model: string }).model,
+          model: readConfig(value).model,
           effort: (value as { effort: string }).effort,
         });
     } catch {
-      // Malformed local preferences preserve Codex's native defaults.
+      // Malformed local preferences follow Codex's recommendation.
     }
     return Object.freeze({ model: "", effort: "" });
   }
@@ -290,28 +281,18 @@ const choices = (data?: Catalog) =>
   })) ?? [];
 const catalogModel = (model: string, data?: Catalog) => {
   if (!data) return undefined;
-  const resolved = resolveModel(model, data.configuredModel, data.models);
+  const resolved = resolveModel(model, data.models);
   return data.models.find((choice) => choice.model === resolved);
 };
 const providerDefaultLabel = (model: string, data?: Catalog) => {
   const selected = catalogModel(model, data);
   const name = selected?.displayName || selected?.model;
-  return (
-    name ||
-    (model === RECOMMENDED_MODEL ? "Codex recommended" : model) ||
-    data?.configuredModel ||
-    "Model unavailable"
-  );
+  return name || model || "Codex recommended";
 };
-const policyLabel = (model: string, data?: Catalog) => {
-  const label =
-    model === RECOMMENDED_MODEL ? "Codex recommended" : "Codex configured";
-  const selected = catalogModel(model, data);
-  const name =
-    selected?.displayName ||
-    selected?.model ||
-    (model ? undefined : data?.configuredModel);
-  return name ? `${label} · ${name}` : label;
+const recommendedLabel = (data?: Catalog) => {
+  const selected = catalogModel("", data);
+  const name = selected?.displayName || selected?.model;
+  return name ? `Codex recommended · ${name}` : "Codex recommended";
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
@@ -527,18 +508,12 @@ export function createTabs(
                 label: "",
                 options: [
                   {
-                    value: RECOMMENDED_MODEL,
-                    label: policyLabel(RECOMMENDED_MODEL, data),
+                    value: "",
+                    label: recommendedLabel(data),
                     description: "Follows Codex's recommendation.",
                     disabled: !nativeModel,
                   },
-                  {
-                    value: "",
-                    label: policyLabel("", data),
-                    description: "Follows your local Codex configuration.",
-                  },
                   ...(draft.model &&
-                  draft.model !== RECOMMENDED_MODEL &&
                   !data?.models.some((model) => model.model === draft.model)
                     ? [
                         {

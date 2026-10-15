@@ -184,17 +184,9 @@ export class CodexRuntime {
     const server = this.open();
     const rpc = server.rpc;
     const ready = (async () => {
-      const workspace = await this.workspace(settings.workspace);
       await server.opening;
-      const normalized = await rpc.request<{
-        config: { model?: string | null };
-      }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model = resolveModel(
-        settings.model,
-        normalized.config.model,
-        models,
-      );
+      const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
           ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
@@ -953,12 +945,11 @@ export class CodexRuntime {
   ) {
     const normalized = await rpc.request<{
       config: {
-        model?: string | null;
         mcp_servers?: Record<string, Record<string, unknown>>;
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
-    const own = resolveModel(settings.model, normalized.config.model, models);
+    const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
     const picked = models.find((row) => row.model === pick.model);
     const selected = picked ?? models.find((row) => row.model === own);

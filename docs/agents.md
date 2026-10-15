@@ -92,17 +92,18 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-Codex's provider model menu separates **Codex recommended** (the catalog's
-recommendation, regardless of configured model), **Codex configured** (the model
-from Codex configuration, or its recommendation when unset), and specific models.
-Existing blank provider preferences retain configured behavior. This is a model
-choice only; thinking remains its separate setting. Configured discovery in the
-provider dialog uses the default `~/.buzz` workspace; an agent's effective model
-is resolved in its own workspace for both composer discovery and execution.
-Composer discovery shares concurrent reads but rereads on subsequent lookups so
-configuration changes are not hidden by a permanent preview cache. Each outgoing
-composer message carries the concrete displayed model and known effort for that
-turn; this does not rewrite the saved provider policy or the agent's overrides.
+Codex's provider model menu offers **Codex recommended** (the catalog's
+recommendation) and specific models. Blank model preferences follow the
+recommendation; blank thinking preferences follow the selected model's default
+unless a supported Buzz provider thinking preference is inherited. Explicit Buzz
+selections take precedence. Local Codex configuration does not supply model or
+thinking preferences to Buzz; unrelated configuration is still used where needed.
+Preview and execution resolve the same concrete model and thinking level, and
+execution passes both explicitly rather than falling through to host preferences.
+Composer discovery shares concurrent reads but refreshes on subsequent lookups.
+Each outgoing composer message carries the concrete displayed model and known
+effort for that turn; this does not rewrite the saved provider preferences or the
+agent's overrides.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.

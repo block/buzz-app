@@ -53,11 +53,12 @@ type Entry = {
   models?: { id: string; recommended?: boolean }[];
 };
 
-/** goose's catalog keeps one endpoint per model name, which on Databricks can
- * be another team's (`auto-labeler-…-gpt-6-luna` for GPT-6 Luna). Offer the
- * provider's own list, only the workspace's endpoints. */
-const PREFIXES: Readonly<Record<string, string>> = {
-  databricks: "databricks-",
+/** A special case for the goose plugin's Databricks provider: goose's catalog
+ * keeps one endpoint per model name, which can be another team's
+ * (`auto-labeler-…-gpt-6-luna` for GPT-6 Luna). Offer the provider's own list,
+ * only the workspace's endpoints and goose's own. */
+const PREFIXES: Readonly<Record<string, readonly string[]>> = {
+  databricks: ["databricks-", "goose-"],
 };
 
 const TEST_PROMPT = "Reply with exactly: OK";
@@ -130,13 +131,15 @@ export class GooseSetup {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
-    const prefix = PREFIXES[id];
+    const prefixes = PREFIXES[id];
     const models =
-      listed?.configured && (prefix || !listed.models.length)
+      listed?.configured && (prefixes || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
-    return prefix
-      ? models.filter((model) => model.id.startsWith(prefix))
+    return prefixes
+      ? models.filter((model) =>
+          prefixes.some((prefix) => model.id.startsWith(prefix)),
+        )
       : models;
   }
 

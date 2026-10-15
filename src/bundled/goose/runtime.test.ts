@@ -324,7 +324,7 @@ describe("GooseRuntime", () => {
     await flush(100);
     expect(fake.geese).toHaveLength(1);
     const [goose] = fake.geese;
-    expect(goose?.env).not.toHaveProperty("GOOSE_PROVIDER");
+    expect(goose?.env).toMatchObject({ GOOSE_PROVIDER: null });
     expect(goose?.closed).toEqual([]);
     expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
       "session-1",

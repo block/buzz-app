@@ -17,7 +17,6 @@ const start = async (tools: ToolServer = ok, silent?: readonly string[]) => {
   const fake = fakeSpawn(silent ? { silent } : {});
   const goose = await GooseProcess.start(fake.spawn, {
     cwd: "/work",
-    env: { GOOSE_MODEL: "m" },
     serve: fake.serve,
   });
   const [process] = fake.geese;
@@ -33,16 +32,17 @@ afterEach(() => {
 });
 
 describe("GooseProcess", () => {
-  it("starts goose-acp without the app's Buzz identity", async () => {
+  it("starts goose-acp without the app's Buzz identity or goose choice", async () => {
     const { process } = await start();
     expect(process.options.cwd).toBe("/work");
     expect(process.options.env).toMatchObject({
       GOOSE_MODE: "auto",
       GOOSE_DISABLE_SESSION_NAMING: "true",
-      GOOSE_MODEL: "m",
       BUZZ_PRIVATE_KEY: null,
       BUZZ_AUTH_TAG: null,
       BUZZ_RELAY_URL: null,
+      GOOSE_PROVIDER: null,
+      GOOSE_MODEL: null,
     });
   });
 
@@ -383,6 +383,30 @@ describe("GooseProcess", () => {
       ok: true,
       text: "Here is the answer.",
     });
+  });
+
+  it("keeps a pick whose steer came too late, for its own turn", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+    });
+    const first = session.send("one", {}, "o3");
+    await flush();
+    // The turn ends before goose takes the steer.
+    process.turns[0]?.finish();
+    const second = session.send("two", {}, "o3");
+    await flush();
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", []],
+      ["two", []],
+    ]);
+    expect(process.configured.at(-1)).toMatch(/ model=o3$/);
+    process.turns[1]?.finish();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+    ]);
   });
 
   it("ends work whose turn ended while a steer into it was answered", async () => {

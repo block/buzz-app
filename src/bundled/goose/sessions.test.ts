@@ -232,8 +232,10 @@ describe("AgentSessions", () => {
     choose({ provider: "openai", model: "gpt-4.1" });
     await sessions.deliver("a", "one", 1);
     const [goose] = fake.geese;
-    expect(goose?.env).not.toHaveProperty("GOOSE_PROVIDER");
-    expect(goose?.env).not.toHaveProperty("GOOSE_MODEL");
+    expect(goose?.env).toMatchObject({
+      GOOSE_PROVIDER: null,
+      GOOSE_MODEL: null,
+    });
     expect(goose?.opened[0]?._meta).toMatchObject({ provider: "openai" });
     expect(goose?.configured).toEqual(["session-1 model=gpt-4.1"]);
     const methods = goose?.received.map((message) => message.method) ?? [];

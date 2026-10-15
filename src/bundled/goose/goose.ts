@@ -60,13 +60,16 @@ const DEVELOPER = { type: "platform", name: "developer" };
 
 /** What every `goose-acp` runs with: tools run without asking, sessions are
  * not named (one model call per turn, not two), and no Buzz identity reaches
- * it from the app's environment. */
+ * it from the app's environment. Nor does a provider or model, which goose
+ * would prefer to each session's. */
 export const ENV: Readonly<Record<string, string | null>> = {
   GOOSE_MODE: "auto",
   GOOSE_DISABLE_SESSION_NAMING: "true",
   BUZZ_PRIVATE_KEY: null,
   BUZZ_AUTH_TAG: null,
   BUZZ_RELAY_URL: null,
+  GOOSE_PROVIDER: null,
+  GOOSE_MODEL: null,
 };
 
 /** The provider and model a session's turns run on; empty is what goose's
@@ -495,7 +498,7 @@ export class GooseSession {
       !this.queue.length &&
       (!model || model === this.model)
     )
-      void this.steer(text, activity, waiter);
+      void this.steer(text, activity, waiter, model);
     else {
       this.queue.push({ text, ...(model ? { model } : {}) });
       this.acknowledge(activity, waiter);
@@ -551,7 +554,12 @@ export class GooseSession {
     this.settle({ ok: false, error });
   }
 
-  private async steer(text: string, activity: ActivityReceipt, waiter: Waiter) {
+  private async steer(
+    text: string,
+    activity: ActivityReceipt,
+    waiter: Waiter,
+    model?: string,
+  ) {
     this.steering++;
     try {
       const runId =
@@ -574,7 +582,7 @@ export class GooseSession {
           // The turn ended, or another took its place: run it as the next.
         }
       }
-      this.queue.push({ text });
+      this.queue.push({ text, ...(model ? { model } : {}) });
       this.acknowledge(activity, waiter);
     } finally {
       this.steering--;

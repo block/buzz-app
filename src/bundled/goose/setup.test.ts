@@ -123,7 +123,7 @@ describe("GooseSetup", () => {
     expect(await goose.models("databricks")).toEqual([]);
   });
 
-  it("lists only the workspace's own Databricks endpoints", async () => {
+  it("lists only the workspace's and goose's own Databricks endpoints", async () => {
     const { setup: goose } = setup({
       providers: PROVIDERS.map((entry) =>
         entry.providerId === "databricks"
@@ -139,11 +139,13 @@ describe("GooseSetup", () => {
         "databricks-gpt-6-1-sol",
         "kgoose-gpt-6-luna",
         "databricks-gpt-6-luna",
+        "goose-gpt-5-5",
       ],
     });
     expect(await goose.models("databricks")).toEqual([
       { id: "databricks-gpt-6-1-sol", label: "databricks-gpt-6-1-sol" },
       { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
+      { id: "goose-gpt-5-5", label: "goose-gpt-5-5" },
     ]);
   });
 
@@ -202,8 +204,10 @@ describe("GooseSetup", () => {
     ).toEqual({ ok: true, message: "Connected" });
     const [tested] = fake.geese;
     expect(tested?.env).toMatchObject({ GOOSE_MODE: "chat" });
-    expect(tested?.env).not.toHaveProperty("GOOSE_PROVIDER");
-    expect(tested?.env).not.toHaveProperty("GOOSE_MODEL");
+    expect(tested?.env).toMatchObject({
+      GOOSE_PROVIDER: null,
+      GOOSE_MODEL: null,
+    });
     expect(tested?.opened[0]).toMatchObject({
       mcpServers: [],
       _meta: { enabledExtensions: [], provider: "anthropic" },

@@ -1,4 +1,5 @@
 import { AgentTabs } from "../agents/AgentTabs";
+import { ProviderDialog } from "../agents/ProviderDialog";
 import type {
   Agents,
   RegisteredAgentType,
@@ -517,9 +518,14 @@ it("loads provider models inside a disabled picker without a loading subtitle", 
 
 it("saves a provider model default explicitly and leaves blank agent config inherited", async () => {
   const installedType = installed().type;
-  const Provider = providerSetup(installedType);
   const onClose = vi.fn();
-  render(<Provider onClose={onClose} />);
+  render(
+    <ProviderDialog
+      type={installedType as unknown as RegisteredAgentType}
+      finalFocus={{ current: null }}
+      onClose={onClose}
+    />,
+  );
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
@@ -527,6 +533,19 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  const saveDefaults = screen.getByRole("button", { name: "Save defaults" });
+  const footer = saveDefaults.closest(".buzz-dialog-actions");
+  expect(footer).not.toBeNull();
+  expect(footer).toContainElement(cancel);
+  expect(within(footer as HTMLElement).getAllByRole("button")).toEqual([
+    cancel,
+    saveDefaults,
+  ]);
+  expect(saveDefaults).toHaveAttribute(
+    "form",
+    defaultModel.closest("form")?.id,
+  );
   expect(defaultModel).toHaveTextContent("Recommended · Opus 5.5");
   await user.click(defaultModel);
   expect(
@@ -553,6 +572,27 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     ),
   );
   expect(save).not.toHaveBeenCalled();
+});
+
+it("cancels a provider defaults draft without saving", async () => {
+  const type = installed().type;
+  const onClose = vi.fn();
+  render(
+    <ProviderDialog
+      type={type as unknown as RegisteredAgentType}
+      finalFocus={{ current: null }}
+      onClose={onClose}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
+  );
+  await choose("Default model", "Fable 5.1");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
 });
 
 it("says when Claude's models could not be loaded and tries again", async () => {

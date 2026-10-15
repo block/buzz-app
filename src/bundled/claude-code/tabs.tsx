@@ -1,5 +1,6 @@
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
   useEffect,
@@ -398,6 +399,7 @@ export function createTabs({
 
   /** Claude Code installation and account readiness on this computer. */
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
+    const defaultsForm = useId();
     const state = useSetupCatalog();
     const savedDefaults = useSyncExternalStore(
       defaults.subscribe,
@@ -481,17 +483,6 @@ export function createTabs({
                   ? "Waiting for Claude Code sign-in…"
                   : (latestOutputLine ?? "Installing Claude Code…")}
               </p>
-              <Button onClick={() => void setup.cancel()}>Cancel</Button>
-            </div>
-          ) : action ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                autoFocus
-                variant="prominent"
-                onClick={() => void setup.run(action.step)}
-              >
-                {action.label}
-              </Button>
             </div>
           ) : null}
           {status?.state === "missing" && !state.running && (
@@ -541,6 +532,7 @@ export function createTabs({
           )}
         </div>
         <form
+          id={defaultsForm}
           className="grid gap-3"
           hidden={!ready}
           onSubmit={(event) => {
@@ -599,17 +591,33 @@ export function createTabs({
               {defaultError}
             </p>
           )}
-          <div>
+        </form>
+        <ProviderDialogActions>
+          <Button
+            onClick={() => (state.running ? void setup.cancel() : onClose())}
+          >
+            Cancel
+          </Button>
+          {ready ? (
             <Button
               type="submit"
+              form={defaultsForm}
               variant="prominent"
               disabled={draftDefault === savedDefaults.model}
               focusableWhenDisabled
             >
               Save defaults
             </Button>
-          </div>
-        </form>
+          ) : action && !state.running && !state.checking ? (
+            <Button
+              autoFocus
+              variant="prominent"
+              onClick={() => void setup.run(action.step)}
+            >
+              {action.label}
+            </Button>
+          ) : null}
+        </ProviderDialogActions>
       </div>
     );
   }

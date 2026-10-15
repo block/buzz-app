@@ -543,12 +543,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const body = (await tools.body(args, true)) as string;
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
-    const unread = new Error(`Memory ${key} could not be read; try again.`);
-    const { entries, partial } = await tools.client.memories(key).catch(() => {
-      throw unread;
-    });
+    const { entries, partial } = await tools.client.memories(key);
     const current = entries.find((entry) => entry.slug === key);
-    if (!current && partial) throw unread;
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },

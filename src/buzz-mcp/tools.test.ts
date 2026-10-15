@@ -309,10 +309,13 @@ it("never reports memory cut short by a limit as missing", async () => {
   await expect(
     callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
   ).rejects.toThrow("Memory mem/notes could not be read; try again.");
-  vi.mocked(client.memories).mockRejectedValueOnce(new Error("429"));
+  // A failed lookup reaches the caller as it is, so denial or a lost
+  // connection is not reported as a retryable read.
+  const denied = new Error("Buzz is not connected");
+  vi.mocked(client.memories).mockRejectedValueOnce(denied);
   await expect(
     callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
-  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  ).rejects.toBe(denied);
   expect(client.remember).not.toHaveBeenCalled();
   partial([{ slug: "mem/a", body: "a", createdAt: 0 }]);
   await expect(callTool(client, {}, "mem_get", {})).resolves.toMatch(

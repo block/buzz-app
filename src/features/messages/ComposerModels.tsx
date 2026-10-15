@@ -49,7 +49,7 @@ export function ComposerModels({
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: MentionPicks = { ...value };
+    const resolved: Record<string, RunPick> = { ...value };
     for (const choice of choices) {
       if (choice.loading) continue;
       const saved = value[choice.pubkey] ?? {};

@@ -1351,7 +1351,7 @@ function ChannelWorkspace({
             />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new conversations from Me. Channel-nested sessions are no
+              Start new conversations from Solo. Channel-nested sessions are no
               longer available.
             </p>
           ) : (

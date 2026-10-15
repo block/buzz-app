@@ -303,8 +303,8 @@ it.each([false, true])(
   (retained) => {
     const f = fixture("loading", retained);
     f.mount();
-    expect(screen.getByText("Loading Me placement…")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry Me" })).toBeNull();
+    expect(screen.getByText("Loading Solo chats…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry Solo" })).toBeNull();
     if (retained) {
       expect(screen.getByLabelText("Channel message history")).toBeVisible();
       expect(
@@ -326,7 +326,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
       transient: true,
     }),
   );
-  expect(screen.queryByRole("button", { name: "Retry Me" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry Solo" })).toBeNull();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(f.refresh).not.toHaveBeenCalled();
   act(() =>
@@ -334,7 +334,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   );
   expect(screen.getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-  await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
+  await userEvent.click(screen.getByRole("button", { name: "Retry Solo" }));
   expect(f.refresh).toHaveBeenCalledOnce();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>
@@ -391,7 +391,7 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   const f = fixture();
   f.mount();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Open in Messages" }));
+  await user.click(screen.getByRole("button", { name: "Open in Multiplayer" }));
   expect(f.open).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ kind: "conversation", channelId: id }),
   );

@@ -21,7 +21,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await expect(topbar.getByRole("tab")).toHaveText(["Solo", "Multiplayer"]);
   await topbar.getByRole("tab", { name: "Solo", exact: true }).click();
   await expect(
-    page.getByRole("complementary", { name: "Me sidebar" }),
+    page.getByRole("complementary", { name: "Solo sidebar" }),
   ).toBeVisible();
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
@@ -30,12 +30,12 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await expect(
     topbar.getByRole("tab", { name: "Solo", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("button", { name: "Hide Me sidebar" }).click();
+  await page.getByRole("button", { name: "Hide Solo sidebar" }).click();
   await expect(page.locator("#shell-navigation")).toHaveAttribute(
     "aria-hidden",
     "true",
   );
-  await page.getByRole("button", { name: "Show Me sidebar" }).click();
+  await page.getByRole("button", { name: "Show Solo sidebar" }).click();
   const me = topbar.getByRole("tab", { name: "Solo", exact: true });
   const messages = topbar.getByRole("tab", {
     name: "Multiplayer",
@@ -105,7 +105,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
     );
     await expect(me).toBeFocused();
     await page
-      .getByRole("complementary", { name: "Me sidebar" })
+      .getByRole("complementary", { name: "Solo sidebar" })
       .getByRole("button", { name: "New chat", exact: true })
       .click();
     await expect(newComposer).toBeFocused();

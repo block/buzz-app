@@ -33,7 +33,7 @@ export function MeSidebar({ relay, navigator, target }: Props) {
   const scope = connection.scope ?? "disconnected";
   return (
     <ResizableSidebar scope={scope}>
-      <SidebarFrame label="Me sidebar">
+      <SidebarFrame label="Solo sidebar">
         {connection.status === "ready" ? (
           <PersonalHistory
             key={`${scope}:${connection.generation}`}
@@ -108,7 +108,7 @@ function PersonalHistory({
   return (
     <nav
       className={`${styles.sidebar} ${styles.history}`}
-      aria-label="Me conversations"
+      aria-label="Solo conversations"
     >
       <SessionSections
         header={<SidebarBrand mark="berd" />}
@@ -163,12 +163,12 @@ function PersonalHistory({
         <p role="status">
           {placement.error}{" "}
           <Button onClick={() => void session.mePlacement.refresh()}>
-            Retry Me
+            Retry Solo
           </Button>
         </p>
       ) : (
         placement.status !== "ready" &&
-        !recoveryShown && <p role="status">Loading Me placement…</p>
+        !recoveryShown && <p role="status">Loading Solo chats…</p>
       )}
       {!conversations.length &&
         list.status === "ready" &&

@@ -113,9 +113,9 @@ export function SessionsPage({
     />
   ) : (
     <PanelFrame companion={companion}>
-      <section className={styles.empty} aria-label="Me">
+      <section className={styles.empty} aria-label="Solo">
         <ChatCircleIcon size={28} />
-        <h1>Me</h1>
+        <h1>Solo</h1>
         <p>
           {connection.status === "connecting"
             ? "Connecting to your community…"
@@ -271,14 +271,12 @@ function SessionsView({
     <PanelFrame companion={companion}>
       <section className={styles.empty}>
         {placement.status !== "ready" ? (
-          <p role="status">{placement.error ?? "Loading Me placement…"}</p>
+          <p role="status">{placement.error ?? "Loading Solo chats…"}</p>
         ) : list.status === "loading" ? (
           <p role="status">Loading your conversation…</p>
         ) : (
           <>
-            <p>
-              This conversation isn’t in your Me workspace. Open it in Messages.
-            </p>
+            <p>This conversation isn’t in Solo. Open it in Multiplayer.</p>
             {selectedSession && (
               <Button
                 onClick={() => {
@@ -292,7 +290,7 @@ function SessionsView({
                     });
                 }}
               >
-                Open in Messages
+                Open in Multiplayer
               </Button>
             )}
             <Button
@@ -557,22 +555,22 @@ function SessionWork({
             <p role="status">
               {placement.error}{" "}
               <Button onClick={() => void session.mePlacement.refresh()}>
-                Retry Me
+                Retry Solo
               </Button>
             </p>
           ) : (
             placement.status !== "ready" && (
-              <p role="status">Loading Me placement…</p>
+              <p role="status">Loading Solo chats…</p>
             )
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">
-              <p>This conversation is in Messages.</p>
+              <p>This conversation is in Multiplayer.</p>
               {navigator && (
                 <Button
                   onClick={() => openLink(`buzz://channel/${channel.id}`)}
                 >
-                  Open in Messages
+                  Open in Multiplayer
                 </Button>
               )}
             </div>

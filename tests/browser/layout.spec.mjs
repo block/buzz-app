@@ -1202,7 +1202,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Bestie",
     "Projects",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ];
   const expectPageOrder = async (expected) => {
@@ -1284,7 +1284,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Reminders",
     "Bestie",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ]);
   await closeSearch();

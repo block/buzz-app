@@ -799,7 +799,7 @@ function ReadySidebar({
           <MenuIcon>
             <MinusIcon size={14} />
           </MenuIcon>
-          Remove from Messages
+          Remove from Multiplayer
         </MenuItem>,
       );
     }

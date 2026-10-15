@@ -20,7 +20,7 @@ test("Berd centers new and existing chats and keeps context actions usable", asy
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
   await expect(row).toBeVisible();
   const composer = page.getByRole("textbox", {
@@ -182,7 +182,9 @@ test.describe("Berd-style Me organization", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Me");
-    const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
     const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
@@ -443,7 +445,7 @@ test("Share promotes the same conversation and opens its preserved history in Me
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   await sidebar
     .getByRole("button", { name: "Alpha", exact: true })
     .click({ button: "right" });
@@ -496,15 +498,15 @@ test("Me and Messages share one resizable sidebar width", async ({
   });
   await page.goto(app.origin);
   await openPage(page, "Me");
-  await expect.poll(() => width("Me sidebar")).toBe(260);
+  await expect.poll(() => width("Solo sidebar")).toBe(260);
   await handle.press("End");
-  await expect.poll(() => width("Me sidebar")).toBe(520);
+  await expect.poll(() => width("Solo sidebar")).toBe(520);
   await openPage(page, "Messages");
   await expect.poll(() => width("Channel sidebar")).toBe(520);
   await handle.press("Home");
   await expect.poll(() => width("Channel sidebar")).toBe(220);
   await openPage(page, "Me");
-  await expect.poll(() => width("Me sidebar")).toBe(220);
+  await expect.poll(() => width("Solo sidebar")).toBe(220);
   await page.reload();
-  await expect.poll(() => width("Me sidebar")).toBe(220);
+  await expect.poll(() => width("Solo sidebar")).toBe(220);
 });

@@ -241,7 +241,7 @@ it("keeps built-in sidebar controls available before page contributions load", (
 
   rerender(shell("buzz.me/me"));
   expect(
-    screen.getByRole("button", { name: "Hide Me sidebar" }),
+    screen.getByRole("button", { name: "Hide Solo sidebar" }),
   ).toHaveAttribute("aria-expanded", "true");
 });
 

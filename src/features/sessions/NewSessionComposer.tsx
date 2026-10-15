@@ -204,7 +204,7 @@ export function NewSessionComposer({
           )
         )
           throw new Error(
-            "Me can only use your available agents. Check mentions and section defaults.",
+            "Solo chats can only use your available agents. Check mentions and section defaults.",
           );
       }
       if (parent && !current.messageId && recipients.length) {
@@ -252,7 +252,7 @@ export function NewSessionComposer({
           if (!mounted.current) return;
           if (!session.mePlacement.has(current.id))
             throw new Error(
-              "This conversation was moved out of Me. Review its placement before retrying.",
+              "This conversation was moved out of Solo. Review its placement before retrying.",
             );
         }
       }
@@ -328,7 +328,7 @@ export function NewSessionComposer({
         if (personal) {
           if (!session.mePlacement.has(current.id))
             throw new Error(
-              "This conversation is no longer personal. Open it in Messages.",
+              "This conversation is no longer in Solo. Open it in Multiplayer.",
             );
         }
         current.messageId = session.messages.send(
@@ -447,7 +447,7 @@ export function NewSessionComposer({
       {!available && (
         <p className={styles.availability} role="status">
           {personal
-            ? "Me preferences or channel creation are unavailable. Your draft is saved."
+            ? "Solo preferences or channel creation are unavailable. Your draft is saved."
             : "This connection can’t send messages. Your draft is saved."}
         </p>
       )}

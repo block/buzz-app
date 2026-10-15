@@ -24,7 +24,7 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
   const composer = page.getByRole("textbox", {
     name: "Message your agents",
@@ -113,7 +113,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
@@ -199,7 +199,7 @@ test("Me hides the empty pane launcher until content opens it", async ({
   await page.goto(app.origin);
   await openPage(page, "Me");
   await page
-    .getByRole("navigation", { name: "Me conversations" })
+    .getByRole("navigation", { name: "Solo conversations" })
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
   const composer = page.getByRole("textbox", {
@@ -260,7 +260,7 @@ test.describe("personal recipients", () => {
       await page.goto(app.origin);
       await openPage(page, "Me");
       await page
-        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("navigation", { name: "Solo conversations" })
         .getByRole("button", { name: "Beta", exact: true })
         .click();
       const workspace = page.getByRole("main");
@@ -353,14 +353,14 @@ test.describe("personal recipients", () => {
       await page.keyboard.insertText("Not mine");
       await openPage(page, "Me");
       await page
-        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("navigation", { name: "Solo conversations" })
         .getByRole("button", { name: "Beta", exact: true })
         .click();
       await expect(composer).toContainText("@Outside Agent");
       await composer.press("Enter");
       await expect(
         workspace.getByText(
-          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -422,7 +422,7 @@ test("Me sidebar opens a captured trigger in the canonical message reader", asyn
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();

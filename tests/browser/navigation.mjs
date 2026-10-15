@@ -67,7 +67,7 @@ export async function settleShellToggle(page) {
   ).toHaveAccessibleName(
     page.viewportSize().width <= 650
       ? /^(Show|Hide) navigation$/
-      : /^(Show|Hide) (?:Channel |Me )?sidebar$/,
+      : /^(Show|Hide) (?:Channel |Solo )?sidebar$/,
   );
 }
 

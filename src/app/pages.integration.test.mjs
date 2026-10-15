@@ -51,6 +51,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       "/src/bundled/index.ts",
     );
     for (const plugin of bundledPlugins) {
+      assert.ok(
+        plugin.manifest.description?.trim(),
+        `${plugin.manifest.id}: description`,
+      );
+      assert.ok(
+        plugin.manifest.discovery?.category?.trim(),
+        `${plugin.manifest.id}: category`,
+      );
       assert.equal(
         typeof plugin.enabledByDefault,
         "boolean",

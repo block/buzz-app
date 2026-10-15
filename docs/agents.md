@@ -417,9 +417,9 @@ the relay re-verifies consent. An owner request copies the target's single live
 by that re-read, and only a definitive relay rejection skips it. No profile pane
 offers Archive or Unarchive now; the only caller is agent deletion.
 
-**Delete agent** on Agents forgets the agent's key on this device, then
-(`AgentsService.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
-runs whenever its community is open:
+**Delete agent** on Agents marks the agent's row `deleting` in the native agent
+store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, shared
+helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
    channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
@@ -427,9 +427,15 @@ runs whenever its community is open:
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.
-3. The saved record is forgotten.
+3. The owner's agent record is deleted.
+4. Only after every step is confirmed is the key erased and the row dropped.
 
-Any failure leaves the cleanup to be retried on the next refresh or connect.
+If a step fails or the app quits partway, nothing is erased and nothing retries in
+the background. The agent stays listed and stopped, including after a relaunch, with
+a note in its settings that Delete didn't finish; pressing Delete again reruns the
+whole cleanup. Rows deleted by older builds, whose key is already erased, only have
+the owner's agent record deleted and the row dropped.
+
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
 its channels on a best-effort basis.

@@ -143,7 +143,7 @@ export function NewProject({
     >
       <form
         id={form}
-        className={styles.fields}
+        className={styles.sections}
         inert={busy}
         onSubmit={(event) => {
           event.preventDefault();

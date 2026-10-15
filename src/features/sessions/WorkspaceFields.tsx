@@ -132,7 +132,7 @@ export function WorkspaceFields({
   const full = folders.length >= MAX_FOLDERS;
   const worktree = value.worktree;
   return (
-    <div className={styles.fields}>
+    <div className={styles.sections}>
       <Field label="Instructions" optional>
         <Textarea
           disabled={disabled}
@@ -144,138 +144,140 @@ export function WorkspaceFields({
           placeholder="Instructions and context for agents working in this session."
         />
       </Field>
-      <Field
-        label="Folders"
-        optional
-        nativeLabel={false}
-        description={full ? "Up to 20 folders." : undefined}
-        error={error || undefined}
-      >
-        {folders.length > 0 && (
-          <div className={styles.folderList}>
-            <SettingsGroup layout="cards">
-              {folders.map((folder, index) => (
-                <PreferenceRow
-                  key={folder}
-                  icon={<FolderSimpleIcon size={18} />}
-                  title={folderName(folder)}
-                  subtitle={folder}
-                  trailing={
-                    <IconButton
-                      ref={(node) => {
-                        removes.current[index] = node;
-                      }}
-                      disabled={disabled}
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove ${folderName(folder)}`}
-                      icon={<XIcon size={16} />}
-                      onClick={() => remove(index)}
-                    />
+      <div className={styles.fields}>
+        <Field
+          label="Folders"
+          optional
+          nativeLabel={false}
+          description={full ? "Up to 20 folders." : undefined}
+          error={error || undefined}
+        >
+          {folders.length > 0 && (
+            <div className={styles.folderList}>
+              <SettingsGroup layout="cards">
+                {folders.map((folder, index) => (
+                  <PreferenceRow
+                    key={folder}
+                    icon={<FolderSimpleIcon size={18} />}
+                    title={folderName(folder)}
+                    subtitle={folder}
+                    trailing={
+                      <IconButton
+                        ref={(node) => {
+                          removes.current[index] = node;
+                        }}
+                        disabled={disabled}
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove ${folderName(folder)}`}
+                        icon={<XIcon size={16} />}
+                        onClick={() => remove(index)}
+                      />
+                    }
+                  />
+                ))}
+              </SettingsGroup>
+            </div>
+          )}
+          {isTauri() ? (
+            <div>
+              <Button
+                ref={add}
+                variant="outline"
+                size="sm"
+                disabled={disabled || full || picking}
+                loading={picking}
+                onClick={() => void browse()}
+              >
+                <FolderPlusIcon size={16} aria-hidden="true" />
+                Add folder…
+              </Button>
+            </div>
+          ) : (
+            <div className={styles.repositoryInput}>
+              <Input
+                ref={pathInput}
+                aria-label="Folder path"
+                value={typed}
+                disabled={disabled || full}
+                placeholder="~/Development/my-project"
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (attach(typed)) setTyped("");
+                }}
+              />
+              <Button
+                ref={add}
+                shape="control"
+                disabled={disabled || full || !typed.trim()}
+                onClick={() => {
+                  if (attach(typed)) setTyped("");
+                }}
+              >
+                Add
+              </Button>
+            </div>
+          )}
+        </Field>
+        <Switch
+          disabled={disabled}
+          label="Work in a new worktree"
+          checked={!!worktree}
+          onCheckedChange={(checked) =>
+            onChange({
+              ...value,
+              worktree: checked
+                ? { location: "~/.buzz/worktrees", baseBranch: "main" }
+                : undefined,
+            })
+          }
+        />
+        {worktree && (
+          <div className={styles.worktree}>
+            {isTauri() ? (
+              <Field label="Worktree location" nativeLabel={false}>
+                <FieldButton
+                  ref={location}
+                  dropdown={false}
+                  title={worktree.location}
+                  aria-label={`Worktree location: ${worktree.location}`}
+                  disabled={disabled || picking}
+                  onClick={() => void pickLocation()}
+                >
+                  {worktree.location}
+                </FieldButton>
+              </Field>
+            ) : (
+              <Field label="Worktree location">
+                <Input
+                  disabled={disabled}
+                  value={worktree.location}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      worktree: { ...worktree, location: event.target.value },
+                    })
                   }
                 />
-              ))}
-            </SettingsGroup>
-          </div>
-        )}
-        {isTauri() ? (
-          <div>
-            <Button
-              ref={add}
-              variant="outline"
-              size="sm"
-              disabled={disabled || full || picking}
-              loading={picking}
-              onClick={() => void browse()}
-            >
-              <FolderPlusIcon size={16} aria-hidden="true" />
-              Add folder…
-            </Button>
-          </div>
-        ) : (
-          <div className={styles.repositoryInput}>
-            <Input
-              ref={pathInput}
-              aria-label="Folder path"
-              value={typed}
-              disabled={disabled || full}
-              placeholder="~/Development/my-project"
-              onChange={(event) => setTyped(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                if (attach(typed)) setTyped("");
-              }}
-            />
-            <Button
-              ref={add}
-              shape="control"
-              disabled={disabled || full || !typed.trim()}
-              onClick={() => {
-                if (attach(typed)) setTyped("");
-              }}
-            >
-              Add
-            </Button>
-          </div>
-        )}
-      </Field>
-      <Switch
-        disabled={disabled}
-        label="Work in a new worktree"
-        checked={!!worktree}
-        onCheckedChange={(checked) =>
-          onChange({
-            ...value,
-            worktree: checked
-              ? { location: "~/.buzz/worktrees", baseBranch: "main" }
-              : undefined,
-          })
-        }
-      />
-      {worktree && (
-        <div className={styles.worktree}>
-          {isTauri() ? (
-            <Field label="Worktree location" nativeLabel={false}>
-              <FieldButton
-                ref={location}
-                dropdown={false}
-                title={worktree.location}
-                aria-label={`Worktree location: ${worktree.location}`}
-                disabled={disabled || picking}
-                onClick={() => void pickLocation()}
-              >
-                {worktree.location}
-              </FieldButton>
-            </Field>
-          ) : (
-            <Field label="Worktree location">
+              </Field>
+            )}
+            <Field label="Base branch">
               <Input
                 disabled={disabled}
-                value={worktree.location}
+                value={worktree.baseBranch}
                 onChange={(event) =>
                   onChange({
                     ...value,
-                    worktree: { ...worktree, location: event.target.value },
+                    worktree: { ...worktree, baseBranch: event.target.value },
                   })
                 }
               />
             </Field>
-          )}
-          <Field label="Base branch">
-            <Input
-              disabled={disabled}
-              value={worktree.baseBranch}
-              onChange={(event) =>
-                onChange({
-                  ...value,
-                  worktree: { ...worktree, baseBranch: event.target.value },
-                })
-              }
-            />
-          </Field>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

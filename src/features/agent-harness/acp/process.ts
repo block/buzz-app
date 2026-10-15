@@ -127,19 +127,28 @@ export class AcpProcess {
     acp = new AcpProcess(process, hooks, launch.serve);
     for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
-    const abort = () => void process.kill();
+    // A cancel rejects at once, whether or not the harness ever exits.
+    let cancel!: (reason: unknown) => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      cancel = reject;
+    });
+    cancelled.catch(() => undefined);
+    const abort = () => cancel(signal?.reason);
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
-      const init = (await acp.request(
-        "initialize",
-        {
-          protocolVersion: 1,
-          clientCapabilities: {},
-          clientInfo: { name: "buzz", version: "1" },
-        },
-        REQUEST_TIMEOUT_MS,
-      )) as {
+      const init = (await Promise.race([
+        acp.request(
+          "initialize",
+          {
+            protocolVersion: 1,
+            clientCapabilities: {},
+            clientInfo: { name: "buzz", version: "1" },
+          },
+          REQUEST_TIMEOUT_MS,
+        ),
+        cancelled,
+      ])) as {
         agentCapabilities?: Record<string, unknown> & {
           mcpCapabilities?: { http?: boolean };
         };
@@ -151,8 +160,11 @@ export class AcpProcess {
           `This ${hooks.label} cannot reach Buzz tools (no HTTP MCP support)`,
         );
     } catch (error) {
+      if (signal?.aborted) {
+        void acp.stop(STOP_TIMEOUT_MS);
+        throw signal.reason;
+      }
       await acp.stop(STOP_TIMEOUT_MS);
-      signal?.throwIfAborted();
       // A program `env` cannot find or run exits before it answers.
       if (MISSING_CODES.has(acp.code ?? 0)) throw new Error(hooks.missing);
       throw error;

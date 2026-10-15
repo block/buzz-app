@@ -44,11 +44,18 @@ function fakeHarness(
     exitCode?: number;
     /** Turns stay open until finished. */
     hold?: boolean;
+    /** Kill asks it to stop, and it never exits. */
+    holdExit?: boolean;
   }> = {},
 ) {
   const started: { options: HostProcessOptions; killed: boolean }[] = [];
   const received: Message[] = [];
-  const turns: { sessionId: string; text: string; finish(): void }[] = [];
+  const turns: {
+    sessionId: string;
+    text: string;
+    steered: string[];
+    finish(): void;
+  }[] = [];
   let servers = 0;
   const serve = async (): Promise<HostMcpServer> => {
     const index = ++servers;
@@ -70,12 +77,20 @@ function fakeHarness(
     let alive = true;
     const record = { options: process, killed: false };
     started.push(record);
-    const reply = (id: Message["id"], result: unknown) =>
+    const send = (message: Record<string, unknown>) =>
       queueMicrotask(() => {
         if (alive)
           process.onStdout?.(
-            `${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`,
+            `${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`,
           );
+      });
+    const reply = (id: Message["id"], result: unknown) => send({ id, result });
+    /** Each session's running turn. */
+    const running = new Map<string, (typeof turns)[number]>();
+    const run = (sessionId: string, runId: string | null) =>
+      send({
+        method: "session/update",
+        params: { sessionId, update: { sessionUpdate: "run", runId } },
       });
     const end = (code: number | null) => {
       if (!alive) return;
@@ -109,17 +124,37 @@ function fakeHarness(
             reply(id, { sessionId: `session-${++sessions}` });
           else if (method === "session/close") reply(id, {});
           else if (method === "session/prompt") {
+            const sessionId = String(params.sessionId);
             const text = (params.prompt as { text: string }[])[0]?.text ?? "";
-            const finish = () => reply(id, { stopReason: "end_turn" });
-            turns.push({ sessionId: String(params.sessionId), text, finish });
-            if (!options.hold) finish();
+            const runId = `run-${turns.length + 1}`;
+            const turn = {
+              sessionId,
+              text,
+              steered: [] as string[],
+              finish: () => {
+                running.delete(sessionId);
+                run(sessionId, null);
+                reply(id, { stopReason: "end_turn" });
+              },
+            };
+            turns.push(turn);
+            running.set(sessionId, turn);
+            run(sessionId, runId);
+            if (!options.hold) turn.finish();
+          } else if (method === "steer") {
+            const turn = running.get(String(params.sessionId));
+            if (turn && `run-${turns.indexOf(turn) + 1}` === params.runId) {
+              turn.steered.push(String(params.text));
+              reply(id, {});
+            } else
+              send({ id, error: { code: -32602, message: "No active run" } });
           }
         }
       },
       end: async () => undefined,
       kill: async () => {
         record.killed = true;
-        end(null);
+        if (!options.holdExit) end(null);
       },
       exited,
     };
@@ -204,8 +239,8 @@ describe("starting a harness", () => {
     expect(harness.started[0]?.killed).toBe(true);
   });
 
-  it("stops the harness when cancelled while it starts", async () => {
-    const harness = fakeHarness({ silent: ["initialize"] });
+  it("rejects at once when cancelled while it starts, even if it never exits", async () => {
+    const harness = fakeHarness({ silent: ["initialize"], holdExit: true });
     const controller = new AbortController();
     const starting = start(harness, { signal: controller.signal });
     await flush();
@@ -231,6 +266,75 @@ describe("starting a harness", () => {
     await acp.stop();
     expect(harness.started[0]?.killed).toBe(true);
     expect(acp.running).toBe(false);
+  });
+
+  it("gives up waiting at the time limit for a harness that never exits", async () => {
+    vi.useFakeTimers();
+    const harness = fakeHarness({ holdExit: true });
+    const acp = await start(harness);
+    let stopped = false;
+    const stopping = acp.stop(1_000).then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await stopping;
+    expect(harness.started[0]?.killed).toBe(true);
+    expect(harness.sent("session/new")).toEqual([]);
+  });
+});
+
+describe("a session with a steering hook", () => {
+  it("steers a message sent while the next turn picks its model into that turn, not the finished one", async () => {
+    let selecting: (() => void) | undefined;
+    const hooks: AcpHooks = {
+      ...HOOKS,
+      steering: {
+        runId: (update) =>
+          update.sessionUpdate !== "run"
+            ? null
+            : typeof update.runId === "string"
+              ? update.runId
+              : undefined,
+        steer: async (acp, sessionId, runId, text) => {
+          await acp.request("steer", { sessionId, runId, text });
+        },
+      },
+      // The second turn's model pick waits until released.
+      select: (_acp, session, want) =>
+        want.model === "slow"
+          ? new Promise<void>((resolve) => {
+              selecting = () => {
+                session.chosen = want;
+                resolve();
+              };
+            })
+          : Promise.resolve(),
+    };
+    const harness = fakeHarness({ hold: true });
+    const acp = await start(harness, {}, hooks);
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      choice: () => ({ provider: "", model: "" }),
+    });
+    const first = session.send("first");
+    await flush();
+    // Another model: queued as the next turn rather than steered.
+    const second = session.send("second", {}, "slow");
+    await flush();
+    harness.turns[0]?.finish();
+    await flush();
+    expect(selecting).toBeDefined();
+    const third = session.send("third");
+    await flush();
+    selecting?.();
+    await flush();
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["first", "second"]);
+    expect(harness.turns[1]?.steered).toEqual(["third"]);
+    harness.turns[1]?.finish();
+    await expect(Promise.all([first, second, third])).resolves.toHaveLength(3);
   });
 });
 

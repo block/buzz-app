@@ -290,6 +290,10 @@ Tailwind utilities include `bg-surface-panel`, `text-standard`,
 `border-prominent` and `bg-affordance-subtle-hover`. Text and border registrations
 stay in separate namespaces so they cannot accidentally share a value.
 
+Enabled sidebar section headings, disclosure chevrons and quiet section actions
+use `text-subtle`, not `text-unavailable`. Disabled controls keep their shared
+disabled state; a parent's inherited color must not override it.
+
 Primary reading text and icons inheriting its color use `text-standard`: #0F0F0F
 in light mode and #FFFFFF in dark mode. Secondary and disabled roles keep their
 existing colors; prominent control fills and focus boundaries remain unchanged.
@@ -317,9 +321,9 @@ and identifiers. Regular (400) supports reading and form labels; Medium (500) ma
 structure. The Typography page documents each role’s complete setting.
 
 Panel padding is 24px, control inset 16px, group gap 32px and page-section gap
-64px at the default scale. Values are rem-based. Full-window gradient backdrops
-and glass navigation support both color modes; content panels use opaque neutral
-surfaces. Dark text roles are selected for contrast on their intended surfaces.
+64px at the default scale. Values are rem-based. A solid shell with a quiet,
+hue-derived dot grid supports both color modes; content panels remain opaque.
+Shell navigation uses flat fills, not glass. Dark text roles are selected for contrast on their intended surfaces.
 Host compatibility names resolve to the shared tokens.
 
 Features own layout, data and behavior. The foundation guard covers `src/`,
@@ -418,9 +422,10 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-1` (4px at default scale). Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
+- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
-- **Reading surfaces:** documentation and dense prose sit on `bg-panel`. Keep page-wide gradients behind product chrome and panels, where their changing contrast will not interfere with reading.
+- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state.
+- **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
 - **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
 
@@ -483,20 +488,21 @@ complete material so fill, blur, rim, and optional shadow stay together.
 - More opaque glass reads as a higher layer. A brighter fill alone does not communicate the same depth.
 - Keep the rim’s light direction consistent across surfaces. Use a border role when you need a visible boundary rather than a material edge.
 - Avoid adding a glass fill when the region already covers an identical glass parent. Two `glass-2` layers composite to 0.77 alpha and become more opaque than either intended layer.
-- Panels and chrome normally sit directly on the gradient. Text placed there needs inspection because its contrast changes with position; small decorative labels may be deliberate exceptions.
+- Shell panes and navigation do not use glass. Floating popovers and media controls retain their existing material recipes.
 
-**Unresolved contrast:** opaque token checks cannot validate glass over a variable
-backdrop. A rendered dark-mode sample of primary glass over Night garden ranged
-from `#162e28` to `#1e4a3c`. In the brighter area, `text-secondary` measured Lc 58
-and `text-tertiary` Lc 43, below their 60 and 45 targets. Review real product
-content before choosing a fix: dim the backdrop, increase glass opacity, or keep
-metadata off that glass surface. These measurements do not establish a general
-contrast guarantee.
+Opaque contrast checks do not validate translucent materials over arbitrary
+content. Inspect the actual background, text and interaction states wherever
+glass remains; the flat shell does not establish a general glass contrast guarantee.
 
 ### Match controls to their surface
 
-Use `Tabs variant="chrome"` for a glass pill on the backdrop and `variant="panel"`
+Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
+Chrome tab and route-navigation groups use a shared `affordance-subtle` capsule,
+with `affordance-subtle-hover` for an inactive item. Selection uses the pane color
+in light mode and neutral 5 in dark mode, where it stays stronger than hover.
+Standalone chrome icon controls remain unfilled and use backdrop hover/pressed
+fills. No blur or glass rim is added.
 A chrome selection can blend into a white panel; choose the appropriate variant
 instead of retinting `--bg-chrome-selected` for one caller. Keep shared behavior
 in one component and show both surface variants in its examples.
@@ -579,7 +585,7 @@ recorded in `docs/presence.md`.
 
 Top-bar ghost icon actions remain unfilled at rest. Their backdrop hover and
 pressed roles use translucent fills (black 6% / 10% in light mode, white 10% / 16%
-in dark mode), so the gradient remains visible. The shell owns this context;
+in dark mode), so the shell and its dot texture remain visible. The shell owns this context;
 content-panel actions retain their opaque surface recipes. Only the fill is
 translucent: icons stay at full opacity, without adding blur or a rim.
 

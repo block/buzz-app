@@ -280,7 +280,7 @@ function setup(
         here: [],
       }),
     ),
-    port: vi.fn(async () => created),
+    port: vi.fn(async () => ({ agent: created, notes: [] })),
     portTeam: vi.fn(
       async (): Promise<TeamPort> => ({
         imported: [],

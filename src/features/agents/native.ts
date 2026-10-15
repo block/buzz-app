@@ -16,6 +16,8 @@ export type AgentIdentity = Readonly<{
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;
+  /** When a deleted one was deleted, in seconds, if that was kept. */
+  deletedAt?: number;
 }>;
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */
@@ -91,7 +93,9 @@ export type AgentsNative = {
     destination: string,
     owner: string,
     type: string,
-  ): Promise<Readonly<{ agent: AgentIdentity; carry: Carry }>>;
+  ): Promise<
+    Readonly<{ agent: AgentIdentity; carry: Carry; notes?: readonly string[] }>
+  >;
   rename(pubkey: string, name: string): Promise<void>;
   /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */
   setPicture(pubkey: string, picture: string | null): Promise<void>;

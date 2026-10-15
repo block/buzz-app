@@ -147,6 +147,32 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
+it("leaves the channels an agent was added back to after its Delete", async () => {
+  const [kept, left] = [`${"b".repeat(8)}-kept`, `${"c".repeat(8)}-left`];
+  const { fixture, instance } = setup(viewer, {
+    [kept]: [agent.pubkey, viewer.pubkey],
+    [left]: [agent.pubkey, viewer.pubkey],
+  });
+  const added = (id: string, created_at: number) =>
+    signed(relay, {
+      kind: 9000,
+      created_at,
+      content: "",
+      tags: [
+        ["h", id],
+        ["p", agent.pubkey],
+      ],
+    });
+  // Added to `left` before the Delete at 100, and back to `kept` after it.
+  fixture.additions.push(added(left, 50), added(kept, 150));
+  const signal = new AbortController().signal;
+  await expect(
+    removeAgentFromChannels(instance.session, agent.pubkey, signal, 100),
+  ).resolves.toBe(1);
+  expect(fixture.channels[kept]).toContain(agent.pubkey);
+  expect(fixture.channels[left]).not.toContain(agent.pubkey);
+});
+
 it("signs a new channel removal instead of resending one the relay would refuse as stale", async () => {
   const { fixture, instance } = setup();
   const removeFromChannels = () =>

@@ -50,6 +50,7 @@ vi.mock("./relay-removal", () => ({
 }));
 
 const viewer = "a".repeat(64);
+const DELETED_AT = 1_700_000_000;
 const other = "b".repeat(64);
 const bot = "c".repeat(64);
 const sibling = "d".repeat(64);
@@ -348,7 +349,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
     }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
-      change(pubkey, { deleted: true });
+      change(pubkey, { deleted: true, deletedAt: DELETED_AT });
     }),
     forget: vi.fn(async (pubkey: string) => {
       steps.push("forget");
@@ -556,7 +557,7 @@ it("brings over an identity not already an agent, with its type's defaults and w
   // `bot` is already an agent here; the warning still shows.
   expect(found.agents.map((agent) => agent.pubkey)).toEqual([sibling]);
   expect(found.warnings).toEqual(["Could not read one store"]);
-  const agent = await service.port({
+  const { agent } = await service.port({
     source: "installed",
     pubkey: sibling,
     type: "example/echo",
@@ -584,9 +585,60 @@ it("brings over an identity not already an agent, with its type's defaults and w
   ).rejects.toThrow("That agent type is not available");
 });
 
+it("brings back unarchived an agent whose Delete cleanup archived it, or says it stays archived", async () => {
+  const { service, archives } = await setup();
+  archives.archived.add(sibling);
+  const port = () =>
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    });
+  const back = await port();
+  expect(archives.request).toHaveBeenCalledWith(
+    "unarchive",
+    sibling,
+    expect.any(AbortSignal),
+  );
+  expect(back.notes).toEqual([]);
+  await service.remove(sibling);
+  archives.archived.add(sibling);
+  archives.request.mockClear();
+  archives.consent.mockResolvedValue(null);
+  const kept = await port();
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(kept.notes).toEqual([
+    "Older is still archived in this community, so it stays out of member lists and mentions there.",
+  ]);
+});
+
+it("passes on what native says did not come over", async () => {
+  const { service, native } = await setup();
+  native.port.mockImplementationOnce(
+    async (_, pubkey, destination, owner, type) => ({
+      agent: {
+        pubkey,
+        relay: destination,
+        owner,
+        type,
+        name: "Older",
+        deleted: false,
+      },
+      carry: { instructions: "Triage." },
+      notes: ["Older came over without its picture."],
+    }),
+  );
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual(["Older came over without its picture."]);
+});
+
 it("imports a shared agent as a new identity with its name and picture, adopting its instructions", async () => {
   const { service, native } = await setup();
-  const agent = await service.port({
+  const { agent } = await service.port({
     source: "shared",
     type: "example/echo",
     name: " Baymax ",
@@ -610,7 +662,7 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     config: { reply: "Open drafts only." },
   });
   // Without instructions it starts from the type's defaults.
-  const plain = await service.port({
+  const { agent: plain } = await service.port({
     source: "shared",
     type: "example/echo",
     name: "Plain",
@@ -1077,6 +1129,7 @@ it("lists a team whose members are all here, and imports it from them", async ()
     failed: [],
     elsewhere: [],
     foreign: [],
+    notes: [],
   });
   expect(native.port).not.toHaveBeenCalled();
 });
@@ -2504,6 +2557,7 @@ it("deletes the key at once, then leaves its channels and archives it before for
     expect.objectContaining({ archives }),
     bot,
     expect.any(AbortSignal),
+    DELETED_AT,
   );
   expect(archives.request).toHaveBeenCalledWith(
     "archive",
@@ -2529,6 +2583,31 @@ it("retries a failed cleanup on the next connect, without archiving twice", asyn
   archives.archived.add(bot);
   connect(true);
   await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(archives.request).not.toHaveBeenCalled();
+});
+
+it("leaves archiving to an agent added back to a channel after its Delete", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  leaveChannels.mockImplementationOnce(async () => {
+    steps.push("channels");
+    return 1;
+  });
+  await service.remove(bot);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(archives.request).not.toHaveBeenCalled();
+});
+
+it("only forgets an agent deleted before its Delete time was kept", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  native.remove.mockImplementationOnce(async (pubkey: string) => {
+    const saved = (await native.list()).find((one) => one.pubkey === pubkey);
+    Object.assign(saved ?? {}, { deleted: true });
+  });
+  await service.remove(bot);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(leaveChannels).not.toHaveBeenCalled();
   expect(archives.request).not.toHaveBeenCalled();
 });
 

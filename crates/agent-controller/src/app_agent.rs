@@ -436,17 +436,17 @@ impl AppAgents {
         // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
         self.update(|agents| {
-            if prepared.adopted {
-                if let Some(saved) = agents.iter().find(|saved| saved.pubkey == agent.pubkey) {
-                    return Err(if saved.deleted {
-                        "That agent is still being removed here; try again shortly".into()
-                    } else {
-                        "That agent is already here".into()
-                    });
-                }
+            // A deleted row awaiting its community cleanup is taken back.
+            if prepared.adopted
+                && agents
+                    .iter()
+                    .any(|saved| saved.pubkey == agent.pubkey && !saved.deleted)
+            {
+                return Err("That agent is already here".into());
             }
             agents.retain(|saved| saved.pubkey != agent.pubkey);
             agents.push(agent.clone());
+            self.set_deleted_at(&agent.pubkey, None)?;
             Ok(())
         })?;
         if shared {
@@ -517,7 +517,53 @@ impl AppAgents {
             return Ok(());
         };
         credentials.delete(&agent.credential_id(), &agent.pubkey)?;
-        self.edit(pubkey, |agent| agent.deleted = true)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?
+            .as_secs();
+        self.update(|agents| {
+            let agent = agents
+                .iter_mut()
+                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            agent.deleted = true;
+            self.set_deleted_at(pubkey, Some(now))
+        })
+    }
+    /// When a deleted agent was deleted, in seconds; channels it was added to
+    /// after that are not its cleanup's to leave. None for one deleted before
+    /// this was kept. Kept beside the identities, which older builds read with
+    /// unknown fields refused, so a field there would hide every agent from them.
+    pub fn deleted_at(&self, pubkey: &str) -> Result<Option<u64>> {
+        Ok(self.deletions()?.get(pubkey).copied())
+    }
+    fn deletions_path(&self) -> PathBuf {
+        self.path.with_file_name("deleted-at.json")
+    }
+    fn deletions(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        match std::fs::read(self.deletions_path()) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| "Saved agent deletion times are malformed".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(_) => Err("Could not read agent deletion times".into()),
+        }
+    }
+    /// Called only under `update`'s lock.
+    fn set_deleted_at(&self, pubkey: &str, at: Option<u64>) -> Result<()> {
+        let mut deletions = self.deletions()?;
+        let changed = match at {
+            Some(at) => deletions.insert(pubkey.to_owned(), at) != Some(at),
+            None => deletions.remove(pubkey).is_some(),
+        };
+        if !changed {
+            return Ok(());
+        }
+        let path = self.deletions_path();
+        let bytes = serde_json::to_vec_pretty(&deletions)
+            .map_err(|_| "Could not encode agent deletion times")?;
+        let temp = path.with_extension("tmp");
+        std::fs::write(&temp, bytes).map_err(|_| "Could not save agent deletion times")?;
+        std::fs::rename(&temp, &path).map_err(|_| "Could not save agent deletion times".into())
     }
     /// Deletes every key it still has, as an erase that removes agents does
     /// before the rows go with app data. Absence is success, so it repeats safely.
@@ -530,7 +576,13 @@ impl AppAgents {
     /// Drops a deleted row once its community has been cleaned up.
     pub fn forget(&self, pubkey: &str) -> Result<()> {
         self.update(|agents| {
-            agents.retain(|agent| agent.pubkey != pubkey || !agent.deleted);
+            if agents
+                .iter()
+                .any(|agent| agent.pubkey == pubkey && agent.deleted)
+            {
+                agents.retain(|agent| agent.pubkey != pubkey || !agent.deleted);
+                self.set_deleted_at(pubkey, None)?;
+            }
             Ok(())
         })
     }

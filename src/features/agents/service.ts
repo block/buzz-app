@@ -534,7 +534,11 @@ export type TeamPort = Readonly<{
   foreign: readonly string[];
   /** The team could not be saved, though its members were imported. */
   teamError?: Readonly<{ name: string }>;
+  /** What did not come over with the members that were imported. */
+  notes?: readonly string[];
 }>;
+/** An imported agent, and what did not come over with it. */
+export type Ported = Readonly<{ agent: Agent; notes: readonly string[] }>;
 export type NewAgent = Readonly<{
   type: string;
   name: string;
@@ -568,7 +572,7 @@ export type Agents = {
    * from `portable` keeps its key, name and picture, and a shared agent gets a
    * new key with its name and picture. Either keeps whatever of its
    * instructions and workspace the type adopts; its other settings stay behind. */
-  port(input: PortInput): Promise<Agent>;
+  port(input: PortInput): Promise<Ported>;
   /** Imports an old Buzz team from `portable`, as read now, into the selected
    * community: each member not here yet as an agent of `type`, then the team's
    * copy there with every member here. A team imported before keeps its name,
@@ -1254,20 +1258,16 @@ export class AgentsService extends Service implements Agents {
     };
   }
 
-  async port(input: PortInput) {
+  async port(input: PortInput): Promise<Ported> {
     const { type } = input;
-    if (input.source !== "shared") {
-      const { source, pubkey } = input;
-      return this.add(type, (native, destination, owner) =>
-        native.port(source, pubkey, destination, owner, type),
-      );
-    }
+    if (input.source !== "shared")
+      return this.portIdentity(input.source, input.pubkey, type);
     const name = input.name.trim();
     if (!name) throw new Error("Name the agent");
     const { picture, instructions } = input;
     // A shared agent has no key to keep; it is a new identity that carries
     // what was shared, as a brought-over one does.
-    return this.add(
+    const agent = await this.add(
       type,
       async (native, destination, owner) => ({
         agent: await native.create(destination, owner, type, name),
@@ -1275,6 +1275,48 @@ export class AgentsService extends Service implements Agents {
       }),
       { picture },
     );
+    return { agent, notes: [] };
+  }
+
+  /** Takes over an identity an earlier agent system saved. One deleted here
+   * whose cleanup already archived it comes back unarchived where the owner
+   * can, and otherwise says it is still archived. */
+  private async portIdentity(
+    source: PortSource,
+    pubkey: string,
+    type: string,
+    given?: Binding,
+  ): Promise<Ported> {
+    const binding = given ?? this.selectedBinding();
+    const notes: string[] = [];
+    const agent = await this.add(
+      type,
+      async (native, destination, owner) => {
+        const ported = await native.port(
+          source,
+          pubkey,
+          destination,
+          owner,
+          type,
+        );
+        notes.push(...(ported.notes ?? []));
+        return ported;
+      },
+      {},
+      binding,
+    );
+    try {
+      if (!(await unarchive(binding.session.archives, pubkey)))
+        notes.push(
+          `${agent.name} is still archived in this community, so it stays out of member lists and mentions there.`,
+        );
+    } catch (error) {
+      console.warn(`Agent ${agent.name} archive state was not checked`, error);
+      notes.push(
+        `Couldn't check whether ${agent.name} is archived in this community. If it is missing from member lists, import it again.`,
+      );
+    }
+    return { agent, notes };
   }
 
   async portTeam({
@@ -1302,6 +1344,7 @@ export class AgentsService extends Service implements Agents {
     const failed: { name: string; error: string }[] = [];
     const elsewhere: string[] = [];
     const foreign: string[] = [];
+    const notes: string[] = [];
     const listed = new Set(found.agents.map((agent) => agent.pubkey));
     const teamId = await importedTeamId(old, binding.scope);
     const labels = publicKeyLabels(old.members.map(({ pubkey }) => pubkey));
@@ -1332,13 +1375,14 @@ export class AgentsService extends Service implements Agents {
         continue;
       }
       try {
-        const agent = await this.add(
+        const ported = await this.portIdentity(
+          member.source,
+          member.pubkey,
           type,
-          (native, destination, owner) =>
-            native.port(member.source, member.pubkey, destination, owner, type),
-          {},
           binding,
         );
+        const { agent } = ported;
+        notes.push(...ported.notes);
         imported.push(agent);
         members.push(agent.pubkey);
       } catch (error) {
@@ -1355,7 +1399,7 @@ export class AgentsService extends Service implements Agents {
       if (!here) return true;
       return fits(here, here.name || pubkey);
     });
-    const result = { imported, failed, elsewhere, foreign };
+    const result = { imported, failed, elsewhere, foreign, notes };
     // A saved team is rewritten so the members judged out leave it; a new
     // one is made only with members.
     if (!saved && !members.length) return result;
@@ -2128,10 +2172,27 @@ export class AgentsService extends Service implements Agents {
       AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
     ]);
     const { session } = binding;
+    // Re-import takes a deleted agent back; nothing here may touch it then.
+    const stillDeleted = async () => {
+      const saved = (await this.native?.list())?.find(
+        (identity) => identity.pubkey === pubkey,
+      );
+      signal.throwIfAborted();
+      if (!saved?.deleted) throw new Error("The agent was taken back");
+      return saved;
+    };
     try {
-      await removeAgentFromChannels(session, pubkey, signal);
+      // Without its Delete time nothing tells a channel it was added back to
+      // from one it was left in, and archiving may hide an identity old Buzz
+      // still runs: such a cleanup only drops its records.
+      const { deletedAt } = await stillDeleted();
       const { archives } = session;
-      if (archives.writable) {
+      // Added back somewhere since, it is wanted in the directory there.
+      if (
+        deletedAt !== undefined &&
+        !(await removeAgentFromChannels(session, pubkey, signal, deletedAt)) &&
+        archives.writable
+      ) {
         // The archive cache is not live; this needs a read started now.
         await archives.ensure();
         await archives.refresh();
@@ -2144,8 +2205,12 @@ export class AgentsService extends Service implements Agents {
         const consent =
           state === "not-archived" && (await archives.consent(pubkey, signal));
         signal.throwIfAborted();
-        if (consent) await archives.request("archive", pubkey, signal);
+        if (consent) {
+          await stillDeleted();
+          await archives.request("archive", pubkey, signal);
+        }
       }
+      await stillDeleted();
       await deleteAgentRecord(session, binding.viewer, pubkey, signal);
       for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
       await this.native?.forget(pubkey);
@@ -2470,4 +2535,24 @@ async function importedTeamId(team: OldTeam, scope: string) {
     new TextEncoder().encode(`${team.id}\n${scope}`),
   );
   return `beta-${bytesToHex(new Uint8Array(digest))}`;
+}
+
+/** Unarchives an identity the owner may, as re-import does for one a Delete's
+ * cleanup archived. False when it stays archived. */
+async function unarchive(
+  archives: RelaySession["archives"],
+  pubkey: string,
+): Promise<boolean> {
+  // The archive cache is not live; this needs a read started now.
+  await archives.ensure();
+  await archives.refresh();
+  const state = archives.state(pubkey);
+  if (state === "not-archived") return true;
+  // An unfinished read says nothing, least of all "not archived".
+  if (state === "unknown") throw new Error("Archive state is unknown");
+  const signal = AbortSignal.timeout(20_000);
+  if (!archives.writable || !(await archives.consent(pubkey, signal)))
+    return false;
+  await archives.request("unarchive", pubkey, signal);
+  return true;
 }

@@ -166,7 +166,8 @@ export const flush = () =>
 /** Fixture relay for NIP-IA requests: applies accepted 9035/9036 events to its
  * relay-signed 13535 snapshot. `hold`/`fail`/`apply` script the publish outcome.
  * `channels` maps channel IDs to relay-signed 39002 members; `removal` scripts
- * accepted 9001 removals the same way. */
+ * accepted 9001 removals the same way. `additions` holds the 9000 member
+ * additions it serves. */
 export function archiveRelay(
   viewer: Key,
   relay: Key,
@@ -178,6 +179,7 @@ export function archiveRelay(
   /** NIP-09 coordinates the relay accepted for deletion. */
   const deleted = new Set<string>();
   const published: RelayEvent[] = [];
+  const additions: RelayEvent[] = [];
   const signedBy: string[] = [];
   const script: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
     apply: true,
@@ -253,6 +255,15 @@ export function archiveRelay(
                   filter["#p"].some((key) => channels[id]?.includes(key))),
             )
             .map(roster);
+        if (filter.kinds?.includes(9000))
+          return additions.filter(
+            (event) =>
+              event.created_at >= (filter.since ?? 0) &&
+              event.tags.some(
+                ([name, key]) =>
+                  name === "p" && !!key && !!filter["#p"]?.includes(key),
+              ),
+          );
         return [];
       }),
     writer: {
@@ -319,5 +330,6 @@ export function archiveRelay(
     channels,
     removal,
     deleted,
+    additions,
   };
 }

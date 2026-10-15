@@ -352,6 +352,37 @@ export function createWorkSessions(
     }
     return [...ids];
   }
+  /** Channel IDs `pubkey` was added to at or after `since` (seconds), as far
+   * as this viewer may read. Throws rather than return a possibly truncated set. */
+  async function addedSince(
+    pubkey: string,
+    since: number,
+    caller: AbortSignal,
+  ) {
+    const limit = 500;
+    const events = await discovery.read(
+      [{ kinds: [9000], "#p": [pubkey], since, limit, consistency: "strong" }],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    if (events.length >= limit)
+      throw new Error("Too many channel additions to confirm. Retry later.");
+    const ids = new Set<string>();
+    for (const event of events) {
+      const id = event.tags.find(([name]) => name === "h")?.[1];
+      if (
+        id &&
+        event.kind === 9000 &&
+        event.created_at >= since &&
+        event.tags.some(([name, value]) => name === "p" && value === pubkey)
+      )
+        ids.add(id);
+    }
+    return ids;
+  }
   /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
    * when no roster is readable, so missing evidence never counts as absence. */
   async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
@@ -498,6 +529,7 @@ export function createWorkSessions(
     addAgents,
     refreshMembership,
     memberChannels,
+    addedSince,
     listsMember,
     createChannel(
       id: string,

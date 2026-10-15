@@ -108,6 +108,52 @@ fn forgets_only_deleted_rows() {
 }
 
 #[test]
+fn keeps_delete_times_beside_the_rows_until_forgotten_or_taken_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    assert_eq!(agents.deleted_at(&agent.pubkey).unwrap(), None);
+    agents.remove(&agent.pubkey, &credentials).unwrap();
+    assert!(agents.deleted_at(&agent.pubkey).unwrap().is_some());
+    // The rows keep their shape, which older builds read refusing unknown fields.
+    let saved = std::fs::read_to_string(dir.path().join("agents/identities.json")).unwrap();
+    assert!(!saved.contains("deleted_at") && !saved.contains("deletedAt"));
+    agents.forget(&agent.pubkey).unwrap();
+    assert_eq!(agents.deleted_at(&agent.pubkey).unwrap(), None);
+}
+
+#[test]
+fn re_import_takes_back_a_deleted_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+    let key = Secret::generate().unwrap();
+    let adopt = || {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), key.pubkey()).unwrap(),
+            "Ada",
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
+    let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
+    assert!(agents.commit(adopt(), &auth, &credentials).is_err());
+    agents.remove(&agent.pubkey, &credentials).unwrap();
+    let (back, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
+    assert_eq!(rows(&agents), [(back.pubkey.clone(), false)]);
+    assert_eq!(agents.deleted_at(&back.pubkey).unwrap(), None);
+    // Its cleanup, if still running, has nothing to drop.
+    agents.forget(&back.pubkey).unwrap();
+    assert_eq!(agents.get(&back.pubkey).unwrap(), back);
+}
+
+#[test]
 fn changes_only_a_live_agents_type() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -463,10 +509,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
         profile["content"],
         r#"{"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"}"#
     );
-    // Once here, it is not taken over again, nor while it is being removed.
-    let again = adopt("https://a.example/b.png");
-    assert!(agents.commit(again, &auth, &credentials).is_err());
-    agents.edit(&pubkey, |agent| agent.deleted = true).unwrap();
+    // Once here, it is not taken over again.
     let again = adopt("https://a.example/b.png");
     assert!(agents.commit(again, &auth, &credentials).is_err());
     // A shared key that fails to verify is left where it was.

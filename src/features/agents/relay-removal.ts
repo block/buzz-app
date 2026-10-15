@@ -156,6 +156,9 @@ export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
   pubkey: string,
   signal: AbortSignal,
+  /** With a Delete time, channels it was added to since stay: someone wanted
+   * it there after the Delete. Returns how many stayed. */
+  deletedAt?: number,
 ) {
   const pending = new Set([
     ...(await session.workSessions.memberChannels(pubkey, signal)),
@@ -164,7 +167,15 @@ export async function removeAgentFromChannels(
       .channels.filter((channel) => channel.members?.includes(pubkey))
       .map((channel) => channel.id),
   ]);
-  if (!pending.size) return;
+  let kept = 0;
+  if (deletedAt !== undefined && pending.size)
+    for (const id of await session.workSessions.addedSince(
+      pubkey,
+      deletedAt,
+      signal,
+    ))
+      if (pending.delete(id)) kept += 1;
+  if (!pending.size) return kept;
   const outbox = session.outbox;
   if (!outbox?.supports(9001))
     throw new Error("This community cannot remove agents from channels.");
@@ -232,6 +243,7 @@ export async function removeAgentFromChannels(
     );
   // The rosters confirm the outcome; nothing is left for the outbox to retry.
   await Promise.all(operations.map((id) => outbox.dismiss(id)));
+  return kept;
 }
 
 /** The relay refuses an event more than 15 minutes from its clock, and a

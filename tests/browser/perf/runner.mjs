@@ -16,7 +16,7 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click }) {
+function observe({ selector, ids, click, hoverMs }) {
   const allowed = new Set(ids);
   const frames = [];
   let start,
@@ -28,7 +28,10 @@ function observe({ selector, ids, click }) {
     timer,
     resolve;
   let wheels = 0;
-  let inputAt;
+  let inputAt, hoverAt;
+  const hovered = (event) => {
+    if (hoverMs && event.target.closest(click)) hoverAt ??= performance.now();
+  };
   const clicked = (event) => {
     if (click && event.target.closest(click)) inputAt = performance.now();
   };
@@ -40,16 +43,22 @@ function observe({ selector, ids, click }) {
   };
   document.addEventListener("wheel", wheel, { passive: true });
   document.addEventListener("click", clicked, true);
+  document.addEventListener("pointerover", hovered, true);
   function stop(error) {
     cancelAnimationFrame(raf);
     clearTimeout(timer);
     document.removeEventListener("wheel", wheel);
     document.removeEventListener("click", clicked, true);
+    document.removeEventListener("pointerover", hovered, true);
     resolve({
       error,
       frames,
       wheels,
       firstRowsMs,
+      hoverLeadMs:
+        hoverAt === undefined || inputAt === undefined
+          ? undefined
+          : inputAt - hoverAt,
       inputDelayMs: inputAt === undefined ? undefined : inputAt - start,
       durationMs: performance.now() - start,
     });
@@ -103,6 +112,16 @@ function observe({ selector, ids, click }) {
     else raf = requestAnimationFrame(sample);
   }
   return {
+    waitForHover() {
+      if (hoverAt === undefined)
+        throw new Error("Hover did not reach the target");
+      return new Promise((r) =>
+        setTimeout(
+          r,
+          Math.ceil(Math.max(0, hoverMs - (performance.now() - hoverAt))),
+        ),
+      );
+    },
     start() {
       start = performance.now();
       quietSince = start;
@@ -158,10 +177,13 @@ export const test = base.extend({
         ).toBeVisible();
         await virtuaIdle(page, page.locator(timeline(id)));
       },
-      async measure(id, { click, act, work = {} }) {
+      async measure(id, { click, hoverMs = 0, act, work = {} }) {
         const ids = app.histories.get(`primary/${id}`).map((event) => event.id);
         const box = click ? await page.locator(click).boundingBox() : null;
         if (click && !box) throw new Error(`Missing click target: ${click}`);
+        const point = box
+          ? { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+          : null;
         let observer, recording;
         const sample = { state: app.report.state, work, metrics: {} };
         try {
@@ -172,26 +194,33 @@ export const test = base.extend({
             selector: timeline(id),
             ids,
             click,
+            hoverMs,
           });
+          if (hoverMs) {
+            await cdp.send("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              ...point,
+            });
+            await observer.evaluate((o) => o.waitForHover());
+          }
+          if (click) sample.work.headReadsBefore = heads(app, id);
           const before = await read();
           await observer.evaluate((o) => o.start());
           if (click) {
             // Browser input counts synchronous handlers in ScriptDuration.
-            // evaluate(() => element.click()) does not. No preceding hover:
-            // cold preparation, if any, begins inside the measured window.
-            const point = {
-              x: box.x + box.width / 2,
-              y: box.y + box.height / 2,
-              button: "left",
-              clickCount: 1,
-            };
+            // evaluate(() => element.click()) does not. Only the hover case
+            // moves the pointer first; cold preparation starts in this window.
             await cdp.send("Input.dispatchMouseEvent", {
               type: "mousePressed",
               ...point,
+              button: "left",
+              clickCount: 1,
             });
             await cdp.send("Input.dispatchMouseEvent", {
               type: "mouseReleased",
               ...point,
+              button: "left",
+              clickCount: 1,
             });
           }
           if (act) await act();
@@ -204,7 +233,11 @@ export const test = base.extend({
           }
           sample.recording = recording;
           sample.metrics.durationMs = recording.durationMs;
-          if (click) sample.metrics.firstRowsMs = recording.firstRowsMs;
+          if (click) {
+            sample.metrics.firstRowsMs = recording.firstRowsMs;
+            sample.work.headReadsDuring =
+              heads(app, id) - sample.work.headReadsBefore;
+          }
           expect(recording.error).toBeUndefined();
           return sample;
         } finally {

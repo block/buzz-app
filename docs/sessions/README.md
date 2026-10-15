@@ -42,7 +42,8 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   link grants no access; Done with no audience closes without writes. Shared uses
   verified membership and cached human evidence, not privacy inference or a required
   role refresh. See [sharing](sharing.md) for retries and evidence limits.
-- Lifetime/settings improvements are separate work. Backend read-only roles,
+- Naming and lifetime belong to [Session settings](#standalone-session-lifetime),
+  not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
   blocked in this checkpoint. Sharing does not expose owner-private detailed agent
   activity or start an agent. Proposal documents remain design history, not
@@ -138,7 +139,8 @@ Setup, Me placement, and first-message ordering retain their existing owners.
 
 The **Session settings** gear in the header opens the form directly; saved-session
 row menus retain **Session settings…** alongside their other actions. Both open one
-scrollable dialog, with **Session name (optional)** above Workspace/Canvas,
+scrollable dialog, with **Session name** above Workspace/Canvas
+(optional for a new draft),
 **Lifetime** below it, and one **Save changes** action. The separate Rename editor
 and menu action have been removed. There is no separate lifetime menu or tab.
 Changed Canvas confirms first, then changed name/lifetime use one fresh signed
@@ -186,12 +188,11 @@ another creation/rename operation.
 New session `about` metadata uses only the existing marker, optional parent line,
 and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
 Custom creation and subsequent renames do not append a `naming:` extension.
-Name/lifetime edits leave that metadata unchanged; only Share's existing conversion
+Name/lifetime edits leave that metadata unchanged; only explicit Convert to channel
 clears `personal`. Persisted naming provenance and automatic-name reset are deferred.
 Clearing a saved name silently preserves the last confirmed title without a name
-write or validation error. Other settings can still save. Transitional local pending
-receipts retain their frozen title/fallback; obsolete explicit-name hints are not
-wire authority and do not invalidate an otherwise valid receipt.
+write or validation error. Other settings can still save. Old pending receipts without a frozen name derive it from their original first
+prompt, not an edited retry draft.
 The form uses the shared content-sized dialog and its normal footer spacing, with
 one body scrollport and no reserved bottom area. The title and actions stay visible
 in ordinary short windows. If enlarged controls cannot fit, the outer dialog also

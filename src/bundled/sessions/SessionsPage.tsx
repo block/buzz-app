@@ -37,6 +37,7 @@ import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
+  MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -505,11 +506,22 @@ function SessionWork({
                   }
                 />
                 <MenuPopup aria-label="Session actions" align="end">
+                  {canConvertSession(session, channel) && (
+                    <MenuItem
+                      disabled={shareAttempts.has(channel.id)}
+                      onClick={() => {
+                        if (!sessionShareAttempt(session, channel.id))
+                          setConvertOpen(true);
+                      }}
+                    >
+                      {conversionLabel(session, channel.id)}
+                    </MenuItem>
+                  )}
                   <ChannelLifecycleMenu
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
                     disabled={false}
-                    separator={false}
+                    separator={canConvertSession(session, channel)}
                     choose={(action) =>
                       chooseLifecycle(
                         action,

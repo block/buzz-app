@@ -438,6 +438,41 @@ it("opens settings directly from the header and restores keyboard focus without 
   expect(f.open).not.toHaveBeenCalled();
 });
 
+it("preserves the Session actions menu trigger relationship and keyboard focus", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session actions" });
+  trigger.focus();
+  await user.keyboard("{ArrowDown}");
+  const menu = await screen.findByRole("menu", { name: "Session actions" });
+  expect(trigger.id).not.toBe("");
+  await waitFor(() =>
+    expect(menu).toHaveAttribute("aria-labelledby", trigger.id),
+  );
+  await waitFor(() =>
+    expect(
+      within(menu).getByRole("menuitem", { name: "Convert to channel" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+
+  await user.keyboard("{ArrowDown}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Convert to channel" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Convert to channel",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("opens an already-moved Me route in Messages without a placement or settings write", async () => {
   const f = fixture();
   f.mount();

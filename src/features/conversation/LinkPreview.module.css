@@ -19,7 +19,7 @@ html[data-keyboard-navigation] .sessionLink:focus-visible {
 .sessionChip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-half);
+  gap: var(--space-1);
   white-space: nowrap;
   font-size: var(--text-body-sm);
 }

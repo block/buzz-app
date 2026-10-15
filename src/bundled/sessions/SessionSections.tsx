@@ -371,7 +371,17 @@ export function SessionSections({
                               (channel) => channel.id === item.id,
                             ),
                           ) && (
-                            <MenuSubmenu>
+                            <MenuItem
+                              disabled={shareAttempts.has(item.id)}
+                              onClick={() => {
+                                if (!sessionShareAttempt(session, item.id))
+                                  setConverting({ id: item.id, visit });
+                              }}
+                            >
+                              {conversionLabel(session, item.id)}
+                            </MenuItem>
+                          )}
+                        <MenuSubmenu>
                           <MenuSubmenuTrigger disabled={!preferences.writable}>
                             <MenuIcon>
                               <FolderSimpleIcon size={16} />

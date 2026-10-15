@@ -1,15 +1,22 @@
-import { expect, it } from "vitest";
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { afterEach, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, TableIcon } from "../../shared/design-system/icons/index";
 import styles from "../../shared/InlineReference.module.css";
 import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
 import { apply } from "./index";
+import { apply as applyLinkLab } from "../link-lab";
+import type { Page } from "../../features/pages/service";
 import type { LinkRenderer } from "../../features/conversation/contracts";
 import {
   LinkLabelContext,
   LinkContentContext,
   LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
+
+afterEach(cleanup);
 
 it("claims recognised services and Buzz entities by default and unknown websites as a catch-all", () => {
   let renderer: LinkRenderer | undefined;
@@ -61,13 +68,39 @@ it("renders private channel links with the design-system lock icon", () => {
 
 it.each([
   "javascript:alert(1)",
+  "JaVaScRiPt:alert(1)",
+  "java\nscript:alert(1)",
+  "java\tscript:alert(1)",
   "data:text/html,hello",
+  "//github.com/block/buzz",
   "buzz://unknown",
   "not a URL",
 ])("leaves unsupported destinations as plain text: %s", (href) => {
   expect(
     renderToStaticMarkup(<InlineLink href={href}>Reference</InlineLink>),
   ).toBe("Reference");
+});
+
+it("guards the Link Lab input-to-anchor path and restores a supported link", () => {
+  let page: Page | undefined;
+  applyLinkLab({
+    pages: { register: (value: Page) => (page = value) },
+  } as never);
+  if (!page) throw new Error("expected the link lab page");
+  const Lab = page.component;
+  render(<Lab />);
+  const input = screen.getByRole("textbox", { name: "Try a URL" });
+  const payload = 'javascript:alert("<img src=x onerror=alert(1)>")';
+  fireEvent.change(input, { target: { value: payload } });
+  expect(screen.getByText(`Take a look at ${payload}.`)).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: payload })).toBeNull();
+
+  const href = "https://github.com/block/buzz";
+  fireEvent.change(input, { target: { value: href } });
+  expect(screen.getByRole("link", { name: href })).toHaveAttribute(
+    "href",
+    href,
+  );
 });
 
 it("preserves the destination and readable full label", () => {

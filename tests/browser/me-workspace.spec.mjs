@@ -111,6 +111,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   page,
   app,
 }) => {
+  // Install before app timers exist so pausing also controls pending hover work.
+  await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
@@ -153,11 +155,9 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // The installed clock runs, so pause at a fixed instant ahead of it rather
-  // than a test-side timestamp that the page clock may already have passed.
-  const base = Date.now();
-  await page.clock.install({ time: base });
-  await page.clock.pauseAt(base + 1_000);
+  // Let the installed clock run through navigation, then pause ahead of its
+  // own current time. No native timers are left outside the controlled clock.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);

@@ -218,6 +218,8 @@ export function SessionSections({
       <ChannelSidebarDnd
         writable={preferences.writable}
         onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
+        // Me projects keep their saved order; only chats drag.
+        onReorder={() => {}}
         overlay={(id) => {
           const item = sessions.find((item) => item.id === id);
           return (

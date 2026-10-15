@@ -16,6 +16,7 @@ import { AgentRunners } from "./runner";
 import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
+import { bytesToHex } from "nostr-tools/utils";
 import type { ComponentType, ReactNode } from "react";
 import type { DefinedIcon } from "../../shared/design-system/icons";
 import {
@@ -38,6 +39,7 @@ import {
   type NipOaAuthorization,
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
@@ -65,6 +67,7 @@ import {
   type Carry,
   type AgentsNative,
   type AgentUpload,
+  type OldTeam,
   type PortableAgents,
   type PortSource,
 } from "./native";
@@ -148,31 +151,28 @@ export type AgentViewProps<Config = unknown> = {
   save(config: Config): Promise<void>;
   /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
   settingsHost?: AgentSettingsHost;
+  /** Optional presentation split for providers that declare splitSettings. */
+  settingsSection?: "identity" | "runtime";
+  /** Host management rows, shown before provider diagnostics. */
+  settingsContent?: ReactNode;
 };
 /** What a type's part of the New agent dialog receives: the new agent's
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Model fields may use the compact card treatment in the library. */
+  modelAppearance?: "subtle";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
 };
-export type AgentCreateModelMenuProps<Config = unknown> =
-  AgentCreateProps<Config> & {
-    /** Whether this provider is the create form's current selection. */
-    active?: boolean;
-    /** Opens Create's host-owned model-ID dialog after its menu closes. */
-    requestCustomModel(
-      initialValue: string,
-      onChange: (model: string) => void,
-    ): void;
-  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
-  /** `settings` lets the Agents build view place host-owned Type controls in
-   * this tab; `activity` makes it the agent's Activity tab in its profile. */
+  /** Lets the Agents build view place host-owned Type controls in this tab. */
   role?: "settings" | "activity";
+  /** Supports separate identity and runtime settings presentations. */
+  splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
@@ -254,6 +254,25 @@ export type Trigger =
       /** This is its last allowed occurrence. */
       spent: boolean;
     }>;
+/** A turn with no conversation and nothing saved, such as for a watch or a
+ * timer. */
+export type StandaloneTurn<Config = unknown> = Readonly<{
+  /** The watch's or timer's delivery. */
+  delivery: Delivery<Config>;
+  /** Names the turn, for status views. */
+  key: string;
+  /** Aborts when the agent is removed, its type is replaced, or
+   * STANDALONE_DEADLINE_MS after the turn starts (agent-harness/standalone).
+   * Unlike the delivery's signal, it does not count time spent waiting in
+   * the lane. A harness waits for readiness under it and stops its turn when
+   * it aborts. */
+  signal: AbortSignal;
+  /** The turn's whole prompt, asked once the harness is ready to start it.
+   * Undefined means it is no longer wanted, so no turn starts. */
+  prompt(): Promise<string | undefined>;
+}>;
+/** How a standalone turn ended. */
+export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   /** The live route's channel; absent when the wire scope was ambiguous. */
@@ -356,10 +375,8 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
-  /** Model rows contributed to this type's submenu in the New agent dialog. */
-  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
-  /** Non-default model detail appended to this type's New agent trigger. */
-  createModelLabel?(config: Config): string | undefined;
+  /** Compact model field for creation and library cards; the type owns discovery and configuration. */
+  CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
@@ -370,6 +387,10 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Runs a standalone turn and settles when it ends, stopping it when
+   * `turn.signal` aborts. With it, the host runs watches and timers as
+   * standalone turns in their Interest's lane, and `run` gets only mentions. */
+  runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
@@ -449,6 +470,36 @@ export type PortInput = Readonly<
       instructions?: string;
     }
 >;
+/** Whether the binding's owner owns the agent, by the partition Yours uses. */
+function ownedBy({ owner }: Pick<AgentIdentity, "owner">, binding: Binding) {
+  return binding.scope === relayPartition(binding.origin, owner);
+}
+/** Whether the agent is in Yours under the binding: its owner's, there. */
+function yours(identity: AgentIdentity, binding: Binding) {
+  return (
+    !identity.deleted &&
+    originOf(identity.relay) === binding.origin &&
+    ownedBy(identity, binding)
+  );
+}
+/** What Import can bring over, and the agents already in Yours. */
+export type FoundAgents = PortableAgents &
+  Readonly<{ here: readonly string[] }>;
+/** What importing an old Buzz team did. Members that came are kept even when
+ * others, or the team itself, did not. */
+export type TeamPort = Readonly<{
+  /** The team that was saved, including an existing team cleaned to zero
+   * members. Absent when no team was saved. */
+  team?: Team;
+  imported: readonly Agent[];
+  failed: readonly Readonly<{ name: string; error: string }>[];
+  /** Members already here in another community, left off the team. */
+  elsewhere: readonly string[];
+  /** Members another account on this device has, left off the team. */
+  foreign: readonly string[];
+  /** The team could not be saved, though its members were imported. */
+  teamError?: Readonly<{ name: string }>;
+}>;
 export type NewAgent = Readonly<{
   type: string;
   name: string;
@@ -475,13 +526,19 @@ export type Agents = {
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
-   * Agents yet. */
-  portable(): Promise<PortableAgents>;
+   * Agents yet, old Buzz's teams with all their members, and which of those
+   * members are already in Yours. */
+  portable(): Promise<FoundAgents>;
   /** Imports one as an agent of `type` in the selected community: an identity
    * from `portable` keeps its key, name and picture, and a shared agent gets a
    * new key with its name and picture. Either keeps whatever of its
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
+  /** Imports an old Buzz team from `portable`, as read now, into the selected
+   * community: each member not here yet as an agent of `type`, then the team's
+   * copy there with every member here. A team imported before keeps its name,
+   * instructions and members here. */
+  portTeam(input: Readonly<{ id: string; type: string }>): Promise<TeamPort>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
@@ -1009,9 +1066,15 @@ export class AgentsService extends Service implements Agents {
         .filter((identity) => !identity.deleted)
         .map((identity) => identity.pubkey),
     );
+    const binding = this.bound.get(this.selectedOrigin() ?? "")?.binding;
     return {
       ...found,
       agents: found.agents.filter((agent) => !own.has(agent.pubkey)),
+      here: binding
+        ? this.identities
+            .filter((identity) => yours(identity, binding))
+            .map((identity) => identity.pubkey)
+        : [],
     };
   }
 
@@ -1038,9 +1101,103 @@ export class AgentsService extends Service implements Agents {
     );
   }
 
-  /** Saves a new identity of `type` in the selected community with the type's
-   * default settings, or the `config` it was made with, adopting what a
-   * brought-over one carried. */
+  async portTeam({
+    id,
+    type,
+  }: Readonly<{ id: string; type: string }>): Promise<TeamPort> {
+    const native = this.native;
+    if (!native) throw new Error("Agents run only in the desktop app");
+    // Every member and the team land here, whatever is opened meanwhile.
+    const binding = this.selectedBinding();
+    const origin = this.selectedOrigin();
+    const kind = this.types().find((entry) => entry.key === type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted agent's key stays with its provider");
+    const moved = () => this.selectedOrigin() !== origin;
+    // As old Buzz has it now, not as the Import tab showed it.
+    const found = await native.portable();
+    if (moved()) throw new Error("Community changed");
+    const old = found.teams.find((team) => team.id === id);
+    if (!old) throw new Error("That team is no longer saved there");
+    const live = this.identities.filter((identity) => !identity.deleted);
+    const members: string[] = [];
+    const imported: Agent[] = [];
+    const failed: { name: string; error: string }[] = [];
+    const elsewhere: string[] = [];
+    const foreign: string[] = [];
+    const listed = new Set(found.agents.map((agent) => agent.pubkey));
+    const teamId = await importedTeamId(old, binding.scope);
+    const labels = publicKeyLabels(old.members.map(({ pubkey }) => pubkey));
+    /** Whether an agent already here may be on the team, noting why not. */
+    const fits = (here: AgentIdentity, name: string) => {
+      if (yours(here, binding)) return true;
+      // Its keys are another account's; neither can take it from the other.
+      if (!ownedBy(here, binding)) foreign.push(name);
+      // Kept to its own community's copy of the team, never moved here.
+      else elsewhere.push(name);
+      return false;
+    };
+    for (const member of old.members) {
+      const name =
+        member.name.trim() || (labels.get(member.pubkey) ?? member.pubkey);
+      const here = live.find((identity) => identity.pubkey === member.pubkey);
+      if (here) {
+        if (fits(here, name)) members.push(member.pubkey);
+        continue;
+      }
+      if (!listed.has(member.pubkey)) {
+        failed.push({ name, error: "No longer available in old Buzz" });
+        continue;
+      }
+      // Checked with no wait before the import starts.
+      if (moved()) {
+        failed.push({ name, error: "Community changed" });
+        continue;
+      }
+      try {
+        const agent = await this.add(
+          type,
+          (native, destination, owner) =>
+            native.port(member.source, member.pubkey, destination, owner, type),
+          {},
+          binding,
+        );
+        imported.push(agent);
+        members.push(agent.pubkey);
+      } catch (error) {
+        failed.push({ name, error: message(error) });
+      }
+    }
+    // Members an earlier import saved are judged as these were; one not
+    // here now stays, as nothing shows it belongs to anyone else.
+    const judged = new Set(old.members.map(({ pubkey }) => pubkey));
+    const saved = this.teamList.find((team) => team.id === teamId);
+    const kept = (saved?.members ?? []).filter((pubkey) => {
+      const here = live.find((identity) => identity.pubkey === pubkey);
+      if (judged.has(pubkey)) return false;
+      if (!here) return true;
+      return fits(here, here.name || pubkey);
+    });
+    const result = { imported, failed, elsewhere, foreign };
+    // A saved team is rewritten so the members judged out leave it; a new
+    // one is made only with members.
+    if (!saved && !members.length) return result;
+    try {
+      const team = this.writeImportedTeam(old, teamId, saved, [
+        ...kept,
+        ...members,
+      ]);
+      return { ...result, team };
+    } catch (error) {
+      console.warn(`Team ${old.name} was not saved`, error);
+      return { ...result, teamError: { name: old.name } };
+    }
+  }
+
+  /** Saves a new identity of `type` in the selected community, or `binding`'s,
+   * with the type's default settings, or the `config` it was made with,
+   * adopting what a brought-over one carried. */
   private async add(
     type: string,
     save: (
@@ -1049,10 +1206,11 @@ export class AgentsService extends Service implements Agents {
       owner: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
     made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
+    given?: Binding,
   ) {
     const native = this.native;
     if (!native) throw new Error("Agents run only in the desktop app");
-    const binding = this.selectedBinding();
+    const binding = given ?? this.selectedBinding();
     const kind = this.types().find((entry) => entry.key === type);
     if (!kind) throw new Error("That agent type is not available");
     if (kind.remote)
@@ -1088,6 +1246,10 @@ export class AgentsService extends Service implements Agents {
       );
     await this.refresh();
     return this.view(shown, record);
+  }
+
+  private selectedOrigin() {
+    return originOf(this.communities.snapshot().selected ?? "");
   }
 
   /** The selected community's live binding, where agents are made. */
@@ -1338,6 +1500,29 @@ export class AgentsService extends Service implements Agents {
         : [...this.teamList, team],
     );
     return team;
+  }
+
+  /** Puts `members` on an old Buzz team's copy `id`, made from `saved` or,
+   * the first time, `team`. Its name and instructions here are never
+   * replaced. */
+  private writeImportedTeam(
+    team: OldTeam,
+    id: string,
+    saved: Team | undefined,
+    members: readonly string[],
+  ) {
+    const joined: Team = Object.freeze({
+      id,
+      name: saved?.name ?? team.name,
+      instructions: saved?.instructions ?? team.instructions,
+      members: Object.freeze([...new Set(members)]),
+    });
+    this.writeTeams(
+      saved
+        ? this.teamList.map((entry) => (entry === saved ? joined : entry))
+        : [...this.teamList, joined],
+    );
+    return joined;
   }
 
   async removeTeam(id: string) {
@@ -2052,4 +2237,14 @@ export class AgentsService extends Service implements Agents {
       channels.get?.(channel);
     return !!summary?.members?.includes(agent.pubkey);
   }
+}
+
+/** An old Buzz team's copy for one owner in one community (`scope`), the same
+ * from every import. */
+async function importedTeamId(team: OldTeam, scope: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${team.id}\n${scope}`),
+  );
+  return `beta-${bytesToHex(new Uint8Array(digest))}`;
 }

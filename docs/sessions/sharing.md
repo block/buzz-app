@@ -53,9 +53,11 @@ device-local display history, not proof of link delivery. The grant remains a
 snapshot: future joins/departures are not synchronized. **Share** grants the
 union of directly selected keys and one fresh relay-confirmed destination roster,
 including bots, then posts one ordinary kind-9 link without notification tags.
-Its hover/focus hint explains that channel sharing grants access and posts a link; the compact **Share**
-label keeps Copy link and Share together in the trailing footer group. At enlarged
-text sizes, that group scrolls horizontally and focus reveals the selected action.
+Its hover/focus hint explains that channel sharing grants access and posts a link.
+The footer reuses shared Dialog wrapping: each whole action gets its own flex item,
+so Copy link and Share can occupy separate rows at narrow widths or enlarged text.
+Only a single action wider than the available row uses the shared horizontal
+scrolling fallback. There is no nested action scrollport or feature focus-scroll handler.
 People-only **Share** grants access without posting or sending a DM. These
 recipients use ordinary membership-based discovery; immediate recipient visibility
 has not been validated across accounts. **Copy link** provides an explicit manual
@@ -260,8 +262,9 @@ Human confirmation of the rebased build, packaged/native GUI quit/relaunch,
 live relay ACLs, cross-account discovery, no-wake behavior, hosted CI and required
 reviewer approval remain separate gates. The 2026-10-14 integration checkpoint
 in the evidence document records the rebase and focused checks, not shipping
-acceptance. Narrow enlarged-text footer clipping/wrapping remains a presentation
-limitation. Main's opaque modal fill supersedes the earlier translucent dialog
-screenshots; anchored floating surfaces retain their shared treatment.
+acceptance. At 390px with 200% text, Convert to channel can exceed a row by itself;
+the shared footer retains horizontal scrolling for that single oversized control.
+Main's opaque modal fill supersedes the earlier translucent dialog screenshots;
+anchored floating surfaces retain their shared treatment.
 The configured desktop/Vite remain running. PR preparation performs no live share,
 settings write or app restart.

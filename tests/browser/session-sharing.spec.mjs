@@ -173,7 +173,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
     dialog.getByText(/^The original sharing destination/),
   ).toHaveCount(0);
   for (const mode of ["light", "dark"]) {
-    for (const width of [390, 1280]) {
+    for (const width of [390, 950, 1280]) {
       await page.setViewportSize({ width, height: 620 });
       await page.evaluate(
         (value) => (document.documentElement.dataset.colorMode = value),
@@ -226,6 +226,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
   for (const mode of ["light", "dark"]) {
     for (const [width, scale] of [
       [1280, 1],
+      [950, 1],
       [390, 1],
       [390, 2],
     ]) {
@@ -240,12 +241,25 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
         },
         { mode, scale },
       );
-      const footer = dialog.locator(".buzz-dialog-actions > div:last-child");
+      const footer = dialog.locator(".buzz-dialog-actions");
       const copy = dialog.getByRole("button", {
         name: /^(Copy link|Link copied)$/,
       });
+      // Each button gets its own flex item. Horizontal overflow is allowed
+      // only for a single oversized action, not the combined Copy/Share row.
+      await expect
+        .poll(() =>
+          footer.evaluate((el) => {
+            const widest = Math.max(
+              ...[...el.querySelectorAll("button")].map(
+                (button) => button.getBoundingClientRect().width,
+              ),
+            );
+            return el.scrollWidth - Math.max(el.clientWidth, widest);
+          }),
+        )
+        .toBeLessThanOrEqual(1);
       if (scale === 1) {
-        // Check before any helper or focus movement can scroll hidden overflow.
         await expect
           .poll(() => footer.evaluate((el) => el.scrollWidth - el.clientWidth))
           .toBeLessThanOrEqual(1);
@@ -253,13 +267,14 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
         await reachable(copy, { scroll: false });
       } else {
         await expect
-          .poll(() => footer.evaluate((el) => getComputedStyle(el).overflowX))
-          .toMatch(/^(auto|scroll)$/);
-        await expect
-          .poll(() => footer.evaluate((el) => el.scrollWidth > el.clientWidth))
+          .poll(async () => {
+            const shared = await share.boundingBox();
+            const copied = await copy.boundingBox();
+            return shared.y >= copied.y + copied.height;
+          })
           .toBe(true);
-        // Real Tab navigation must reveal both controls; never scroll/focus them
-        // programmatically to turn hidden content into an apparently usable footer.
+        // Real Tab still reaches both wrapped controls, without programmatic
+        // scrolling or focus bypassing the actual tab order.
         for (const action of [share, copy]) {
           for (
             let step = 0;
@@ -281,7 +296,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
               .toBe(false);
           }
           await expect(action).toBeFocused();
-          await expect(action).toBeInViewport();
+          await expect(action).toBeInViewport({ ratio: 1 });
         }
         await reachable(copy, { scroll: false });
         await page.keyboard.press("Enter");
@@ -322,7 +337,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
     postedId = event.id;
     return route.continue();
   });
-  // Submit the oversized primary action through its actual keyboard path too.
+  // Submit the wrapped primary action through its actual keyboard path too.
   await page.keyboard.press("Tab");
   await expect(share).toBeFocused();
   await page.keyboard.press("Enter");

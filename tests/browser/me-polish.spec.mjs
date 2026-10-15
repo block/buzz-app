@@ -617,8 +617,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
       });
     }
   }
-  // At a narrow viewport Convert may wrap, but Copy and Share stay together,
-  // including enlarged text. The existing footer may scroll instead of splitting.
+  // Each action is a shared footer item, not a second horizontal scrollport.
   await page.setViewportSize({ width: 390, height: 850 });
   for (const scale of [1, 2]) {
     await page.evaluate((value) => {
@@ -627,30 +626,37 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
         String(value),
       );
     }, scale);
+    const actions = dialog.locator(".buzz-dialog-actions");
     await expect
-      .poll(async () => {
-        const centers = await Promise.all(
-          [copy, primary].map((control) =>
-            control.evaluate((element) => {
-              const bounds = element.getBoundingClientRect();
-              return bounds.top + bounds.height / 2;
-            }),
-          ),
-        );
-        return Math.abs(centers[0] - centers[1]);
-      })
+      .poll(() =>
+        actions.evaluate((footer) => {
+          const widest = Math.max(
+            ...[...footer.querySelectorAll("button")].map(
+              (button) => button.getBoundingClientRect().width,
+            ),
+          );
+          return footer.scrollWidth - Math.max(footer.clientWidth, widest);
+        }),
+      )
       .toBeLessThanOrEqual(1);
+    if (scale === 1) {
+      await expect
+        .poll(() => actions.evaluate((el) => el.scrollWidth - el.clientWidth))
+        .toBeLessThanOrEqual(1);
+      for (const action of [convert, copy, primary])
+        await expect(action).toBeInViewport({ ratio: 1 });
+    }
     if (scale === 2) {
-      const actions = dialog.locator(".buzz-dialog-actions > div:last-child");
       await expect
-        .poll(() => actions.evaluate((el) => getComputedStyle(el).overflowX))
-        .toBe("auto");
-      await expect
-        .poll(() => actions.evaluate((el) => el.scrollWidth > el.clientWidth))
+        .poll(async () => {
+          const copied = await copy.boundingBox();
+          const shared = await primary.boundingBox();
+          return shared.y >= copied.y + copied.height;
+        })
         .toBe(true);
-      // Focus the preceding body control, then let native Tab reveal each action.
+      // Focus the preceding body control, then traverse every wrapped action.
       await search.focus();
-      for (const action of [copy, primary]) {
+      for (const action of [convert, copy, primary]) {
         for (
           let step = 0;
           !(await action.evaluate((el) => el === document.activeElement));
@@ -658,8 +664,20 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
         ) {
           expect(step).toBeLessThan(12);
           await page.keyboard.press("Tab");
+          await expect
+            .poll(() =>
+              page.evaluate(() =>
+                document.activeElement?.hasAttribute(
+                  "data-base-ui-focus-guard",
+                ),
+              ),
+            )
+            .toBe(false);
         }
-        await expect(action).toBeInViewport();
+        // Convert alone exceeds the row at 2x text; its ends are tested below.
+        await expect(action).toBeInViewport(
+          action === convert ? undefined : { ratio: 1 },
+        );
         await expect
           .poll(() =>
             action.evaluate((element) => {
@@ -674,6 +692,27 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
           )
           .toBe(true);
       }
+      // The shared footer's single-action overflow remains scrollable at both
+      // ends. Use pointer wheel input, not scrollLeft or scrollIntoView.
+      await convert.hover();
+      await page.mouse.wheel(600, 0);
+      await expect
+        .poll(() =>
+          convert.evaluate((button) => {
+            const footer = button.closest("footer").getBoundingClientRect();
+            return button.getBoundingClientRect().right <= footer.right + 1;
+          }),
+        )
+        .toBe(true);
+      await page.mouse.wheel(-600, 0);
+      await expect
+        .poll(() =>
+          convert.evaluate((button) => {
+            const footer = button.closest("footer").getBoundingClientRect();
+            return button.getBoundingClientRect().left >= footer.left - 1;
+          }),
+        )
+        .toBe(true);
     }
     await page.screenshot({
       path: test

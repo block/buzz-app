@@ -80,6 +80,32 @@ blocker. The non-wrapping footer remains the prior design choice pending a human
 layout decision. New focus/draft behavior needs human confirmation; earlier
 Share/Convert product confirmation remains recorded, not reused for this repair.
 
+### Approved footer wrapping
+
+On 2026-10-15 the author approved replacing the grouped scrolling footer with
+shared Dialog wrapping. On `6c931815c` plus this change, removing the feature
+wrapper, focus-scroll handler and eight CSS lines leaves each trailing action as
+a shared footer item. Wide controls remain in one row; narrow Copy/Share actions
+wrap. At 390px/200% text, Convert alone is wider than its row, so the existing
+single-control scrolling fallback remains; no shared styling or label is changed.
+
+The first whole-control geometry assertions failed in both affected journeys in
+both engines before the change. Those assertions also exposed the documented
+single-oversized-control exception after the wrapper was removed; the final tests
+therefore bound overflow to the widest individual control and require separate
+Copy/Share rows. They retain real Tab traversal, full Copy/Share viewport checks,
+Convert endpoint reachability, pending-action stability and exact-link recovery.
+The refined final assertions were not rerun against the old wrapper; independent
+source review confirms its non-wrapping row cannot satisfy the separate-row check.
+
+Both complete browser files passed all 22 Chromium/WebKit cases: 110.14s wall,
+204.25s summed, slowest 26.11s (WebKit reachability), slowest file me-polish 119.48s
+summed. Linux ARM64 browsers, two-CPU limit, macOS host, two workers, no retries.
+All 34 tests in the complete Share and page-conversion owner files passed (17.04s
+wall, 16.46s summed). No browser cases added or removed. Independent source review:
+9/10, no blockers. Layout approval is not human testing of the resulting build;
+focus/draft acceptance, exact-head CI and required review remain separate gates.
+
 ## Regression and test-layer accounting
 
 - Real signed-details → Me preference → Outbox tests cover ordering, exact

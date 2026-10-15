@@ -767,17 +767,7 @@ export function SessionShare({
           )
         }
         actions={
-          <div
-            className={styles.actions}
-            onFocusCapture={(event) => {
-              // Native Tab can focus a clipped child without revealing nested overflow.
-              if (event.currentTarget.contains(event.target))
-                event.target.scrollIntoView?.({
-                  block: "nearest",
-                  inline: "nearest",
-                });
-            }}
-          >
+          <>
             <Tooltip content="Copying a link does not grant access.">
               <Button onClick={() => void copy()}>
                 <span aria-live="polite">
@@ -814,7 +804,7 @@ export function SessionShare({
                     ? "Share"
                     : "Done"}
             </Button>
-          </div>
+          </>
         }
       >
         <div className={styles.form}>

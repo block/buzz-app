@@ -298,6 +298,11 @@ test.describe("exact history resize ownership", () => {
   // thread's exact-target anchor, which would then apply it a second time.
   test("exact target shift committed with a live reply", ({ page, app }) =>
     heldResizeThenReply({ page, app }, "with reply"));
+  // A reader gesture retires the exact-target anchor. The thread's ordinary
+  // reading anchor must then own the same-commit shift, since native
+  // anchoring is off.
+  test("reading position shift committed with a live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "with reply after reading"));
 
   async function heldResizeThenReply({ page, app }, shift) {
     const key = generateSecretKey();
@@ -411,8 +416,22 @@ test.describe("exact history resize ownership", () => {
       ).toHaveCount(1);
       await page.evaluate(() => window.releaseExactReveal());
       await settle(page, history);
+      let anchor = target;
+      if (shift === "with reply after reading") {
+        await history.hover();
+        await page.mouse.wheel(0, 200);
+        await settle(page, history);
+        const id = await history.evaluate((scroller) => {
+          const top = scroller.getBoundingClientRect().top;
+          return [...scroller.querySelectorAll("[data-message-id]")].find(
+            (row) => row.getBoundingClientRect().bottom > top,
+          )?.dataset.messageId;
+        });
+        expect(id).toBeTruthy();
+        anchor = history.locator(`[data-message-id="${id}"]`);
+      }
       const y = () =>
-        target.evaluate(
+        anchor.evaluate(
           (el) =>
             el.getBoundingClientRect().top -
             el.closest('[aria-label="Thread messages"]').getBoundingClientRect()
@@ -433,7 +452,7 @@ test.describe("exact history resize ownership", () => {
         resized = await y();
         // Add the spacer when React inserts the next reply's row: inside that
         // commit and before its layout effects run.
-        await target.evaluate((el) => {
+        await anchor.evaluate((el) => {
           const originals = {
             appendChild: Node.prototype.appendChild,
             insertBefore: Node.prototype.insertBefore,

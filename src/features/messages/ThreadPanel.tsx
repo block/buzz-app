@@ -570,6 +570,7 @@ function ThreadMessages({
         width: number;
         height: number;
         contentHeight: number;
+        scrollTop: number;
         anchor?: { element: HTMLElement; top: number };
       }
     | undefined
@@ -585,6 +586,7 @@ function ThreadMessages({
       width: element.clientWidth,
       height: element.clientHeight,
       contentHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
       ...(row
         ? {
             anchor: {
@@ -902,6 +904,21 @@ function ThreadMessages({
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
+    // Native scroll anchoring is off here, so this panel owns ordinary reading
+    // too. With no explicit anchor, keep the saved first visible row in place
+    // through this commit's layout shift. A scroll since that save is newer
+    // reader intent and wins.
+    const reading = resizePosition.current;
+    if (
+      !olderAnchor.current &&
+      targetAnchor.current === undefined &&
+      !follow.current &&
+      !jumpingToLatest.current &&
+      reading?.anchor &&
+      reading.scrollTop === element.scrollTop &&
+      element.contains(reading.anchor.element)
+    )
+      correctScrollTop(element, readingDrift(element, reading.anchor));
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree
@@ -1033,16 +1050,7 @@ function ThreadMessages({
       if (follow.current) {
         element.scrollTop = element.scrollHeight;
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
-        correctScrollTop(
-          element,
-          // WebKit quantizes scrollTop. Round the correction instead of letting
-          // tiny negative fractions lose a whole pixel on every animation frame.
-          Math.round(
-            previous.anchor.element.getBoundingClientRect().top -
-              element.getBoundingClientRect().top -
-              previous.anchor.top,
-          ),
-        );
+        correctScrollTop(element, readingDrift(element, previous.anchor));
       }
       // Exact-history restoration must start from this corrected geometry,
       // rather than applying the same child-only height delta a second time.
@@ -1531,6 +1539,20 @@ function ThreadMessages({
   );
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
+// How far a saved reading row has moved from its saved viewport offset. WebKit
+// quantizes scrollTop: round instead of letting tiny negative fractions lose a
+// whole pixel on every animation frame.
+function readingDrift(
+  element: HTMLElement,
+  anchor: { element: HTMLElement; top: number },
+) {
+  return Math.round(
+    anchor.element.getBoundingClientRect().top -
+      element.getBoundingClientRect().top -
+      anchor.top,
+  );
+}
+
 function ThreadLoading() {
   return (
     <div className={styles.threadLoading} role="status">

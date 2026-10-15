@@ -146,7 +146,6 @@ export class GooseSetup {
       const session = await goose.open({
         cwd,
         systemPrompt: "",
-        bare: true,
         choice: () => choice,
       });
       try {
@@ -199,9 +198,6 @@ export async function briefly<T>(
   const goose = await GooseProcess.start(spawn, {
     cwd,
     env,
-    tools: async () => {
-      throw new Error("No Buzz tools here");
-    },
   });
   try {
     return await run(goose, cwd);

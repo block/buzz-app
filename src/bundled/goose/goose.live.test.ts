@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { respond } from "../../buzz-mcp/rpc";
 import {
@@ -196,7 +196,7 @@ async function live() {
     return respond(undefined, {}, message);
   };
   const cwd = mkdtempSync(join(tmpdir(), "buzz-goose-"));
-  const goose = await GooseProcess.start(spawn, { cwd, tools, serve });
+  const goose = await GooseProcess.start(spawn, { cwd, serve });
   const requests: { method: string; ok?: boolean }[] = [];
   /** What each request that succeeded answered, in order. */
   const results: { method: string; result: unknown }[] = [];
@@ -219,20 +219,21 @@ async function live() {
       .filter((call) => call.method === "tools/call")
       .map((call) => call.params as Send)
       .filter((call) => call.name === "send");
-  return { goose, cwd, calls, requests, results, sends };
+  return { goose, cwd, tools, calls, requests, results, sends };
 }
 
 describe.skipIf(!BIN)("goose-acp", () => {
   it("answers with the Buzz tools, the Buzz prompt and a title", {
     timeout: 180_000,
   }, async () => {
-    const { goose, cwd, calls, sends } = await live();
+    const { goose, cwd, tools, calls, sends } = await live();
     const code = `zebra-${Math.random().toString(36).slice(2, 8)}`;
     try {
       const title = "Ada · #general · 01234567";
       const session = await goose.open({
         cwd,
         title,
+        tools,
         systemPrompt: systemPrompt({
           scope: "thread",
           cwd,
@@ -288,10 +289,11 @@ describe.skipIf(!BIN)("goose-acp", () => {
   it("steers a message into the running turn", {
     timeout: 180_000,
   }, async () => {
-    const { goose, cwd, requests, sends } = await live();
+    const { goose, cwd, tools, requests, sends } = await live();
     try {
       const session = await goose.open({
         cwd,
+        tools,
         systemPrompt:
           "You are a Buzz agent. You reply in Buzz only by calling the send tool, once, with final true.",
       });
@@ -326,6 +328,57 @@ describe.skipIf(!BIN)("goose-acp", () => {
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain(
         "banana",
       );
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("serves two agents in one goose, each in its workspace with its tools", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose } = await live();
+    const agents = ["ada", "bo"].map((name) => {
+      const cwd = mkdtempSync(join(tmpdir(), `buzz-goose-${name}-`));
+      const sent: string[] = [];
+      const tools: ToolServer = async (_conversation, message) => {
+        if (message.method !== "tools/call")
+          return respond(undefined, {}, message);
+        const call = message.params as Send;
+        if (call.name === "send") sent.push(call.arguments?.text ?? "");
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { content: [{ type: "text", text: "Sent." }] },
+        };
+      };
+      return { cwd, sent, tools };
+    });
+    try {
+      const sessions = await Promise.all(
+        agents.map(({ cwd, tools }) =>
+          goose.open({
+            cwd,
+            tools,
+            systemPrompt:
+              "You are a Buzz agent. You reply in Buzz only by calling the send tool, once, with final true.",
+          }),
+        ),
+      );
+      await expect(
+        Promise.all(
+          sessions.map((session) =>
+            session.send(
+              "Run the shell command `pwd`, then reply in Buzz with its exact output.",
+            ),
+          ),
+        ),
+      ).resolves.toEqual([{ ok: true }, { ok: true }]);
+      const [ada, bo] = agents;
+      // Each ran in its own workspace, and answered through its own tools.
+      expect(ada?.sent.join("\n")).toContain(basename(ada?.cwd ?? "-"));
+      expect(ada?.sent.join("\n")).not.toContain(basename(bo?.cwd ?? "-"));
+      expect(bo?.sent.join("\n")).toContain(basename(bo?.cwd ?? "-"));
+      expect(bo?.sent.join("\n")).not.toContain(basename(ada?.cwd ?? "-"));
     } finally {
       await goose.kill();
     }
@@ -381,7 +434,6 @@ describe.skipIf(!BIN)("goose-acp", () => {
       const session = await goose.open({
         cwd,
         systemPrompt: "",
-        bare: true,
         choice: () => choice,
       });
       // The provider's default model, though goose's config has none for it.

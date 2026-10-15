@@ -332,6 +332,29 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it("keeps goose while another agent runs, and stops it with the last", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
+    const running = (...agents: (typeof agent)[]) =>
+      runtime.sync(
+        agents.map(
+          (item) => ({ ...item, config: DEFAULT_CONFIG }) as unknown as Agent,
+        ),
+      );
+    running(agent, other);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    running(other);
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.killed).toBe(false);
+    running();
+    await flush(30);
+    expect(goose?.killed).toBe(true);
+    expect(fake.geese).toHaveLength(1);
+  });
+
   it("fails a session mention it cannot place until the placement can be read", async () => {
     const { deliver, fake, placement, published } = setup({
       channelType: "session",

@@ -18,12 +18,14 @@ const start = async (tools: ToolServer = ok, silent?: readonly string[]) => {
   const goose = await GooseProcess.start(fake.spawn, {
     cwd: "/work",
     env: { GOOSE_MODEL: "m" },
-    tools,
     serve: fake.serve,
   });
   const [process] = fake.geese;
   if (!process) throw new Error("goose did not start");
-  return { goose, process, fake };
+  /** Opens a session in /work whose Buzz tools `tools` answers. */
+  const open = (launch: Partial<Parameters<GooseProcess["open"]>[0]> = {}) =>
+    goose.open({ cwd: "/work", systemPrompt: "", tools, ...launch });
+  return { goose, open, process, fake };
 };
 
 afterEach(() => {
@@ -47,14 +49,14 @@ describe("GooseProcess", () => {
   it("refuses a goose that cannot serve the Buzz tools", async () => {
     const fake = fakeSpawn({ http: false });
     await expect(
-      GooseProcess.start(fake.spawn, { cwd: "/work", tools: ok }),
+      GooseProcess.start(fake.spawn, { cwd: "/work" }),
     ).rejects.toThrow(/HTTP MCP/);
     expect(fake.geese[0]?.killed).toBe(true);
   });
 
   it("opens a session with its own Buzz MCP server and its system prompt", async () => {
-    const { goose, process, fake } = await start();
-    const session = await goose.open({ cwd: "/work", systemPrompt: "Be Buzz" });
+    const { open, process, fake } = await start();
+    const session = await open({ systemPrompt: "Be Buzz" });
     const buzz = {
       type: "http",
       name: "buzz",
@@ -78,10 +80,11 @@ describe("GooseProcess", () => {
   });
 
   it("gives each session its own server, closed with it", async () => {
-    const { goose, fake } = await start();
-    const first = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const { goose, open, fake } = await start();
+    const first = await open();
+    await open();
+    // One without tools has no server.
     await goose.open({ cwd: "/work", systemPrompt: "" });
-    await goose.open({ cwd: "/work", systemPrompt: "", bare: true });
     expect(fake.servers.map((server) => server.url)).toEqual([
       "http://127.0.0.1:40001/mcp",
       "http://127.0.0.1:40002/mcp",
@@ -91,9 +94,9 @@ describe("GooseProcess", () => {
   });
 
   it("closes a session whose server the host stopped", async () => {
-    const { goose, process, fake } = await start();
+    const { open, process, fake } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     fake.servers[0]?.stop();
@@ -108,16 +111,16 @@ describe("GooseProcess", () => {
   });
 
   it("closes the session servers when goose exits", async () => {
-    const { goose, process, fake } = await start();
-    await goose.open({ cwd: "/work", systemPrompt: "" });
+    const { goose, open, process, fake } = await start();
+    await open();
     process.exit(1, "boom");
     await goose.exited;
     expect(fake.servers[0]?.closed).toBe(true);
   });
 
   it("settles a message when its turn ends", async () => {
-    const { goose, process } = await start();
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const { open, process } = await start();
+    const session = await open();
     await expect(session.send("hello")).resolves.toEqual({ ok: true });
     expect(process.turns.map((turn) => turn.text)).toEqual(["hello"]);
     expect(session.busy).toBe(false);
@@ -125,8 +128,8 @@ describe("GooseProcess", () => {
 
   it("answers the Buzz tools' MCP messages for the session's conversation", async () => {
     const tools = vi.fn(ok);
-    const { goose, process } = await start(tools);
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const { open, process } = await start(tools);
+    const session = await open();
     session.conversation = "channel/root";
     const response = await process.mcp(session.id, "tools/list");
     expect(tools).toHaveBeenCalledWith("channel/root", {
@@ -144,8 +147,8 @@ describe("GooseProcess", () => {
 
   it("answers no MCP notification", async () => {
     const tools = vi.fn(ok);
-    const { goose, fake } = await start(tools);
-    await goose.open({ cwd: "/work", systemPrompt: "" });
+    const { open, fake } = await start(tools);
+    await open();
     await expect(
       fake.servers[0]?.handler({
         jsonrpc: "2.0",
@@ -156,10 +159,10 @@ describe("GooseProcess", () => {
   });
 
   it("returns a tool server's failure as the MCP error", async () => {
-    const { goose, process } = await start(async () => {
+    const { open, process } = await start(async () => {
       throw new Error("relay down");
     });
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const response = await process.mcp(session.id, "tools/call", {
       name: "send",
       arguments: {},
@@ -172,9 +175,9 @@ describe("GooseProcess", () => {
   });
 
   it("counts the work done when a final send succeeds", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     await process.mcp(session.id, "tools/call", {
@@ -187,9 +190,9 @@ describe("GooseProcess", () => {
   });
 
   it("steers a message that arrives mid-turn into it", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const acknowledged = vi.fn();
     const first = session.send("one");
     await flush();
@@ -204,9 +207,9 @@ describe("GooseProcess", () => {
   });
 
   it("steers a message sent before goose names the turn", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const first = session.send("one");
     const second = session.send("two");
     await flush();
@@ -219,21 +222,17 @@ describe("GooseProcess", () => {
   });
 
   it("names a session with its title", async () => {
-    const { goose, process } = await start();
-    await goose.open({
-      cwd: "/work",
-      systemPrompt: "",
-      title: "Ada · #general",
-    });
+    const { open, process } = await start();
+    await open({ title: "Ada · #general" });
     expect(process.opened[0]?._meta).toMatchObject({
       sessionTitle: "Ada · #general",
     });
   });
 
   it("runs a message the turn could not take as the next turn", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const first = session.send("one");
     await flush();
     // The run ended on goose's side, but its answer has not arrived yet.
@@ -253,9 +252,9 @@ describe("GooseProcess", () => {
   });
 
   it("shows the latest message's steps", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const step = vi.fn();
     void session.send("one", { step });
     await flush();
@@ -278,9 +277,9 @@ describe("GooseProcess", () => {
   });
 
   it("ends work that only wrote text with what goose wrote", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     process.update(session.id, {
@@ -296,9 +295,9 @@ describe("GooseProcess", () => {
   });
 
   it("ends work that acted in Buzz without its closing text", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     await process.mcp(session.id, "tools/call", {
@@ -323,9 +322,9 @@ describe("GooseProcess", () => {
             result: { content: [{ type: "text", text: "no" }], isError: true },
           }
         : ok(conversation, message);
-    const { goose, process } = await start(failed);
+    const { open, process } = await start(failed);
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     await process.mcp(session.id, "tools/call", { name: "read" });
@@ -346,10 +345,10 @@ describe("GooseProcess", () => {
   });
 
   it("ends work whose turn ended while a steer into it was answered", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
     process.endOnSteer = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const first = session.send("one");
     await flush();
     const second = session.send("two");
@@ -375,9 +374,9 @@ describe("GooseProcess", () => {
   });
 
   it("fails a working session with goose's last words when it exits", async () => {
-    const { goose, process } = await start();
+    const { goose, open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     process.exit(1, "starting\nNo provider configured\n");
@@ -391,10 +390,7 @@ describe("GooseProcess", () => {
   it("stops a goose that does not answer as it starts", async () => {
     vi.useFakeTimers();
     const fake = fakeSpawn({ silent: ["initialize"] });
-    const starting = GooseProcess.start(fake.spawn, {
-      cwd: "/work",
-      tools: ok,
-    });
+    const starting = GooseProcess.start(fake.spawn, { cwd: "/work" });
     const failed = expect(starting).rejects.toThrow(
       "goose did not answer initialize in 60s",
     );
@@ -405,8 +401,8 @@ describe("GooseProcess", () => {
 
   it("stops a goose that does not open or close a session", async () => {
     vi.useFakeTimers();
-    const { goose, process, fake } = await start(ok, ["session/new"]);
-    const opening = goose.open({ cwd: "/work", systemPrompt: "" });
+    const { open, process, fake } = await start(ok, ["session/new"]);
+    const opening = open();
     const failed = expect(opening).rejects.toThrow(
       "goose did not answer session/new in 60s",
     );
@@ -418,7 +414,7 @@ describe("GooseProcess", () => {
     expect(fake.servers.map((server) => server.closed)).toEqual([true]);
 
     const other = await start(ok, ["session/close"]);
-    const session = await other.goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await other.open();
     const closing = other.goose.close(session);
     await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
     await closing;
@@ -426,9 +422,9 @@ describe("GooseProcess", () => {
   });
 
   it("gives a burst's text to its latest acknowledged message only", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const first = session.send("one", { step: () => {} });
     await flush();
     const second = session.send("two", { step: () => {} });
@@ -444,9 +440,9 @@ describe("GooseProcess", () => {
   });
 
   it("gives a failed burst's error to one message", async () => {
-    const { goose, process } = await start();
+    const { open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const first = session.send("one", { step: () => {} });
     await flush();
     const second = session.send("two", { step: () => {} });
@@ -457,9 +453,9 @@ describe("GooseProcess", () => {
   });
 
   it("cancels a session's turn when it closes", async () => {
-    const { goose, process } = await start();
+    const { goose, open, process } = await start();
     process.hold = true;
-    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const session = await open();
     const settled = session.send("hello");
     await flush();
     await goose.close(session);

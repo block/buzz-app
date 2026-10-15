@@ -1,7 +1,7 @@
-// goose agents: an agent type whose agents are goose on this computer, one
-// `goose-acp` process per agent. Each conversation the agent is in is one ACP
-// session in it; goose answers with the in-process Buzz tools, served to it
-// over the same ACP connection.
+// goose agents: an agent type whose agents are goose on this computer, all in
+// one `goose-acp` process. Each conversation an agent is in is one ACP session
+// in it; goose answers with the in-process Buzz tools, served to it over
+// loopback HTTP MCP.
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";

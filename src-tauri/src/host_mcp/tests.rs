@@ -62,10 +62,11 @@ async fn answers_a_request_with_the_page_reply() {
         .serve(servers.page(), "plugin".into(), channel)
         .unwrap();
     assert!(info.url.starts_with("http://127.0.0.1:"));
+    let named = initialize(&servers, &info, &mut events).await;
     let request = post(
         &info,
         &info.token,
-        "",
+        &named,
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
     );
     let client = tokio::spawn({
@@ -111,10 +112,11 @@ async fn accepts_a_notification_without_a_body() {
     let info = servers
         .serve(servers.page(), "plugin".into(), channel)
         .unwrap();
+    let named = initialize(&servers, &info, &mut events).await;
     let request = post(
         &info,
         &info.token,
-        "",
+        &named,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
     );
     let client = tokio::spawn({
@@ -164,6 +166,24 @@ async fn exchange(
     client.await.unwrap()
 }
 
+const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
+const INITIALIZED: &str = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+
+/// Claims `info`'s session, returning the header that names it.
+async fn initialize(
+    servers: &HostMcpServers,
+    info: &McpServerInfo,
+    events: &mut mpsc::UnboundedReceiver<serde_json::Value>,
+) -> String {
+    let request = post(info, &info.token, "", INITIALIZE);
+    let response = exchange(servers, info, events, request, Some(INITIALIZED)).await;
+    assert_eq!(status(&response), "200");
+    format!(
+        "Mcp-Session-Id: {}\r\n",
+        session(&response).expect("a session id")
+    )
+}
+
 #[tokio::test]
 async fn admits_only_the_session_that_initialized() {
     let servers = HostMcpServers::default();
@@ -171,54 +191,89 @@ async fn admits_only_the_session_that_initialized() {
     let info = servers
         .serve(servers.page(), "plugin".into(), channel)
         .unwrap();
-    // Before `initialize`, a message needs no session, and joins none.
+    // Before `initialize`, discovery needs no session and joins none; a tool
+    // call is refused.
     let discover = r#"{"jsonrpc":"2.0","id":0,"method":"server/discover"}"#;
     let not_found = r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"No"}}"#;
-    let response = exchange(
-        &servers,
-        &info,
-        &mut events,
-        post(&info, &info.token, "", discover),
-        Some(not_found),
-    )
-    .await;
+    let request = post(&info, &info.token, "", discover);
+    let response = exchange(&servers, &info, &mut events, request, Some(not_found)).await;
     assert_eq!(status(&response), "200");
     assert_eq!(session(&response), None);
-    let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#;
-    let initialized = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
-    let response = exchange(
-        &servers,
-        &info,
-        &mut events,
-        post(&info, &info.token, "", initialize),
-        Some(initialized),
-    )
-    .await;
-    assert_eq!(status(&response), "200");
-    let id = session(&response).expect("a session id").to_owned();
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send"}}"#;
+    let request = post(&info, &info.token, "", call);
+    assert_eq!(status(&send(&info, request).await), "404");
+    assert!(events.try_recv().is_err());
+
+    let named = initialize(&servers, &info, &mut events).await;
     // The token alone, as read from where the agent saved it, admits nothing
-    // more: not another `initialize`, nor a guessed session.
-    let ping = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
-    for (extra, body) in [
-        ("", ping),
-        ("", initialize),
-        ("Mcp-Session-Id: guess\r\n", ping),
-    ] {
-        let request = post(&info, &info.token, extra, body);
+    // more, nor does a guessed session.
+    for extra in ["", "Mcp-Session-Id: guess\r\n"] {
+        let request = post(&info, &info.token, extra, call);
         assert_eq!(status(&send(&info, request).await), "404");
     }
     assert!(events.try_recv().is_err());
-    let named = format!("Mcp-Session-Id: {id}\r\n");
-    let response = exchange(
-        &servers,
-        &info,
-        &mut events,
-        post(&info, &info.token, &named, ping),
-        None,
-    )
-    .await;
+    let request = post(&info, &info.token, &named, call);
+    let response = exchange(&servers, &info, &mut events, request, None).await;
     assert_eq!(status(&response), "202");
-    assert_eq!(session(&response), Some(id.as_str()));
+    assert_eq!(
+        session(&response).map(|id| format!("Mcp-Session-Id: {id}\r\n")),
+        Some(named)
+    );
+}
+
+#[tokio::test]
+async fn stops_when_a_second_client_initializes() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel)
+        .unwrap();
+    initialize(&servers, &info, &mut events).await;
+    // Whoever claimed the session, two clients hold the token.
+    let request = post(&info, &info.token, "", INITIALIZE);
+    assert_eq!(status(&send(&info, request).await), "404");
+    assert_eq!(next(&mut events).await["type"], "closed");
+}
+
+#[tokio::test]
+async fn releases_a_claim_that_did_not_succeed() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel)
+        .unwrap();
+    let claim = || {
+        servers
+            .owned("plugin", info.handle)
+            .unwrap()
+            .claim
+            .load(Ordering::SeqCst)
+    };
+    // The page answered with an error.
+    let failed = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"No"}}"#;
+    let request = post(&info, &info.token, "", INITIALIZE);
+    let response = exchange(&servers, &info, &mut events, request, Some(failed)).await;
+    assert_eq!(status(&response), "200");
+    assert_eq!(session(&response), None);
+    assert_eq!(claim(), UNCLAIMED);
+    // The client hung up before the answer.
+    let request = post(&info, &info.token, "", INITIALIZE);
+    let client = tokio::spawn({
+        let info = info.clone();
+        async move { send(&info, request).await }
+    });
+    next(&mut events).await;
+    assert_eq!(claim(), CLAIMING);
+    client.abort();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while claim() != UNCLAIMED {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the claim released");
+    initialize(&servers, &info, &mut events).await;
+    assert_eq!(claim(), CLAIMED);
 }
 
 #[tokio::test]

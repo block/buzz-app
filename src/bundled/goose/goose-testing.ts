@@ -74,6 +74,8 @@ export type FakeMcpServer = {
   token: string;
   handler: McpHandler;
   closed: boolean;
+  /** Stops it from the host's side, as when a second client initializes. */
+  stop(): void;
 };
 
 /** A spawn whose `goose` processes answer like `goose-acp`, and whose
@@ -111,15 +113,16 @@ export function fakeSpawn(
       token: `token-${index}`,
       handler,
       closed: false,
+      stop: () => {
+        server.closed = true;
+        stopped();
+      },
     };
     servers.push(server);
     return {
       url: server.url,
       headers: [{ name: "Authorization", value: `Bearer ${server.token}` }],
-      close: async () => {
-        server.closed = true;
-        stopped();
-      },
+      close: async () => server.stop(),
       closed,
     };
   };

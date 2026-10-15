@@ -81,6 +81,23 @@ describe("GooseProcess", () => {
     expect(fake.servers.map((server) => server.closed)).toEqual([true, false]);
   });
 
+  it("closes a session whose server the host stopped", async () => {
+    const { goose, process, fake } = await start();
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const settled = session.send("hello");
+    await flush();
+    fake.servers[0]?.stop();
+    await expect(settled).resolves.toEqual({
+      ok: false,
+      error:
+        "Buzz stopped this session's tools: another program used their token",
+    });
+    expect(session.open).toBe(false);
+    await flush();
+    expect(process.closed).toEqual([session.id]);
+  });
+
   it("closes the session servers when goose exits", async () => {
     const { goose, process, fake } = await start();
     await goose.open({ cwd: "/work", systemPrompt: "" });

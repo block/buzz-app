@@ -9,6 +9,7 @@ import {
   lineDiff,
   loadOlder,
   revertTemplate,
+  revisionProblem,
   segments,
   settingsDiff,
 } from "./agent-config-history";
@@ -24,6 +25,8 @@ function rev(
     op = prev ? "update" : "create",
     content = `{"version":1,"text":"${id}"}`,
     tags = [] as string[][],
+    type = "buzz.agent.instructions",
+    title = "Agent instructions",
   } = {},
 ): RelayEvent {
   return {
@@ -37,8 +40,8 @@ function rev(
       ["ar", "1"],
       ["d", d],
       ["h", channel],
-      ["type", "buzz.agent.instructions"],
-      ["title", "Agent instructions"],
+      ["type", type],
+      ["title", title],
       ["op", op],
       ...(prev ? [["prev", prev]] : []),
       ...tags,
@@ -52,12 +55,15 @@ const chain = (n: number) =>
     rev(`r${i}`, i ? `r${i - 1}` : undefined),
   ).reverse();
 
-/** Answers history pages from `revisions` (newest first) and records filters. */
+/** Answers history pages from `revisions` (newest first) and records filters.
+ * Like the relay for a system channel (NIP-CL), a filter whose `#h` doesn't
+ * name the channel reads nothing. */
 function relay(revisions: RelayEvent[]) {
   const filters: ReadFilter[] = [];
   const read: SnapshotRead = async ([filter]) => {
     if (!filter) throw new Error("no filter");
     filters.push(filter);
+    if (!filter["#h"]?.includes(channel)) return [];
     const offset = filter.offset ?? 0;
     return revisions.slice(offset, offset + filter.limit);
   };
@@ -67,7 +73,7 @@ function relay(revisions: RelayEvent[]) {
 async function loadAll(read: SnapshotRead, pages: number) {
   let history: History = emptyHistory;
   for (let page = 0; page < pages; page++)
-    history = await loadOlder(read, d, history);
+    history = await loadOlder(read, channel, d, history);
   return history;
 }
 
@@ -78,6 +84,7 @@ describe("history paging", () => {
     expect(filters).toEqual([
       {
         kinds: [ARTIFACT_KIND],
+        "#h": [channel],
         "#d": [d],
         artifact: "history",
         limit: HISTORY_PAGE,
@@ -85,6 +92,7 @@ describe("history paging", () => {
       },
       {
         kinds: [ARTIFACT_KIND],
+        "#h": [channel],
         "#d": [d],
         artifact: "history",
         limit: HISTORY_PAGE,
@@ -99,9 +107,9 @@ describe("history paging", () => {
   it("drops repeats when a revision arrives between pages", async () => {
     const revisions = chain(HISTORY_PAGE + 2);
     const { read } = relay(revisions);
-    let history = await loadOlder(read, d, emptyHistory);
+    let history = await loadOlder(read, channel, d, emptyHistory);
     revisions.unshift(rev("new", `r${HISTORY_PAGE + 1}`));
-    history = await loadOlder(read, d, history);
+    history = await loadOlder(read, channel, d, history);
     const ids = history.revisions.map((event) => event.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toHaveLength(HISTORY_PAGE + 2);
@@ -133,13 +141,13 @@ describe("history gaps", () => {
       if (fail) throw new Error("offline");
       return ok.read(filters, options);
     };
-    let history = await loadOlder(read, d, emptyHistory);
+    let history = await loadOlder(read, channel, d, emptyHistory);
     fail = true;
-    history = await loadOlder(read, d, history);
+    history = await loadOlder(read, channel, d, history);
     expect(history.revisions).toHaveLength(HISTORY_PAGE);
     expect(segments(history)[0]?.gap).toBe("failed");
     fail = false;
-    history = await loadOlder(read, d, history);
+    history = await loadOlder(read, channel, d, history);
     expect(ok.filters.at(-1)?.offset).toBe(HISTORY_PAGE);
     expect(segments(history)).toEqual([{ revisions }]);
   });
@@ -222,26 +230,93 @@ describe("revert", () => {
     ]);
   });
 
-  it("keeps a team's current name", () => {
-    const team = (name: string, instructions: string) =>
-      JSON.stringify({ version: 1, name, instructions });
-    const old = rev("r0", undefined, { content: team("Old", "before") });
-    const head = rev("r1", "r0", {
-      content: team("New", "after"),
+  const teamExpected = { ...expected, type: "buzz.team" as const, team: "t1" };
+  const team = (
+    id: string,
+    prev: string | undefined,
+    name: string,
+    instructions: string,
+    title = name,
+  ) =>
+    rev(id, prev, {
+      type: "buzz.team",
+      title,
+      content: JSON.stringify({ version: 1, name, instructions }),
       tags: [["team", "t1"]],
     });
-    const template = revertTemplate(
-      { ...expected, type: "buzz.team", team: "t1" },
-      head,
-      old,
-    );
+
+  it("keeps a team's current name", () => {
+    const old = team("r0", undefined, "Old", "before");
+    const head = team("r1", "r0", "New", "after");
+    expect(revisionProblem(teamExpected, old)).toBeUndefined();
+    expect(revisionProblem(teamExpected, head)).toBeUndefined();
+    const template = revertTemplate(teamExpected, head, old);
     expect(JSON.parse(template.content)).toEqual({
       version: 1,
       name: "New",
       instructions: "before",
     });
+    expect(template.tags).toContainEqual(["title", "New"]);
     expect(template.tags).toContainEqual(["team", "t1"]);
     expect(template.tags).toContainEqual(["op", "update"]);
+  });
+
+  it("refuses to republish a malformed or unsupported revision", () => {
+    const head = rev("r2", "r1");
+    for (const content of ["not-json", '{"version":2,"text":"future"}'])
+      expect(() =>
+        revertTemplate(expected, head, rev("r0", undefined, { content })),
+      ).toThrow(/isn't valid/);
+  });
+
+  it("repairs an invalid head from a valid older revision", () => {
+    const old = rev("r0");
+    const head = rev("r1", "r0", { content: "not-json" });
+    const template = revertTemplate(expected, head, old);
+    expect(template.content).toBe(old.content);
+    expect(template.tags).toContainEqual(["prev", "r1"]);
+    // A team head whose name no longer matches its title takes the target's.
+    const brokenTeam = team("t2", "t1r", "New", "after", "Other");
+    const template2 = revertTemplate(
+      teamExpected,
+      brokenTeam,
+      team("t0", undefined, "Old", "before"),
+    );
+    expect(JSON.parse(template2.content)).toMatchObject({ name: "Old" });
+    expect(template2.tags).toContainEqual(["title", "Old"]);
+  });
+
+  it("checks settings against the plugin schema before reverting", () => {
+    const settingsExpected = {
+      ...expected,
+      type: "buzz.agent.settings" as const,
+    };
+    const check = { agentType: "goose", schema: { model: "string" } } as const;
+    const settings = (id: string, prev: string | undefined, body: object) =>
+      rev(id, prev, {
+        type: "buzz.agent.settings",
+        content: JSON.stringify({
+          version: 1,
+          agentType: "goose",
+          settings: body,
+        }),
+      });
+    const head = settings("r1", "r0", { model: "b" });
+    const valid = settings("r0", undefined, { model: "a" });
+    expect(revertTemplate(settingsExpected, head, valid, check).content).toBe(
+      valid.content,
+    );
+    expect(() =>
+      revertTemplate(
+        settingsExpected,
+        head,
+        settings("r0", undefined, { retired: "x" }),
+        check,
+      ),
+    ).toThrow(/Unknown setting/);
+    expect(() => revertTemplate(settingsExpected, head, valid)).toThrow(
+      /No settings schema/,
+    );
   });
 
   it("refuses to revert over or to a deletion", () => {

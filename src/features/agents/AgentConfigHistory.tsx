@@ -5,6 +5,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
   artifactOp,
+  type Delivery,
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
@@ -16,6 +17,8 @@ import {
   lineDiff,
   loadOlder,
   revertTemplate,
+  revisionProblem,
+  type SettingsCheck,
   segments,
   settingsDiff,
 } from "./agent-config-history";
@@ -39,22 +42,32 @@ function text(expected: Expected, event: RelayEvent) {
   }
 }
 
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+const unconfirmed = (detail: string) =>
+  `Couldn't confirm the revert was saved (${detail}). It may still arrive; check the history before trying again.`;
+
 export function AgentConfigHistory({
   expected,
   head,
   read,
+  settings,
   onRevert,
 }: {
   expected: Expected;
   /** The current head from the config store; revert builds on it. */
   head: RelayEvent | undefined;
   read: SnapshotRead;
-  onRevert(template: ReturnType<typeof revertTemplate>): Promise<void>;
+  /** Required to validate, and so to revert, `buzz.agent.settings`. */
+  settings?: SettingsCheck;
+  /** Signs and sends the revert; resolves to what the relay said. */
+  onRevert(template: ReturnType<typeof revertTemplate>): Promise<Delivery>;
 }) {
   const [history, setHistory] = useState<History>(emptyHistory);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<string>();
   const [reverting, setReverting] = useState<string>();
+  const [failure, setFailure] = useState<{ id: string; text: string }>();
   const live = useRef(history);
   live.current = history;
   const signal = useRef<AbortController>(undefined);
@@ -65,6 +78,7 @@ export function AgentConfigHistory({
     setLoading(true);
     const next = await loadOlder(
       read,
+      expected.channel,
       expected.d,
       live.current,
       controller.signal,
@@ -73,7 +87,7 @@ export function AgentConfigHistory({
     live.current = next;
     setHistory(next);
     setLoading(false);
-  }, [read, expected.d]);
+  }, [read, expected.channel, expected.d]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: A new head reloads history from the newest page.
   useEffect(() => {
@@ -86,11 +100,27 @@ export function AgentConfigHistory({
     };
   }, [more, head?.id]);
 
+  /** A refusal or an invalid snapshot is definite: nothing changed. A send
+   * that fails without a refusal may still have been saved. */
   const revert = async (target: RelayEvent) => {
     if (!head) return;
+    const fail = (text: string) => setFailure({ id: target.id, text });
+    setFailure(undefined);
+    let template: ReturnType<typeof revertTemplate>;
+    try {
+      template = revertTemplate(expected, head, target, settings);
+    } catch (error) {
+      return fail(`Not reverted: ${message(error)}`);
+    }
     setReverting(target.id);
     try {
-      await onRevert(revertTemplate(expected, head, target));
+      const delivery = await onRevert(template);
+      if (delivery.status === "refused")
+        fail(`Not reverted: ${delivery.message}`);
+      else if (delivery.status === "uncertain")
+        fail(unconfirmed(delivery.message));
+    } catch (error) {
+      fail(unconfirmed(message(error)));
     } finally {
       setReverting(undefined);
     }
@@ -104,6 +134,20 @@ export function AgentConfigHistory({
     ) : null;
 
   const changes = (event: RelayEvent, before: RelayEvent | undefined) => {
+    const problem = revisionProblem(expected, event, settings);
+    if (problem)
+      return (
+        <p className="text-body-sm">
+          This revision isn't valid config ({problem}), so changes can't be
+          shown.
+        </p>
+      );
+    if (before && revisionProblem(expected, before, settings))
+      return (
+        <p className="text-body-sm">
+          The previous revision isn't valid config, so changes can't be shown.
+        </p>
+      );
     if (!before && artifactOp(event) !== "create")
       return (
         <p className="text-body-sm">
@@ -181,12 +225,15 @@ export function AgentConfigHistory({
           {segment.revisions.map((event, index) => {
             const deleted = artifactOp(event) === "delete";
             const current = event.id === head?.id;
+            const invalid =
+              !deleted && revisionProblem(expected, event, settings);
             return (
               <li className={styles.row} key={event.id}>
                 <span className={styles.label}>
                   <span className="text-label">
                     {artifactOp(event)}
                     {current ? " · Current" : ""}
+                    {invalid ? " · Not valid" : ""}
                   </span>{" "}
                   <span className="text-caption">
                     {new Date(event.created_at * 1000).toLocaleString()}
@@ -205,6 +252,7 @@ export function AgentConfigHistory({
                   </Button>
                 )}
                 {!deleted &&
+                  !invalid &&
                   !current &&
                   head &&
                   artifactOp(head) !== "delete" && (
@@ -220,6 +268,11 @@ export function AgentConfigHistory({
                       Revert to this
                     </Button>
                   )}
+                {failure?.id === event.id && (
+                  <p className={`text-body-sm ${styles.failure}`} role="alert">
+                    {failure.text}
+                  </p>
+                )}
                 {open === event.id &&
                   changes(event, segment.revisions[index + 1])}
               </li>

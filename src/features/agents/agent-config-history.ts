@@ -1,11 +1,13 @@
 // NIP-AP config history (plan §7): offset pages of one artifact's revisions,
 // every chain segment they form, the cause of each gap, diffs and revert.
 // Display only: history never decides artifact state (§3.2).
-import type { RelayEvent } from "../relay/events";
+import type { EventData, RelayEvent } from "../relay/events";
+import { type SettingsSchema, syncedSettings } from "./agent-config";
 import {
   ARTIFACT_KIND,
   artifactOp,
   artifactPrev,
+  artifactProblem,
   artifactTemplate,
   type Expected,
   type SnapshotRead,
@@ -34,9 +36,12 @@ export const emptyHistory: History = {
 };
 
 /** Reads the next page. Revisions accepted since the last page shift offsets,
- * so repeats are dropped by event ID. A failed page keeps what was loaded. */
+ * so repeats are dropped by event ID. A failed page keeps what was loaded.
+ * Every page names the channel in `#h`: the relay leaves system channels out
+ * of any read that doesn't (NIP-CL), members included. */
 export async function loadOlder(
   read: SnapshotRead,
+  channel: string,
   d: string,
   history: History,
   signal?: AbortSignal,
@@ -48,6 +53,7 @@ export async function loadOlder(
       [
         {
           kinds: [ARTIFACT_KIND],
+          "#h": [channel],
           "#d": [d],
           artifact: "history",
           limit: HISTORY_PAGE,
@@ -206,30 +212,72 @@ const parse = (content: string) => {
   }
 };
 
+/** The agent type and plugin schema a settings revision must fit to start. */
+export type SettingsCheck = Readonly<{
+  agentType: string;
+  schema: SettingsSchema;
+}>;
+
+/** Why a revision isn't config this client could start, or undefined. A
+ * settings revision without a schema to check it against is never valid. */
+export function revisionProblem(
+  expected: Expected,
+  event: EventData,
+  settings?: SettingsCheck,
+) {
+  const problem = artifactProblem(event, expected);
+  if (
+    problem ||
+    expected.type !== "buzz.agent.settings" ||
+    artifactOp(event) === "delete"
+  )
+    return problem;
+  if (!settings) return "No settings schema to check against";
+  const checked = syncedSettings(
+    event.content,
+    settings.agentType,
+    settings.schema,
+  );
+  return "problem" in checked ? checked.problem : undefined;
+}
+
 const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
 
 /** Revert: a new `op=update` whose content is `target`'s snapshot and whose
- * `prev` is the current head. A team keeps its current name. Never redacts. */
+ * `prev` is the current head. A team keeps its current name. Never redacts.
+ * Only a valid snapshot is republished (NIP-AP); an invalid head is what a
+ * revert repairs, so its name, title and client tags are kept only when the
+ * head itself is valid. */
 export function revertTemplate(
   expected: Expected,
   head: RelayEvent,
   target: RelayEvent,
+  settings?: SettingsCheck,
 ) {
   if (artifactOp(head) === "delete" || artifactOp(target) === "delete")
     throw new Error("A deleted revision can't be reverted");
-  const title = head.tags.find((t) => t[0] === "title")?.[1] ?? "";
+  const base = revisionProblem(expected, head, settings) ? target : head;
+  const title = base.tags.find((t) => t[0] === "title")?.[1] ?? "";
   let content = target.content;
-  if (expected.type === "buzz.team") {
-    const team = parse(target.content);
-    if (!team) throw new Error("Malformed team");
-    content = JSON.stringify({ ...team, name: parse(head.content)?.name });
-  }
-  return artifactTemplate({
+  if (expected.type === "buzz.team")
+    content = JSON.stringify({
+      ...parse(target.content),
+      name: parse(base.content)?.name,
+    });
+  const template = artifactTemplate({
     ...expected,
     op: "update",
     title,
     content,
     prev: head.id,
-    extra: head.tags.filter((t) => !ENVELOPE.has(t[0] ?? "")),
+    extra: base.tags.filter((t) => !ENVELOPE.has(t[0] ?? "")),
   });
+  // Unsigned, so no id or pubkey yet; validation reads neither.
+  const problem = revisionProblem(
+    expected,
+    { ...template, id: "", pubkey: "" },
+    settings,
+  );
+  if (problem) throw new Error(`That revision isn't valid: ${problem}`);
+  return template;
 }

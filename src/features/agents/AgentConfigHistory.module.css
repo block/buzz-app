@@ -43,7 +43,14 @@
 }
 .added {
   background: var(--affordance-success);
+  color: var(--text-success);
 }
 .removed {
   background: var(--affordance-danger);
+  color: var(--text-danger);
+}
+.failure {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-danger);
 }

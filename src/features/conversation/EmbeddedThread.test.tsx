@@ -65,6 +65,7 @@ vi.mock("../../shared/design-system/ui/Dialog", () => ({
     <section>{children}</section>
   ),
 }));
+const noTyping: readonly never[] = [];
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -149,6 +150,7 @@ function fixture(
     }),
     channels: { subscribeList: () => () => {}, list: () => channels },
     profiles: { ensure: async () => {} },
+    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry() {} },
     media: () => undefined,

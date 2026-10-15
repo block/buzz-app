@@ -432,6 +432,9 @@ export function createTabs({
     const nativeModel = state.models.find(
       (candidate) => candidate.value === "default",
     );
+    const nativeLabel = nativeModel?.resolvedModel
+      ? `Recommended · ${resolvedModelName(nativeModel.resolvedModel)}`
+      : "Recommended";
     const listed = modelChoices(state.models);
     // A saved default Claude has not listed (yet) stays selectable.
     const defaultChoices =
@@ -562,7 +565,7 @@ export function createTabs({
                 options: [
                   {
                     value: "",
-                    label: "Recommended",
+                    label: nativeLabel,
                     description: nativeModel
                       ? "Following Claude Code's recommendation"
                       : undefined,
@@ -831,7 +834,7 @@ export function createTabs({
       setupState.models,
     );
     const effortOptions = [
-      { value: "", label: "Default · Automatic" },
+      { value: "", label: "Recommended · Automatic" },
       // A saved level the model does not list; without Claude's list, it may.
       ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
         ? [

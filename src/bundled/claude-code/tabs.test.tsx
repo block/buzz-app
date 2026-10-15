@@ -464,7 +464,7 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Recommended"),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -489,15 +489,15 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Recommended"),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
-  expect(defaultModel).toHaveTextContent("Recommended");
+  expect(defaultModel).toHaveTextContent("Recommended · Opus 5.5");
   await user.click(defaultModel);
   expect(
     await screen.findByRole("option", {
-      name: "Recommended",
+      name: "Recommended · Opus 5.5",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
   // Every model Claude lists is offered, not only the aliases.
@@ -680,12 +680,12 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
-  ).toEqual(["Default · Automatic", "Low", "Medium", "High", "Extra high"]);
+  ).toEqual(["Recommended · Automatic", "Low", "Medium", "High", "Extra high"]);
   await user.click(screen.getByRole("option", { name: "Extra high" }));
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Default · Automatic");
+  expect(thinking).toHaveTextContent("Recommended · Automatic");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -711,9 +711,9 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   expect(thinking).not.toHaveTextContent("unavailable");
   await user.click(thinking);
   await user.click(
-    await screen.findByRole("option", { name: "Default · Automatic" }),
+    await screen.findByRole("option", { name: "Recommended · Automatic" }),
   );
-  expect(thinking).toHaveTextContent("Default · Automatic");
+  expect(thinking).toHaveTextContent("Recommended · Automatic");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });

@@ -289,6 +289,11 @@ const providerDefaultLabel = (model: string, data?: Catalog) => {
   const name = selected?.displayName || selected?.model;
   return name || model || "Recommended";
 };
+const recommendedLabel = (data?: Catalog) => {
+  const selected = catalogModel("", data);
+  const name = selected?.displayName || selected?.model;
+  return name ? `Recommended · ${name}` : "Recommended";
+};
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
   return resolved ? effortName(resolved) : "Automatic";
@@ -416,7 +421,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `Default · ${codexDefaultEffortLabel("", selected)}`,
+        label: `Recommended · ${codexDefaultEffortLabel("", selected)}`,
       },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
@@ -504,7 +509,7 @@ export function createTabs(
                 options: [
                   {
                     value: "",
-                    label: "Recommended",
+                    label: recommendedLabel(data),
                     description: "Follows Codex's recommendation.",
                     disabled: !nativeModel,
                   },
@@ -809,7 +814,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `Default · ${codexDefaultEffortLabel(effective.effort, selected)}`,
+        label: `Recommended · ${codexDefaultEffortLabel(effective.effort, selected)}`,
       },
       ...(draft.effort &&
       !supported.some((effort) => effort.reasoningEffort === draft.effort)

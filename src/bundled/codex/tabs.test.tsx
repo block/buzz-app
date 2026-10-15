@@ -442,7 +442,7 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Default model" }));
   expect(
-    await screen.findByRole("option", { name: "Recommended" }),
+    await screen.findByRole("option", { name: "Recommended · Model A" }),
   ).toHaveAccessibleDescription("Follows Codex's recommendation.");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
@@ -524,15 +524,19 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   const user = userEvent.setup();
   const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Recommended",
+    "Recommended · Model A",
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Default · Low",
+    "Recommended · Low",
   );
   await user.click(screen.getByLabelText("Default model"));
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(3);
-  for (const [index, name] of ["Recommended", "Model A", "Model B"].entries())
+  for (const [index, name] of [
+    "Recommended · Model A",
+    "Model A",
+    "Model B",
+  ].entries())
     expect(options[index]).toHaveAccessibleName(name);
   await user.click(screen.getByRole("option", { name: "Model B" }));
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
@@ -554,7 +558,9 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent("Model B");
   await user.click(screen.getByLabelText("Default model"));
-  await user.click(await screen.findByRole("option", { name: "Recommended" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Recommended · Model A" }),
+  );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(f.provider.resolve(defaults).model).toBe("");
   expect(
@@ -572,7 +578,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   await f.provider.check();
   await waitFor(() =>
     expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Recommended",
+      "Recommended · Model A",
     ),
   );
 });
@@ -651,7 +657,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(/^High$/);
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
-    await screen.findByRole("option", { name: "Default · Low" }),
+    await screen.findByRole("option", { name: "Recommended · Low" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
@@ -669,7 +675,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Default · Low",
+    "Recommended · Low",
   );
 });
 it("shows the recommended model and default thinking despite different local Codex preferences", async () => {
@@ -679,7 +685,9 @@ it("shows the recommended model and default thinking despite different local Cod
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.getByLabelText("Model")).toHaveTextContent("Default · Model A");
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Default · Low");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
+    "Recommended · Low",
+  );
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
@@ -688,7 +696,9 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Default · Low");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
+    "Recommended · Low",
+  );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(

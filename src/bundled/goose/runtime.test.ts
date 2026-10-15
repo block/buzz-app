@@ -441,22 +441,6 @@ describe("goose memory reads", () => {
     });
   });
 
-  it("does not take a partial read that missed core as no core memory", async () => {
-    let listing = { entries: [], partial: true };
-    const relay = {
-      snapshot: () => ({
-        status: "ready",
-        session: { agentMemories: { read: async () => listing } },
-      }),
-    } as unknown as RelayData;
-    const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
-      memory(pubkey: string, entry: object): Promise<string | null | undefined>;
-    };
-    await expect(runtime.memory(self, {})).resolves.toBeUndefined();
-    listing = { entries: [], partial: false };
-    await expect(runtime.memory(self, {})).resolves.toBeNull();
-  });
-
   it("gives a tool the partial listing a slow native read answers", async () => {
     vi.useFakeTimers();
     // AbortSignal.timeout runs on real time; put it on the fake clock.

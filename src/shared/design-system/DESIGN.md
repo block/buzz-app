@@ -1174,8 +1174,8 @@ Values scale with the host interface-size preference.
   each utility’s semantic role and complete setting alongside the size ladder.
 - A role carries size, leading, tracking and weight together. Display, title,
   and heading roles use unitless 1.1 leading so wrapped headings have breathing room.
-- Regular (400) is for reading; Medium (500) is for labels and structure.
-  Existing `font-semibold` consumers resolve to Medium.
+- Regular (400) is for reading and form labels; Medium (500) is for actions and
+  structure. Existing `font-semibold` consumers resolve to Medium.
 - Mono uses `detail/body-xsmall` at 12/16 with 0.03em tracking.
   `--type-xsmall-size` points to the existing 12px step, keeping the semantic
   independent from caption even though their sizes currently match. `text-mono-lg` and
@@ -1563,7 +1563,8 @@ body omits its vertical gutters; agent creation uses this for scrolling steps.
 
 Field labels, choice labels, PreferenceRow titles and Switch labels use the complete
 `text-body-sm` role (14px, Regular). `Field optional` appends “Optional” in the
-same role with `text-metadata` color and the shared small gap. Required validation
+same role with `text-metadata` color and normal word spacing, including in the
+accessible label. Required validation
 remains the control's responsibility. Use `FieldButton dropdown={false}` for a
 system picker, not a dropdown; its single-line value ellipsizes.
 

@@ -4,7 +4,7 @@ import { webcrypto } from "node:crypto";
 import { sectionTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
@@ -1292,9 +1292,10 @@ async function projectSetup() {
 }
 
 it.each([false, true])(
-  "a project entry clears only changed draft defaults and preserves pending starts (pending=%s)",
+  "re-entering a mounted project clears changed defaults and preserves pending starts (pending=%s)",
   async (submitted) => {
     const f = await projectSetup();
+    const started = vi.fn();
     const scope = `project-reset-${submitted}`;
     const key = "me:section:work";
     writeView(scope, `${key}:new-project`, "other");
@@ -1309,7 +1310,6 @@ it.each([false, true])(
           canvas: "other edited instructions",
         },
       });
-    resetNewChatProject(scope, true, "work");
     render(
       <NewSessionComposer
         personal
@@ -1317,9 +1317,13 @@ it.each([false, true])(
         sectionId="work"
         session={f.session}
         scope={scope}
-        onStarted={vi.fn()}
+        onStarted={started}
       />,
     );
+    expect(
+      screen.getByRole("button", { name: "Project: Other" }),
+    ).toBeVisible();
+    act(() => resetNewChatProject(scope, true, "work"));
     expect(
       await screen.findByRole("button", {
         name: submitted ? "Project: Other" : "Project: Work",
@@ -1335,9 +1339,62 @@ it.each([false, true])(
       expect(
         await screen.findByRole("textbox", { name: /^Instructions/ }),
       ).toHaveValue("work instructions");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await userEvent.type(screen.getByRole("textbox"), "Start in Work");
     }
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.mePlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
+      sectionId: submitted ? "other" : "work",
+    });
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      submitted ? "other edited instructions" : "work instructions",
+      undefined,
+    );
   },
 );
+
+it("keeps a locally chosen project when its persistence fails and other draft writes succeed", async () => {
+  const f = await projectSetup();
+  const started = vi.fn();
+  const user = userEvent.setup();
+  const scope = "project-write-failure";
+  const key = `buzz-view.v1:${JSON.stringify([scope, "me:section:work:new-project"])}`;
+  const setItem = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new Error("Storage unavailable");
+      setItem.call(this, name, value);
+    });
+  try {
+    render(
+      <NewSessionComposer
+        personal
+        sectionId="work"
+        session={f.session}
+        scope={scope}
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Other" }),
+    );
+    await user.type(screen.getByRole("textbox"), "Keep this project");
+    expect(
+      screen.getByRole("button", { name: "Project: Other" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.mePlacement.admit).toHaveBeenCalledWith(expect.any(String), {
+      sectionId: "other",
+    });
+  } finally {
+    storage.mockRestore();
+  }
+});
 
 it("inherits the project's defaults for two consecutive new chats", async () => {
   const f = await projectSetup();

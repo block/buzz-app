@@ -40,6 +40,7 @@ export function NewProject({
   const [error, setError] = useState("");
   // Once publication starts, retries must use the same project and defaults.
   const [submitted, setSubmitted] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const pending = useRef(false);
   const defaults = useRef<Resume>({
     enqueued: (eventId) => {
@@ -50,7 +51,7 @@ export function NewProject({
   const input = useRef<HTMLInputElement>(null);
   const submit = async () => {
     const trimmed = name.trim();
-    if (!trimmed || pending.current) return;
+    if (!trimmed || pending.current || conflict) return;
     pending.current = true;
     setBusy(true);
     setError("");
@@ -91,10 +92,12 @@ export function NewProject({
           existing &&
           (existing.record.deleted ||
             JSON.stringify(existing.record.value) !== JSON.stringify(template))
-        )
+        ) {
+          setConflict(true);
           throw new Error(
             "Project defaults changed. Close this dialog and review Project settings.",
           );
+        }
         if (!existing)
           await session.channelKit.save(
             template,
@@ -130,17 +133,19 @@ export function NewProject({
       actions={
         <>
           <Button disabled={busy} onClick={close}>
-            Cancel
+            {submitted ? "Close" : "Cancel"}
           </Button>
-          <Button
-            form={form}
-            type="submit"
-            variant="prominent"
-            loading={busy}
-            disabled={!name.trim()}
-          >
-            Create
-          </Button>
+          {!conflict && (
+            <Button
+              form={form}
+              type="submit"
+              variant="prominent"
+              loading={busy}
+              disabled={!name.trim()}
+            >
+              {submitted ? "Retry" : "Create"}
+            </Button>
+          )}
         </>
       }
     >
@@ -157,15 +162,22 @@ export function NewProject({
           <Input
             ref={input}
             required
-            readOnly={submitted}
+            disabled={busy || submitted}
             maxLength={80}
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
         </Field>
-        <div inert={submitted}>
-          <WorkspaceFields value={workspace} onChange={setWorkspace} />
-        </div>
+        <WorkspaceFields
+          value={workspace}
+          onChange={setWorkspace}
+          disabled={busy || submitted}
+        />
+        {submitted && !busy && !conflict && (
+          <p role="status">
+            Name, folders and instructions are kept for the retry.
+          </p>
+        )}
         {error && <p role="alert">{error}</p>}
       </form>
     </Dialog>

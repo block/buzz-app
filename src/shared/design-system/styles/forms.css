@@ -37,8 +37,6 @@
     color: var(--text-standard);
   }
   .buzz-field-optional {
-    margin-inline-start: var(--space-1);
-    font-weight: var(--type-weight-normal);
     /* The placeholder hint color: lighter than descriptions. */
     color: var(--text-metadata);
   }

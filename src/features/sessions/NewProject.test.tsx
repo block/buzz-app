@@ -67,26 +67,35 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Work" },
   });
-  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Keep changes small" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   try {
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveAttribute(
-      "readonly",
-    );
+    for (const closeButton of screen.getAllByRole("button", {
+      name: "Close",
+    }))
+      expect(closeButton).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: /^Instructions/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("textbox", { name: /^Folders/ })).toBeDisabled();
   } finally {
     release();
   }
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Save not confirmed",
   );
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Keep changes small",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Name, folders and instructions are kept for the retry.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledOnce();
   expect(create.mock.calls[0]).toEqual(create.mock.calls[1]);
@@ -105,13 +114,73 @@ it("rejects oversized defaults with their real community envelope before creatin
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Work" },
   });
-  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), {
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "a".repeat(16_095) },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("16 KiB");
   expect(create).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Name" })).not.toHaveAttribute(
-    "readonly",
+  expect(screen.getByRole("textbox", { name: "Name" })).toBeEnabled();
+});
+
+it("offers only Close when the saved project defaults were changed elsewhere", async () => {
+  let entries: KitEntry[] = [];
+  const save = vi.fn(async (template: Template) => {
+    entries = [
+      {
+        record: parseKitRecord(
+          {
+            version: 1,
+            community: "https://relay.example.test",
+            deleted: false,
+            value: { ...template, canvas: "Changed elsewhere" },
+          },
+          "https://relay.example.test",
+        ),
+        eventId: "changed",
+        createdAt: 1,
+      },
+    ];
+    throw new Error("Save not confirmed");
+  });
+  const close = vi.fn();
+  render(
+    <NewProject
+      create={vi.fn(async () => {})}
+      close={close}
+      onCreated={vi.fn()}
+      session={
+        {
+          scope: "https://relay.example.test:viewer",
+          channelKit: {
+            refresh: async () => {},
+            snapshot: () => ({ status: "ready", entries }),
+            save,
+          },
+        } as unknown as RelaySession
+      }
+    />,
   );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Work" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
+    target: { value: "Keep changes small" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Save not confirmed",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Project defaults changed",
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: /^(Create|Retry)$/ }),
+  ).not.toBeInTheDocument();
+  expect(save).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByText("Close", { selector: "button span" }));
+  expect(close).toHaveBeenCalledOnce();
 });

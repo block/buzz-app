@@ -37,6 +37,7 @@ mod notifications;
 mod os_idle;
 mod window_controls;
 mod window_state;
+mod workspace_folder;
 use os_idle::get_os_idle_seconds;
 mod relay;
 mod sign_out;
@@ -258,10 +259,7 @@ async fn workspace_pick_folder<R: tauri::Runtime>(
     // Open at the current choice, or its nearest existing parent ("~" is home).
     let home = app.path().home_dir().ok();
     let start = start.and_then(|path| {
-        let path = match (path.strip_prefix('~'), &home) {
-            (Some(rest), Some(home)) => home.join(rest.trim_start_matches('/')),
-            _ => std::path::PathBuf::from(path),
-        };
+        let path = workspace_folder::expand(&path, home.as_deref());
         path.ancestors()
             .find(|dir| dir.is_dir())
             .map(|dir| dir.to_path_buf())
@@ -277,17 +275,8 @@ async fn workspace_pick_folder<R: tauri::Runtime>(
         }
         .blocking_pick_folder()
         .map(|folder| {
-            folder
-                .into_path()
-                // Paths under home read as "~/…", like the default location.
-                .map(
-                    |path| match home.as_deref().map(|home| path.strip_prefix(home)) {
-                        Some(Ok(rest)) if rest.as_os_str().is_empty() => "~".to_owned(),
-                        Some(Ok(rest)) => format!("~/{}", rest.to_string_lossy()),
-                        _ => path.to_string_lossy().into_owned(),
-                    },
-                )
-                .map_err(|error| error.to_string())
+            let path = folder.into_path().map_err(|error| error.to_string())?;
+            workspace_folder::display(&path, home.as_deref())
         })
         .transpose()
     })

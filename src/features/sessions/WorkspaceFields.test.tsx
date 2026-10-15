@@ -1,23 +1,24 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { WorkspaceFields } from "./WorkspaceFields";
 import type { Workspace } from "./workspace";
 vi.mock("@tauri-apps/api/core", () => ({
-  isTauri: () => true,
+  isTauri: vi.fn(),
   invoke: vi.fn(),
 }));
+beforeEach(() => vi.mocked(isTauri).mockReturnValue(true));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
-function Form() {
+function Form({ folders = ["~/original"] }: { folders?: string[] }) {
   const [value, setValue] = useState<Workspace>({
-    folders: ["~/original"],
+    folders,
     worktree: { location: "~/worktrees", baseBranch: "main" },
     canvas: "Keep this",
   });
@@ -73,4 +74,29 @@ it("opens the worktree picker at the current location and keeps it when the pick
   expect(
     screen.getByRole("button", { name: "Worktree location: ~/worktrees" }),
   ).toBeEnabled();
+  expect(location).toHaveFocus();
+});
+
+it("returns focus to the final folder when adding reaches the folder limit", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce("~/last");
+  render(
+    <Form
+      folders={Array.from({ length: 19 }, (_, index) => `~/folder-${index}`)}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Add folder…" }));
+  expect(screen.getByRole("button", { name: "Add folder…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Remove last" })).toHaveFocus();
+});
+
+it("returns focus to the path input after removing the last folder in the browser", async () => {
+  vi.mocked(isTauri).mockReturnValue(false);
+  render(<Form />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Remove original" }));
+  expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: /^Folders/ })).toHaveFocus();
 });

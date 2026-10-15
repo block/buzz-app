@@ -27,19 +27,23 @@ const folderName = (path: string) =>
 export function WorkspaceFields({
   value,
   onChange,
+  disabled = false,
 }: {
   value: Workspace;
+  disabled?: boolean;
   onChange(value: Workspace): void;
 }) {
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState("");
   const [typed, setTyped] = useState("");
-  const current = useRef({ value, onChange });
-  current.current = { value, onChange };
+  const current = useRef({ value, onChange, disabled });
+  current.current = { value, onChange, disabled };
   const alive = useRef(true);
   const add = useRef<HTMLElement>(null);
+  const pathInput = useRef<HTMLInputElement>(null);
+  const location = useRef<HTMLElement>(null);
   const removes = useRef<(HTMLElement | null)[]>([]);
-  const focusAfter = useRef<number | "add" | undefined>(undefined);
+  const focusAfter = useRef<number | "add" | "location" | undefined>(undefined);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -51,10 +55,19 @@ export function WorkspaceFields({
     const target = focusAfter.current;
     focusAfter.current = undefined;
     if (target === undefined) return;
-    (target === "add" ? add.current : removes.current[target])?.focus();
+    const requested =
+      target === "add"
+        ? add.current
+        : target === "location"
+          ? location.current
+          : removes.current[target];
+    [requested, pathInput.current, removes.current.at(-1), location.current]
+      .find((node) => node && !node.matches(":disabled, [data-disabled]"))
+      ?.focus();
   });
   /** Appends a folder; returns false when it was not added. */
   const attach = (path: string) => {
+    if (current.current.disabled) return false;
     const latest = current.current.value;
     const existing = latest.folders.map((item) => item.trim()).filter(Boolean);
     const next = path.trim();
@@ -95,7 +108,7 @@ export function WorkspaceFields({
         start: current.current.value.worktree?.location,
       });
       const latest = current.current.value;
-      if (alive.current && path && latest.worktree)
+      if (alive.current && !current.current.disabled && path && latest.worktree)
         current.current.onChange({
           ...latest,
           worktree: { ...latest.worktree, location: path },
@@ -104,7 +117,10 @@ export function WorkspaceFields({
       if (alive.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      if (alive.current) setPicking(false);
+      if (alive.current) {
+        setPicking(false);
+        focusAfter.current = "location";
+      }
     }
   };
   const remove = (index: number) => {
@@ -119,6 +135,7 @@ export function WorkspaceFields({
     <div className={styles.fields}>
       <Field label="Instructions" optional>
         <Textarea
+          disabled={disabled}
           rows={5}
           value={value.canvas}
           onChange={(event) =>
@@ -148,6 +165,7 @@ export function WorkspaceFields({
                       ref={(node) => {
                         removes.current[index] = node;
                       }}
+                      disabled={disabled}
                       variant="ghost"
                       size="sm"
                       aria-label={`Remove ${folderName(folder)}`}
@@ -166,7 +184,7 @@ export function WorkspaceFields({
               ref={add}
               variant="outline"
               size="sm"
-              disabled={full || picking}
+              disabled={disabled || full || picking}
               loading={picking}
               onClick={() => void browse()}
             >
@@ -177,9 +195,10 @@ export function WorkspaceFields({
         ) : (
           <div className={styles.repositoryInput}>
             <Input
+              ref={pathInput}
               aria-label="Folder path"
               value={typed}
-              disabled={full}
+              disabled={disabled || full}
               placeholder="~/Development/my-project"
               onChange={(event) => setTyped(event.target.value)}
               onKeyDown={(event) => {
@@ -191,7 +210,7 @@ export function WorkspaceFields({
             <Button
               ref={add}
               shape="control"
-              disabled={full || !typed.trim()}
+              disabled={disabled || full || !typed.trim()}
               onClick={() => {
                 if (attach(typed)) setTyped("");
               }}
@@ -202,6 +221,7 @@ export function WorkspaceFields({
         )}
       </Field>
       <Switch
+        disabled={disabled}
         label="Work in a new worktree"
         checked={!!worktree}
         onCheckedChange={(checked) =>
@@ -218,9 +238,11 @@ export function WorkspaceFields({
           {isTauri() ? (
             <Field label="Worktree location" nativeLabel={false}>
               <FieldButton
+                ref={location}
                 dropdown={false}
+                title={worktree.location}
                 aria-label={`Worktree location: ${worktree.location}`}
-                disabled={picking}
+                disabled={disabled || picking}
                 onClick={() => void pickLocation()}
               >
                 {worktree.location}
@@ -229,6 +251,7 @@ export function WorkspaceFields({
           ) : (
             <Field label="Worktree location">
               <Input
+                disabled={disabled}
                 value={worktree.location}
                 onChange={(event) =>
                   onChange({
@@ -241,6 +264,7 @@ export function WorkspaceFields({
           )}
           <Field label="Base branch">
             <Input
+              disabled={disabled}
               value={worktree.baseBranch}
               onChange={(event) =>
                 onChange({

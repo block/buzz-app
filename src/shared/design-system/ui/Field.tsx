@@ -46,10 +46,10 @@ export function Field({
       >
         {label}
         {optional && (
-          <span className="buzz-field-optional" aria-hidden="true">
+          <>
             {" "}
-            Optional
-          </span>
+            <span className="buzz-field-optional">Optional</span>
+          </>
         )}
       </BaseField.Label>
       {children}

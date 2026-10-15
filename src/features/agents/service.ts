@@ -571,7 +571,7 @@ export type Agents = {
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
   addTool(tool: AddedTool): void;
-  /** The tools plugins add now, each name once. */
+  /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
@@ -822,6 +822,8 @@ export class AgentsService extends Service implements Agents {
   private keyGeneration = 0;
   private readonly contributions;
   private readonly addedTools;
+  /** Every added tool's name, its plugin active or still starting. */
+  private readonly toolNames = new Set<string>();
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -1070,19 +1072,17 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "Agent tools need a lowercase name no Buzz tool has, a description, a JSON object inputSchema and call",
       );
-    if (this.tools().some((added) => added.name === tool.name))
+    // Reserved from registration, not activation: plugins starting together
+    // are not active yet, and the second to take a name must fail.
+    if (this.toolNames.has(tool.name))
       throw new Error(`Another plugin adds agent tool ${tool.name}`);
     this.addedTools.register(this.ctx, { ...tool, id: tool.name });
-  }
-  tools = () => {
-    // Two plugins may name a tool alike; the first keeps it.
-    const names = new Set<string>();
-    return this.addedTools.snapshot().filter((tool) => {
-      if (names.has(tool.name)) return false;
-      names.add(tool.name);
-      return true;
+    this.ctx.effect(() => {
+      this.toolNames.add(tool.name);
+      return () => this.toolNames.delete(tool.name);
     });
-  };
+  }
+  tools = () => this.addedTools.snapshot();
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

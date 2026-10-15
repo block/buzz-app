@@ -53,7 +53,10 @@ tools under the same `buzz` server; the standalone server in
 and passes it to `respond` or `callSessionTool`. A session keeps the list it
 started with, so `addedKey` goes in what decides when one is replaced: the
 Claude and goose session fingerprints, Claude's spare, and each saved Codex
-binding, since `thread/resume` keeps a thread's tools.
+binding, since `thread/resume` keeps a thread's tools. Claude and goose resume
+their sessions when replaced, but a Codex agent starts a new thread and loses its
+context. That happens once when a plugin with tools ships, and again whenever a
+tool's name, description or schema changes, so edit those deliberately.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need

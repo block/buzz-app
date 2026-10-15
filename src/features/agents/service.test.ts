@@ -5250,6 +5250,40 @@ it("adds plugins' tools to every session, each name once", async () => {
   ]);
 });
 
+it("reserves a tool name while its plugin is still starting", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => false,
+    subscribe: () => () => {},
+  });
+  const service = new AgentsService(
+    ctx,
+    fakeCommunities(fakeRelay()).communities,
+    fakeNative(),
+    memoryStorage(),
+  );
+  const tool = {
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object" },
+    call: async () => "created",
+  };
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const first = owner("buzz.tasks").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.addTool(tool),
+  });
+  await first;
+  // Neither plugin is active yet, and still the name is taken.
+  expect(service.tools()).toEqual([]);
+  expect(() => owner("buzz.other").agents.addTool(tool)).toThrow(
+    /Another plugin/,
+  );
+  await first.dispose();
+  owner("buzz.other").agents.addTool(tool);
+});
+
 it("refuses a hosted type that also runs here", async () => {
   const { plugin } = await setup();
   const { type } = cloud();

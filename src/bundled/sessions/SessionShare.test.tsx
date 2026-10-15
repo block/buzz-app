@@ -1107,7 +1107,7 @@ it("clears unsubmitted choices when handing conversion to the Messages host", as
   const user = userEvent.setup();
   const onConvert = vi.fn();
   t.mount({ onConvert });
-  await user.click(screen.getByRole("button", { name: "Share", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Share" }));
   const dialog = screen.getByRole("dialog", { name: "Share session" });
   await chooseDestination(user, dialog);
   await choosePerson(user, dialog, "Aria");
@@ -1119,7 +1119,7 @@ it("clears unsubmitted choices when handing conversion to the Messages host", as
   expect(onConvert).toHaveBeenCalledOnce();
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   // The host can cancel its conversion while this Share owner stays mounted.
-  await user.click(screen.getByRole("button", { name: "Share", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Share" }));
   const reopened = screen.getByRole("dialog", { name: "Share session" });
   expect(within(reopened).getByRole("combobox")).toHaveValue("");
   expect(

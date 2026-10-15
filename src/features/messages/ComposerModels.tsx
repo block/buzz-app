@@ -1,7 +1,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { Slider } from "@base-ui/react/slider";
 import {
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -28,56 +28,53 @@ import {
 import styles from "./ComposerModels.module.css";
 
 /** Model and effort for the next run of each mentioned agent of the viewer's
- * that offers a choice. The shown defaults are reported for the outgoing event. */
+ * that offers a choice. Unpicked agents run with their own. */
 export function ComposerModels({
   pubkeys,
   value,
   disabled,
   onChange,
+  onResolved,
 }: {
   pubkeys: readonly string[];
   value: MentionPicks;
   disabled: boolean;
   onChange(value: MentionPicks): void;
+  onResolved(value: MentionPicks): void;
 }) {
   const [open, setOpen] = useState(false);
   const choices = useMentionModels(pubkeys);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    let changed = false;
-    const next = { ...value };
+  // Publish the displayed defaults separately from the user's draft picks.
+  // A settings refresh or model-only pick must still follow the new default.
+  useLayoutEffect(() => {
+    const resolved: MentionPicks = { ...value };
     for (const choice of choices) {
       if (choice.loading) continue;
       const saved = value[choice.pubkey] ?? {};
       const runs = runModel(choice, saved.model);
       if (!runs.id) continue;
-      const effort = runs.efforts.some(
-        (candidate) => candidate.id === saved.effort,
-      )
+      const effort = runs.efforts.some((item) => item.id === saved.effort)
         ? saved.effort
-        : runs.efforts.some((candidate) => candidate.id === runs.effort)
+        : runs.efforts.some((item) => item.id === runs.effort)
           ? runs.effort
           : undefined;
-      if (saved.model === runs.id && saved.effort === effort) continue;
-      next[choice.pubkey] = {
+      resolved[choice.pubkey] = {
         model: runs.id,
         ...(effort ? { effort } : {}),
       };
-      changed = true;
     }
-    if (changed) onChange(next);
-  }, [choices, value, onChange]);
+    onResolved(resolved);
+    return () => onResolved({});
+  }, [choices, value, onResolved]);
   if (!choices.length) return null;
   const picked = choices.flatMap((choice) => {
     const { model, effort } = value[choice.pubkey] ?? {};
     const runs = runModel(choice, model);
-    const own = runModel(choice, undefined);
     const text = [
-      model !== undefined && model !== own.id && runs.label,
-      effort !== undefined && effort !== runs.effort
-        ? runs.efforts.find((item) => item.id === effort)?.label
-        : undefined,
+      model !== undefined && runs.label,
+      runs.efforts.find((item) => item.id === effort)?.label,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -171,15 +168,15 @@ function AgentChoice({
     );
   const runs = runModel(choice, value.model);
   const several = choice.models.length > 1;
-  // Every shown choice is explicit on the wire; the runner may live on a host
-  // whose provider defaults differ from this composer's.
+  // Picking the agent's own model is no pick; an effort the new model lacks
+  // falls back to its default.
   const chooseModel = (id: string) => {
     const next = choice.models.find((item) => item.id === id);
     const effort = next?.efforts.some((item) => item.id === value.effort)
       ? value.effort
-      : next?.effort;
+      : undefined;
     pick({
-      model: id,
+      ...(id !== choice.current ? { model: id } : {}),
       ...(effort ? { effort } : {}),
     });
   };
@@ -223,7 +220,7 @@ function AgentChoice({
           disabled={disabled}
           pick={(effort) =>
             pick({
-              ...(runs.id ? { model: runs.id } : {}),
+              ...(value.model ? { model: value.model } : {}),
               ...(effort ? { effort } : {}),
             })
           }
@@ -264,9 +261,10 @@ function EffortSlider({
   const known = set || own >= 0;
   const level = known ? (efforts[at]?.label ?? "") : "Default";
   // A tap on the thumb's resting stop changes no value, so commits pick too.
+  // The run's own effort is no pick.
   const choose = (next: number) => {
     const effort = efforts[next]?.id;
-    pick(effort);
+    pick(effort === resting ? undefined : effort);
   };
   return (
     <Slider.Root

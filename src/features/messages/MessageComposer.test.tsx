@@ -2317,6 +2317,95 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   );
 });
 
+it.each(["settings refresh", "model pick"])(
+  "follows the new model's effort after %s without inheriting an untouched effort",
+  async (change) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    let current = "fast";
+    const models = [
+      {
+        id: "fast",
+        label: "Fast",
+        effort: "medium",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      {
+        id: "deep",
+        label: "Deep",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ];
+    const listeners = new Set<() => void>();
+    const types = [{ key: "test/agent", models: () => ({ current, models }) }];
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "follow the shown defaults");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    const trigger = await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    });
+    await h.user.click(trigger);
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "Medium");
+    expect(trigger).not.toHaveAttribute("data-selected");
+    if (change === "settings refresh") {
+      await act(async () => {
+        current = "deep";
+        snapshot = { ...snapshot };
+        for (const listener of listeners) listener();
+      });
+    } else {
+      await h.user.click(
+        screen.getByRole("button", { name: "Model for Honey's next run" }),
+      );
+      await h.user.click(
+        await screen.findByRole("menuitemradio", { name: "Deep" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Model for Honey's next run",
+        }),
+      ).toHaveTextContent("Deep"),
+    );
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "High");
+    if (change === "settings refresh")
+      expect(trigger).not.toHaveAttribute("data-selected");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      expect.stringContaining("follow the shown defaults"),
+      [first.pubkey],
+      [],
+      undefined,
+      [],
+      { [first.pubkey]: { model: "deep", effort: "high" } },
+    );
+  },
+);
+
 it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
   // Snapshots are stable, as the service's are.
   const snapshot = {

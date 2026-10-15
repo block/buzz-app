@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
+import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
+import inlineStyles from "../../../shared/InlineReference.module.css";
 import {
   MAX_INSTRUCTIONS_LENGTH,
   validInstructions,
@@ -145,11 +148,31 @@ export function createInstructionsTab(
   return function Instructions({ agent }: AgentViewProps) {
     const [revision, setRevision] = useState(0);
     return (
-      <Editor
-        key={`${agent.pubkey}/${revision}`}
-        pubkey={agent.pubkey}
-        retry={() => setRevision((value) => value + 1)}
-      />
+      <div className="grid gap-4">
+        <Editor
+          key={`${agent.pubkey}/${revision}`}
+          pubkey={agent.pubkey}
+          retry={() => setRevision((value) => value + 1)}
+        />
+        <SettingsGroup>
+          <PreferenceRow
+            title="Workspace"
+            subtitle="Remote runtime shared with all agents by default."
+          />
+          <PreferenceRow title="Sessions" subtitle="One session per thread" />
+        </SettingsGroup>
+        <p className="m-0 text-body-sm text-secondary">
+          Remote runtime managed via{" "}
+          <a
+            className={inlineStyles.link}
+            href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Builderlab
+          </a>
+        </p>
+      </div>
     );
   };
 }

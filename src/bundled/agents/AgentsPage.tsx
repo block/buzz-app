@@ -968,7 +968,8 @@ function ImportAgents({
         {chosen?.adopt
           ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
           : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
-        Stop it where it runs now first, or both will answer.
+        An archived agent is unarchived here. Stop it where it runs now first,
+        or both will answer.
       </p>
       {types.length > 1 && (
         <div className="flex">

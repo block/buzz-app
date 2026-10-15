@@ -241,9 +241,6 @@ pub(crate) struct AppAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
     deleted: bool,
-    /// When a deleted one was deleted, in seconds, if that was kept.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deleted_at: Option<u64>,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -255,7 +252,6 @@ impl From<AppAgent> for AppAgentSummary {
             name: agent.name,
             picture: agent.picture,
             deleted: agent.deleted,
-            deleted_at: None,
         }
     }
 }
@@ -275,21 +271,7 @@ pub(crate) async fn app_agent_list(
     state: tauri::State<'_, AppAgentHost>,
 ) -> Result<Vec<AppAgentSummary>, String> {
     let agents = state.agents.clone()?;
-    blocking(move || {
-        let mut summaries = vec![];
-        for agent in agents.list()? {
-            let deleted_at = match agent.deleted {
-                true => agents.deleted_at(&agent.pubkey)?,
-                false => None,
-            };
-            summaries.push(AppAgentSummary {
-                deleted_at,
-                ..agent.into()
-            });
-        }
-        Ok(summaries)
-    })
-    .await
+    blocking(move || Ok(agents.list()?.into_iter().map(Into::into).collect())).await
 }
 
 /// Generates a key for `owner` in `destination`, has the signed-in owner attest
@@ -386,7 +368,17 @@ pub(crate) async fn app_agent_port(
     let mut notes = vec![];
     // Old Buzz kept some pictures inline; the community serves the upload. The
     // agent comes over without it if that fails, which the import reports.
-    if let Some((mime, bytes)) = found.picture.as_deref().and_then(inline_picture) {
+    let inline = found
+        .picture
+        .as_deref()
+        .filter(|url| url.starts_with("data:"));
+    if inline.is_some_and(|url| inline_picture(url).is_none()) {
+        notes.push(format!(
+            "{} came over without its picture, which isn't a PNG, JPEG, GIF or WebP image under 6 MB.",
+            agent.name
+        ));
+    }
+    if let Some((mime, bytes)) = inline.and_then(inline_picture) {
         let agents = state.agents.clone()?;
         let uploaded = async {
             let receipt = upload(&agent, &key, bytes, mime).await?;

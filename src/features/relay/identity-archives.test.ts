@@ -542,3 +542,46 @@ it.each(["cancel", "cache", "dispose"] as const)(
     }
   },
 );
+it("a fence stops a request before it publishes, but not a publish already started", async () => {
+  const fixture = archiveRelay(viewer, relay, [attested(target, viewer)]);
+  const writer = fixture.transport.identityArchive;
+  if (!writer) throw new Error("fixture writer");
+  const archives = writable(fixture);
+  // Stopped while signing: nothing is published.
+  const sign = writer.sign.bind(writer);
+  const signing = new AbortController();
+  writer.sign = async (template, signal) => {
+    signing.abort();
+    return sign(template, signal);
+  };
+  await expect(
+    archives.request("archive", target.pubkey, undefined, signing.signal),
+  ).rejects.toThrow();
+  expect(fixture.published).toEqual([]);
+  writer.sign = sign;
+  // Stopped while publishing: the publish goes on and is confirmed.
+  let release!: () => void;
+  fixture.script.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  // A publish honors its signal, as the relay writer does.
+  const publish = writer.publish.bind(writer);
+  writer.publish = async (event, signal) => {
+    await fixture.script.hold;
+    signal?.throwIfAborted();
+    await publish(event, signal);
+  };
+  const publishing = new AbortController();
+  const request = archives.request(
+    "archive",
+    target.pubkey,
+    undefined,
+    publishing.signal,
+  );
+  await vi.waitFor(() => expect(fixture.signedBy).toHaveLength(2));
+  publishing.abort();
+  release();
+  await request;
+  expect(fixture.published).toHaveLength(1);
+  expect(archives.state(target.pubkey)).toBe("archived");
+});

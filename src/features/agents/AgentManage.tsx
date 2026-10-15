@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import type { Agent, Agents } from "./service";
 
 const message = (error: unknown) =>
@@ -24,11 +25,14 @@ export function AgentDelete({
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
+  /** What its Delete left undone; it is deleted all the same. */
+  const [unfinished, setUnfinished] = useState("");
   const remove = async () => {
     setRemoving(true);
     setError("");
     try {
-      await agents.remove(agent.pubkey);
+      const left = await agents.remove(agent.pubkey);
+      if (left) return setUnfinished(left);
       setConfirming(false);
       onRemoved();
     } catch (reason) {
@@ -51,35 +55,86 @@ export function AgentDelete({
       )}
       <Dialog
         open={confirming}
-        onOpenChange={setConfirming}
+        onOpenChange={(open) =>
+          !open && unfinished ? onRemoved() : setConfirming(open)
+        }
         title={`Delete ${agent.name}?`}
         description={
           agent.place === "hosted"
             ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
-            : "This deletes its key from this device. Then, whenever its community is open, it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+            : "This deletes its key from this device, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
         }
-        preventClose={removing}
+        preventClose={removing && !unfinished}
         actions={
-          <>
-            <Button onClick={() => setConfirming(false)} disabled={removing}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              loading={removing}
-              onClick={() => void remove()}
-            >
-              Delete
-            </Button>
-          </>
+          unfinished ? (
+            <Button onClick={onRemoved}>Done</Button>
+          ) : (
+            <>
+              <Button onClick={() => setConfirming(false)} disabled={removing}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={removing}
+                onClick={() => void remove()}
+              >
+                Delete
+              </Button>
+            </>
+          )
         }
       >
-        {error ? (
+        {error || unfinished ? (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
+            {error || unfinished}
           </p>
         ) : null}
       </Dialog>
     </>
+  );
+}
+
+/** Checks again, for an imported agent, that it is not archived in its
+ * community, which import could not confirm. */
+export function AgentArchiveRetry({
+  agents,
+  agent,
+}: {
+  agents: Pick<Agents, "unarchive">;
+  agent: Agent;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState("");
+  if (!agent.archiveUnchecked && !result) return null;
+  const retry = async () => {
+    setChecking(true);
+    setResult("");
+    try {
+      setResult((await agents.unarchive(agent.pubkey)) ?? "");
+    } catch (reason) {
+      setResult(`Couldn't check whether it's archived: ${message(reason)}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <PreferenceRow
+      title="Archive state"
+      subtitle={
+        result ||
+        "Not checked since import, so it may be hidden from member lists and mentions."
+      }
+      trailing={
+        agent.archiveUnchecked ? (
+          <Button
+            size="compact"
+            loading={checking}
+            onClick={() => void retry()}
+          >
+            Retry
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }

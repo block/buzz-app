@@ -117,14 +117,16 @@ export async function deleteAgentRecord(
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
+  fence?: AbortSignal,
 ) {
   const outbox = session.outbox;
   if (!outbox?.supports(5))
     throw new Error("This community cannot delete agent records.");
+  const waits = fenced(signal, fence);
   await outbox.ready();
-  signal.throwIfAborted();
+  waits.throwIfAborted();
   const coordinate = `30177:${viewer}:${pubkey}`;
-  const active = () => !signal.aborted;
+  const active = () => !waits.aborted;
   const previous = await resumable(
     outbox,
     (event) =>
@@ -156,33 +158,24 @@ export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
   pubkey: string,
   signal: AbortSignal,
-  /** With a Delete time, channels it was added to since stay: someone wanted
-   * it there after the Delete. Returns how many stayed. */
-  deletedAt?: number,
+  fence?: AbortSignal,
 ) {
+  const waits = fenced(signal, fence);
   const pending = new Set([
-    ...(await session.workSessions.memberChannels(pubkey, signal)),
+    ...(await session.workSessions.memberChannels(pubkey, waits)),
     ...session.channels
       .list()
       .channels.filter((channel) => channel.members?.includes(pubkey))
       .map((channel) => channel.id),
   ]);
-  let kept = 0;
-  if (deletedAt !== undefined && pending.size)
-    for (const id of await session.workSessions.addedSince(
-      pubkey,
-      deletedAt,
-      signal,
-    ))
-      if (pending.delete(id)) kept += 1;
-  if (!pending.size) return kept;
+  if (!pending.size) return;
   const outbox = session.outbox;
   if (!outbox?.supports(9001))
     throw new Error("This community cannot remove agents from channels.");
   await outbox.ready();
-  signal.throwIfAborted();
+  waits.throwIfAborted();
   // Nothing new is signed or published for a cancelled Delete.
-  const active = () => !signal.aborted;
+  const active = () => !waits.aborted;
   // Keep each operation as it is enqueued: a later enqueue can still throw,
   // for example when the outbox is full.
   const operations: string[] = [];
@@ -233,7 +226,7 @@ export async function removeAgentFromChannels(
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(
     [...pending].map((id) =>
-      session.workSessions.listsMember(id, pubkey, signal),
+      session.workSessions.listsMember(id, pubkey, waits),
     ),
   );
   const remaining = listed.filter(Boolean);
@@ -243,7 +236,12 @@ export async function removeAgentFromChannels(
     );
   // The rosters confirm the outcome; nothing is left for the outbox to retry.
   await Promise.all(operations.map((id) => outbox.dismiss(id)));
-  return kept;
+}
+
+/** `fence` keeps anything new from being admitted, while a publish already
+ * started settles under `signal` alone. */
+function fenced(signal: AbortSignal, fence?: AbortSignal) {
+  return fence ? AbortSignal.any([signal, fence]) : signal;
 }
 
 /** The relay refuses an event more than 15 minutes from its clock, and a

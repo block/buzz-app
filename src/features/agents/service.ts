@@ -114,6 +114,9 @@ export type Agent<Config = unknown> = Readonly<{
   /** A hosted agent its provider made whose setup has not finished; `finish`
    * continues it. */
   unfinished?: true;
+  /** Imported, but whether it is still archived in its community could not
+   * be checked; `unarchive` tries again. */
+  archiveUnchecked?: true;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -591,11 +594,15 @@ export type Agents = {
     type: string,
     change?: Readonly<{ config: unknown }>,
   ): Promise<readonly (keyof Carry)[]>;
-  /** Deletes its key at once. Leaving its channels and archiving it follow in
-   * the background whenever its community is open. A hosted agent is archived,
-   * leaves its channels and is removed from its provider before this resolves.
-   * One on another device is deleted there. */
-  remove(pubkey: string): Promise<void>;
+  /** Deletes its key, then leaves its channels and archives it in its
+   * community. When that cannot finish, as offline, nothing retries it, and
+   * this resolves saying what may be left. A hosted agent is archived, leaves
+   * its channels and is removed from its provider before this resolves. One on
+   * another device is deleted there. */
+  remove(pubkey: string): Promise<string | undefined>;
+  /** Unarchives an imported agent whose archive state was not checked, as
+   * import does, keeping its key and settings. Resolves with what is left. */
+  unarchive(pubkey: string): Promise<string | undefined>;
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
   /** Saves the TypeSafe key in native storage, which the classifier uses.
@@ -787,9 +794,15 @@ export class AgentsService extends Service implements Agents {
   private readonly runners: AgentRunners;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
-  /** Deleted agents whose community cleanup is running, and whether it was
-   * asked for again meanwhile, as when the connection recovers mid-attempt. */
-  private cleaning = new Map<string, boolean>();
+  /** Each running Delete cleanup, how to stop it, and whether it finished. */
+  private cleaning = new Map<
+    string,
+    { stop: AbortController; done: Promise<boolean> }
+  >();
+  /** Identities a re-import is taking back; no cleanup starts for them. */
+  private reclaiming = new Set<string>();
+  /** Imported identities whose archive state could not be checked yet. */
+  private unarchiving = new Set<string>();
   private unfinished: readonly Unfinished[];
   /** The viewer's agent records in each community, by origin, as last read
    * from its live session and written since. */
@@ -1289,34 +1302,44 @@ export class AgentsService extends Service implements Agents {
   ): Promise<Ported> {
     const binding = given ?? this.selectedBinding();
     const notes: string[] = [];
-    const agent = await this.add(
-      type,
-      async (native, destination, owner) => {
-        const ported = await native.port(
-          source,
-          pubkey,
-          destination,
-          owner,
-          type,
-        );
-        notes.push(...(ported.notes ?? []));
-        return ported;
-      },
-      {},
-      binding,
-    );
+    // A cleanup still running from its Delete must not touch it once it is back.
+    await this.reclaim(pubkey);
     try {
-      if (!(await unarchive(binding.session.archives, pubkey)))
-        notes.push(
-          `${agent.name} is still archived in this community, so it stays out of member lists and mentions there.`,
-        );
-    } catch (error) {
-      console.warn(`Agent ${agent.name} archive state was not checked`, error);
-      notes.push(
-        `Couldn't check whether ${agent.name} is archived in this community. If it is missing from member lists, import it again.`,
+      const agent = await this.add(
+        type,
+        async (native, destination, owner) => {
+          const ported = await native.port(
+            source,
+            pubkey,
+            destination,
+            owner,
+            type,
+          );
+          notes.push(...(ported.notes ?? []));
+          return ported;
+        },
+        {},
+        binding,
       );
+      try {
+        if (!(await unarchive(binding.session.archives, pubkey)))
+          notes.push(stillArchived(agent.name));
+      } catch (error) {
+        console.warn(
+          `Agent ${agent.name} archive state was not checked`,
+          error,
+        );
+        this.unarchiving.add(pubkey);
+        this.update();
+        this.notify();
+        notes.push(
+          `Couldn't check whether ${agent.name} is archived in this community. Retry from its settings.`,
+        );
+      }
+      return { agent, notes };
+    } finally {
+      this.reclaiming.delete(pubkey);
     }
-    return { agent, notes };
   }
 
   async portTeam({
@@ -1659,13 +1682,38 @@ export class AgentsService extends Service implements Agents {
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
-  async remove(pubkey: string) {
-    if (!this.identities.some((identity) => identity.pubkey === pubkey))
-      return this.removeHosted(pubkey);
+  async remove(pubkey: string): Promise<string | undefined> {
+    if (!this.identities.some((identity) => identity.pubkey === pubkey)) {
+      await this.removeHosted(pubkey);
+      return;
+    }
     if (!this.native) throw new Error("Agents run only in the desktop app");
+    const identity = this.identities.find((item) => item.pubkey === pubkey);
+    const binding = identity && this.bindingOf(identity);
     await this.native.remove(pubkey);
-    // Drops its settings, and starts its cleanup if its community is connected.
+    this.unarchiving.delete(pubkey);
+    // Only this Delete leaves channels and archives; nothing retries that later.
+    const finished = binding
+      ? this.cleanup(pubkey, binding, true)
+      : Promise.resolve(false);
+    // Drops its settings.
     await this.refresh();
+    if (await finished) return;
+    return `${identity?.name ?? "The agent"} is deleted, but may still be in some channels or member lists. To finish, import it and delete it again.`;
+  }
+
+  async unarchive(pubkey: string): Promise<string | undefined> {
+    const identity = this.identities.find(
+      (item) => item.pubkey === pubkey && !item.deleted,
+    );
+    const binding = identity && this.bindingOf(identity);
+    if (!binding)
+      throw new Error("Its community isn't connected. Try again once it is.");
+    const done = await unarchive(binding.session.archives, pubkey);
+    this.unarchiving.delete(pubkey);
+    this.update();
+    this.notify();
+    return done ? undefined : stillArchived(identity.name);
   }
 
   /** Has a hosted agent's provider remove it, then takes it out of the
@@ -2050,7 +2098,11 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
+      ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
     });
+  }
+  private archiveUnchecked(pubkey: string) {
+    return this.unarchiving.has(pubkey) || undefined;
   }
   /** The live binding of the agent's community, if it has one now. */
   private bindingOf({ relay, owner }: Pick<AgentIdentity, "relay" | "owner">) {
@@ -2157,71 +2209,88 @@ export class AgentsService extends Service implements Agents {
         if (binding) void this.cleanup(identity.pubkey, binding);
       }
   }
-  /** As harness Delete does: leave every channel, then archive the identity so
-   * it drops out of member lists and mention suggestions. The owner signs both,
-   * so neither needs the deleted key. Nothing is final until each is confirmed. */
-  private async cleanup(pubkey: string, binding: Binding) {
-    if (this.cleaning.has(pubkey)) {
-      this.cleaning.set(pubkey, true);
-      return;
-    }
-    this.cleaning.set(pubkey, false);
-    let failed = false;
+  /** Starts a deleted identity's cleanup unless one is running or a re-import
+   * is taking it back. Only Delete itself passes `leave`: a cleanup started
+   * later, as after a relaunch, cannot tell whether someone added the agent
+   * back since, so it only drops the records. Resolves whether it finished. */
+  private cleanup(pubkey: string, binding: Binding, leave = false) {
+    if (this.reclaiming.has(pubkey)) return Promise.resolve(false);
+    const running = this.cleaning.get(pubkey);
+    if (running) return running.done;
+    const stop = new AbortController();
+    const done = this.clean(pubkey, binding, leave, stop.signal).finally(() =>
+      this.cleaning.delete(pubkey),
+    );
+    this.cleaning.set(pubkey, { stop, done });
+    return done;
+  }
+  /** Stops a running cleanup before a re-import takes the identity back, and
+   * keeps new ones from starting until the import ends. Resolves once every
+   * write the cleanup started has settled; none starts after the stop. */
+  private async reclaim(pubkey: string) {
+    this.reclaiming.add(pubkey);
+    const running = this.cleaning.get(pubkey);
+    running?.stop.abort(new Error("The agent was taken back"));
+    await running?.done;
+  }
+  /** As harness Delete does with `leave`: leave every channel, then archive the
+   * identity so it drops out of member lists and mention suggestions. The owner
+   * signs each step, so none needs the deleted key. Nothing is final until each
+   * is confirmed, and nothing destructive is retried. */
+  private async clean(
+    pubkey: string,
+    binding: Binding,
+    leave: boolean,
+    stopped: AbortSignal,
+  ) {
     const signal = AbortSignal.any([
       binding.controller.signal,
       AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
     ]);
+    // Each write checks this as it is admitted, so a re-import's stop holds
+    // through consent and signing, while a publish already started settles.
+    const fence = AbortSignal.any([signal, stopped]);
     const { session } = binding;
-    // Re-import takes a deleted agent back; nothing here may touch it then.
     const stillDeleted = async () => {
       const saved = (await this.native?.list())?.find(
         (identity) => identity.pubkey === pubkey,
       );
-      signal.throwIfAborted();
+      fence.throwIfAborted();
       if (!saved?.deleted) throw new Error("The agent was taken back");
-      return saved;
     };
     try {
-      // Without its Delete time nothing tells a channel it was added back to
-      // from one it was left in, and archiving may hide an identity old Buzz
-      // still runs: such a cleanup only drops its records.
-      const { deletedAt } = await stillDeleted();
+      await stillDeleted();
       const { archives } = session;
-      // Added back somewhere since, it is wanted in the directory there.
-      if (
-        deletedAt !== undefined &&
-        !(await removeAgentFromChannels(session, pubkey, signal, deletedAt)) &&
-        archives.writable
-      ) {
-        // The archive cache is not live; this needs a read started now.
-        await archives.ensure();
-        await archives.refresh();
-        signal.throwIfAborted();
-        const state = archives.state(pubkey);
-        // An unfinished read says nothing, least of all "not archived".
-        if (state === "unknown") throw new Error("Archive state is unknown");
-        // Without an owner-attested profile the agent is not in the directory,
-        // so there is nothing to hide (and no consent path to archive it with).
-        const consent =
-          state === "not-archived" && (await archives.consent(pubkey, signal));
-        signal.throwIfAborted();
-        if (consent) {
-          await stillDeleted();
-          await archives.request("archive", pubkey, signal);
+      if (leave) {
+        await removeAgentFromChannels(session, pubkey, signal, stopped);
+        if (archives.writable) {
+          // The archive cache is not live; this needs a read started now.
+          await archives.ensure();
+          await archives.refresh();
+          fence.throwIfAborted();
+          const state = archives.state(pubkey);
+          // An unfinished read says nothing, least of all "not archived".
+          if (state === "unknown") throw new Error("Archive state is unknown");
+          // Without an owner-attested profile the agent is not in the
+          // directory, so there is nothing to hide (and no consent path).
+          const consent =
+            state === "not-archived" && (await archives.consent(pubkey, fence));
+          fence.throwIfAborted();
+          if (consent) {
+            await stillDeleted();
+            await archives.request("archive", pubkey, signal, stopped);
+          }
         }
       }
       await stillDeleted();
-      await deleteAgentRecord(session, binding.viewer, pubkey, signal);
+      await deleteAgentRecord(session, binding.viewer, pubkey, signal, stopped);
       for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
       await this.native?.forget(pubkey);
       await this.refresh();
+      return true;
     } catch (error) {
-      failed = !binding.controller.signal.aborted;
-      if (failed) console.warn("Deleted agent cleanup will be retried", error);
-    } finally {
-      const again = this.cleaning.get(pubkey);
-      this.cleaning.delete(pubkey);
-      if (failed && again) void this.cleanup(pubkey, binding);
+      if (!fence.aborted) console.warn("Deleted agent cleanup stopped", error);
+      return false;
     }
   }
 
@@ -2381,7 +2450,8 @@ export class AgentsService extends Service implements Agents {
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
-          prior.config === record.config
+          prior.config === record.config &&
+          prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey)
           ? prior
           : this.view(identity, record),
       );
@@ -2539,6 +2609,9 @@ async function importedTeamId(team: OldTeam, scope: string) {
 
 /** Unarchives an identity the owner may, as re-import does for one a Delete's
  * cleanup archived. False when it stays archived. */
+function stillArchived(name: string) {
+  return `${name} is still archived in this community, so it stays out of member lists and mentions there.`;
+}
 async function unarchive(
   archives: RelaySession["archives"],
   pubkey: string,
@@ -2546,6 +2619,8 @@ async function unarchive(
   // The archive cache is not live; this needs a read started now.
   await archives.ensure();
   await archives.refresh();
+  // A community without archives cannot have archived it.
+  if (archives.snapshot().status === "unavailable") return true;
   const state = archives.state(pubkey);
   if (state === "not-archived") return true;
   // An unfinished read says nothing, least of all "not archived".

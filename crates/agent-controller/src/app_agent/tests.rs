@@ -108,21 +108,6 @@ fn forgets_only_deleted_rows() {
 }
 
 #[test]
-fn keeps_delete_times_beside_the_rows_until_forgotten_or_taken_back() {
-    let dir = tempfile::tempdir().unwrap();
-    let credentials = Memory::default();
-    let (agents, agent) = created(dir.path(), &credentials);
-    assert_eq!(agents.deleted_at(&agent.pubkey).unwrap(), None);
-    agents.remove(&agent.pubkey, &credentials).unwrap();
-    assert!(agents.deleted_at(&agent.pubkey).unwrap().is_some());
-    // The rows keep their shape, which older builds read refusing unknown fields.
-    let saved = std::fs::read_to_string(dir.path().join("agents/identities.json")).unwrap();
-    assert!(!saved.contains("deleted_at") && !saved.contains("deletedAt"));
-    agents.forget(&agent.pubkey).unwrap();
-    assert_eq!(agents.deleted_at(&agent.pubkey).unwrap(), None);
-}
-
-#[test]
 fn re_import_takes_back_a_deleted_row() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -147,7 +132,6 @@ fn re_import_takes_back_a_deleted_row() {
     agents.remove(&agent.pubkey, &credentials).unwrap();
     let (back, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert_eq!(rows(&agents), [(back.pubkey.clone(), false)]);
-    assert_eq!(agents.deleted_at(&back.pubkey).unwrap(), None);
     // Its cleanup, if still running, has nothing to drop.
     agents.forget(&back.pubkey).unwrap();
     assert_eq!(agents.get(&back.pubkey).unwrap(), back);

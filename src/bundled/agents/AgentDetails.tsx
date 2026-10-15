@@ -14,7 +14,10 @@ import type {
   AgentConversation,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import { AgentDelete } from "../../features/agents/AgentManage";
+import {
+  AgentArchiveRetry,
+  AgentDelete,
+} from "../../features/agents/AgentManage";
 import {
   CopyIcon,
   DotsThreeIcon,
@@ -341,6 +344,7 @@ export function AgentDetails({
                         />
                       }
                     />
+                    <AgentArchiveRetry agents={agents} agent={agent} />
                     <PreferenceRow
                       title="Delete agent"
                       trailing={

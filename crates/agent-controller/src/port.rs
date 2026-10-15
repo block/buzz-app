@@ -359,7 +359,8 @@ fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Po
     } else {
         record["avatar_url"].as_str()
     }
-    .filter(|url| public_picture(url) || inline_picture(url).is_some())
+    // Inline data is kept even when unusable, so the import can say it was left behind.
+    .filter(|url| public_picture(url) || url.starts_with("data:"))
     .map(str::to_owned);
     Some((
         Portable {

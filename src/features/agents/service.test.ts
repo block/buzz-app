@@ -50,8 +50,9 @@ vi.mock("./relay-removal", () => ({
 }));
 
 const viewer = "a".repeat(64);
-const DELETED_AT = 1_700_000_000;
 const other = "b".repeat(64);
+const UNFINISHED =
+  "Echo is deleted, but may still be in some channels or member lists. To finish, import it and delete it again.";
 const bot = "c".repeat(64);
 const sibling = "d".repeat(64);
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
@@ -99,8 +100,14 @@ function fakeRelay(origin = "https://relay.example.test") {
     archived,
     /** The last read did not finish, as when its session closed. */
     unknown: false,
+    /** The community has no archives at all. */
+    unavailable: false,
+    snapshot() {
+      return { status: this.unavailable ? "unavailable" : "ready" };
+    },
     consent: vi.fn(
-      async () => ({ auth: ["auth"] }) as { auth: string[] } | null,
+      async (_pubkey: string, _signal?: AbortSignal) =>
+        ({ auth: ["auth"] }) as { auth: string[] } | null,
     ),
     ensure: vi.fn(async () => {}),
     refresh: vi.fn(async () => {}),
@@ -109,9 +116,10 @@ function fakeRelay(origin = "https://relay.example.test") {
       return archived.has(pubkey) ? "archived" : "not-archived";
     },
     writable: true,
-    request: vi.fn(async (_: string, pubkey: string) => {
-      steps.push("archive");
-      archived.add(pubkey);
+    request: vi.fn(async (action: string, pubkey: string) => {
+      steps.push(action);
+      if (action === "archive") archived.add(pubkey);
+      else archived.delete(pubkey);
     }),
   };
   let status = "connected";
@@ -332,6 +340,9 @@ function fakeNative(identities: AgentIdentity[] = []) {
           name: "Older",
           deleted: false,
         };
+        // As native does, a re-import replaces a deleted row.
+        const index = identities.findIndex((item) => item.pubkey === pubkey);
+        if (index >= 0) identities.splice(index, 1);
         identities.push(identity);
         return { agent: identity, carry: { instructions: "Triage." } };
       },
@@ -349,7 +360,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
     }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
-      change(pubkey, { deleted: true, deletedAt: DELETED_AT });
+      change(pubkey, { deleted: true });
     }),
     forget: vi.fn(async (pubkey: string) => {
       steps.push("forget");
@@ -2016,7 +2027,7 @@ it("renames through native, and publishes profiles again on rename and reconnect
   expect(native.publishProfile).toHaveBeenCalledTimes(2);
 });
 
-it("retries a failed profile and cleanup when the live connection recovers in the same session", async () => {
+it("retries a failed profile when the live connection recovers in the same session", async () => {
   const { service, native, recover } = await setup();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   native.publishProfile.mockRejectedValueOnce(new Error("offline"));
@@ -2025,30 +2036,22 @@ it("retries a failed profile and cleanup when the live connection recovers in th
   expect(native.publishProfile).toHaveBeenCalledTimes(1);
   recover();
   expect(native.publishProfile).toHaveBeenCalledTimes(2);
-  leaveChannels.mockRejectedValueOnce(new Error("offline"));
-  await service.remove(bot);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
   warn.mockRestore();
-  expect(native.forget).not.toHaveBeenCalled();
-  recover();
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
 });
 
-it("retries a cleanup that fails after the connection recovered while it ran", async () => {
-  const { service, native, recover } = await setup();
+it("says what a Delete that fails partway left, and queues nothing destructive after it", async () => {
+  const { service, native, archives, recover } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  let fail: (error: Error) => void = () => {};
-  leaveChannels.mockImplementationOnce(
-    () => new Promise((_, reject) => (fail = reject)),
-  );
-  await service.remove(bot);
-  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledTimes(1));
-  recover();
-  fail(new Error("Read started before the drop"));
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(leaveChannels).toHaveBeenCalledTimes(2);
+  leaveChannels.mockRejectedValueOnce(new Error("offline"));
+  await expect(service.remove(bot)).resolves.toBe(UNFINISHED);
   warn.mockRestore();
+  // A later cleanup only drops the records; the agent stays where it is.
+  recover();
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(leaveChannels).toHaveBeenCalledTimes(1);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(steps).toEqual(["key", "record", "forget"]);
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -2557,58 +2560,174 @@ it("deletes the key at once, then leaves its channels and archives it before for
     expect.objectContaining({ archives }),
     bot,
     expect.any(AbortSignal),
-    DELETED_AT,
+    expect.any(AbortSignal),
   );
   expect(archives.request).toHaveBeenCalledWith(
     "archive",
     bot,
     expect.any(AbortSignal),
+    expect.any(AbortSignal),
   );
   expect(await native.list()).toEqual([]);
 });
 
-it("retries a failed cleanup on the next connect, without archiving twice", async () => {
-  const { service, native, archives, connect } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  leaveChannels.mockRejectedValueOnce(new Error("Channel removal refused"));
-  await service.remove(bot);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
-  archives.request.mockRejectedValueOnce(new Error("Archive refused"));
-  connect(true);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
-  warn.mockRestore();
-  expect(native.forget).not.toHaveBeenCalled();
-  archives.request.mockClear();
-  archives.archived.add(bot);
-  connect(true);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(archives.request).not.toHaveBeenCalled();
-});
-
-it("leaves archiving to an agent added back to a channel after its Delete", async () => {
-  const { service, native, archives } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  leaveChannels.mockImplementationOnce(async () => {
-    steps.push("channels");
-    return 1;
+it("after a relaunch, only drops the record and row of an agent left deleted", async () => {
+  const { service, native, archives } = await setup({
+    identities: [{ ...here(bot), name: "Echo", deleted: true }],
   });
-  await service.remove(bot);
   await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(archives.request).not.toHaveBeenCalled();
-});
-
-it("only forgets an agent deleted before its Delete time was kept", async () => {
-  const { service, native, archives } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  native.remove.mockImplementationOnce(async (pubkey: string) => {
-    const saved = (await native.list()).find((one) => one.pubkey === pubkey);
-    Object.assign(saved ?? {}, { deleted: true });
-  });
-  await service.remove(bot);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(steps).toEqual(["record", "forget"]);
   expect(leaveChannels).not.toHaveBeenCalled();
+  expect(archives.consent).not.toHaveBeenCalled();
   expect(archives.request).not.toHaveBeenCalled();
+  expect(await native.list()).toEqual([]);
+  expect(service.snapshot().agents).toEqual([]);
+});
+
+it.each(["channels", "consent", "record"] as const)(
+  "stops a Delete's cleanup waiting at %s once a re-import takes the agent back",
+  async (stage) => {
+    const { service, native, archives } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    // The held step ends only when the stop reaches it, as every outbox
+    // admission, consent and signing wait does.
+    let reached = false;
+    const held = (fence: AbortSignal) =>
+      new Promise<never>((_, reject) => {
+        reached = true;
+        fence.addEventListener("abort", () => reject(fence.reason));
+      });
+    if (stage === "channels")
+      leaveChannels.mockImplementationOnce((_, __, ___, fence) => held(fence));
+    if (stage === "consent")
+      archives.consent.mockImplementationOnce((_, fence) =>
+        held(fence as AbortSignal),
+      );
+    if (stage === "record")
+      records.remove.mockImplementationOnce((_, __, ___, ____, fence) =>
+        held(fence),
+      );
+    const removing = service.remove(bot);
+    await vi.waitFor(() => expect(reached).toBe(true));
+    archives.request.mockClear();
+    const { agent } = await service.port({
+      source: "harness",
+      pubkey: bot,
+      type: "example/echo",
+    });
+    expect(agent.pubkey).toBe(bot);
+    await removing;
+    await settle();
+    // Nothing destructive followed the take-back, and it is live again.
+    expect(archives.request).not.toHaveBeenCalledWith(
+      "archive",
+      bot,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(archives.archived.has(bot)).toBe(false);
+    expect(records.remove).toHaveBeenCalledTimes(stage === "record" ? 1 : 0);
+    expect(native.forget).not.toHaveBeenCalled();
+    expect(
+      (await native.list()).find((item) => item.pubkey === bot)?.deleted,
+    ).toBe(false);
+  },
+);
+
+it("keeps a first Delete's cleanup from acting on a second Delete after a re-import", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let first: AbortSignal | undefined;
+  leaveChannels.mockImplementationOnce(
+    (_, __, ___, fence) =>
+      new Promise<never>((_, reject) => {
+        first = fence;
+        fence.addEventListener("abort", () => reject(fence.reason));
+      }),
+  );
+  const firstDelete = service.remove(bot);
+  await vi.waitFor(() => expect(first).toBeDefined());
+  await service.port({ source: "harness", pubkey: bot, type: "example/echo" });
+  // The re-import stopped the first cleanup before it came back.
+  expect(first?.aborted).toBe(true);
+  await expect(firstDelete).resolves.toBe(UNFINISHED);
+  steps.length = 0;
+  await expect(service.remove(bot)).resolves.toBeUndefined();
+  // Only the second Delete's own cleanup ran, leaving channels before forgetting.
+  expect(steps).toEqual(["key", "channels", "archive", "record", "forget"]);
+  expect(leaveChannels).toHaveBeenCalledTimes(2);
+  expect(native.forget).toHaveBeenCalledOnce();
+});
+
+it("offers a retry when import could not check archive state, and retries without re-importing", async () => {
+  const { service, archives, native } = await setup();
+  archives.archived.add(sibling);
+  archives.refresh.mockRejectedValueOnce(new Error("offline"));
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual([
+    "Couldn't check whether Older is archived in this community. Retry from its settings.",
+  ]);
+  expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+  // Reconnecting does not retry it behind the user's back.
+  archives.request.mockClear();
+  await service.refresh();
+  expect(archives.request).not.toHaveBeenCalled();
+  await expect(service.unarchive(sibling)).resolves.toBeUndefined();
+  expect(archives.archived.has(sibling)).toBe(false);
+  expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+  expect(native.port).toHaveBeenCalledOnce();
+});
+
+it("treats a community without archives as nothing to unarchive", async () => {
+  const { service, archives } = await setup();
+  archives.unavailable = true;
+  archives.unknown = true;
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual([]);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+});
+
+it("lets an archive already publishing settle before a re-import, then unarchives it", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let publish: () => void = () => {};
+  archives.request.mockImplementationOnce(
+    (_: string, pubkey: string) =>
+      new Promise<void>((resolve) => {
+        publish = () => {
+          archives.archived.add(pubkey);
+          resolve();
+        };
+      }),
+  );
+  const removing = service.remove(bot);
+  await vi.waitFor(() => expect(archives.request).toHaveBeenCalledOnce());
+  let ported = false;
+  const porting = service
+    .port({ source: "harness", pubkey: bot, type: "example/echo" })
+    .then(() => (ported = true));
+  await settle();
+  expect(ported).toBe(false);
+  publish();
+  await porting;
+  await removing;
+  expect(archives.request).toHaveBeenLastCalledWith(
+    "unarchive",
+    bot,
+    expect.any(AbortSignal),
+  );
+  expect(archives.archived.has(bot)).toBe(false);
+  expect(records.remove).not.toHaveBeenCalled();
+  expect(native.forget).not.toHaveBeenCalled();
 });
 
 it("forgets an agent with no owner-attested profile without archiving it", async () => {
@@ -2620,19 +2739,19 @@ it("forgets an agent with no owner-attested profile without archiving it", async
   expect(archives.request).not.toHaveBeenCalled();
 });
 
-it("deletes outside the agent's community, and cleans up once it is open", async () => {
-  const { service, native, connect } = await setup();
+it("deletes outside the agent's community, says it may be left there, and drops its record once open", async () => {
+  const { service, native, archives, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   connect(false);
-  await service.remove(bot);
+  await expect(service.remove(bot)).resolves.toBe(UNFINISHED);
   expect(native.remove).toHaveBeenCalledWith(bot);
-  await settle();
-  expect(leaveChannels).not.toHaveBeenCalled();
   connect(true);
   await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(leaveChannels).not.toHaveBeenCalled();
+  expect(archives.request).not.toHaveBeenCalled();
 });
 
-it("keeps the cleanup for later when the session closes while archive state is read", async () => {
+it("does not archive later when the session closes while its Delete reads archive state", async () => {
   const { service, native, archives, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   archives.refresh.mockImplementationOnce(async () => {
@@ -2640,15 +2759,13 @@ it("keeps the cleanup for later when the session closes while archive state is r
     archives.unknown = true;
     connect(false);
   });
-  await service.remove(bot);
-  await vi.waitFor(() => expect(archives.refresh).toHaveBeenCalled());
-  await settle();
+  await expect(service.remove(bot)).resolves.toBe(UNFINISHED);
   expect(native.forget).not.toHaveBeenCalled();
   expect(await native.list()).toMatchObject([{ pubkey: bot, deleted: true }]);
   archives.unknown = false;
   connect(true);
   await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(archives.request).toHaveBeenCalledOnce();
+  expect(archives.request).not.toHaveBeenCalled();
 });
 
 it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {

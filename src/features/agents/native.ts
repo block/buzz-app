@@ -16,8 +16,6 @@ export type AgentIdentity = Readonly<{
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;
-  /** When a deleted one was deleted, in seconds, if that was kept. */
-  deletedAt?: number;
 }>;
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */

@@ -181,16 +181,20 @@ export function createIdentityArchives(
     action: IdentityArchiveAction,
     target: string,
     caller?: AbortSignal,
+    /** Stops it only until it publishes, so a publish already started
+     * settles before this rejects. */
+    fence?: AbortSignal,
   ): Promise<void> {
     if (!writer) throw new Error("Archive is unavailable on this connection");
     const owned = new AbortController();
     let uncertain: unknown;
     requests.add(owned);
-    const signal = AbortSignal.any([
+    const publishing = AbortSignal.any([
       owned.signal,
       AbortSignal.timeout(20_000),
       ...(caller ? [caller] : []),
     ]);
+    const signal = fence ? AbortSignal.any([publishing, fence]) : publishing;
     try {
       const path = await consent(target, signal);
       if (!path) throw new Error("You can no longer archive this identity");
@@ -212,7 +216,7 @@ export function createIdentityArchives(
       )
         throw new Error("Signer changed the archive request");
       try {
-        await writer.publish(signed, signal);
+        await writer.publish(signed, publishing);
       } catch (error) {
         // A definitive rejection changed nothing; an unknown outcome may have applied.
         if (error instanceof PublishRejected) throw error;

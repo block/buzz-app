@@ -147,32 +147,6 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
-it("leaves the channels an agent was added back to after its Delete", async () => {
-  const [kept, left] = [`${"b".repeat(8)}-kept`, `${"c".repeat(8)}-left`];
-  const { fixture, instance } = setup(viewer, {
-    [kept]: [agent.pubkey, viewer.pubkey],
-    [left]: [agent.pubkey, viewer.pubkey],
-  });
-  const added = (id: string, created_at: number) =>
-    signed(relay, {
-      kind: 9000,
-      created_at,
-      content: "",
-      tags: [
-        ["h", id],
-        ["p", agent.pubkey],
-      ],
-    });
-  // Added to `left` before the Delete at 100, and back to `kept` after it.
-  fixture.additions.push(added(left, 50), added(kept, 150));
-  const signal = new AbortController().signal;
-  await expect(
-    removeAgentFromChannels(instance.session, agent.pubkey, signal, 100),
-  ).resolves.toBe(1);
-  expect(fixture.channels[kept]).toContain(agent.pubkey);
-  expect(fixture.channels[left]).not.toContain(agent.pubkey);
-});
-
 it("signs a new channel removal instead of resending one the relay would refuse as stale", async () => {
   const { fixture, instance } = setup();
   const removeFromChannels = () =>
@@ -458,4 +432,45 @@ it("keeps the settings and tags of the record it replaces", async () => {
       ["a", "30175:owner:p1"],
     ],
   });
+});
+
+it("a fence waits for channel removals already publishing to settle", async () => {
+  const [first, second] = [`${"b".repeat(8)}-first`, `${"c".repeat(8)}-second`];
+  let release!: () => void;
+  let started = 0;
+  const { fixture, instance } = setup(
+    viewer,
+    {
+      [first]: [agent.pubkey, viewer.pubkey],
+      [second]: [agent.pubkey, viewer.pubkey],
+    },
+    (fixture) => {
+      fixture.removal.hold = new Promise((resolve) => (release = resolve));
+      const writer = fixture.transport.writer;
+      if (!writer) throw new Error("fixture writer");
+      const publish = writer.publish.bind(writer);
+      writer.publish = (event, signal) => {
+        started += 1;
+        return publish(event, signal);
+      };
+    },
+  );
+  const fence = new AbortController();
+  let settled = false;
+  const removal = removeAgentFromChannels(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+    fence.signal,
+  ).finally(() => (settled = true));
+  removal.catch(() => {});
+  await vi.waitFor(() => expect(started).toBeGreaterThan(0));
+  const admitted = started;
+  fence.abort();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(settled).toBe(false);
+  release();
+  await expect(removal).rejects.toThrow();
+  // What had started publishing landed before the removal reported.
+  expect(fixture.published).toHaveLength(admitted);
 });

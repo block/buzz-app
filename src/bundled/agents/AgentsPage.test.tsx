@@ -320,7 +320,8 @@ function setup(
       for (const listener of listeners) listener();
       return ["workspace"] as const;
     }),
-    remove: vi.fn(async () => {}),
+    remove: vi.fn(async (): Promise<string | undefined> => undefined),
+    unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),

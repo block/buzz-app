@@ -59,7 +59,16 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     pluginCategoryDefinitions.map(({ id }) => [id, []]),
   );
   const other: PluginInfo[] = [];
+  const essentials: PluginInfo[] = [];
   for (const plugin of plugins) {
+    if (
+      plugin.manifest.discovery?.tags?.some(
+        (tag) => tag.trim().toLowerCase() === "essentials",
+      )
+    ) {
+      essentials.push(plugin);
+      continue;
+    }
     const group = known.get(plugin.manifest.discovery?.category ?? "");
     (group ?? other).push(plugin);
   }
@@ -67,7 +76,11 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     entries.sort(compareRequiredPlugins);
   }
   other.sort(compareRequiredPlugins);
+  essentials.sort(compareRequiredPlugins);
   return [
+    ...(essentials.length
+      ? [{ id: "essentials", label: "Essentials", plugins: essentials }]
+      : []),
     ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
       const entries = known.get(id) ?? [];
       return entries.length ? [{ id, label, plugins: entries }] : [];

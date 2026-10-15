@@ -37,7 +37,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import { AgentSessions, ServerPool, SharedProcess } from "./sessions";
+import { AgentSessions, SharedProcess } from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -108,8 +108,6 @@ type Entry = {
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
-  /** The MCP servers every agent's sessions share. */
-  private readonly pool = new ServerPool();
   /** The goose every agent's sessions open in. */
   private readonly goose = new SharedProcess(
     (id, options) => this.spawn(id, options),
@@ -502,7 +500,6 @@ export class GooseRuntime {
       spawn: (id, options) => this.spawn(id, options),
       tools,
       process: this.goose,
-      pool: this.pool,
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({

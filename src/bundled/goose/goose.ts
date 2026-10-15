@@ -53,6 +53,8 @@ export const GOOSE: AcpHooks = {
   program: "goose",
   missing: "goose-acp is missing from this Buzz build.",
   env: ENV,
+  // goose is asked to close every session, advertised or not.
+  closeSession: "always",
   newSessionMeta: (buzz, { title, provider }) => ({
     // The session's whole tool set: goose's developer tools and the Buzz
     // tools, so extensions in the owner's goose config and plugins never load

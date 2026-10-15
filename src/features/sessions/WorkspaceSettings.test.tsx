@@ -137,6 +137,7 @@ it("saves section defaults as an existing relay template without writing section
   const save = vi.fn(async () => {});
   const close = vi.fn();
   const session = {
+    scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
       snapshot: () => ({ status: "ready", entries: [] }),
@@ -203,7 +204,10 @@ it("recreates deleted section defaults using the tombstone revision", async () =
         })),
     },
   });
-  const session = { channelKit: kit.capability } as unknown as RelaySession;
+  const session = {
+    scope: "https://relay.example.test:viewer",
+    channelKit: kit.capability,
+  } as unknown as RelaySession;
   const close = vi.fn();
   const view = () => (
     <WorkspaceSettings
@@ -624,9 +628,12 @@ it("a failed details read leaves Canvas usable without sending a default lifetim
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Details unavailable",
   );
-  fireEvent.change(await screen.findByRole("textbox", { name: /^Instructions/ }), {
-    target: { value: "Canvas only" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "Canvas only" },
+    },
+  );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.canvas.save).toHaveBeenCalledOnce();

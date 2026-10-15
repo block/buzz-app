@@ -220,10 +220,13 @@ export function WorkspaceSettings({
           (target.kind === "section" || canvas !== confirmedCanvas.current)
         ) {
           if (target.kind === "section") {
-            const template = sectionTemplate(recipeId, target.name, personal, {
-              ...lineup,
-              canvas,
-            });
+            const template = sectionTemplate(
+              session.scope,
+              recipeId,
+              target.name,
+              personal,
+              { ...lineup, canvas },
+            );
             try {
               await session.channelKit.save(template, base);
             } catch (reason) {

@@ -6,6 +6,7 @@ import {
   parseLineup,
   resolveLineup,
 } from "../channel-templates/model";
+import { splitPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 
 export type Workspace = {
@@ -147,11 +148,15 @@ export async function sectionTemplateId(sectionId: string, personal = false) {
 }
 /** The defaults record new chats/sessions in a section copy; validated for publication. */
 export function sectionTemplate(
+  scope: string,
   id: string,
   sectionName: string,
   personal: boolean,
   lineup: Lineup,
 ): Template {
+  const community = splitPartition(scope)?.communityOrigin;
+  if (!community)
+    throw new Error("Project defaults require a connected community.");
   const template: Template = {
     ...lineup,
     type: "template",
@@ -159,10 +164,11 @@ export function sectionTemplate(
     name: `${sectionName.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
     description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
   };
-  // Validate the complete encrypted recipe budget before publication.
+  // Validate the complete encrypted recipe budget, including the community
+  // URL, before publication.
   const record = parseKitRecord(
-    { version: 1, community: "", deleted: false, value: template },
-    "",
+    { version: 1, community, deleted: false, value: template },
+    community,
   );
   if (record.value.type !== "template")
     throw new Error("Expected project defaults");

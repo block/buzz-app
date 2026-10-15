@@ -46,9 +46,9 @@ function readDraftSettings(scope: string, draftKey: string) {
         ? settings.canvas
         : undefined,
     // Preserve malformed lifetime input for the existing visible validation.
-    ttlSeconds: ("ttlSeconds" in settings
-      ? settings.ttlSeconds
-      : undefined) as number | undefined,
+    ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
+      | number
+      | undefined,
   };
 }
 

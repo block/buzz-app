@@ -1204,9 +1204,9 @@ it.each([-1, "broken"])(
     );
     expect(h.workSessions.create).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Session settings" }));
-    expect(await screen.findByRole("textbox", { name: /^Instructions/ })).toHaveValue(
-      "Keep parent Canvas",
-    );
+    expect(
+      await screen.findByRole("textbox", { name: /^Instructions/ }),
+    ).toHaveValue("Keep parent Canvas");
     expect(screen.queryByRole("radio", { name: /^Ongoing/ })).toBeNull();
     expect(screen.queryByRole("radio", { name: /^Temporary/ })).toBeNull();
     const save = screen.getByRole("button", { name: "Save changes" });
@@ -1331,10 +1331,7 @@ it.each([false, true])(
     ).toBeVisible();
     if (!submitted) {
       await userEvent.click(
-        screen.getByRole("button", { name: "Session actions" }),
-      );
-      await userEvent.click(
-        screen.getByRole("menuitem", { name: "Chat settings…" }),
+        screen.getByRole("button", { name: "Session settings" }),
       );
       expect(
         await screen.findByRole("textbox", { name: /^Instructions/ }),
@@ -1354,6 +1351,48 @@ it.each([false, true])(
     );
   },
 );
+
+it("re-entering a project while a start loads its defaults keeps the submitted project", async () => {
+  const f = await projectSetup();
+  const started = vi.fn();
+  const user = userEvent.setup();
+  const scope = "project-reset-loading";
+  writeView(scope, "me:section:work:new-project", "other");
+  let release = () => {};
+  const loading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.spyOn(f.session.channelKit, "refresh").mockReturnValue(loading);
+  f.mePlacement.admit.mockRejectedValueOnce(new Error("Admission unavailable"));
+  render(
+    <NewSessionComposer
+      personal
+      standalone
+      sectionId="work"
+      session={f.session}
+      scope={scope}
+      onStarted={started}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Start in Other");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  act(() => resetNewChatProject(scope, true, "work"));
+  release();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Admission unavailable",
+  );
+  expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.mePlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
+    sectionId: "other",
+  });
+  expect(f.saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "other instructions",
+    undefined,
+  );
+});
 
 it("keeps a locally chosen project when its persistence fails and other draft writes succeed", async () => {
   const f = await projectSetup();

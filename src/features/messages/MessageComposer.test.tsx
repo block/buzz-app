@@ -46,6 +46,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -6903,7 +6904,17 @@ it("marks the leading tools while explicit recipients are shown", async () => {
   expect(h.container.querySelector("[data-recipients]")).toBeNull();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   const region = screen.getByRole("region", { name: "Explicit mentions" });
-  expect(region.parentElement).toHaveAttribute("data-recipients");
+  const tools = region.parentElement;
+  expect(tools).toHaveAttribute("data-recipients");
+  await h.user.click(
+    within(region).getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  expect(tools).not.toHaveAttribute("data-recipients");
   h.unmount();
 });
 
@@ -6914,4 +6925,46 @@ it("marks the composer with attachments only while items are listed", async () =
   await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
   fireEvent.click(h.send());
   await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
+});
+
+it("drops the attachments mark while a row-requested edit holds pending items", async () => {
+  // Arrow-up refuses to edit over pending items; the row's Edit action does not.
+  const h = await mountUploadComposer({ editable: true });
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  h.unmount();
+  let scope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    scope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage({ authorId: viewer });
+  const view = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  const form = within(view.container).getByRole("form");
+  attachByPaste(
+    within(view.container).getByRole("textbox"),
+    attachmentFile("pending.txt"),
+  );
+  await waitFor(() => expect(form).toHaveAttribute("data-attachments"));
+  act(() => scope?.current?.(row));
+  expect(form).toHaveAttribute("data-editing");
+  expect(form).not.toHaveAttribute("data-attachments");
+  fireEvent.click(
+    within(view.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  expect(form).not.toHaveAttribute("data-editing");
+  expect(form).toHaveAttribute("data-attachments");
+  expect(within(view.container).getByText("pending.txt")).toBeVisible();
 });

@@ -10,6 +10,7 @@ import {
   screen,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -500,9 +501,14 @@ it.each(["Collapse sessions in Alpha", "Plan, session in Alpha"])(
 
 it("marks the row for ordinary unread and working agents", () => {
   const state = owner();
-  const view = render(
-    <ChannelSidebarItem {...itemProps(state.session, true)} />,
-  );
+  // Rendered by the row core, so it counts row renders but not badge-only ones.
+  const frame = vi.fn(({ children }: { children: ReactNode }) => children);
+  const props = {
+    ...itemProps(state.session, true),
+    sectionKey: "group:work",
+    selectFrame: frame,
+  };
+  const view = render(<ChannelSidebarItem {...props} />);
   const row = () => document.querySelector("[data-channel-sidebar-row]");
   const select = () => document.querySelector('[data-channel-id="alpha"]');
   const badges = () =>
@@ -515,9 +521,14 @@ it("marks the row for ordinary unread and working agents", () => {
   expect(row()).not.toHaveAttribute("data-ordinary");
   act(() => state.unread(2, 1));
   expect(row()).toHaveAttribute("data-ordinary");
+  // Counts that leave the boolean alone re-render only the badge.
+  const renders = frame.mock.calls.length;
+  act(() => state.unread(3, 1));
+  expect(frame).toHaveBeenCalledTimes(renders);
   act(() => state.unread(0, 0));
   expect(row()).not.toHaveAttribute("data-ordinary");
-  view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
+  expect(frame.mock.calls.length).toBeGreaterThan(renders);
+  view.rerender(<ChannelSidebarItem {...props} working={false} />);
   expect(select()).not.toHaveAttribute("data-working");
   expect(badges()).not.toHaveAttribute("data-working");
 });

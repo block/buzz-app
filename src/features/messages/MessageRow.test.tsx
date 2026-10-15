@@ -2204,7 +2204,9 @@ it("renders built-in own bubbles and keeps only the last grouped avatar", () => 
     const { container, rerender } = renderDom(
       <MessageRow {...props} stackNext />,
     );
-    expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+    expect(
+      container.querySelector("[data-message-action-anchor][data-own]"),
+    ).toHaveTextContent("Root");
     expect(
       screen.queryByRole("button", { name: "View author profile" }),
     ).toBeNull();

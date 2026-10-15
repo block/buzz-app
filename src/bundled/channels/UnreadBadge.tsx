@@ -9,7 +9,18 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
 
-/** Unread evidence for one channel; the sidebar row and its badge share it. */
+type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
+
+/** Bold tracks ordinary backlog; protected attention has its own dot. */
+export function ordinaryUnread(snapshot: UnreadSnapshot, dm: boolean) {
+  const count = snapshot.observedCount ?? 0;
+  return (
+    snapshot.manual !== "none" ||
+    (dm ? count > 0 : count > (snapshot.attentionCount ?? 0))
+  );
+}
+
+/** Unread evidence for one channel's badge. */
 export function useUnreadState(
   session: RelaySession,
   channelId: string,
@@ -45,10 +56,7 @@ export function useUnreadState(
   const count = snapshot.observedCount;
   const manual = snapshot.manual !== "none";
   const unread = manual || (count ?? 0) > 0;
-  // Bold tracks ordinary backlog; protected attention has its own dot.
-  const ordinary =
-    manual ||
-    (dm ? (count ?? 0) > 0 : (count ?? 0) > (snapshot.attentionCount ?? 0));
+  const ordinary = ordinaryUnread(snapshot, dm);
   const threadCount = activity.items?.length ?? 0;
   return { snapshot, activity, count, manual, unread, ordinary, threadCount };
 }
@@ -82,7 +90,6 @@ export function UnreadBadge({
         <span
           className={styles.unreadState}
           data-channel-unread=""
-          data-channel-ordinary={ordinary || undefined}
           data-priority={priority}
           role="img"
           aria-label={unreadLabel}

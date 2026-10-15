@@ -534,7 +534,8 @@ function SessionWork({
                   focusableWhenDisabled
                   onClick={() => tabState.setPaneOpen(!showingPanel)}
                 />
-              </span>            )}
+              </span>
+            )}
           </SessionHeading>
           {convertOpen && (
             <ConvertSession

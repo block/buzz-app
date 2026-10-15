@@ -19,7 +19,7 @@ export async function openPage(page, name, { connected = true } = {}) {
 // Select from an already-open palette, including tests that inspect page order.
 export async function selectPage(page, name, { connected = true } = {}) {
   // Keep fixture call sites on stable page identities, not the current branding.
-  name = name === "Me" ? "Berd" : name === "Messages" ? "Buzz" : name;
+  name = name === "Me" ? "Solo" : name === "Messages" ? "Multiplayer" : name;
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
   const choice = dialog

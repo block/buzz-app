@@ -10,7 +10,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Buzz");
+  await openPage(page, "Multiplayer");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -18,8 +18,8 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
-  await expect(topbar.getByRole("tab")).toHaveText(["Berd", "Buzz"]);
-  await topbar.getByRole("tab", { name: "Berd", exact: true }).click();
+  await expect(topbar.getByRole("tab")).toHaveText(["Solo", "Multiplayer"]);
+  await topbar.getByRole("tab", { name: "Solo", exact: true }).click();
   await expect(
     page.getByRole("complementary", { name: "Me sidebar" }),
   ).toBeVisible();
@@ -28,7 +28,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   ).toHaveCount(0);
   await expect(composer).toHaveCount(0);
   await expect(
-    topbar.getByRole("tab", { name: "Berd", exact: true }),
+    topbar.getByRole("tab", { name: "Solo", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Hide Me sidebar" }).click();
   await expect(page.locator("#shell-navigation")).toHaveAttribute(
@@ -36,8 +36,11 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
     "true",
   );
   await page.getByRole("button", { name: "Show Me sidebar" }).click();
-  const me = topbar.getByRole("tab", { name: "Berd", exact: true });
-  const messages = topbar.getByRole("tab", { name: "Buzz", exact: true });
+  const me = topbar.getByRole("tab", { name: "Solo", exact: true });
+  const messages = topbar.getByRole("tab", {
+    name: "Multiplayer",
+    exact: true,
+  });
   await me.focus();
   await me.press("ArrowRight");
   await expect(messages).toBeFocused();
@@ -45,7 +48,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await messages.press("Enter");
   await expect(messages).toHaveAttribute("aria-selected", "true");
   await expect(
-    page.getByRole("tabpanel", { name: "Buzz", exact: true }),
+    page.getByRole("tabpanel", { name: "Multiplayer", exact: true }),
   ).toBeVisible();
   const indicator = topbar.locator(".buzz-tabs-indicator");
   await expect
@@ -106,7 +109,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
       .getByRole("button", { name: "New chat", exact: true })
       .click();
     await expect(newComposer).toBeFocused();
-    for (const name of ["Berd", "Buzz"]) {
+    for (const name of ["Solo", "Multiplayer"]) {
       await topbar.getByRole("tab", { name, exact: true }).click();
       const panel = page.getByRole("tabpanel", { name, exact: true });
       await page.locator("#main-content").focus();
@@ -185,7 +188,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
       await expect(inbox).toHaveAttribute("aria-current", "page");
       await expect(messages).toHaveAttribute("aria-selected", "true");
       await expect(
-        page.getByRole("tabpanel", { name: "Buzz", exact: true }),
+        page.getByRole("tabpanel", { name: "Multiplayer", exact: true }),
       ).toHaveAttribute("id", await messages.getAttribute("aria-controls"));
       await expect(page.locator("#main-content")).toBeFocused();
       if (activation === "pointer") await messages.click();
@@ -219,7 +222,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
     await page.getByRole("button", { name: "More pages", exact: true }).click();
     const overflow = page.getByRole("navigation", { name: "Header pages" });
     const area = overflow.getByRole("button", {
-      name: "Buzz",
+      name: "Multiplayer",
       exact: true,
     });
     await expect(area).toHaveAttribute("aria-current", "true");
@@ -255,11 +258,11 @@ test("header pages remain reachable without overlap through scale and resize", a
     );
   });
   await page.goto(app.origin);
-  await openPage(page, "Buzz");
+  await openPage(page, "Multiplayer");
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
   const toolbar = page.getByRole("navigation", { name: "Toolbar pages" });
   const more = page.getByRole("button", { name: "More pages", exact: true });
-  const me = topbar.getByRole("tab", { name: "Berd", exact: true });
+  const me = topbar.getByRole("tab", { name: "Solo", exact: true });
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -300,8 +303,8 @@ test("header pages remain reachable without overlap through scale and resize", a
       await more.press("Enter");
       const choices = page.getByRole("navigation", { name: "Header pages" });
       await expect(choices.getByRole("button")).toHaveText([
-        "Berd",
-        "Buzz",
+        "Solo",
+        "Multiplayer",
         "A deliberately long topbar destination",
         "Toolbar destination",
       ]);
@@ -309,14 +312,16 @@ test("header pages remain reachable without overlap through scale and resize", a
       await expect(choices).toHaveCount(0);
       await expect(more).toBeFocused();
       await more.press("Enter");
-      await choices.getByRole("button", { name: "Berd", exact: true }).click();
+      await choices.getByRole("button", { name: "Solo", exact: true }).click();
       await expect(
         page.getByRole("heading", { name: "New chat", exact: true }),
       ).toBeVisible();
       await expect(more).not.toHaveAttribute("aria-expanded", "true");
       // Widen with focus inside the open overflow, not only on its trigger.
       await more.click();
-      await choices.getByRole("button", { name: "Buzz", exact: true }).focus();
+      await choices
+        .getByRole("button", { name: "Multiplayer", exact: true })
+        .focus();
       await page.setViewportSize({ width: 1600, height: 950 });
       await expect(choices).toHaveCount(0);
       await expect(me).toBeFocused();
@@ -335,6 +340,6 @@ test("header pages remain reachable without overlap through scale and resize", a
   await expect(
     page
       .getByRole("navigation", { name: "Header pages" })
-      .getByRole("button", { name: "Buzz", exact: true }),
+      .getByRole("button", { name: "Multiplayer", exact: true }),
   ).toBeVisible();
 });

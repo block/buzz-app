@@ -37,6 +37,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -844,6 +845,20 @@ function ChannelWorkspace({
       tabState.leaveVisit,
     ],
   );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
+  );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
@@ -1604,7 +1619,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }

@@ -202,7 +202,8 @@ function AgentChoice({
           {...(thumb ? { thumb } : {})}
         />
       ) : (
-        model
+        // Without a slider the model sits on its own tab, not on the thread.
+        <div className={styles.solo}>{model}</div>
       )}
     </div>
   );

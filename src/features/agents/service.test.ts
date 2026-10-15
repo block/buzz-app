@@ -1708,7 +1708,7 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   native.setType.mockClear();
   native.claim.mockResolvedValueOnce(false);
   await expect(service.retype(bot, "other/relay")).rejects.toThrow(
-    "device that runs it",
+    "Another copy of Buzz is running this agent",
   );
   expect(native.setType).not.toHaveBeenCalled();
   native.claim.mockRejectedValueOnce(new Error("claim unavailable"));

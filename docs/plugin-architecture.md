@@ -640,16 +640,27 @@ either side, and no more than 1,048,576 pixels total. Signing places their exact
 content in typed optional release-envelope fields, so the artifact hash and
 publisher signature cover them without changing plugin `apiVersion: 1`. Hosts
 continue to accept older `{ manifest, code }` artifacts. The catalog exposes only
-small content revisions for import/update comparison; a details surface reads the
-content through the integrity-checked native command on demand.
+small content revisions for import/update comparison. `Manager::content` reads the
+integrity-checked content on demand; its native command and capability land with
+the first details surface that consumes them.
 Both icon formats may be packaged together and are returned independently; the
 client decides which format to prefer.
 Header parsing and image decoding use a 16 MiB allocation budget; the underlying
 decoder may discard optional metadata that exceeds that budget. Validation does
 not certify later animation frames or reject trailing bytes after the image.
-The native content response returns the stored base64 icon strings. Conventional
+Content reads return the stored base64 icon strings. Conventional
 asset filenames are case-sensitive in both folder and Git imports; a symbolic
 link at one of those filenames rejects an unsigned candidate.
+
+`README.md`, `icon.png`, and `icon.jpg` are reserved names in an unsigned build
+folder, with the same all-or-nothing rule as `manifest.json`: a file at one of
+those names that misses the limits above rejects the whole folder or Git import,
+reload, and signing, and an installed plugin keeps its current revision.
+Older hosts ignored these names, so a source tree that already ships a
+nonconforming file there (for example, a 2048×2048 `icon.png`) stops reloading
+after upgrade. To migrate, resize the file to meet the limits, or rename or move it
+out of the build folder. Signed artifacts carry their content explicitly and are
+not affected by neighboring files.
 
 Older hosts can still read asset-free packages and registry entries. Packages
 with these new fields, and registry entries recording their content revisions,

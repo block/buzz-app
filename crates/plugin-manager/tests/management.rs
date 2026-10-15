@@ -529,6 +529,39 @@ fn reload_rejects_invalid_sources_without_changing_revision() {
     .is_ok());
     assert!(manager.reload("example.page").is_err());
 }
+#[test]
+fn reload_rejects_nonconforming_reserved_asset_until_source_migrates() {
+    let (_temp, manager, source) = fixture();
+    let installed = |manager: &Manager| {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+    };
+    manager.install(&source).unwrap();
+    let first = installed(&manager);
+    // Older hosts ignored this filename; it is now a reserved package asset.
+    fs::write(source.join("icon.png"), png(2048, 2048)).unwrap();
+    let Err(error) = manager.reload("example.page") else {
+        panic!("reload should reject the nonconforming icon");
+    };
+    assert!(error.contains("icon.png"), "{error}");
+    assert!(install_error(&manager, &source).contains("icon.png"));
+    assert_eq!(installed(&manager).revision, first.revision);
+    assert!(installed(&manager).icon_png_revision.is_none());
+
+    fs::rename(source.join("icon.png"), source.join("icon-2048.png")).unwrap();
+    manager.reload("example.page").unwrap();
+    assert_eq!(installed(&manager).revision, first.revision);
+    fs::write(source.join("icon.png"), png(1024, 1024)).unwrap();
+    manager.reload("example.page").unwrap();
+    let migrated = installed(&manager);
+    assert_ne!(migrated.revision, first.revision);
+    assert!(migrated.icon_png_revision.is_some());
+}
 #[cfg(unix)]
 #[test]
 fn reload_rejects_replaced_source_folder_symlink() {

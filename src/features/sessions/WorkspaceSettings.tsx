@@ -336,10 +336,11 @@ export function WorkspaceSettings({
     >
       <div className={styles.sections} inert={busy}>
         {lifetime.available && lifetime.base && (
-          <Field label="Session name (optional)" error={lifetime.nameError}>
+          <Field label="Session name" error={lifetime.nameError}>
             <Input
               value={lifetime.name}
-              disabled={busy || lifetime.busy || lifetime.nameBlocked}
+              placeholder={lifetime.base.name}
+              disabled={busy || lifetime.busy || lifetime.blocked}
               onChange={(event) => lifetime.changeName(event.target.value)}
             />
           </Field>
@@ -425,7 +426,7 @@ export function WorkspaceSettings({
                 label="Lifetime"
                 temporary={lifetime.ttl !== undefined}
                 ttlSeconds={lifetime.temporaryTtl}
-                disabled={busy || lifetime.busy || lifetime.nameBlocked}
+                disabled={busy || lifetime.busy || lifetime.blocked}
                 error={lifetime.lifetimeError}
                 onChange={lifetime.change}
               />

@@ -1619,10 +1619,6 @@ it.each([
   { source: "draft", fields: { name: { invalid: true } } },
   { source: "draft", fields: { name: "x".repeat(121) } },
   { source: "receipt", fields: { name: { invalid: true } } },
-  { source: "receipt", fields: { name: "", automaticName: null } },
-  { source: "receipt", fields: { name: "", automaticName: 7 } },
-  { source: "receipt", fields: { name: "", automaticName: "x".repeat(81) } },
-  { source: "receipt", fields: { name: "", automaticName: " untrimmed " } },
 ])(
   "rejects malformed persisted naming before start side effects: $source $fields",
   async ({ source, fields }) => {
@@ -1652,8 +1648,6 @@ it.each([
       writeView("test", `${key}:pending`, {
         id: parent.id,
         text: "Keep this draft",
-        automaticName: "Keep this draft",
-        explicitName: true,
         ...fields,
       });
     render(
@@ -1801,25 +1795,11 @@ it.each(
 );
 
 it.each([
-  {
-    fields: {
-      name: "Frozen title",
-      automaticName: null,
-      explicitName: "obsolete",
-    },
-    title: "Frozen title",
-  },
-  {
-    fields: {
-      name: "",
-      automaticName: "Old automatic title",
-      explicitName: true,
-    },
-    title: "Old automatic title",
-  },
+  { fields: { name: "Frozen title" }, title: "Frozen title" },
+  { fields: { name: "" }, title: "Original receipt prompt" },
   { fields: {}, title: "Original receipt prompt" },
 ])(
-  "recovers old pending naming fields without changing original intent: $fields",
+  "recovers pending receipts without changing original intent: $fields",
   async ({ fields, title }) => {
     const h = setup(),
       user = userEvent.setup(),

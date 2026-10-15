@@ -200,7 +200,6 @@ export function useSessionLifetime({
     nameError,
     lifetimeError:
       base && detailsDraftErrors({ ...base, ttlSeconds: ttl }).lifetime,
-    nameBlocked: !!attempt || !eligible || !!signal?.aborted,
     changeName: setName,
     ttl,
     temporaryTtl,

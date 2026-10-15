@@ -527,8 +527,8 @@ function SessionWork({
                   data-tab-pane-toggle=""
                   size="toolbar"
                   aria-label="Toggle tab pane"
-                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                  aria-expanded={!!showingPanel}
+                  title="Open tab pane"
+                  aria-expanded={false}
                   icon={<SidebarRightIcon size="1rem" />}
                   onClick={() => tabState.setPaneOpen(!showingPanel)}
                 />

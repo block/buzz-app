@@ -175,21 +175,9 @@ export function NewSessionComposer({
     try {
       if (current.name !== undefined && typeof current.name !== "string")
         throw new Error("The saved session name could not be verified.");
-      // Receipts from before optional naming have no frozen title. Transitional
-      // receipts may have a separate fallback; use it only if no title was saved.
-      if (!current.name) {
-        const fallback = current.automaticName;
-        if (
-          fallback !== undefined &&
-          (typeof fallback !== "string" ||
-            !fallback ||
-            [...fallback].length > 80 ||
-            fallback !== canonicalDetailsName(fallback))
-        )
-          throw new Error("The saved session name could not be verified.");
-        current.name =
-          fallback ?? automaticTitle(pending?.text ?? current.text);
-      }
+      // Receipts from before optional naming have no frozen title.
+      if (!current.name)
+        current.name = automaticTitle(pending?.text ?? current.text);
       const errors = detailsDraftErrors({
         name: current.name ?? "Session",
         description: "",

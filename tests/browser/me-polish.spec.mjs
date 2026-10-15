@@ -1154,7 +1154,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
-    name: "Session name (optional)",
+    name: "Session name",
     exact: true,
   });
   await draftName.fill("Make contrast meet accessibility standards");
@@ -1189,7 +1189,7 @@ test("unified session naming and lifetime retain host focus and save only explic
       for (const width of [390, 950, 1280]) {
         await page.setViewportSize({ width, height: 850 });
         const name = dialog.getByRole("textbox", {
-          name: "Session name (optional)",
+          name: "Session name",
           exact: true,
         });
         await name.scrollIntoViewIfNeeded();
@@ -1307,7 +1307,7 @@ test("unified session naming and lifetime retain host focus and save only explic
       await page.setViewportSize({ width, height });
       const close = dialog.getByRole("button", { name: "Close", exact: true });
       const name = dialog.getByRole("textbox", {
-        name: "Session name (optional)",
+        name: "Session name",
       });
       await name.scrollIntoViewIfNeeded();
       await expect(close).toBeInViewport();
@@ -1419,7 +1419,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     await close.focus();
     await page.keyboard.press("Tab");
     const minimumName = dialog.getByRole("textbox", {
-      name: "Session name (optional)",
+      name: "Session name",
       exact: true,
     });
     await expect(minimumName).toBeFocused();
@@ -1628,7 +1628,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     .click();
   await lifetime.getByRole("button", { name: "Increase duration" }).click();
   await lifetime
-    .getByRole("textbox", { name: "Session name (optional)", exact: true })
+    .getByRole("textbox", { name: "Session name", exact: true })
     .fill("Make contrast meet accessibility standards");
   await save.click();
   await expect(lifetime).not.toBeVisible();

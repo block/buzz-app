@@ -673,7 +673,7 @@ it("shows independent Canvas and lifetime read failures with both recovery actio
 it("saves name and lifetime together after Canvas; clearing later preserves the confirmed title", async () => {
   const h = combined();
   await editBoth();
-  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
+  const name = screen.getByRole("textbox", { name: "Session name" });
   fireEvent.change(name, { target: { value: "  Better name  " } });
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
@@ -688,7 +688,7 @@ it("saves name and lifetime together after Canvas; clearing later preserves the 
   h.mounted.unmount();
   render(h.view());
   fireEvent.change(
-    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    await screen.findByRole("textbox", { name: "Session name" }),
     { target: { value: "" } },
   );
   fireEvent.click(saveChanges());
@@ -705,9 +705,10 @@ it.each([false, true])(
   async (personal) => {
     const h = combined(personal);
     const name = await screen.findByRole("textbox", {
-      name: "Session name (optional)",
+      name: "Session name",
     });
     expect(name).toHaveValue("Plan");
+    expect(name).toHaveAttribute("placeholder", "Plan");
     expect(name).not.toHaveAccessibleDescription();
     fireEvent.change(name, { target: { value: "  " } });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -723,7 +724,7 @@ it.each([false, true])(
     h.mounted.unmount();
     render(h.view());
     expect(
-      await screen.findByRole("textbox", { name: "Session name (optional)" }),
+      await screen.findByRole("textbox", { name: "Session name" }),
     ).toHaveValue("Plan");
   },
 );
@@ -732,10 +733,9 @@ it.each([false, true])(
   async (personal) => {
     const h = combined(personal);
     await editBoth();
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Session name (optional)" }),
-      { target: { value: "" } },
-    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+      target: { value: "" },
+    });
     const original = Storage.prototype.setItem;
     const storage = vi
       .spyOn(Storage.prototype, "setItem")
@@ -775,10 +775,9 @@ it.each([false, true])(
 it("a conflicted name retains input across explicit reload and rechecks real signed authority", async () => {
   const h = combined();
   await editBoth();
-  fireEvent.change(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-    { target: { value: "Keep my name" } },
-  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+    target: { value: "Keep my name" },
+  });
   h.rename("Elsewhere");
   fireEvent.click(saveChanges());
   expect(await screen.findByRole("alert")).toHaveTextContent("changed");
@@ -791,9 +790,9 @@ it("a conflicted name retains input across explicit reload and rechecks real sig
   expect(
     screen.queryByRole("button", { name: "Review saved settings" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("Keep my name");
+  expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
+    "Keep my name",
+  );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.canvas.save).toHaveBeenCalledOnce();
@@ -802,10 +801,9 @@ it("a conflicted name retains input across explicit reload and rechecks real sig
 it("uncertain name survives remount and reconciles without publishing or saving newer Canvas edits", async () => {
   const h = combined();
   await editBoth();
-  fireEvent.change(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-    { target: { value: "Frozen name" } },
-  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+    target: { value: "Frozen name" },
+  });
   h.publish.mockRejectedValueOnce(new Error("Lost ack"));
   fireEvent.click(saveChanges());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -817,9 +815,9 @@ it("uncertain name survives remount and reconciles without publishing or saving 
     name: "Check save status",
   });
   await waitFor(() => expect(check).toBeEnabled());
-  expect(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("Frozen name");
+  expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
+    "Frozen name",
+  );
   fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
     target: { value: "Next Canvas" },
   });
@@ -836,10 +834,9 @@ it("uncertain name survives remount and reconciles without publishing or saving 
 it("explicit-to-explicit uncertain rename is still the same settings receipt", async () => {
   const h = combined();
   await editBoth();
-  fireEvent.change(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-    { target: { value: "Second explicit name" } },
-  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+    target: { value: "Second explicit name" },
+  });
   h.publish.mockRejectedValueOnce(new Error("Lost ack"));
   fireEvent.click(saveChanges());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -861,7 +858,7 @@ it("explicit-to-explicit uncertain rename is still the same settings receipt", a
 it("shared name validation blocks oversized names before either owner publishes", async () => {
   const h = combined();
   await editBoth();
-  const name = screen.getByRole("textbox", { name: "Session name (optional)" });
+  const name = screen.getByRole("textbox", { name: "Session name" });
   fireEvent.change(name, { target: { value: "🙂".repeat(121) } });
   expect(saveChanges()).toBeDisabled();
   expect(name).toBeEnabled();
@@ -883,10 +880,9 @@ it("shared name validation blocks oversized names before either owner publishes"
 it("failed initial read then Reload keeps the uncertain name through check and Canvas-only save", async () => {
   const h = combined();
   await editBoth();
-  fireEvent.change(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-    { target: { value: "Retained name" } },
-  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), {
+    target: { value: "Retained name" },
+  });
   h.publish.mockRejectedValueOnce(new Error("Lost ack"));
   fireEvent.click(saveChanges());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -903,9 +899,9 @@ it("failed initial read then Reload keeps the uncertain name through check and C
     name: "Check save status",
   });
   await waitFor(() => expect(check).toBeEnabled());
-  expect(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("Retained name");
+  expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
+    "Retained name",
+  );
   fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
     target: { value: "Next Canvas" },
   });
@@ -913,9 +909,9 @@ it("failed initial read then Reload keeps the uncertain name through check and C
   if (sent) h.apply(sent);
   fireEvent.click(check);
   await waitFor(() => expect(saveChanges()).toBeEnabled());
-  expect(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("Retained name");
+  expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
+    "Retained name",
+  );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledOnce();
@@ -924,9 +920,9 @@ it("failed initial read then Reload keeps the uncertain name through check and C
 it("a saved title stays visible during a lifetime-only save", async () => {
   const h = combined();
   await editBoth();
-  expect(
-    screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("Plan");
+  expect(screen.getByRole("textbox", { name: "Session name" })).toHaveValue(
+    "Plan",
+  );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
@@ -939,7 +935,7 @@ it("a saved title stays visible during a lifetime-only save", async () => {
 it("renaming and clearing a personal session preserve its signed personal marker", async () => {
   const h = combined(true);
   fireEvent.change(
-    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    await screen.findByRole("textbox", { name: "Session name" }),
     { target: { value: "Solo title" } },
   );
   fireEvent.click(saveChanges());
@@ -955,7 +951,7 @@ it("renaming and clearing a personal session preserve its signed personal marker
   h.mounted.unmount();
   render(h.view());
   fireEvent.change(
-    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+    await screen.findByRole("textbox", { name: "Session name" }),
     { target: { value: "" } },
   );
   fireEvent.click(saveChanges());

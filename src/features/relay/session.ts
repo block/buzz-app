@@ -2145,6 +2145,8 @@ export function createRelaySession(
         throw new DOMException("Stale relay read", "AbortError");
       return result;
     },
+    /** Whether read() search filters may ask for `search_sort: "newest"`. */
+    searchSort: transport?.searchSort === true,
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const began = revision;
       const epoch = accessEpoch;

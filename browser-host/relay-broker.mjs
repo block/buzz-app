@@ -327,6 +327,10 @@ async function relayAuthority(fetch, relay) {
           ),
         }
       : {}),
+    // Bridge search accepts `search_sort: "newest"`.
+    searchSort:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-search-sort"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),

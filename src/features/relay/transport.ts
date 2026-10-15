@@ -130,6 +130,9 @@ export interface ReadTransport {
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;
+  /** The relay advertises `buzz-search-sort`: bridge search accepts
+   * `search_sort: "newest"`. Older relays silently rank by relevance. */
+  readonly searchSort?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -454,6 +457,7 @@ export async function connectBrokerTransport(
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     channelIdentity?: boolean;
+    searchSort?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
@@ -778,6 +782,7 @@ export async function connectBrokerTransport(
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
       : {}),
+    ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.channelKit
       ? {
           channelKit: {

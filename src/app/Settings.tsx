@@ -162,16 +162,10 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
-  const [essentialsOnly, setEssentialsOnly] = useState(false);
   const pluginControlPrefix = useId();
   const pluginGroups = useMemo(
-    () =>
-      groupPlugins(
-        (catalog?.plugins ?? []).filter(
-          (plugin) => !essentialsOnly || isEssentialPlugin(plugin),
-        ),
-      ),
-    [catalog?.plugins, essentialsOnly],
+    () => groupPlugins(catalog?.plugins ?? []),
+    [catalog?.plugins],
   );
   return (
     <div
@@ -344,23 +338,6 @@ export function Settings({
                     )}
                   </div>
                   <div className="grid grid-cols-1 gap-section-gap">
-                    {catalog && (
-                      <div className={styles.pluginFilter}>
-                        <Button
-                          size="sm"
-                          variant={essentialsOnly ? "prominent" : "outline"}
-                          aria-pressed={essentialsOnly}
-                          onClick={() => setEssentialsOnly((value) => !value)}
-                        >
-                          <span aria-hidden="true">✨</span> Essentials only
-                        </Button>
-                        {essentialsOnly && pluginGroups.length === 0 && (
-                          <p role="status" className="text-body-sm text-subtle">
-                            No plugins are tagged Essentials.
-                          </p>
-                        )}
-                      </div>
-                    )}
                     {pluginGroups.map((group) => (
                       <section
                         aria-labelledby={`plugin-category-${group.id}`}
@@ -385,9 +362,13 @@ export function Settings({
                               <span className={styles.pluginTitle}>
                                 <span>{plugin.manifest.name}</span>
                                 {isEssentialPlugin(plugin) && (
-                                  <span className={styles.essentialBadge}>
-                                    <span aria-hidden="true">✨</span>
-                                    Essential
+                                  <span
+                                    className={styles.essentialBadge}
+                                    role="img"
+                                    aria-label="Essential"
+                                    title="Essential"
+                                  >
+                                    ✨
                                   </span>
                                 )}
                               </span>

@@ -94,10 +94,6 @@
   padding-block: var(--space-3) var(--space-2);
 }
 
-.pluginFilter {
-  padding-inline: var(--space-4);
-}
-
 .pluginCategoryTitle {
   display: inline-flex;
   align-items: center;
@@ -129,11 +125,9 @@
 .essentialBadge {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
   padding: var(--space-half) var(--space-2);
   border-radius: var(--radius-capsule);
-  background: var(--affordance-accent);
-  color: var(--text-accent);
+  background: var(--surface-inset);
   @apply text-caption;
 }
 .settingsGroupTitle {

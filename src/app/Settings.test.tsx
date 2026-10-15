@@ -256,9 +256,10 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
       : ["Channels", "Messages", "Voice Notes"],
   );
   expect(within(content).getAllByRole("article")).toHaveLength(5);
-  expect(within(content).queryAllByText("Essential")).toHaveLength(
-    essentials ? 3 : 0,
-  );
+  expect(
+    within(content).queryAllByRole("img", { name: "Essential" }),
+  ).toHaveLength(essentials ? 3 : 0);
+  expect(within(content).queryByText("Essential")).toBeNull();
   expect(
     within(content).queryByRole("switch", { name: "Enable Channels" }),
   ).toBeNull();
@@ -290,31 +291,11 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
   expect(
     within(content).queryByRole("heading", { name: "Finance" }),
   ).toBeNull();
-  const filter = within(content).getByRole("button", {
-    name: "Essentials only",
-  });
-  fireEvent.click(filter);
-  expect(filter).toHaveAttribute("aria-pressed", "true");
-  expect(within(content).queryByText("Messages")).toBeNull();
-  expect(within(content).queryByText("Invoices")).toBeNull();
-  if (essentials) {
-    expect(within(content).getAllByRole("article")).toHaveLength(3);
-    expect(
-      within(content)
-        .getAllByRole("heading", { level: 3 })
-        .map((heading) => heading.textContent),
-    ).toEqual(["Communication2 plugins", "Agents1 plugins"]);
-    expect(
-      within(content).getByRole("switch", { name: "Enable Voice Notes" }),
-    ).toBeEnabled();
-  } else {
-    expect(within(content).getByRole("status")).toHaveTextContent(
-      "No plugins are tagged Essentials.",
-    );
-  }
-  fireEvent.click(filter);
-  expect(filter).toHaveAttribute("aria-pressed", "false");
-  expect(within(content).getAllByRole("article")).toHaveLength(5);
+  expect(
+    within(content).queryByRole("button", {
+      name: "Essentials only",
+    }),
+  ).toBeNull();
 });
 
 it("uses contributed icons in community and account navigation", () => {

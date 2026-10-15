@@ -606,7 +606,9 @@ export function createTabs({
         </form>
         <ProviderDialogActions>
           <Button
-            onClick={() => (state.running ? void setup.cancel() : onClose())}
+            onClick={() =>
+              state.running && !ready ? void setup.cancel() : onClose()
+            }
           >
             Cancel
           </Button>

@@ -103,12 +103,14 @@ function applied({
   loggedIn = true,
   available = true,
   version = "2.1.292",
+  latest = version,
   files = {},
   catalog = { listed: true },
 }: {
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
+  latest?: string;
   files?: Record<string, string>;
   /** Whether Claude lists its models when asked. */
   catalog?: { listed: boolean; ready?: Promise<void> };
@@ -220,12 +222,12 @@ function applied({
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: {
       spawn,
-      // downloads.claude.ai offering the release installed, so no update runs.
+      // Offer the installed release unless the test requests an update.
       request: vi.fn(async ({ url }: { url: string }) => ({
         status: 200,
         headers: {},
         body: url.endsWith("/latest")
-          ? version
+          ? latest
           : JSON.stringify({
               platforms: { "darwin-arm64": { checksum: "a".repeat(64) } },
             }),
@@ -593,6 +595,58 @@ it("cancels a provider defaults draft without saving", async () => {
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
   expect(onClose).toHaveBeenCalledOnce();
   expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
+});
+
+it("closes a provider defaults draft without stopping a hidden background update", async () => {
+  const { type, spawn } = installed({ latest: "2.1.293" });
+  await waitFor(() =>
+    expect(spawn).toHaveBeenCalledWith(
+      "claude-sh",
+      expect.objectContaining({ args: expect.arrayContaining(["install"]) }),
+    ),
+  );
+  const installIndex = spawn.mock.calls.findIndex(
+    ([, options]) => options?.args?.[2] === "install",
+  );
+  const installation = await spawn.mock.results[installIndex]?.value;
+  if (!installation || !type.provider) throw new Error("No background update");
+  const kill = vi.spyOn(installation, "kill");
+  const onClose = vi.fn();
+  try {
+    render(
+      <ProviderDialog
+        type={type as unknown as RegisteredAgentType}
+        finalFocus={{ current: null }}
+        onClose={onClose}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Default model" }),
+      ).toHaveTextContent("Opus 5.5 · Default"),
+    );
+    expect(type.provider.snapshot()).toMatchObject({
+      readiness: "ready",
+      blocking: true,
+    });
+    expect(screen.getByText("Setting up Claude Code...")).not.toBeVisible();
+    await choose("Default model", "Fable 5.1");
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
+    expect(kill).not.toHaveBeenCalled();
+    expect(type.provider.snapshot()).toMatchObject({
+      readiness: "ready",
+      blocking: true,
+    });
+  } finally {
+    await act(async () => installation.kill());
+    await waitFor(() =>
+      expect(type.provider?.snapshot().blocking).not.toBe(true),
+    );
+  }
 });
 
 it("says when Claude's models could not be loaded and tries again", async () => {

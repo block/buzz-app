@@ -104,12 +104,13 @@ agents are not migrated into this type.
   device through the `knownCommunities` capability while signed in, in native
   builds with a configured service. The list is an account-scoped set behind
   three idempotent JSON routes under `/v1/buzz/known-communities/`: `list`
-  (`{}` → `{ communities: [{ relay_url }] }`), `add` and `remove` (each
-  `{ relay_url }`; adding a saved destination or removing an absent one
-  succeeds, and the account holds at most 1,000). Each sign-in merges the
-  complete list, then sends each destination's latest queued join or leave one
-  at a time, retrying failures as sent, and reports its state on the
-  communities snapshot. See [communities](../../../docs/communities.md#known-communities).
+  (`{}` → `{ communities: [{ community_url }] }`), `add` and `remove` (each
+  `{ community_url }`; adding a saved destination or removing an absent one
+  succeeds, and adds past about 1,000 saved destinations are refused with
+  `limit_reached`). Each sign-in merges the complete list, then sends each
+  destination's latest queued join or leave one at a time, retrying failures
+  as sent, and reports its state on the communities snapshot. See
+  [communities](../../../docs/communities.md#known-communities).
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

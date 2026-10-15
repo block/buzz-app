@@ -46,15 +46,16 @@ const invalid = () => new Error("Builderlab returned an invalid response.");
 /** A listed destination's address as the service holds it. */
 function address(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const { relay_url } = value as Record<string, unknown>;
-  return typeof relay_url === "string" && relay_url.startsWith("wss://")
-    ? relay_url
+  const { community_url } = value as Record<string, unknown>;
+  return typeof community_url === "string" && community_url.startsWith("wss://")
+    ? community_url
     : undefined;
 }
 
 /** The known-communities routes under the signed-in Builderlab session. The
- * list is bounded by the service (1,000 rows) well inside the host transport's
- * response cap, so no smaller cap is imposed here. */
+ * service refuses adds past about 1,000 destinations (a best-effort quota that
+ * concurrent adds can overshoot), so the list stays far inside the host
+ * transport's response cap and no cap is imposed here. */
 export function createKnownCommunitiesClient(
   host: Host,
   session: OAuthSession,
@@ -119,7 +120,11 @@ export function createKnownCommunitiesClient(
     url: string,
     signal: AbortSignal,
   ): Promise<UpdateResult> {
-    const { status, value } = await request(path, { relay_url: url }, signal);
+    const { status, value } = await request(
+      path,
+      { community_url: url },
+      signal,
+    );
     return status === 200 ? { kind: "accepted" } : refusal(status, value);
   }
   return {

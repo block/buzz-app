@@ -379,3 +379,36 @@ describe("GooseRuntime", () => {
     expect(published).toEqual([]);
   });
 });
+
+describe("goose memory reads", () => {
+  it("does not share a read that started before a write", async () => {
+    const pending: ((body: string) => void)[] = [];
+    const read = vi.fn(
+      () =>
+        new Promise<{ entries: { slug: string; body: string }[] }>((done) =>
+          pending.push((body) => done({ entries: [{ slug: "core", body }] })),
+        ),
+    );
+    const relay = {
+      snapshot: () => ({
+        status: "ready",
+        session: { agentMemories: { read } },
+      }),
+    } as unknown as RelayData;
+    const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
+      memories(pubkey: string, slug?: string): Promise<unknown>;
+      forgetMemories(pubkey: string): void;
+    };
+    const before = runtime.memories(self, "core");
+    runtime.forgetMemories(self);
+    const after = runtime.memories(self, "core");
+    expect(read).toHaveBeenCalledTimes(2);
+    pending[0]?.("old");
+    await expect(before).resolves.toEqual([{ slug: "core", body: "old" }]);
+    // The old read finishing must not drop the newer one.
+    expect(runtime.memories(self, "core")).toBe(after);
+    expect(read).toHaveBeenCalledTimes(2);
+    pending[1]?.("new");
+    await expect(after).resolves.toEqual([{ slug: "core", body: "new" }]);
+  });
+});

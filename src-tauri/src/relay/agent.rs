@@ -315,10 +315,12 @@ pub(crate) fn slug(s: &str) -> bool {
     })
 }
 /// Most events one memory query asks for. A memory body is at most 64 KiB, so
-/// a page of them stays under the response cap.
+/// a page of ordinary memory events stays under the response cap; a page that
+/// exceeds it (an event carrying unusually many tags) fails the read.
 const MEMORY_PAGE: usize = 16;
 const MEMORY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-/// Most memory events and decoded bytes one read takes, across its pages.
+/// Most memory events and decoded bytes one read takes, across its pages. A
+/// listing past either cap is returned partial.
 const MEMORY_EVENTS: usize = 4096;
 const MEMORY_DECODED_BYTES: usize = 8 * 1024 * 1024;
 
@@ -369,10 +371,11 @@ pub(crate) async fn relay_agent_memories_read(
             .await?;
         filter["#d"] = json!([address]);
     }
-    let (events, partial) = read_memory_pages(|until| {
+    let (events, partial) = read_memory_pages(|cursor| {
         let mut page = filter.clone();
-        if let Some(until) = until {
+        if let Some((until, before_id)) = cursor {
             page["until"] = json!(until);
+            page["before_id"] = json!(before_id);
         }
         let url = url.clone();
         let host = host.inner();
@@ -412,37 +415,37 @@ pub(crate) async fn relay_agent_memories_read(
     Ok(listing)
 }
 
-/// Reads newest first, a page at a time, until a short page. `until` is
-/// inclusive, so pages overlap by a second and repeats are dropped. The
-/// listing is partial when it hits the event cap or a page brings nothing
-/// new, which happens only when more than a page shares one second.
+/// Reads newest first, a page at a time, until a short page. The relay orders
+/// by `created_at DESC, id ASC` and resumes after the `(until, before_id)`
+/// cursor taken from the last event of the previous page, so entries sharing
+/// one second still page through. The listing is partial when it hits the
+/// event cap, or when a full page brings nothing new (a relay ignoring
+/// `before_id`), which stops the read instead of looping.
 async fn read_memory_pages<F, P>(mut page: P) -> Result<(Vec<Option<Value>>, bool)>
 where
-    P: FnMut(Option<u64>) -> F,
+    P: FnMut(Option<(u64, String)>) -> F,
     F: std::future::Future<Output = Result<Vec<Option<Value>>>>,
 {
     let mut events = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut until = None;
+    let mut cursor = None;
     loop {
-        let records = page(until).await?;
+        let records = page(cursor.clone()).await?;
         let full = records.len() >= MEMORY_PAGE;
         let mut added = false;
         for record in records {
-            let id = record
-                .as_ref()
-                .and_then(|value| value.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            if id.as_ref().is_some_and(|id| !seen.insert(id.clone())) {
+            let value = record.as_ref();
+            let id = value.and_then(|v| v.get("id")).and_then(Value::as_str);
+            if id.is_some_and(|id| !seen.insert(id.to_owned())) {
                 continue;
             }
-            if let Some(time) = record
-                .as_ref()
-                .and_then(|value| value.get("created_at"))
-                .and_then(Value::as_u64)
-            {
-                until = Some(until.map_or(time, |oldest: u64| oldest.min(time)));
+            if let (Some(id), Some(time)) = (
+                id,
+                value
+                    .and_then(|v| v.get("created_at"))
+                    .and_then(Value::as_u64),
+            ) {
+                cursor = Some((time, id.to_owned()));
             }
             added = true;
             events.push(record);
@@ -1125,18 +1128,34 @@ mod tests {
         );
     }
 
-    /// Pages `events` (newest first) the way the relay answers `until` and
-    /// `limit`, recording each `until` asked for.
-    async fn paged(
+    /// Pages `events` the way the relay answers `until`, `before_id` and
+    /// `limit` (`created_at DESC, id ASC`), recording each cursor asked for.
+    /// With `honor_before_id` false it acts like a relay that drops the
+    /// cursor id and applies an inclusive `until` only.
+    async fn paged_with(
         events: &[Value],
-        asked: &std::sync::Mutex<Vec<Option<u64>>>,
+        asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
+        honor_before_id: bool,
     ) -> (Vec<Option<Value>>, bool) {
-        read_memory_pages(|until| {
-            asked.lock().unwrap().push(until);
+        let mut events = events.to_vec();
+        events.sort_by(|a, b| {
+            b["created_at"]
+                .as_u64()
+                .cmp(&a["created_at"].as_u64())
+                .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+        });
+        let events = &events;
+        read_memory_pages(|cursor| {
+            asked.lock().unwrap().push(cursor.clone());
             let page: Vec<_> = events
                 .iter()
                 .filter(|event| {
-                    until.is_none_or(|until| event["created_at"].as_u64().unwrap() <= until)
+                    let time = event["created_at"].as_u64().unwrap();
+                    let id = event["id"].as_str().unwrap();
+                    cursor.as_ref().is_none_or(|(until, before_id)| {
+                        time < *until
+                            || (time == *until && (!honor_before_id || id > before_id.as_str()))
+                    })
                 })
                 .take(MEMORY_PAGE)
                 .cloned()
@@ -1146,6 +1165,13 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    async fn paged(
+        events: &[Value],
+        asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
+    ) -> (Vec<Option<Value>>, bool) {
+        paged_with(events, asked, true).await
     }
 
     #[tokio::test]
@@ -1217,21 +1243,58 @@ mod tests {
         assert_eq!(single["entries"][0]["body"], "x".repeat(8 * 1024));
     }
 
+    fn stub(index: u64, time: u64) -> Value {
+        json!({"id": format!("{index:064x}"), "created_at": time})
+    }
+
+    #[tokio::test]
+    async fn memory_listing_pages_through_entries_sharing_one_second() {
+        let none = || std::sync::Mutex::new(Vec::new());
+        // Exactly one page in one second, nothing older: the cursor page is
+        // empty, so the listing is complete.
+        let exact: Vec<_> = (0..MEMORY_PAGE as u64).map(|i| stub(i, 5)).collect();
+        let asked = none();
+        let (records, partial) = paged(&exact, &asked).await;
+        assert!(!partial);
+        assert_eq!(records.len(), MEMORY_PAGE);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![None, Some((5, format!("{:064x}", MEMORY_PAGE - 1)))]
+        );
+        // More than a page in one second.
+        let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2 + 3)
+            .map(|i| stub(i, 5))
+            .collect();
+        let (records, partial) = paged(&tied, &none()).await;
+        assert!(!partial);
+        assert_eq!(records.len(), tied.len());
+        // A tied run followed by older entries.
+        let mixed: Vec<_> = (0..MEMORY_PAGE as u64 + 5)
+            .map(|i| stub(i, 9))
+            .chain((100..140).map(|i| stub(i, 1_000 - i)))
+            .collect();
+        let (records, partial) = paged(&mixed, &none()).await;
+        assert!(!partial);
+        assert_eq!(records.len(), mixed.len());
+        let ids: std::collections::HashSet<_> = records
+            .iter()
+            .map(|r| r.as_ref().unwrap()["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(ids.len(), mixed.len());
+    }
+
     #[tokio::test]
     async fn memory_listing_marks_a_stalled_or_capped_read_partial() {
-        let event =
-            |index: u64, time: u64| json!({"id": format!("{index:064x}"), "created_at": time});
-        // More than a page in one second: `until` cannot move past it.
-        let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2)
-            .map(|index| event(index, 5))
-            .collect();
+        // A relay that ignores `before_id` repeats the tied page: the read
+        // stops partial instead of looping.
+        let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2).map(|i| stub(i, 5)).collect();
         let asked = std::sync::Mutex::new(Vec::new());
-        let (records, partial) = paged(&tied, &asked).await;
+        let (records, partial) = paged_with(&tied, &asked, false).await;
         assert!(partial);
         assert_eq!(records.len(), MEMORY_PAGE);
-        assert_eq!(*asked.lock().unwrap(), vec![None, Some(5)]);
+        assert_eq!(asked.lock().unwrap().len(), 2);
         let many: Vec<_> = (0..MEMORY_EVENTS as u64 + 40)
-            .map(|index| event(index, 1_000_000 - index))
+            .map(|index| stub(index, 1_000_000 - index))
             .collect();
         let (records, partial) = paged(&many, &std::sync::Mutex::new(Vec::new())).await;
         assert!(partial);

@@ -485,6 +485,7 @@ export class GooseRuntime {
         }),
         remember: async (slug: string, body: string, after: number) => {
           await handle.remember(slug, body, after);
+          this.forgetMemories(pubkey);
           if (slug === "core") delete entry.memory;
         },
       };
@@ -552,12 +553,19 @@ export class GooseRuntime {
     const key = `${pubkey}\0${slug ?? ""}`;
     let reading = this.reading.get(key);
     if (!reading) {
-      reading = this.readMemories(pubkey, slug).finally(() =>
-        this.reading.delete(key),
-      );
-      this.reading.set(key, reading);
+      const started = this.readMemories(pubkey, slug).finally(() => {
+        if (this.reading.get(key) === started) this.reading.delete(key);
+      });
+      this.reading.set(key, started);
+      reading = started;
     }
     return reading;
+  }
+  /** After a memory write, a read that may have started before it is not
+   * shared with later callers. */
+  private forgetMemories(pubkey: string) {
+    for (const key of this.reading.keys())
+      if (key.startsWith(`${pubkey}\0`)) this.reading.delete(key);
   }
   private async readMemories(
     pubkey: string,

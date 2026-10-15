@@ -54,6 +54,7 @@
   color: var(--text-subtle);
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-1);
   min-width: 0;
 }

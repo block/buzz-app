@@ -367,6 +367,13 @@ test("message activity opens a grouped preview and the agent's profile without l
     .click();
   publish(human, 9, "Unread reply while agents work", typingTags, resumedAt);
   await expect(summary).toHaveAccessibleName(/Observed unread replies/);
+  // Mixed freshness adds both dots and status text. Control expiry explicitly
+  // so narrow-layout coverage does not depend on the runner crossing 30s.
+  await page.clock.fastForward(31_000);
+  telemetryTime = await page.evaluate(() => new Date().toISOString());
+  send(1, "turn_liveness", 4);
+  await expect(summary).toHaveAccessibleName(/Agent 1, status unknown/);
+  await expect(summary).toHaveAccessibleName(/Agent 2, working/);
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
     for (const width of [1440, 800, 390]) {
@@ -402,22 +409,26 @@ test("message activity opens a grouped preview and the agent's profile without l
       }
       const box = await summary.boundingBox();
       expect(box.x + box.width).toBeLessThanOrEqual(width);
+      // The connector extends beyond the button; measure label overflow
+      // separately while retaining the connector's viewport bounds.
+      const geometry = await summary.evaluate((element) => {
+        const label = element.querySelector(".buzz-button-label");
+        const box = element.getBoundingClientRect();
+        const connector = getComputedStyle(element, "::before");
+        const extension = parseFloat(connector.width) || 0;
+        return {
+          labelOverflow: label.scrollWidth - label.clientWidth,
+          connectorLeft: box.left - extension,
+          connectorRight: box.right + extension,
+          viewport: innerWidth,
+        };
+      });
       expect(
-        await summary.evaluate((element) => {
-          // The thread connector intentionally extends outside the button.
-          // Check the actual label contents and the connector's viewport bounds.
-          const label = element.querySelector(".buzz-button-label");
-          const box = element.getBoundingClientRect();
-          const connector = getComputedStyle(element, "::before");
-          const extension = parseFloat(connector.width) || 0;
-          return (
-            !!label &&
-            label.scrollWidth <= label.clientWidth &&
-            box.left - extension >= 0 &&
-            box.right + extension <= innerWidth
-          );
-        }),
-      ).toBe(true);
+        geometry.labelOverflow,
+        JSON.stringify(geometry),
+      ).toBeLessThanOrEqual(0);
+      expect(geometry.connectorLeft).toBeGreaterThanOrEqual(0);
+      expect(geometry.connectorRight).toBeLessThanOrEqual(geometry.viewport);
       await page.screenshot({
         path: testInfo.outputPath(
           `channel-activity-${colorScheme}-${width}.png`,
@@ -431,7 +442,7 @@ test("message activity opens a grouped preview and the agent's profile without l
   send(0, "turn_completed", 4);
   await expect(bubble.locator(".buzz-avatar")).toHaveCount(1);
   await expect(threadIndicator).toHaveCount(1);
-  send(1, "turn_completed", 4);
+  send(1, "turn_completed", 5);
   await expect(region).toHaveCount(0);
   await expect(threadIndicator).toHaveCount(0);
   await expect(reply).toHaveText("Keep this draft while inspecting activity");

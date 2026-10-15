@@ -598,3 +598,47 @@ it.each(
     expect(completed).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["archive", "Archive channel", "prominent", "subtle", true],
+  ["unarchive", "Unarchive channel", "prominent", "subtle", true],
+  ["hide", "Hide conversation", "prominent", "subtle", true],
+  ["leave", "Leave channel", "subtle", "prominent", false],
+  ["delete", "Delete channel", "destructive", "prominent", false],
+] as const)(
+  "Enter presses the prominent default button for %s",
+  async (action, label, confirmVariant, cancelVariant, confirms) => {
+    const lifecycle = capability();
+    const close = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Fixture"
+        action={action}
+        lifecycle={lifecycle}
+        close={close}
+        completed={vi.fn()}
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: label });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(confirm).toHaveAttribute("data-variant", confirmVariant);
+    expect(cancel).toHaveAttribute("data-variant", cancelVariant);
+    await waitFor(() => expect(confirms ? confirm : cancel).toHaveFocus());
+    await user.keyboard("{Enter}");
+    if (confirms) {
+      await waitFor(() =>
+        expect(lifecycle.run).toHaveBeenCalledWith(
+          action,
+          "id",
+          expect.any(AbortSignal),
+        ),
+      );
+      expect(close).not.toHaveBeenCalled();
+    } else {
+      expect(close).toHaveBeenCalledOnce();
+      expect(lifecycle.run).not.toHaveBeenCalled();
+    }
+  },
+);

@@ -45,6 +45,13 @@ const copy = {
   },
 } as const;
 
+// Enter confirms reversible actions; irreversible ones default to Cancel.
+const reversible = new Set<ChannelLifecycleAction>([
+  "archive",
+  "unarchive",
+  "hide",
+]);
+
 export function ChannelLifecycleDialog({
   channelId,
   channelName,
@@ -69,6 +76,8 @@ export function ChannelLifecycleDialog({
     callbacks.current = { completed, failed };
   });
   const cancel = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const confirms = reversible.has(action);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const notify = useToastNotification();
@@ -118,7 +127,7 @@ export function ChannelLifecycleDialog({
       <Dialog
         open={!busy && !error}
         dismissOnOutsideClick
-        initialFocus={cancel}
+        initialFocus={confirms ? confirm : cancel}
         // Cancellation remains sidebar-owned; submission returns to the trigger.
         {...(!busy && !error && { finalFocus: false })}
         onOpenChange={(open) => {
@@ -132,12 +141,24 @@ export function ChannelLifecycleDialog({
         description={copy[action].detail}
         actions={
           <>
-            <Button ref={cancel} type="button" onClick={close}>
+            <Button
+              ref={cancel}
+              type="button"
+              variant={confirms ? "subtle" : "prominent"}
+              onClick={close}
+            >
               Cancel
             </Button>
             <Button
               type="button"
-              variant={action === "delete" ? "destructive" : "prominent"}
+              ref={confirm}
+              variant={
+                action === "delete"
+                  ? "destructive"
+                  : confirms
+                    ? "prominent"
+                    : "subtle"
+              }
               onClick={() => void submit()}
             >
               {copy[action].title}

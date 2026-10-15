@@ -1,18 +1,18 @@
 # Shared conversation composition
 
-Proposed direction, October 13, 2026. This document describes the remaining structural repair requested for Inbox and Channels. It does not describe implemented parity.
+Proposed direction, October 13, 2026. This document records the structural repair proposed for Inbox and Channels before it was implemented. [Current status](#current-status) describes what is implemented and where it differs.
 
 ## Outcome
 
 Inbox and Channels should receive messaging features from the same feature-owned composition. A page should not have to remember to add another editing provider, profile callback, or composer dependency when a shared messaging feature changes.
 
-The first interaction repair is [PR 977](https://github.com/block/buzz-app/pull/977). It fixes person mentions and missing profile/panel/media dispatch, but Channels still creates its interaction handlers separately and the pages still assemble readers and composers independently. The whole outcome remains unfinished. [PR 815](https://github.com/block/buzz-app/pull/815) has merged its recovery wrapper; preserve that implementation and its tests.
+When this was written, Channels created its interaction handlers separately and each page assembled its readers and composers independently, so a dependency added in one page was easy to miss in another. Inbox had already missed person mentions and profile, panel, and media dispatch. [PR 815](https://github.com/block/buzz-app/pull/815) merged the editing recovery wrapper; preserve that implementation and its tests.
 
 ## Existing owners to retain
 
 `MessageRow` and `MessageMarkdown` own message presentation and reference resolution. `ThreadPanel` owns exact-thread loading, reveal, reply branches, and its reply composer. `ChannelTimeline` owns the canonical channel window, scrolling, and reading evidence. `MessageComposer` owns drafts, recipients, attachments, and publication. `MessageManagement` owns channel-scoped editing/deletion recovery and the channel visit. None of these needs a replacement implementation.
 
-Today, `ChannelsPage`, `ConversationTab`, `InboxDetail`, `ChannelPreview`, and `DraftsView` choose and connect those owners separately. That assembly is the boundary to extract.
+At the time, `ChannelsPage`, `ConversationTab`, `InboxDetail`, `ChannelPreview`, and `DraftsView` chose and connected those owners separately. That assembly is the boundary to extract.
 
 ## Proposed boundary
 
@@ -54,6 +54,6 @@ A passing mention journey or clean partial PR is not completion of this directio
 
 ## Current status
 
-Revised October 14, 2026. `features/conversation/Conversation.tsx` implements the channel scope as `ConversationChannel`: it owns `MessageManagement` and its visit policy, and supplies session, scope, channel identity, extensions, and the interaction environment (page adapter or the shared dialog host) to `ConversationThread`, `ConversationTimeline`, and `ConversationComposer`. The Channels pane, conversation tabs, Inbox detail and channel preview, saved drafts, and embedded threads all use it, and their duplicated prop forwarding is removed. Saved drafts gain the editing/recovery scope they previously lacked, with `active={false}`.
+Revised October 15, 2026, for [PR 977](https://github.com/block/buzz-app/pull/977). `features/conversation/Conversation.tsx` implements the channel scope as `ConversationChannel`: it owns `MessageManagement` and its visit policy, and supplies session, scope, channel identity, extensions, and the interaction environment (page adapter or the shared dialog host) to `ConversationThread`, `ConversationTimeline`, and `ConversationComposer`. It also renders the open media review from that scope; pages decide only when a review opens and retires. The Channels pane, conversation tabs, Inbox detail and channel preview, saved drafts, and embedded threads all use it, and their duplicated prop forwarding is removed. Saved drafts gain the editing/recovery scope they previously lacked, with `active={false}`.
 
-Differences from the proposal above: pages still choose which reader to render, so a page can compose readers but cannot omit their shared dependencies. Dialog-hosted pages receive `MessageManagementStatus` from the channel scope; Channels places it within its own layout. `SessionsPage` still assembles its own timeline and composer and is the next adopter.
+Differences from the proposal above: pages still choose which reader to render, so a page can compose readers but cannot omit their shared dependencies. Dialog-hosted pages receive `MessageManagementStatus` from the channel scope; Channels places it within its own layout. The panel service gained `panelOpening`, which every host uses to resolve a link's panel and keep its originating thread; the contribution contract is unchanged. `SessionsPage` still assembles its own timeline and composer and is the next adopter.

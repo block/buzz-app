@@ -2175,6 +2175,60 @@ it("refreshes core memory when a standalone turn ends, without holding the next 
   await expect(service.core(bot)).resolves.toBe("two");
 });
 
+it("never writes decrypted core memory to storage, so a rebuilt service reads it again", async () => {
+  const storage = memoryStorage();
+  const written: string[] = [];
+  const setItem = storage.setItem.bind(storage);
+  vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+    written.push(`${key}=${value}`);
+    setItem(key, value);
+  });
+  const leaked = () =>
+    written.filter((entry) => /secret-(read|written|refreshed)/.test(entry));
+  const first = await setup({ storage });
+  const read = vi.mocked(first.session.agentMemories.read);
+  await first.service.create({ type: "example/echo", name: "Echo" });
+  // A read.
+  first.memories.set(bot, "secret-read");
+  await expect(first.service.core(bot)).resolves.toBe("secret-read");
+  // A successful write through the agent's handle.
+  first.run.mockImplementationOnce(async ({ agent }) => {
+    await agent.remember("core", "secret-written", 0);
+  });
+  first.emit({
+    events: [
+      event("m1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+  await settle();
+  // A refresh.
+  first.memories.set(bot, "secret-refreshed");
+  first.recover();
+  await settle();
+  await expect(first.service.core(bot)).resolves.toBe("secret-refreshed");
+  expect(read.mock.calls.length).toBeGreaterThan(0);
+  expect(leaked()).toEqual([]);
+  // A service rebuilt on the same storage starts empty and reads core again.
+  const second = await setup({ storage });
+  const reread = vi.mocked(second.session.agentMemories.read);
+  await second.service.create({ type: "example/echo", name: "Echo" });
+  second.memories.set(bot, "after restart");
+  await expect(second.service.core(bot)).resolves.toBe("after restart");
+  expect(reread).toHaveBeenCalled();
+  expect(leaked()).toEqual([]);
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i) as string;
+    expect(storage.getItem(key)).not.toMatch(/secret-/);
+  }
+});
+
 it("stops refreshing core memory for a community once it is left", async () => {
   const { service, session, recover, leave, select } = await setup();
   const read = vi.mocked(session.agentMemories.read);

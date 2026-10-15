@@ -82,7 +82,10 @@ export function ChannelHeaderMenu({
       }
     >
       {finishConversion && (
-        <MenuItem onClick={finishConversion}>Finish conversion</MenuItem>
+        <MenuItem onClick={finishConversion}>
+          <MenuIcon>{null}</MenuIcon>
+          Finish conversion
+        </MenuItem>
       )}
       <MenuItem onClick={openDetails}>
         <MenuIcon>

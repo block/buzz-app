@@ -62,6 +62,24 @@ Two workers, no retries, local Apple Silicon. The thread-tab failure did not
 reproduce; its cause is unconfirmed, not claimed fixed by the upstream update.
 Current-head hosted CI remains the next gate.
 
+### Retry-focus review follow-up
+
+On `efa065b52` plus the review repairs, the existing failed-share journey now
+closes and reopens before retrying: initial focus must enter the dialog and Tab
+must remain inside. That assertion failed before repair in both engines. A mounted
+Messages-handoff regression likewise failed with the stale `Dev` query before
+resetting the unsubmitted draft. Disabled-input states now use the shared Dialog's
+first-tabbable default; editable Share still focuses its combobox. The Tab traversal
+waits off Base UI's focus guard without raising its 12-step bound.
+
+All 93 tests in seven complete owner files passed (16.61s wall, 22.08s summed), as
+did 18 cases in both complete sharing browser files: 91.44s wall, 168.92s summed,
+slowest case 24.01s; two Linux browser workers under a two-CPU limit, macOS host,
+no retries. No browser cases added/removed. Independent narrow review: 9/10, no
+blocker. The non-wrapping footer remains the prior design choice pending a human
+layout decision. New focus/draft behavior needs human confirmation; earlier
+Share/Convert product confirmation remains recorded, not reused for this repair.
+
 ## Regression and test-layer accounting
 
 - Real signed-details → Me preference → Outbox tests cover ordering, exact

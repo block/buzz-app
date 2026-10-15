@@ -268,6 +268,17 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
           ) {
             expect(step).toBeLessThan(12);
             await page.keyboard.press("Tab");
+            // Base UI returns focus from its guard on the next frame. Do not
+            // send another Tab while that handoff is still pending.
+            await expect
+              .poll(() =>
+                page.evaluate(() =>
+                  document.activeElement?.hasAttribute(
+                    "data-base-ui-focus-guard",
+                  ),
+                ),
+              )
+              .toBe(false);
           }
           await expect(action).toBeFocused();
           await expect(action).toBeInViewport();
@@ -334,6 +345,18 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
     dialog.getByText(/^Retry keeps the exact submitted recipients\./),
   ).toHaveCount(0);
   await expect(participants).toContainText("Submitted audience");
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.press("Enter");
+  await expect(search).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect
+    .poll(() => dialog.evaluate((el) => el.contains(document.activeElement)))
+    .toBe(true);
   await reachable(dialog.getByRole("button", { name: "Retry share" }));
   await dialog.getByRole("button", { name: "Retry share" }).click();
   await expect(dialog).not.toBeVisible();

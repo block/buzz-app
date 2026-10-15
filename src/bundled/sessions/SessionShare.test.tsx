@@ -348,7 +348,13 @@ function fixture(direct = false) {
       owner.session.channels.ensureList();
       await waitFor(() => expect(channel()?.channelType).toBe("session"));
     },
-    mount(props: { signal?: AbortSignal; onClose?: () => void } = {}) {
+    mount(
+      props: {
+        signal?: AbortSignal;
+        onClose?: () => void;
+        onConvert?: (trigger: HTMLElement | null) => void;
+      } = {},
+    ) {
       const initial = channel();
       if (!initial) throw new Error("Session not loaded");
       return render(
@@ -1093,6 +1099,37 @@ it("Me offers explicit conversion from Share while Done never promotes or remove
       { name: "Convert to channel" },
     ),
   ).toBeNull();
+});
+
+it("clears unsubmitted choices when handing conversion to the Messages host", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  const onConvert = vi.fn();
+  t.mount({ onConvert });
+  await user.click(screen.getByRole("button", { name: "Share", exact: true }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await choosePerson(user, dialog, "Aria");
+  await user.type(within(dialog).getByRole("combobox"), "Dev");
+  await user.keyboard("{Escape}");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Convert to channel" }),
+  );
+  expect(onConvert).toHaveBeenCalledOnce();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  // The host can cancel its conversion while this Share owner stays mounted.
+  await user.click(screen.getByRole("button", { name: "Share", exact: true }));
+  const reopened = screen.getByRole("dialog", { name: "Share session" });
+  expect(within(reopened).getByRole("combobox")).toHaveValue("");
+  expect(
+    within(reopened).queryByRole("region", { name: "Selected channel" }),
+  ).toBeNull();
+  expect(
+    within(reopened).queryByRole("button", { name: "Remove Aria" }),
+  ).toBeNull();
+  expect(within(reopened).getByRole("button", { name: "Done" })).toBeEnabled();
+  expect(t.publish).not.toHaveBeenCalled();
 });
 
 it("row Share conversion retains its captured visit when the sidebar survives navigation", async () => {

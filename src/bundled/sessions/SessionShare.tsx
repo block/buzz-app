@@ -44,6 +44,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
@@ -717,7 +718,7 @@ export function SessionShare({
       shape={knownAgent(key) ? "squircle" : "circle"}
       alt=""
       fallback={names(key)}
-      src={session.media(profiles.get(key)?.picture ?? "", "small")}
+      src={avatarMedia(profiles.get(key)?.picture, session.media)}
     />
   );
   const row = (key: string, selected: boolean) => (
@@ -768,7 +769,7 @@ export function SessionShare({
         description="People with access can read the full history and participate in new messages."
         preventClose={busy}
         finalFocus={finalFocus}
-        initialFocus={input}
+        initialFocus={busy || saved || !eligible ? true : input}
         leadingActions={
           canConvertSession(session, source) && (
             <Button
@@ -782,8 +783,10 @@ export function SessionShare({
                 )
                   return;
                 setOpen(false);
-                if (onConvert) onConvert(trigger.current);
-                else setConverting(true);
+                if (onConvert) {
+                  reset();
+                  onConvert(trigger.current);
+                } else setConverting(true);
               }}
             >
               {conversionLabel(session, channel.id)}

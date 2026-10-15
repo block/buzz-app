@@ -541,12 +541,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory, including a partial read that did not find the
-    // entry, still takes a write, dated now.
-    const current = await tools.client
-      .memories(key)
-      .then(({ entries }) => entries.find((entry) => entry.slug === key))
-      .catch(() => undefined);
+    // A write must be dated after the entry it replaces, so it waits for a
+    // read that finds the entry or confirms there is none.
+    const unread = new Error(`Memory ${key} could not be read; try again.`);
+    const { entries, partial } = await tools.client.memories(key).catch(() => {
+      throw unread;
+    });
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial) throw unread;
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },

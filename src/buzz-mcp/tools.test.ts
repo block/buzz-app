@@ -304,9 +304,16 @@ it("never reports memory cut short by a limit as missing", async () => {
   await expect(
     callTool(client, {}, "mem_get", { slug: "notes" }),
   ).rejects.toThrow("Memory mem/notes could not be read; try again.");
-  // A write over an unread entry is dated now, as when the read fails.
-  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
-  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 0);
+  // A write needs the entry it replaces: a partial read that missed it, or a
+  // failed read, writes nothing.
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  vi.mocked(client.memories).mockRejectedValueOnce(new Error("429"));
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  expect(client.remember).not.toHaveBeenCalled();
   partial([{ slug: "mem/a", body: "a", createdAt: 0 }]);
   await expect(callTool(client, {}, "mem_get", {})).resolves.toMatch(
     /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
@@ -316,6 +323,9 @@ it("never reports memory cut short by a limit as missing", async () => {
   await expect(
     callTool(client, {}, "mem_get", { slug: "notes" }),
   ).resolves.toBe("No memory mem/notes.");
+  // Only a complete read that confirms the entry is missing writes it fresh.
+  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 0);
 });
 
 it("answers MCP requests, reporting a failed call as a tool error", async () => {

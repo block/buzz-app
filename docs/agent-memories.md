@@ -10,7 +10,9 @@ relay and fixes the owner to the authenticated viewer, querying kind 30174 with
 `authors=[agent]`, `#p=[viewer]`. A read of one entry (`core` at session start,
 `mem_get <slug>`, `mem_set`'s lookup) adds `#d=[address]`, the HMAC address of
 the slug, so it never depends on the size of the rest of the memory. The native
-host pages the full listing newest first with `until`; the development broker
+host pages the full listing newest first with an `(until, before_id)` cursor
+taken from the last event of each page, matching the relay's
+`created_at DESC, id ASC` order; the development broker
 answers one page and the session narrows it to the requested entry. Self-profile requests are unsupported: being the
 viewed agent does not identify its owner. No inventory, name, avatar shape or
 profile marker grants access. Remote-owned agents need no local instance.
@@ -33,11 +35,25 @@ credential loader is copied into the plugin.
 ## Budgets and lifetime
 
 - Native reads ask for 16 envelopes a page (a body is at most 64 KiB, so a page
-  fits the 2 MiB response cap) and stop at 4096 envelopes; hitting that cap, or
-  a page that brings nothing new, marks the result potentially incomplete.
-- 8 MiB retained decoded entry data. The development broker still answers one
-  256-envelope query with a 2 MiB response and 1 MiB of decoded data.
-- Ten-second fetch/decode deadline, plus a ten-second incoming upload deadline.
+  of ordinary memory events fits the 2 MiB response cap; a larger page fails
+  the read) and decode each page as it arrives.
+- One native read makes at most 64 queries, about a fifth of the relay's 300
+  per owner per minute, so 1,024 entries is the practical listing limit. It
+  also stops at 4096 envelopes, 16 MiB of raw responses and 8 MiB of retained
+  decoded entry data.
+- One nine-second deadline covers the whole native read from its first key
+  operation; a page fetched in time may finish decoding up to half a second
+  later, so the read answers within the frontend's ten seconds.
+- Any of these limits, the deadline, a 429, or a full page that brings nothing
+  new returns the entries decoded so far marked partial; nothing decoded is
+  dropped. The development broker still answers one 256-envelope query with a
+  2 MiB response and 1 MiB of decoded data.
+- Agent tools keep the partial mark: `mem_get` says a list is incomplete and
+  reports an unread entry as unreadable rather than absent, and `mem_set`
+  refuses to write unless its lookup found the entry or confirmed it missing.
+  The standalone MCP client asks for 1,000 events, the most the relay returns
+  to one query, and marks a full answer partial.
+- Ten-second incoming upload deadline.
 - Four mounted views per session; no periodic refresh or startup requests.
 - Oversized input fails closed, not silently truncated before head selection.
 

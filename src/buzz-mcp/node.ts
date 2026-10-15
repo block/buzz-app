@@ -11,9 +11,9 @@ import { hexToBytes } from "nostr-tools/utils";
 import { eventsDto } from "../features/relay/events";
 import type { BuzzClient, BuzzEvent, Memory, Template, Upload } from "./client";
 
-/** Most memory events one read asks for; a read that fills it may be missing
- * older entries. */
-const MEMORY_LIMIT = 5000;
+/** Most memory events one read asks for: the most the relay returns for one
+ * query. A read that fills it may be missing older entries. */
+const MEMORY_LIMIT = 1000;
 
 const sha256 = (data: Uint8Array | string) =>
   createHash("sha256").update(data).digest("hex");

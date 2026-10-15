@@ -11,7 +11,9 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -20,7 +22,7 @@ import styles from "./Settings.module.css";
 import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { PluginInfo } from "../plugins/types";
-import type { Communities } from "../features/communities/service";
+import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
@@ -39,6 +41,7 @@ import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
+import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
 import { developerMode, settingsSections } from "./settings-sections";
 
 const pluginCategoryDefinitions = [
@@ -107,6 +110,7 @@ export function Settings({
   navigation,
   onSection,
   navigationPane = false,
+  onDeparturePending,
 }: {
   agents?: Agents | undefined;
   cards: SettingsCards;
@@ -123,6 +127,7 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
   navigationPane?: boolean;
+  onDeparturePending?: (pending: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
@@ -133,11 +138,37 @@ export function Settings({
   const selectedCommunity = client.memberships.find(
     (membership) => membership.id === client.selected,
   );
+  // Local removal drops the saved membership before session disposal/purge
+  // settles. Retain only this action's context so its modal can finish.
+  const [departure, setDeparture] = useState<{
+    community: Membership;
+    viewer: string | undefined;
+  } | null>(null);
+  const departureCommunity =
+    departure?.viewer === client.viewer
+      ? (departure?.community ?? selectedCommunity)
+      : selectedCommunity;
   const { groups, sections, defaultSection } = useMemo(
-    () => settingsSections(contributed, selectedCommunity),
-    [contributed, selectedCommunity],
+    () => settingsSections(contributed, departureCommunity),
+    [contributed, departureCommunity],
   );
   const [selected, setSelected] = useState(defaultSection);
+  const departureFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (selected !== "profile" || !departureFocus.current) return;
+    departureFocus.current = false;
+    document.getElementById("main-content")?.focus({ preventScroll: true });
+  }, [selected]);
+  useEffect(() => {
+    if (
+      departure &&
+      (selected !== "leave-community" ||
+        departure.viewer !== client.viewer ||
+        (client.selected !== null &&
+          client.selected !== departure.community.id))
+    )
+      setDeparture(null);
+  }, [client.selected, client.viewer, departure, selected]);
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
@@ -265,6 +296,26 @@ export function Settings({
                     }}
                   </OwnedContribution>
                 ),
+            )}
+            {departureCommunity && selected === "leave-community" && (
+              <CommunityDepartureSettings
+                key={`${client.viewer}:${departureCommunity.id}`}
+                communities={communities}
+                community={departureCommunity}
+                onPending={(pending) => {
+                  onDeparturePending?.(pending);
+                  setDeparture(
+                    pending
+                      ? { community: departureCommunity, viewer: client.viewer }
+                      : null,
+                  );
+                }}
+                onRemoved={() => {
+                  departureFocus.current = true;
+                  if (onSection) onSection("profile");
+                  else setSelected("profile");
+                }}
+              />
             )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings

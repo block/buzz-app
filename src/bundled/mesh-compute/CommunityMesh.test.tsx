@@ -265,3 +265,26 @@ it("labels Mesh model refs by name and quantization", () => {
   expect(modelLabel("local-gguf/sha256-7756e8943d5ec98b")).toBe("Local model");
   expect(modelLabel("Qwen 27B")).toBe("Qwen 27B");
 });
+
+it("reports unique contributors without fetching profiles for setup", async () => {
+  native.invoke.mockResolvedValue({
+    unavailable: null,
+    entries: [
+      { memberPubkey: "one", modelId: "first" },
+      { memberPubkey: "one", modelId: "second" },
+      { memberPubkey: "two", modelId: "first" },
+    ],
+  });
+  const source = relay("viewer");
+  const availability = vi.fn();
+  render(
+    <CommunityMesh
+      community="https://fixture.example"
+      relay={source}
+      presentation="availability"
+      onAvailabilityChange={availability}
+    />,
+  );
+  await waitFor(() => expect(availability).toHaveBeenLastCalledWith(true, 2));
+  expect(source.snapshot().session.profiles.ensure).not.toHaveBeenCalled();
+});

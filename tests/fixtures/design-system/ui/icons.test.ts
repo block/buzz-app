@@ -14,6 +14,7 @@ it("derives the complete categorized inventory from the public gateway", () => {
 
   expect(customNames).toEqual([
     "BestieIcon",
+    "BuzzIcon",
     "ClaudeLogoIcon",
     "CodexLogoIcon",
     "GitHubIssueIcon",
@@ -39,6 +40,11 @@ it("derives the complete categorized inventory from the public gateway", () => {
         { width: 15, height: 15 },
         { width: 17, height: 17 },
       ],
+    }),
+    expect.objectContaining({
+      name: "BuzzIcon",
+      category: "Product mark",
+      intendedSizes: [{ width: 18, height: 18 }],
     }),
     expect.objectContaining({
       name: "ClaudeLogoIcon",

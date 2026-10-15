@@ -1,3 +1,7 @@
+import {
+  UsersIcon,
+  MonitorIcon,
+} from "../../../../src/shared/design-system/icons";
 import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
@@ -1740,6 +1744,32 @@ function RadioGroupSpecimen() {
   const [enabled, setEnabled] = useState(false);
   return (
     <>
+      <SpecimenGroup
+        label="Icon segments"
+        code={`<Field label="Compute" nativeLabel={false}>
+  <RadioGroup variant="segmented" defaultValue="community">
+    <Radio value="community" label="Use community" description="Use compute shared by someone else." icon={<UsersIcon size={18} />} />
+    <Radio value="local" label="Share computer" description="Contribute compute to your community." icon={<MonitorIcon size={18} />} />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Compute" nativeLabel={false}>
+          <RadioGroup variant="segmented" defaultValue="community">
+            <Radio
+              value="community"
+              label="Use community"
+              description="Use compute shared by someone else."
+              icon={<UsersIcon size={18} />}
+            />
+            <Radio
+              value="local"
+              label="Share computer"
+              description="Contribute compute to your community."
+              icon={<MonitorIcon size={18} />}
+            />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
       <SpecimenGroup
         label="Native form reset"
         code={`<form aria-label="Notification preferences">

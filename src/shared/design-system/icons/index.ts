@@ -1,4 +1,12 @@
 import { defineIcon } from "./createDecorativeIcon";
+import { BuzzArtwork } from "./Buzz";
+export const BuzzIcon = defineIcon("custom", BuzzArtwork, {
+  meaning: "Buzz community",
+  category: "Product mark",
+  provenance:
+    "Existing public/buzz-mark.svg, requested for community compute by the designer.",
+  intendedSizes: [{ width: 18, height: 18 }],
+});
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
@@ -468,6 +476,8 @@ export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);
 import TablerGaugeIcon from "@tabler/icons-react/dist/esm/icons/IconGauge.mjs";
 export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);
 
+import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
+export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
 import TablerStorefrontIcon from "@tabler/icons-react/dist/esm/icons/IconBuildingStore.mjs";
 export const StorefrontIcon = defineIcon("tabler", TablerStorefrontIcon);
 

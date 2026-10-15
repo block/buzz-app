@@ -25,10 +25,17 @@ export function CommunityMesh({
   community,
   relay,
   refreshKey = 0,
+  presentation = "list",
+  onAvailabilityChange,
 }: {
   community: string;
   relay: RelayData;
   refreshKey?: number;
+  presentation?: "list" | "availability";
+  onAvailabilityChange?: (
+    available: boolean | null,
+    contributors: number | null,
+  ) => void;
 }) {
   const snapshot = useSyncExternalStore(relay.subscribe, relay.snapshot);
   const directory = snapshot.session.profiles;
@@ -55,12 +62,11 @@ export function CommunityMesh({
         });
         if (!active || snapshot !== relay.snapshot()) return;
         setResult({ snapshot, inventory });
-        void directory
-          .ensure(
-            inventory.entries.map((entry) => entry.memberPubkey),
-            "foreground",
-          )
-          .catch(() => {});
+        const members = [
+          ...new Set(inventory.entries.map((entry) => entry.memberPubkey)),
+        ];
+        if (presentation === "list" && members.length)
+          void directory.ensure(members, "foreground").catch(() => {});
       } catch (error) {
         if (active && snapshot === relay.snapshot())
           setResult({ snapshot, error: String(error) });
@@ -69,12 +75,16 @@ export function CommunityMesh({
     return () => {
       active = false;
     };
-  }, [community, snapshot, directory, relay, refreshKey]);
+  }, [community, snapshot, directory, relay, refreshKey, presentation]);
   const current = result?.snapshot === snapshot ? result : undefined;
   const inventory = current?.inventory;
   const error = current?.error ?? inventory?.unavailable;
   const entries = inventory?.entries ?? [];
+  const available = error || !inventory ? null : entries.length > 0;
   const contributors = new Set(entries.map((entry) => entry.memberPubkey)).size;
+  useEffect(() => {
+    onAvailabilityChange?.(available, available === null ? null : contributors);
+  }, [available, contributors, onAvailabilityChange]);
   const modelCount = new Set(entries.map((entry) => entry.modelId)).size;
   // One device may advertise several models: count each identified device once.
   // Unknown device identity or capacity is not guessed into the total.
@@ -96,6 +106,12 @@ export function CommunityMesh({
       profiles.get(pubkey)?.name || "Unnamed member",
       memberKeys,
     );
+  if (presentation === "availability")
+    return error ? (
+      <p role="alert" className="m-0 text-center text-body-sm text-danger">
+        Couldn’t check community compute: {error}
+      </p>
+    ) : null;
   const shared = groupDevices(entries, snapshot.viewer, memberName);
   const sharedGb =
     devices.size && !unknownCapacity

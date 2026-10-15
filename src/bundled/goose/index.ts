@@ -23,8 +23,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(host, agents.relay);
   const spawn = host.spawn?.bind(host);
+  const setup = new GooseSetup(spawn);
   const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
-    setup: new GooseSetup(spawn),
+    setup,
     runtime,
     history: new GooseHistory(spawn),
   });
@@ -81,6 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         component: ActivityTab,
       },
     ],
+    models: (agent) => setup.picks(config(agent.config)),
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,

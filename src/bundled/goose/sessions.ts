@@ -182,7 +182,8 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
-   * `title` names a session opened for it. Once `signal` aborts, it stops
+   * `title` names a session opened for it; `model`, one of the agent's
+   * provider's, is what its turn runs on. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -194,12 +195,14 @@ export class AgentSessions {
       fresh,
       title,
       signal,
+      model,
       ...activity
     }: Readonly<{
       steer?: string;
       fresh?: () => Promise<string>;
       title?: string;
       signal?: AbortSignal;
+      model?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -226,7 +229,13 @@ export class AgentSessions {
         break;
       }
       this.touch(key, live, seen);
-      return this.answer(key, live, live.session.busy ? steer : text, activity);
+      return this.answer(
+        key,
+        live,
+        live.session.busy ? steer : text,
+        activity,
+        model,
+      );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
     // waits for this session instead of opening another.
@@ -244,7 +253,7 @@ export class AgentSessions {
       }
       if (signal?.aborted) return {};
       this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity) };
+      return { settled: this.answer(key, live, text, activity, model) };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -409,8 +418,9 @@ export class AgentSessions {
     live: Live,
     text: string,
     activity: ActivityReceipt,
+    model: string | undefined,
   ) {
-    const settled = await live.session.send(text, activity);
+    const settled = await live.session.send(text, activity, model);
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (!live.session.busy && this.stale(live)) this.drop(key, live);

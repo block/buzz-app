@@ -192,6 +192,7 @@ export class GooseRuntime {
     config: raw,
     channelId,
     team,
+    model,
     workingUntil,
     ignored,
     signal,
@@ -276,6 +277,7 @@ export class GooseRuntime {
       fresh: async () => (await prompt(true)).text,
       title: sessionTitle(entry.name, place, key.split("/")[1]),
       signal,
+      ...(model ? { model } : {}),
       activityScope: topLevel
         ? channel
         : (threadReference(event)?.rootId ?? event.id),

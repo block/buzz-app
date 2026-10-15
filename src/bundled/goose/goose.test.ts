@@ -221,6 +221,47 @@ describe("GooseProcess", () => {
     await expect(second).resolves.toEqual({ ok: true });
   });
 
+  it("runs a message that asks for another model as the next turn, on it", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+    });
+    const first = session.send("one");
+    await flush();
+    const same = session.send("two", {}, "gpt-4.1");
+    const other = session.send("three", {}, "o3");
+    // Steering would answer it before the turn it waits for.
+    const after = session.send("four");
+    await flush();
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", ["two"]],
+    ]);
+    process.turns[0]?.finish();
+    await flush();
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
+    process.turns[1]?.finish();
+    await flush();
+    process.turns[2]?.finish();
+    await expect(Promise.all([first, same, other, after])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ]);
+    expect(process.turns.map((turn) => turn.text)).toEqual([
+      "one",
+      "three",
+      "four",
+    ]);
+    // Each turn on its model: the pick's, then the agent's again.
+    expect(process.configured).toEqual([
+      "session-1 model=gpt-4.1",
+      "session-1 model=o3",
+      "session-1 model=gpt-4.1",
+    ]);
+  });
+
   it("names a session with its title", async () => {
     const { open, process } = await start();
     await open({ title: "Ada · #general" });

@@ -263,6 +263,21 @@ describe("AgentSessions", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it("runs a turn on the model its message asked for, and the next on the agent's", async () => {
+    const { fake, sessions, choose } = setup();
+    choose({ provider: "openai", model: "" });
+    await sessions.deliver("a", "one", 1, { model: "gpt-4.1" });
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=gpt-4.1",
+      "session-1 model=gpt-default",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+  });
+
   it("fails a turn goose cannot switch, and switches at the next", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);

@@ -38,7 +38,10 @@ async function fixture(reply: HostResponse | (() => Promise<HostResponse>)) {
 it("lists every destination the account holds under the session credential", async () => {
   const h = await fixture(
     response({
-      communities: [{ relay_url: url }, { relay_url: "wss://b.example:8443" }],
+      communities: [
+        { community_url: url },
+        { community_url: "wss://b.example:8443" },
+      ],
     }),
   );
   expect(await h.client.list(h.signal)).toEqual({
@@ -66,14 +69,14 @@ it("reads an omitted repeated field as an empty list", async () => {
 });
 
 it.each([
-  { relay_url: "https://primary.example" },
-  { relay_url: 7 },
+  { community_url: "https://primary.example" },
+  { community_url: 7 },
   {},
   "not a record",
   null,
 ])("rejects a list holding %j", async (entry) => {
   const h = await fixture(
-    response({ communities: [{ relay_url: url }, entry] }),
+    response({ communities: [{ community_url: url }, entry] }),
   );
   await expect(h.client.list(h.signal)).rejects.toThrow(
     "Builderlab returned an invalid response.",
@@ -111,14 +114,14 @@ it.each([
 });
 
 it("adds and removes one destination by its address, taking the status as the answer", async () => {
-  const added = await fixture(response({ community: { relay_url: url } }));
+  const added = await fixture(response({ community: { community_url: url } }));
   expect(await added.client.add(url, added.signal)).toEqual({
     kind: "accepted",
   });
   expect(added.host.request).toHaveBeenCalledWith(
     expect.objectContaining({
       url: route("add"),
-      body: JSON.stringify({ relay_url: url }),
+      body: JSON.stringify({ community_url: url }),
     }),
   );
   const removed = await fixture(response({}));
@@ -128,7 +131,7 @@ it("adds and removes one destination by its address, taking the status as the an
   expect(removed.host.request).toHaveBeenCalledWith(
     expect.objectContaining({
       url: route("remove"),
-      body: JSON.stringify({ relay_url: url }),
+      body: JSON.stringify({ community_url: url }),
     }),
   );
 });
@@ -196,7 +199,7 @@ it("names an unreachable service while the session stands, and cancels once it c
 });
 
 it("does not request under an aborted signal or a signed-out session", async () => {
-  const h = await fixture(response({ community: { relay_url: url } }));
+  const h = await fixture(response({ community: { community_url: url } }));
   const controller = new AbortController();
   controller.abort();
   await expect(h.client.add(url, controller.signal)).rejects.toMatchObject({

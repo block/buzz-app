@@ -58,32 +58,34 @@ const SCOPES = [
 ];
 
 type Choice = Readonly<{ provider: string; model: string }>;
-type Read<T> =
+type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
-  | { status: "error"; error: string; value?: T };
+  | { status: "error"; error: string; value?: T }
+) & { scope?: string };
 
 /** `read()` as it settles, read again when `key` changes or on `retry`. A
- * value already shown stays while it is read again. */
-function useRead<T>(read: () => Promise<T>, key: string) {
+ * value already shown stays while it is read again, even when that read
+ * fails, but only for the same `scope`; another scope's value is never shown. */
+function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
   const [round, setRound] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     let current = true;
-    setState((prior) =>
-      prior.value === undefined
-        ? { status: "loading" }
-        : { status: "loading", value: prior.value },
-    );
+    const kept = (prior: Read<T>) =>
+      prior.value === undefined || prior.scope !== scope
+        ? {}
+        : { value: prior.value, scope };
+    setState((prior) => ({ status: "loading", ...kept(prior) }));
     read().then(
-      (value) => current && setState({ status: "ready", value }),
+      (value) => current && setState({ status: "ready", value, scope }),
       (error: unknown) =>
         current &&
         setState((prior) => ({
           status: "error",
           error: message(error),
-          ...(prior.value === undefined ? {} : { value: prior.value }),
+          ...kept(prior),
         })),
     );
     return () => {
@@ -149,6 +151,7 @@ export function createTabs({
     const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
       `${id}:${provider?.configured ?? false}:${saves}`,
+      id,
     );
     // A result belongs to the choice it tested.
     const choice = `${value.provider}\u0000${value.model}`;

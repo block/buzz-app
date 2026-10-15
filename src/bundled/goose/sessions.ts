@@ -151,7 +151,8 @@ export class AgentSessions {
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
    * `title` names a session opened for it. Once `signal` aborts, it stops
-   * waiting for a session to open, which is then kept for the next message. */
+   * waiting for a session to open, which is then kept for the next message,
+   * and sends nothing. */
   async deliver(
     key: string,
     text: string,
@@ -175,7 +176,15 @@ export class AgentSessions {
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
       if (opening) {
-        await opening.catch(() => undefined);
+        // The session stays shared; only this message gives up on it.
+        try {
+          await abortable(
+            opening.catch(() => undefined),
+            signal,
+          );
+        } catch {
+          return LATE;
+        }
         continue;
       }
       const live = this.live.get(key);

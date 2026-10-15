@@ -354,6 +354,41 @@ describe("AgentSessions", () => {
     ]);
   });
 
+  it("sends nothing for a message that gives up waiting on another's session", async () => {
+    const { fake, sessions, change } = setup();
+    await sessions.deliver("a", "one", 1);
+    change({ systemPrompt: "newer" }, false);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fresh = async () => {
+      await gate;
+      return "everything so far";
+    };
+    const opening = sessions.deliver("a", "two", 2, { fresh });
+    await flush(30);
+    const abort = new AbortController();
+    const expired = sessions.deliver("a", "three", 3, {
+      signal: abort.signal,
+    });
+    await flush(30);
+    abort.abort();
+    await expect(expired).resolves.toEqual({
+      ok: false,
+      error: "goose did not start in time",
+    });
+    release();
+    await expect(opening).resolves.toEqual({ ok: true });
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.turns.map((turn) => [turn.sessionId, turn.text])).toEqual([
+      ["session-1", "one"],
+      ["session-2", "everything so far"],
+    ]);
+    expect(goose?.turns[1]?.steered).toEqual([]);
+  });
+
   it("stops a goose that hangs opening a session", async () => {
     vi.useFakeTimers();
     const { fake, sessions, pool } = setup({}, false, {

@@ -5,7 +5,12 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./goose-testing";
-import { DEFAULT_CONFIG, GooseRuntime, sessionTitle } from "./runtime";
+import {
+  DEFAULT_CONFIG,
+  GooseRuntime,
+  sessionTitle,
+  standalonePrompt,
+} from "./runtime";
 
 describe("sessionTitle", () => {
   it("names the agent, the channel and a thread's root", () => {
@@ -121,9 +126,21 @@ function setup(
       workingUntil: () => undefined,
     } as unknown as Delivery);
   const goose = () => fake.geese.find((process) => process.turns.length);
+  const runOnce = (key: string, prompt: string) =>
+    runtime.runOnce({
+      delivery: {
+        agent,
+        channelId: channel,
+        config: DEFAULT_CONFIG,
+      },
+      key,
+      signal: new AbortController().signal,
+      prompt: async () => prompt,
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
     agent,
     deliver,
+    runOnce,
     fake,
     goose,
     published,
@@ -245,6 +262,16 @@ describe("GooseRuntime", () => {
     await me.deliver(message("1", "@Gander hi"));
     await flush(100);
     expect(me.published.map((event) => event.tags)).toEqual([[["h", channel]]]);
+  });
+
+  it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
+    const { runOnce, goose } = setup();
+    await expect(
+      runOnce("timer/daily", "Post the daily summary."),
+    ).resolves.toEqual({ ok: true });
+    expect(goose()?.turns.map((turn) => turn.text)).toEqual([
+      standalonePrompt(self, "Post the daily summary."),
+    ]);
   });
 
   it("fails a mention it cannot place until the placement can be read", async () => {

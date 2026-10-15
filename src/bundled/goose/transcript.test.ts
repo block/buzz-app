@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
 import { steerPrompt, turnPrompt } from "../claude-code/prompt";
 import { type FakeSession, fakeSpawn } from "./goose-testing";
+import { standalonePrompt } from "./runtime";
 import { GooseHistory, gooseTurns, startedFor } from "./transcript";
 
 const alice = "a".repeat(64);
@@ -233,6 +234,10 @@ describe("GooseHistory", () => {
         user([text(`Ask ${agent}`)]),
       ]),
       session("s4", "Gander · DM", conversation(), "/elsewhere"),
+      // A timer's turn, which names no channel.
+      session("s5", "Gander · timer/daily", [
+        user([text(standalonePrompt(agent, "Post the daily summary."))]),
+      ]),
     ]).recent(agent, "~/.buzz", signal);
     expect(rows.map((row) => [row.sessionId, row.title, row.at])).toEqual([
       [
@@ -245,6 +250,7 @@ describe("GooseHistory", () => {
         "Old name · #general · 11111111",
         Date.parse("2027-01-15T08:00:00Z"),
       ],
+      ["s5", "Gander · timer/daily", Date.parse("2027-01-15T08:00:00Z")],
     ]);
   });
 

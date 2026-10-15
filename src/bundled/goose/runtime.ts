@@ -63,6 +63,12 @@ const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 const TITLE_LIMIT = 80;
 
+/** A watch's or timer's prompt, after a context naming the agent as a
+ * conversation's first prompt does, so its session is listed as the agent's. */
+export function standalonePrompt(agent: string, text: string) {
+  return `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`;
+}
+
 /** A session's title in goose, as harness agents name theirs:
  * `Agent · #channel`, and the thread's root when each thread is a session. */
 export function sessionTitle(
@@ -303,10 +309,16 @@ export class GooseRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     void this.memory(agent.pubkey, entry);
-    const done = entry.sessions.runOnce(key, prompt, {
-      signal,
-      title: sessionTitle(entry.name, key),
-    });
+    const done = entry.sessions.runOnce(
+      key,
+      async () => {
+        const text = await prompt();
+        return text === undefined
+          ? undefined
+          : standalonePrompt(agent.pubkey, text);
+      },
+      { signal, title: sessionTitle(entry.name, key) },
+    );
     this.notify();
     return done.finally(() => this.notify());
   }

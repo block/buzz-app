@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { CoreMemoryCache } from "./core-memory-cache";
+import { CoreMemoryCache, forgetCoreMemory } from "./core-memory-cache";
 import type { AgentReads, MemoryListing } from "./reads";
 
 const agent = "a".repeat(64);
@@ -13,6 +13,11 @@ function setup() {
   const storage = {
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
+    removeItem: (key: string) => void data.delete(key),
+    key: (index: number) => [...data.keys()][index] ?? null,
+    get length() {
+      return data.size;
+    },
   } as Storage;
   const memoryListing = vi.fn(async (_signal: AbortSignal) => listing("one"));
   let reads: AgentReads | undefined = {
@@ -27,10 +32,10 @@ function setup() {
     memoryListing,
     storage,
     /** Replaces the connection, which may read as someone else. */
-    reconnect(read = memoryListing) {
+    reconnect(read = memoryListing, scope = "wss://one.test") {
       reads = {
         connection: {},
-        scope: "wss://one.test",
+        scope,
         memoryListing: read,
       } as unknown as AgentReads;
     },
@@ -141,7 +146,67 @@ it("keeps nothing a replaced connection read", async () => {
 it("keeps each community's copy apart", async () => {
   const f = setup();
   await f.cache.core(agent);
-  expect([...f.data.keys()]).toEqual([
+  f.reconnect(
+    vi.fn(async () => listing("two")),
+    "wss://two.test",
+  );
+  await expect(f.cache.core(agent)).resolves.toBe("two");
+  f.reconnect(f.memoryListing, "wss://one.test");
+  await expect(f.cache.core(agent)).resolves.toBe("one");
+  f.reconnect(
+    vi.fn(async () => listing("unused")),
+    "wss://two.test",
+  );
+  await expect(f.cache.core(agent)).resolves.toBe("two");
+  expect(f.memoryListing).toHaveBeenCalledOnce();
+  expect([...f.data.keys()].sort()).toEqual([
     `buzz.core-memory.v1:wss://one.test:${agent}`,
+    `buzz.core-memory.v1:wss://two.test:${agent}`,
   ]);
+});
+
+it("gives a start waiting on its first read what the agent wrote meanwhile", async () => {
+  const f = setup();
+  const read = held();
+  f.memoryListing.mockReturnValueOnce(read.promise);
+  const waiting = f.cache.core(agent);
+  await vi.waitFor(() => expect(f.memoryListing).toHaveBeenCalledOnce());
+  f.cache.wrote(agent, "core", "new");
+  read.release(listing("old"));
+  await expect(waiting).resolves.toBe("new");
+});
+
+it("forgets a left community's copy, keeps it across a disconnect, and lets no held read restore it", async () => {
+  const f = setup();
+  await f.cache.core(agent);
+  f.reconnect(
+    vi.fn(async () => listing("two")),
+    "wss://two.test",
+  );
+  await f.cache.core(agent);
+  // A disconnect keeps the offline copy.
+  f.reconnect(
+    vi.fn(async () => listing("unused")),
+    "wss://one.test",
+  );
+  await expect(f.cache.core(agent)).resolves.toBe("one");
+  // A refresh is under way when the community is left.
+  const read = held();
+  f.reconnect(
+    vi.fn(() => read.promise),
+    "wss://one.test",
+  );
+  f.cache.refresh(agent);
+  forgetCoreMemory("wss://one.test", f.storage);
+  read.release(listing("stale"));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect([...f.data.keys()]).toEqual([
+    `buzz.core-memory.v1:wss://two.test:${agent}`,
+  ]);
+  // Rejoining reads it again rather than reusing the forgotten copy.
+  const rejoin = vi.fn(async () => listing("fresh"));
+  f.reconnect(rejoin, "wss://one.test");
+  await expect(f.cache.core(agent)).resolves.toBe("fresh");
+  expect(rejoin).toHaveBeenCalledOnce();
 });

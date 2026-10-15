@@ -10,6 +10,26 @@ import type { AgentReads } from "./reads";
 const FIRST_READ_MS = 5_000;
 /** How long a refresh nothing waits on may take. */
 const REFRESH_MS = 10_000;
+const PREFIX = "buzz.core-memory.v1:";
+/** Every cache on this page, so leaving a community can clear their copies. */
+const caches = new Set<CoreMemoryCache>();
+
+/** Forgets every agent's cached `core` memory for one community and viewer
+ * (`origin:viewer`): the saved copies and each cache's in-memory copy. A read
+ * still under way cannot put it back. */
+export function forgetCoreMemory(
+  scope: string,
+  storage: Storage = localStorage,
+) {
+  const prefix = `${PREFIX}${scope}:`;
+  for (const cache of caches) cache.forget(prefix);
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(prefix)) keys.push(key);
+  }
+  for (const key of keys) storage.removeItem(key);
+}
 
 export class CoreMemoryCache {
   private readonly memoryReads = new MemoryReads();
@@ -23,7 +43,17 @@ export class CoreMemoryCache {
     /** The reads of each agent's community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage,
-  ) {}
+  ) {
+    caches.add(this);
+  }
+
+  /** Drops the in-memory copies under `prefix` and fences reads under way. */
+  forget(prefix: string) {
+    for (const key of [...this.latest.keys()])
+      if (key.startsWith(prefix)) this.latest.delete(key);
+    for (const key of [...this.writers.keys()])
+      if (key.startsWith(prefix)) this.claim(key);
+  }
 
   /** The agent's `core` memory: its text, `null` when it has none, or
    * undefined when it could not be read. The cached copy needs no relay
@@ -81,8 +111,12 @@ export class CoreMemoryCache {
     const writer = this.claim(key);
     const memory = coreOf(await this.memoryReads.read(reads, pubkey, signal, "core"));
     if (this.reads(pubkey)?.connection !== reads.connection) return undefined;
-    if (memory !== undefined && this.writers.get(key) === writer)
-      this.keep(key, memory);
+    if (this.writers.get(key) !== writer) {
+      // A later write or read took over: answer with what it kept, if anything.
+      const current = this.cached(key);
+      return current === undefined ? memory : current;
+    }
+    if (memory !== undefined) this.keep(key, memory);
     return memory;
   }
 
@@ -114,6 +148,6 @@ export class CoreMemoryCache {
   }
 
   private key(scope: string, pubkey: string) {
-    return `buzz.core-memory.v1:${scope}:${pubkey}`;
+    return `${PREFIX}${scope}:${pubkey}`;
   }
 }

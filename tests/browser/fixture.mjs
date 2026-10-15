@@ -1043,6 +1043,16 @@ export const test = base.extend({
             filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
         );
       }
+      if (filter.kinds?.includes(30174)) {
+        // A local agent's memory, read by its owner: these agents have none.
+        expect(filter).toEqual({
+          kinds: [30174],
+          authors: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+          "#p": [viewer],
+          limit: 256,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30315)) {
         expect(filter).toEqual({
           kinds: [30315],

@@ -319,10 +319,45 @@ pub(crate) fn slug(s: &str) -> bool {
 /// exceeds it (an event carrying unusually many tags) fails the read.
 const MEMORY_PAGE: usize = 16;
 const MEMORY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-/// Most memory events and decoded bytes one read takes, across its pages. A
-/// listing past either cap is returned partial.
+/// Most memory events and decoded bytes one decode takes. A listing past
+/// either cap is returned partial.
 const MEMORY_EVENTS: usize = 4096;
 const MEMORY_DECODED_BYTES: usize = 8 * 1024 * 1024;
+
+/// What one paged memory read may spend before it returns what it has,
+/// marked partial.
+struct MemoryBudget {
+    /// Relay `/query` calls. The relay admits 300 per owner per minute, shared
+    /// with every other read the app makes, so one listing takes at most 64
+    /// (about a fifth). At 16 events a page this makes 1,024 entries the real
+    /// listing limit, below `MEMORY_EVENTS`.
+    requests: usize,
+    events: usize,
+    /// Undecoded response bytes kept across pages. Ciphertext is base64 plus
+    /// the event envelope, so 16 MiB covers the 8 MiB decoded cap.
+    raw_bytes: usize,
+    /// One deadline for the whole read, under the frontend's 10 seconds so
+    /// a partial listing arrives before the caller gives up.
+    deadline: tokio::time::Instant,
+}
+
+impl MemoryBudget {
+    fn new() -> Self {
+        Self {
+            requests: 64,
+            events: MEMORY_EVENTS,
+            raw_bytes: 16 * 1024 * 1024,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(9),
+        }
+    }
+}
+
+/// One memory query's answer: its records and response size, or the relay
+/// refusing it for rate (429).
+enum MemoryPage {
+    Records(Vec<Option<Value>>, usize),
+    Limited,
+}
 
 /// The `d` tag of memory `name`: an HMAC of the slug under the owner's
 /// conversation key, so the relay never sees slugs.
@@ -371,7 +406,7 @@ pub(crate) async fn relay_agent_memories_read(
             .await?;
         filter["#d"] = json!([address]);
     }
-    let (events, partial) = read_memory_pages(|cursor| {
+    let (events, partial) = read_memory_pages(MemoryBudget::new(), |cursor| {
         let mut page = filter.clone();
         if let Some((until, before_id)) = cursor {
             page["until"] = json!(until);
@@ -380,26 +415,28 @@ pub(crate) async fn relay_agent_memories_read(
         let url = url.clone();
         let host = host.inner();
         async move {
-            let response = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                send(
-                    host,
-                    url,
-                    "POST",
-                    Some(json!([page]).to_string()),
-                    true,
-                    MEMORY_RESPONSE_BYTES,
-                ),
+            let response = send(
+                host,
+                url,
+                "POST",
+                Some(json!([page]).to_string()),
+                true,
+                MEMORY_RESPONSE_BYTES,
             )
-            .await
-            .map_err(|_| "Memory read failed")??;
+            .await?;
+            if response.status == 429 {
+                return Ok(MemoryPage::Limited);
+            }
             if response.status == 401 || response.status == 403 {
                 return Err("MemoryDenied".into());
             }
             if response.status != 200 || response.body.len() > MEMORY_RESPONSE_BYTES {
                 return Err("Memory read failed".into());
             }
-            memory_wire_records(&response.body)
+            Ok(MemoryPage::Records(
+                memory_wire_records(&response.body)?,
+                response.body.len(),
+            ))
         }
     })
     .await?;
@@ -418,19 +455,34 @@ pub(crate) async fn relay_agent_memories_read(
 /// Reads newest first, a page at a time, until a short page. The relay orders
 /// by `created_at DESC, id ASC` and resumes after the `(until, before_id)`
 /// cursor taken from the last event of the previous page, so entries sharing
-/// one second still page through. The listing is partial when it hits the
-/// event cap, or when a full page brings nothing new (a relay ignoring
-/// `before_id`), which stops the read instead of looping.
-async fn read_memory_pages<F, P>(mut page: P) -> Result<(Vec<Option<Value>>, bool)>
+/// one second still page through. The listing is partial, keeping the pages
+/// already read, when it exhausts `budget`, the relay answers 429, or a full
+/// page brings nothing new (a relay ignoring `before_id`), which stops the
+/// read instead of looping.
+async fn read_memory_pages<F, P>(
+    budget: MemoryBudget,
+    mut page: P,
+) -> Result<(Vec<Option<Value>>, bool)>
 where
     P: FnMut(Option<(u64, String)>) -> F,
-    F: std::future::Future<Output = Result<Vec<Option<Value>>>>,
+    F: std::future::Future<Output = Result<MemoryPage>>,
 {
     let mut events = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut cursor = None;
-    loop {
-        let records = page(cursor.clone()).await?;
+    let mut raw_bytes = 0usize;
+    for _ in 0..budget.requests {
+        let Ok(answer) = tokio::time::timeout_at(budget.deadline, page(cursor.clone())).await
+        else {
+            return Ok((events, true));
+        };
+        let MemoryPage::Records(records, bytes) = answer? else {
+            return Ok((events, true));
+        };
+        raw_bytes += bytes;
+        if raw_bytes > budget.raw_bytes {
+            return Ok((events, true));
+        }
         let full = records.len() >= MEMORY_PAGE;
         let mut added = false;
         for record in records {
@@ -450,14 +502,18 @@ where
             added = true;
             events.push(record);
         }
+        if events.len() > budget.events {
+            events.truncate(budget.events);
+            return Ok((events, true));
+        }
         if !full {
             return Ok((events, false));
         }
-        if !added || events.len() >= MEMORY_EVENTS {
-            events.truncate(MEMORY_EVENTS);
+        if !added || events.len() == budget.events {
             return Ok((events, true));
         }
     }
+    Ok((events, true))
 }
 
 // Validate the complete array grammar before projecting members. RawValue
@@ -1136,6 +1192,7 @@ mod tests {
         events: &[Value],
         asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
         honor_before_id: bool,
+        budget: MemoryBudget,
     ) -> (Vec<Option<Value>>, bool) {
         let mut events = events.to_vec();
         events.sort_by(|a, b| {
@@ -1145,7 +1202,7 @@ mod tests {
                 .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
         });
         let events = &events;
-        read_memory_pages(|cursor| {
+        read_memory_pages(budget, |cursor| {
             asked.lock().unwrap().push(cursor.clone());
             let page: Vec<_> = events
                 .iter()
@@ -1161,17 +1218,26 @@ mod tests {
                 .cloned()
                 .map(Some)
                 .collect();
-            async move { Ok(page) }
+            async move { Ok(MemoryPage::Records(page, 100)) }
         })
         .await
         .unwrap()
+    }
+
+    /// A budget that only the event cap limits.
+    fn roomy() -> MemoryBudget {
+        MemoryBudget {
+            requests: usize::MAX,
+            raw_bytes: usize::MAX,
+            ..MemoryBudget::new()
+        }
     }
 
     async fn paged(
         events: &[Value],
         asked: &std::sync::Mutex<Vec<Option<(u64, String)>>>,
     ) -> (Vec<Option<Value>>, bool) {
-        paged_with(events, asked, true).await
+        paged_with(events, asked, true, roomy()).await
     }
 
     #[tokio::test]
@@ -1289,7 +1355,7 @@ mod tests {
         // stops partial instead of looping.
         let tied: Vec<_> = (0..MEMORY_PAGE as u64 * 2).map(|i| stub(i, 5)).collect();
         let asked = std::sync::Mutex::new(Vec::new());
-        let (records, partial) = paged_with(&tied, &asked, false).await;
+        let (records, partial) = paged_with(&tied, &asked, false, roomy()).await;
         assert!(partial);
         assert_eq!(records.len(), MEMORY_PAGE);
         assert_eq!(asked.lock().unwrap().len(), 2);
@@ -1299,6 +1365,76 @@ mod tests {
         let (records, partial) = paged(&many, &std::sync::Mutex::new(Vec::new())).await;
         assert!(partial);
         assert_eq!(records.len(), MEMORY_EVENTS);
+        // One past the cap, two to a second: the last page is short, and the
+        // cap still applies.
+        let over: Vec<_> = (0..MEMORY_EVENTS as u64 + 1)
+            .map(|index| stub(index, 1_000_000 - index / 2))
+            .collect();
+        let (records, partial) = paged(&over, &std::sync::Mutex::new(Vec::new())).await;
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_EVENTS);
+    }
+
+    #[tokio::test]
+    async fn memory_listing_stops_partial_at_its_request_and_byte_budgets() {
+        let many: Vec<_> = (0..200u64).map(|i| stub(i, 1_000 - i)).collect();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let budget = MemoryBudget {
+            requests: 3,
+            ..roomy()
+        };
+        let (records, partial) = paged_with(&many, &asked, true, budget).await;
+        assert!(partial);
+        assert_eq!(records.len(), 3 * MEMORY_PAGE);
+        assert_eq!(asked.lock().unwrap().len(), 3);
+        // Each stub page reports 100 bytes: the third page passes 250.
+        let budget = MemoryBudget {
+            raw_bytes: 250,
+            ..roomy()
+        };
+        let (records, partial) = paged_with(&many, &asked, true, budget).await;
+        assert!(partial);
+        assert_eq!(records.len(), 2 * MEMORY_PAGE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn memory_listing_keeps_its_pages_on_rate_limit_or_deadline() {
+        let full = || {
+            (0..MEMORY_PAGE as u64)
+                .map(|i| Some(stub(i, 1_000 - i)))
+                .collect::<Vec<_>>()
+        };
+        let mut calls = 0;
+        let (records, partial) = read_memory_pages(roomy(), |_| {
+            calls += 1;
+            let answer = if calls == 1 {
+                MemoryPage::Records(full(), 1)
+            } else {
+                MemoryPage::Limited
+            };
+            async move { Ok(answer) }
+        })
+        .await
+        .unwrap();
+        assert!(partial);
+        assert_eq!(records.len(), MEMORY_PAGE);
+        // Pages of 4 seconds each: the third crosses the 9-second deadline
+        // for the whole read.
+        let mut calls = 0u64;
+        let (records, partial) = read_memory_pages(MemoryBudget::new(), |_| {
+            calls += 1;
+            let page: Vec<_> = (0..MEMORY_PAGE as u64)
+                .map(|i| Some(stub(calls * 100 + i, 1_000 - calls * 100 - i)))
+                .collect();
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                Ok(MemoryPage::Records(page, 1))
+            }
+        })
+        .await
+        .unwrap();
+        assert!(partial);
+        assert_eq!(records.len(), 2 * MEMORY_PAGE);
     }
 
     fn resign(event: &mut AgentEvent, secret: &[u8; 32]) {

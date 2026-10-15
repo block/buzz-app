@@ -460,6 +460,9 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
   ],
 });
 
+import TablerImageIcon from "@tabler/icons-react/dist/esm/icons/IconPhoto.mjs";
+export const ImageIcon = defineIcon("tabler", TablerImageIcon);
+
 import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
 export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
 import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
@@ -475,3 +478,11 @@ export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);
 
 import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
 export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
+import TablerStorefrontIcon from "@tabler/icons-react/dist/esm/icons/IconBuildingStore.mjs";
+export const StorefrontIcon = defineIcon("tabler", TablerStorefrontIcon);
+
+import TablerBrainIcon from "@tabler/icons-react/dist/esm/icons/IconBrain.mjs";
+export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
+
+import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
+export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);

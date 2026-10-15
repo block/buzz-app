@@ -66,7 +66,9 @@ import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/Keyboa
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
-  return <ThemePicker value={value} onValueChange={setValue} />;
+  return (
+    <ThemePicker value={value} onValueChange={setValue} messageColor="blue" />
+  );
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
@@ -767,6 +769,7 @@ function TabsSpecimen() {
     "Harness log",
   ]);
   const [selectedClosable, setSelectedClosable] = useState("Thread");
+  const [attentionRequest, requestAttention] = useState(0);
   const [destination, setDestination] = useState<Destination>("messages");
   const [panelDestination, setPanelDestination] =
     useState<Destination>("messages");
@@ -777,6 +780,15 @@ function TabsSpecimen() {
   }));
   return (
     <div className="component-specimen-stack">
+      <Button
+        disabled={!closable.includes("Thread")}
+        onClick={() => {
+          setSelectedClosable("Thread");
+          requestAttention((value) => value + 1);
+        }}
+      >
+        Reopen thread
+      </Button>
       <SpecimenGroup
         label="Closable navigation tabs — shared sidebar control"
         code={`{closable.length ? (
@@ -825,6 +837,8 @@ function TabsSpecimen() {
             items={closable.map((label) => ({
               value: label,
               label,
+              attentionRequest:
+                label === "Thread" ? attentionRequest : undefined,
               icon:
                 label === "Profile" ? (
                   <Avatar alt="" fallback="Ada" size="fill" />
@@ -2059,6 +2073,16 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
                 Focus a heading and press Enter or Space to expand it.
               </p>
             ),
+          },
+        ]}
+      />
+      <Accordion
+        variant="settings"
+        items={[
+          {
+            value: "memory",
+            title: "Core memory",
+            content: <p className="text-body-sm">Supporting agent context.</p>,
           },
         ]}
       />

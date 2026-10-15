@@ -1,5 +1,4 @@
 mod archive;
-pub mod tool_relay;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
@@ -586,6 +585,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::GtkSettingsExt;
+
+                // Avoid medium/full hinting distorting Linux WebKit font spacing.
+                // Process-local only; preserve the user's hinting on/off preference.
+                if let Some(settings) = gtk::Settings::default() {
+                    settings.set_gtk_xft_hintstyle(Some("hintslight"));
+                }
+            }
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
                     eprintln!("Could not restore Buzz window: {error}");
@@ -703,11 +712,11 @@ pub fn run() {
                 browser_status
             ];
             #[cfg(feature = "mesh")]
-            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat, mesh_compute::inline::mesh_compute_agent_run, mesh_compute::inline::mesh_compute_agent_cancel, mesh_compute::inline::mesh_compute_agent_result];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
                 #[cfg(feature = "mesh")]
-                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release" | "mesh_compute_disarm" | "mesh_compute_prepare_inference" | "mesh_compute_inference_current" | "mesh_compute_chat") {
+                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release" | "mesh_compute_disarm" | "mesh_compute_prepare_inference" | "mesh_compute_inference_current" | "mesh_compute_chat" | "mesh_compute_agent_run" | "mesh_compute_agent_cancel" | "mesh_compute_agent_result") {
                     return mesh_commands(request);
                 }
                 if request.message.command().starts_with("browser_") {
@@ -729,6 +738,7 @@ pub fn run() {
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
                 webview.state::<HostProcesses>().stop_all();
+                webview.state::<mesh_compute::MeshHost>().cancel_agent_turns();
             }
             browser::page_load(webview, payload);
         })

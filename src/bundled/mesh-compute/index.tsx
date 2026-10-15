@@ -1,9 +1,9 @@
-import type { AgentSetupAction } from "../../features/agents/service";
-import { MeshHistory } from "./meshTranscript";
+import { ownerReads } from "../../features/agents/reads";
+import { InlineAgent } from "./inlineAgent";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
 import { EmbeddedActivity } from "./EmbeddedActivity";
@@ -20,10 +20,9 @@ import styles from "./Compute.module.css";
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
-import { MeshSetup } from "./MeshSetup";
+import { MeshCreateSetup } from "./MeshCreateSetup";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
-  allowMeshAgentWatch,
   type MeshAgentConfig,
   MeshAgentRuntime,
   type PreparedInference,
@@ -172,12 +171,27 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const snapshot = agents.relay(agent)?.snapshot();
       if (snapshot?.status !== "ready")
         throw new Error("Buzz is not connected to this community");
-      const listing = await memoryReads.read(snapshot.session, agent, signal);
+      const source = ownerReads(agents.relay(agent), agent);
+      if (!source) throw new Error("Buzz is not connected to this community");
+      const listing = await memoryReads.read(source, agent, signal);
       if (agents.relay(agent)?.snapshot() !== snapshot)
         throw new Error("Community changed during memory read");
       return listing;
     };
+    const inline = new InlineAgent({
+      spawn,
+      current: (lease) =>
+        invoke<boolean>("mesh_compute_inference_current", { lease }),
+      memories: async (agent, signal) =>
+        (await readMemory(agent, signal)).entries,
+      remembered: (agent) => {
+        const snapshot = agents.relay(agent)?.snapshot();
+        if (snapshot?.status === "ready")
+          memoryReads.forget(snapshot.session, agent);
+      },
+    });
     const runtime = new MeshAgentRuntime({
+      inline,
       spawn,
       origin: (agent) => agents.relay(agent)?.snapshot().origin,
       prepare: (relay) =>
@@ -227,19 +241,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
         "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
       defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
       summary: () => "Shared compute",
-      CreateSetup: ({ disabled, onReadyChange, onActionChange }) => (
-        <CommunityComputePage
-          disabled={disabled}
-          onReadyChange={onReadyChange}
-          onActionChange={onActionChange}
-        />
+      Create: ({ disabled }) => (
+        <CommunityComputePage setupOnly disabled={disabled} />
       ),
       tabs: [
         { id: "prompt", title: "Settings", component: MeshAgentTab },
         {
           id: "transcript",
           title: "Transcripts",
-          component: createMeshTranscriptTab(new MeshHistory(spawn)),
+          component: createMeshTranscriptTab(inline),
         },
       ],
       // Covers compute startup (native waits up to 120s) plus one reply.
@@ -250,20 +260,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
         delivery.workingUntil(done);
         // Release the host queue so a subsequent mention can steer this run.
       },
-      allowAgentWatch: allowMeshAgentWatch,
     });
   }
 
   function CommunityComputePage({
     community,
+    setupOnly = false,
     disabled = false,
-    onReadyChange,
-    onActionChange,
   }: {
     community?: { id: string; name: string };
+    setupOnly?: boolean;
     disabled?: boolean;
-    onReadyChange?: (ready: boolean, advance?: boolean) => void;
-    onActionChange?: (action: AgentSetupAction) => void;
   }) {
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
@@ -312,7 +319,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
-    const sharingAction = useRef(0);
     // One page Refresh also rereads the community list (no second Refresh).
     const [refreshCount, setRefreshCount] = useState(0);
     // Controls wait for this community's selection instead of rejecting clicks.
@@ -412,19 +418,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (!disposed) setBusy(false);
       }
     };
-    const share = (
-      clearSaved = false,
-      hosting?: { model: string; maxVramGb: number },
-    ) => {
-      const action = runShare(clearSaved, hosting);
+    const share = (clearSaved = false, startAuto = false) => {
+      const action = runShare(clearSaved, startAuto);
       lastShareAction = action;
       return action;
     };
-    const runShare = async (
-      clearSaved: boolean,
-      hosting?: { model: string; maxVramGb: number },
-    ) => {
-      const action = ++sharingAction.current;
+    const runShare = async (clearSaved: boolean, startAuto: boolean) => {
       setBusy(true);
       setError(null);
       try {
@@ -451,58 +450,52 @@ export const apply: PluginModule["apply"] = (ctx) => {
             expectedViewer: owner,
           });
           const result = await invoke<MeshStatus>("mesh_compute_status");
-          if (
-            !disposed &&
-            action === sharingAction.current &&
-            snapshot === ctx.relay.snapshot()
-          )
-            setStatus(result);
+          if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
           return;
         }
         if (!id) throw new Error("Mesh native runtime is unavailable");
-        if (disposed || selected !== lease)
+        if (!current() || selected !== lease)
           throw new Error("Community changed");
+        if (startAuto) {
+          const latest = await invoke<MeshStatus>("mesh_compute_status");
+          if (!current() || selected !== lease)
+            throw new Error("Community changed");
+          if (latest.boundCommunity !== viewedCommunity)
+            throw new Error(
+              "Open Shared compute settings to switch communities first",
+            );
+          // A second creation view must not replace sharing started elsewhere.
+          if (latest.sharing) {
+            setStatus(latest);
+            return;
+          }
+        }
         await invoke("mesh_compute_share", {
           lease: id,
-          model:
-            clearSaved || status?.sharing
+          model: startAuto
+            ? "auto"
+            : clearSaved || status?.sharing
               ? null
-              : hosting
-                ? hosting.model
-                : auto
-                  ? (recommended ?? model)
-                  : model,
-          maxVramGb: hosting?.maxVramGb ?? null,
-          auto: hosting ? false : auto,
+              : auto
+                ? (recommended ?? model)
+                : model,
+          maxVramGb: null,
+          auto: startAuto || auto,
         });
         const result = await invoke<MeshStatus>("mesh_compute_status");
-        if (
-          !disposed &&
-          action === sharingAction.current &&
-          snapshot === ctx.relay.snapshot()
-        )
-          setStatus(result);
+        if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
       } catch (error) {
-        if (
-          !disposed &&
-          action === sharingAction.current &&
-          snapshot === ctx.relay.snapshot()
-        ) {
+        if (!disposed && snapshot === ctx.relay.snapshot()) {
           setError(String(error));
           // Share Off may clear intent even when shutdown fails.
           const result = await invoke<MeshStatus>("mesh_compute_status").catch(
             () => null,
           );
-          if (
-            result &&
-            !disposed &&
-            action === sharingAction.current &&
-            snapshot === ctx.relay.snapshot()
-          )
+          if (result && !disposed && snapshot === ctx.relay.snapshot())
             setStatus(result);
         }
       } finally {
-        if (!disposed && action === sharingAction.current) setBusy(false);
+        if (!disposed) setBusy(false);
       }
     };
     const refresh = async () => {
@@ -524,12 +517,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
     useEffect(() => {
       if (
-        (busy && !onReadyChange) ||
+        busy ||
         error ||
         (status?.lifecycle?.state !== "starting" &&
           status?.lifecycle?.state !== "stopping" &&
-          status?.lifecycle?.state !== "ready" &&
-          !(onReadyChange && busy))
+          status?.lifecycle?.state !== "ready")
       )
         return;
       let active = true;
@@ -552,23 +544,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
         active = false;
         clearTimeout(timer);
       };
-    }, [status, busy, error, snapshot, onReadyChange]);
-    if (onReadyChange)
+    }, [status, busy, error, snapshot]);
+    if (setupOnly)
       return (
-        <MeshSetup
-          key={`${snapshot.viewer}:${snapshot.scope}`}
-          community={viewedCommunity ?? ""}
-          relay={ctx.relay}
+        <MeshCreateSetup
           status={status}
           busy={busy}
-          disabled={disabled}
-          otherCommunity={otherCommunity}
+          disabled={disabled || snapshot.status !== "ready"}
           leaseReady={leaseReady}
-          error={error ?? status?.settingsError ?? status?.reason ?? null}
-          onActionChange={onActionChange ?? (() => {})}
-          refreshKey={refreshCount}
-          share={(model, maxVramGb) => share(false, { model, maxVramGb })}
-          onReadyChange={onReadyChange}
+          otherCommunity={otherCommunity}
+          error={error}
+          share={() => void share(false, true)}
+          refresh={() => void refresh()}
         />
       );
     return (
@@ -735,7 +722,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
             <MeshHelpers
               key={`${snapshot.origin}:${snapshot.viewer}`}
               agents={ctx.agents}
-              community={snapshot.origin}
             />
           )}
         {isTauri() && status?.available && community && (
@@ -801,10 +787,8 @@ function shareStatus(
 
 function DownloadProgress({
   download,
-  label,
 }: {
   download: NonNullable<MeshStatus["download"]>;
-  label?: string;
 }) {
   const received = download.downloadedBytes ?? 0;
   const total = download.totalBytes ?? 0;
@@ -819,7 +803,7 @@ function DownloadProgress({
         className="w-full"
       />
       <span className="text-body-sm text-secondary">
-        {label ?? `Downloading ${download.file ?? download.label}`}
+        {`Downloading ${download.file ?? download.label}`}
         {percent === undefined
           ? "…"
           : ` · ${percent}% (${(received / 1e9).toFixed(2)} GB / ${(total / 1e9).toFixed(2)} GB)`}

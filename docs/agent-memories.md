@@ -43,7 +43,8 @@ credential loader is copied into the plugin.
   decoded entry data.
 - One nine-second deadline covers the whole native read from its first key
   operation; a page fetched in time may finish decoding up to half a second
-  later, so the read answers within the frontend's ten seconds.
+  later. That native budget of 9.5 seconds sits under the frontend's
+  ten-second timeout; it is a budget, not a measured end-to-end time.
 - Any of these limits, the deadline, a 429, or a full page that brings nothing
   new returns the entries decoded so far marked partial; nothing decoded is
   dropped. The development broker still answers one 256-envelope query with a
@@ -87,9 +88,8 @@ not production memory reads or packaged-native acceptance.
 ## Consumers
 
 No plugin shows memories in a UI now: the Profiles plugin and its Memories tab
-were removed. The Claude and Codex bundled runtimes open a view through
-`session.agentMemories.open(pubkey)` to read the agent's own memories for its Buzz
-tools; Claude also reads the `core` memory for a new session and reuses a
-read for five minutes. Each read refreshes one view and disposes it when settled,
-and fails unless the view's status is `ready`. Without a ready relay connection
-no view is opened.
+were removed. The Claude Code, Codex and Goose bundled runtimes read the agent's
+own memories for their Buzz tools through `session.agentMemories.read(pubkey,
+signal, slug?)`, the paged native read described above, and pass its partial
+status through to the tool result. Without a ready relay connection the read
+fails instead of being attempted.

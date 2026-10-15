@@ -89,6 +89,8 @@ tauri-winrt-notification = "=0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Deep-link 2.6.2 requires rust-ini's two-field ParseOption from 0.21.1.
+rust-ini = "=0.21.1"
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 futures-lite = "=2.6.1"
 gtk = "0.18"

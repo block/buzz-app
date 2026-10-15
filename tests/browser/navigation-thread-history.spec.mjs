@@ -4,10 +4,10 @@ import { open, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
-const closeRequest = readFileSync(
+const closeRequest = `{ const tabEvent = "buzz:close-active-tab";\n${readFileSync(
   new URL("../../src-tauri/src/close-request.js", import.meta.url),
   "utf8",
-);
+)}\n}`;
 
 test.use({
   productionBroker: true,

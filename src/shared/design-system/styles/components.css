@@ -689,6 +689,9 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    /* Tab labels are controls, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   /* Geometry only. **Colour is not here, deliberately.**

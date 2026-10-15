@@ -61,7 +61,10 @@ export function Tabs<Value extends string>({
   previewValue,
   arrivalValue,
   renderPanel,
+  tabMenu,
 }: {
+  /** Scoped host action, composed with each tab's Rename action. */
+  tabMenu?: { key: string; closeAll(): boolean } | undefined;
   /** Omit only when composing an existing externally owned view. */
   renderPanel?: (value: Value) => ReactNode;
   value: Value | null;
@@ -90,8 +93,9 @@ export function Tabs<Value extends string>({
         )}
         {items.map((item) => (
           <TabMenu
-            key={item.value}
+            key={JSON.stringify([tabMenu?.key, item.value])}
             label={item.label}
+            closeAll={tabMenu?.closeAll}
             onClose={item.onClose}
             onRename={item.onRename && (() => setRenaming(item.value))}
           >
@@ -231,18 +235,24 @@ export function Tabs<Value extends string>({
   );
 }
 
-/** One tab's wrapper; a renamable tab's right-click offers Rename tab. */
+/** One shared menu composes tab naming with the host's close-all action. */
 function TabMenu({
   label,
   onClose,
   onRename,
+  closeAll,
   children,
 }: {
   label: string;
   onClose: (() => void) | undefined;
   onRename: (() => void) | undefined;
+  closeAll: (() => boolean) | undefined;
   children: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  const closingAll = useRef(false);
   // Middle-click closes a closable tab, without the browser's own default.
   const item = {
     className: "buzz-tabs-item",
@@ -256,14 +266,57 @@ function TabMenu({
       onClose();
     },
   };
-  if (!onRename) return <span {...item}>{children}</span>;
+  if (!onRename && !closeAll) return <span {...item}>{children}</span>;
   return (
-    <ContextMenuRoot>
-      <ContextMenuTrigger render={<span {...item} />}>
+    <ContextMenuRoot
+      open={open}
+      onOpenChange={(next) => {
+        if (next) closingAll.current = false;
+        setOpen(next);
+      }}
+    >
+      <ContextMenuTrigger
+        ref={(element) => {
+          trigger.current = element;
+        }}
+        render={<span {...item} />}
+        onContextMenu={() => setAnchor(undefined)}
+        onTouchStart={() => setAnchor(undefined)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            closingAll.current = false;
+            setAnchor(event.target as HTMLElement);
+            setOpen(true);
+          }
+        }}
+      >
         {children}
       </ContextMenuTrigger>
-      <MenuPopup aria-label={`Actions for ${label} tab`} size="compact">
-        <MenuItem onClick={onRename}>Rename tab</MenuItem>
+      <MenuPopup
+        aria-label={`Actions for ${label} tab`}
+        size="compact"
+        anchor={anchor}
+        finalFocus={() =>
+          closingAll.current
+            ? false
+            : (trigger.current?.querySelector<HTMLElement>('[role="tab"]') ??
+              false)
+        }
+      >
+        {onRename && <MenuItem onClick={onRename}>Rename tab</MenuItem>}
+        {closeAll && (
+          <MenuItem
+            onClick={() => {
+              closingAll.current = closeAll();
+            }}
+          >
+            Close all tabs
+          </MenuItem>
+        )}
       </MenuPopup>
     </ContextMenuRoot>
   );

@@ -51,7 +51,7 @@ export function ComposerModels({
   useLayoutEffect(() => {
     const resolved: Record<string, RunPick> = { ...value };
     for (const choice of choices) {
-      if (choice.loading) continue;
+      if (choice.loading || !choice.sendDefaults) continue;
       const saved = value[choice.pubkey] ?? {};
       const runs = runModel(choice, saved.model);
       if (!runs.id) continue;

@@ -201,9 +201,10 @@ export class CodexRuntime {
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
       return !model || models.some((row) => row.model === model)
-        ? { current: model ?? "", models: offered }
+        ? { current: model ?? "", models: offered, sendDefaults: true }
         : {
             current: model,
+            sendDefaults: true,
             models: [{ id: model, label: model, efforts: [] }, ...offered],
           };
     })();

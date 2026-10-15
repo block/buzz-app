@@ -41,7 +41,10 @@ import type { LocalAgents } from "../agents/local";
 import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import type { OutgoingEvent } from "../relay/outbox";
+import type { Outbox, OutgoingEvent } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
+import { ClaudeProcess } from "../../bundled/claude-code/claude";
+import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
@@ -2262,6 +2265,138 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+it.each([
+  "claude-sonnet-4-5@20250929",
+  "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5",
+])(
+  "sends an untouched Claude cloud model without an override: %s",
+  async (current) => {
+    const snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+    };
+    const types = [
+      {
+        key: "claude",
+        models: () => ({
+          current,
+          models: [
+            { id: current, label: "Configured Claude", efforts: [] },
+            { id: "haiku", label: "Haiku", efforts: [] },
+          ],
+        }),
+      },
+    ];
+    const agents = {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const publish = vi.fn<Outbox["send"]>(() => "sent");
+    const messages = createMessages(
+      { supports: () => true, send: publish } as unknown as Outbox,
+      first.pubkey,
+      () => undefined,
+      () => [],
+      () => {},
+    );
+    h.messages.send.mockImplementation(messages.send);
+    await h.user.type(h.input(), "use the configured model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Configured Claude");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: [
+        ["h", "channel"],
+        ["p", first.pubkey],
+      ],
+    });
+  },
+);
+
+it("keeps an active Claude model when a follow-up composer picker is untouched", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    cwd: "~/.buzz",
+    systemPrompt: "test",
+    model: "opus",
+    sessionId: "s1",
+  });
+  onTestFinished(() => claude.kill());
+  await claude.send("plain");
+  const fake = processes[0];
+  if (!fake) throw new Error("Expected Claude process");
+  fake.hold = true;
+  const quick = claude.send("quick", { model: "haiku" });
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+  };
+  const types = [
+    {
+      key: "claude",
+      models: () => ({
+        current: "opus",
+        models: [
+          { id: "opus", label: "Opus", efforts: [] },
+          { id: "haiku", label: "Haiku", efforts: [] },
+        ],
+      }),
+    },
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  let steered: ReturnType<ClaudeProcess["send"]> | undefined;
+  h.messages.send.mockImplementation(
+    (
+      _channel,
+      content,
+      _mentions,
+      _attachments,
+      _recovery,
+      _references,
+      picks,
+    ) => {
+      steered = claude.send(content, picks?.[first.pubkey]);
+      return "sent";
+    },
+  );
+  try {
+    await h.user.type(h.input(), "keep working");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Opus");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    await waitFor(() => expect(fake.prompts).toHaveLength(3));
+    expect(fake.models).toEqual(["opus", "haiku", "haiku"]);
+  } finally {
+    fake.finish();
+    await Promise.all([quick, steered]);
+  }
+});
+
 it("sends the model and effort shown by an untouched agent picker", async () => {
   const snapshot = {
     status: "ready",
@@ -2269,6 +2404,7 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   };
   const models = {
     current: "gpt-6.1-sol",
+    sendDefaults: true,
     models: [
       {
         id: "gpt-6.1-sol",
@@ -2346,7 +2482,12 @@ it.each(["settings refresh", "model pick"])(
       },
     ];
     const listeners = new Set<() => void>();
-    const types = [{ key: "test/agent", models: () => ({ current, models }) }];
+    const types = [
+      {
+        key: "test/agent",
+        models: () => ({ current, models, sendDefaults: true }),
+      },
+    ];
     const agents = {
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -2486,7 +2627,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     [],
     undefined,
     [],
-    { [first.pubkey]: { model: "fast", effort: "high" } },
+    { [first.pubkey]: { effort: "high" } },
   );
   await write("First Honey", "think deeper");
   const again = await open();
@@ -2517,7 +2658,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   await h.user.click(
     await screen.findByRole("menuitemradio", { name: "Deep" }),
   );
-  // Back to the agent's own model remains explicit on the wire.
+  // Back to the agent's own model is no pick at all.
   await h.user.click(model());
   await h.user.click(
     await screen.findByRole("menuitemradio", { name: "Fast" }),
@@ -2529,9 +2670,6 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     expect.stringContaining("as usual"),
     [first.pubkey],
     [],
-    undefined,
-    [],
-    { [first.pubkey]: { model: "fast" } },
   );
 });
 
@@ -2583,7 +2721,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   slider.focus();
   await h.user.keyboard("{ArrowRight}");
   expect(slider).toHaveAttribute("aria-valuetext", "High");
-  // Back to the shown default remains explicit on the wire.
+  // Back to the agent's own effort is no pick at all.
   await h.user.keyboard("{ArrowLeft}");
   expect(slider).toHaveAttribute("aria-valuetext", "Medium");
   await send();
@@ -2592,9 +2730,6 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
     expect.stringContaining("think hard"),
     [first.pubkey],
     [],
-    undefined,
-    [],
-    { [first.pubkey]: { model: "fast", effort: "medium" } },
   );
 });
 

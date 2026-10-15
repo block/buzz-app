@@ -101,9 +101,12 @@ thinking preferences to Buzz; unrelated configuration is still used where needed
 Preview and execution resolve the same concrete model and thinking level, and
 execution passes both explicitly rather than falling through to host preferences.
 Composer discovery caches reads until effective model or thinking settings change.
-Each outgoing composer message carries the concrete displayed model and known
-effort for that turn; this does not rewrite the saved provider preferences or the
-agent's overrides.
+Codex opts into sending the concrete displayed model and known effort with each
+composer message; this does not rewrite saved provider preferences or agent
+overrides. Model discovery's `sendDefaults` flag is opt-in: other types send only
+explicit picks. In particular, an untouched Claude picker must not emit an override,
+so follow-up messages preserve a running turn's model and configured cloud model
+IDs do not become per-turn tags.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.

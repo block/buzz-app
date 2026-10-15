@@ -328,7 +328,13 @@ export type Model = Readonly<{
   effort?: string;
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
-export type Models = Readonly<{ current: string; models: readonly Model[] }>;
+export type Models = Readonly<{
+  current: string;
+  models: readonly Model[];
+  /** Send displayed defaults as per-turn picks even when untouched. Opt in only
+   * when explicit defaults preserve this provider's running-turn semantics. */
+  sendDefaults?: boolean;
+}>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
   /** Action-oriented menu copy for direct recovery or recovery guidance. */

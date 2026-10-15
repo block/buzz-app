@@ -812,6 +812,7 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   expect(one).toBe(two);
   await expect(one).resolves.toEqual({
     current: "test-model",
+    sendDefaults: true,
     models: [
       {
         id: "test-model",

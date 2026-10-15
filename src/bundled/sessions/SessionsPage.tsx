@@ -684,6 +684,7 @@ function SessionWork({
                   ? "Message your agents"
                   : undefined
               }
+              autoFocus={navigation?.focus !== "preserve"}
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||

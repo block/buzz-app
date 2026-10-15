@@ -403,13 +403,20 @@ function Composer({
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
-    autoFocus && !disabled && typeof document !== "undefined"
+    autoFocus && typeof document !== "undefined"
       ? document.activeElement
       : undefined,
   );
   useEffect(() => {
     // A navigation/dialog owner may restore focus during this commit. Let that
-    // explicit handoff win over the conversation's default initial focus.
+    // explicit handoff win over the conversation's default initial focus. A
+    // loading conversation defers it until its composer is first enabled.
+    if (disabled) {
+      // Disabling after the handoff ends it; re-enabling must not refocus.
+      if (focusOnMount.current === input.current)
+        focusOnMount.current = undefined;
+      return;
+    }
     if (!focusOnMount.current) return;
     const focus = () => {
       const previous = focusOnMount.current;
@@ -450,7 +457,7 @@ function Composer({
       return () => observer.disconnect();
     }
     focus();
-  }, []);
+  }, [disabled]);
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });

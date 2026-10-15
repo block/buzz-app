@@ -1093,7 +1093,9 @@ are no longer Tab destinations or pointer targets.
 Scrolling anything that contains the trigger dismisses a hover-opened preview when
 the trigger moves: a still pointer cannot report that its trigger moved away. A
 scroll that leaves the trigger in place, such as scroll anchoring, keeps the
-preview. A keyboard-focused
+preview. A hover close is refused while the pointer is still on the trigger: a
+scrolling virtualized list briefly stops hit-testing, and WebKit then reports a
+mouseleave that the pointer never made. A keyboard-focused
 trigger keeps its preview, hidden while the trigger is scrolled out of view
 unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor

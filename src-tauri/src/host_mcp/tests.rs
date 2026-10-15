@@ -242,13 +242,7 @@ async fn releases_a_claim_that_did_not_succeed() {
     let info = servers
         .serve(servers.page(), "plugin".into(), channel)
         .unwrap();
-    let claim = || {
-        servers
-            .owned("plugin", info.handle)
-            .unwrap()
-            .claim
-            .load(Ordering::SeqCst)
-    };
+    let claim = || claim(&servers, &info);
     // The page answered with an error.
     let failed = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"No"}}"#;
     let request = post(&info, &info.token, "", INITIALIZE);
@@ -274,6 +268,71 @@ async fn releases_a_claim_that_did_not_succeed() {
     .expect("the claim released");
     initialize(&servers, &info, &mut events).await;
     assert_eq!(claim(), CLAIMED);
+}
+
+/// Where `info`'s session claim stands.
+fn claim(servers: &HostMcpServers, info: &McpServerInfo) -> u8 {
+    servers
+        .owned("plugin", info.handle)
+        .unwrap()
+        .claim
+        .load(Ordering::SeqCst)
+}
+
+#[tokio::test]
+async fn keeps_the_session_across_requests() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel)
+        .unwrap();
+    let named = initialize(&servers, &info, &mut events).await;
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+    for _ in 0..3 {
+        let request = post(&info, &info.token, &named, call);
+        let response = exchange(&servers, &info, &mut events, request, None).await;
+        assert_eq!(status(&response), "202");
+        assert_eq!(claim(&servers, &info), CLAIMED);
+    }
+    // The session stays claimed, so another `initialize` still stops it.
+    let request = post(&info, &info.token, "", INITIALIZE);
+    assert_eq!(status(&send(&info, request).await), "404");
+    assert_eq!(next(&mut events).await["type"], "closed");
+}
+
+#[tokio::test]
+async fn holds_the_claim_while_initialize_waits() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel)
+        .unwrap();
+    let request = post(&info, &info.token, "", INITIALIZE);
+    let client = tokio::spawn({
+        let info = info.clone();
+        async move { send(&info, request).await }
+    });
+    let initializing = next(&mut events).await;
+    assert_eq!(claim(&servers, &info), CLAIMING);
+    // A `ping` meanwhile is answered and leaves the claim alone.
+    let ping = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
+    let request = post(&info, &info.token, "", ping);
+    let pong = r#"{"jsonrpc":"2.0","id":3,"result":{}}"#;
+    let response = exchange(&servers, &info, &mut events, request, Some(pong)).await;
+    assert_eq!(status(&response), "200");
+    assert_eq!(session(&response), None);
+    assert_eq!(claim(&servers, &info), CLAIMING);
+    servers
+        .reply(
+            "plugin",
+            info.handle,
+            initializing["request"].as_u64().unwrap(),
+            Some(INITIALIZED.into()),
+        )
+        .unwrap();
+    let response = client.await.unwrap();
+    assert!(session(&response).is_some());
+    assert_eq!(claim(&servers, &info), CLAIMED);
 }
 
 #[tokio::test]

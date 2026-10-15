@@ -281,7 +281,7 @@ async fn answer(
                 Ok(Ok(body)) => match String::from_utf8(body.to_bytes().into()) {
                     Ok(body) => match join(shared, named, &body) {
                         Ok(join) => {
-                            let claim = (join == Join::Claiming).then_some(Claim {
+                            let claim = (join == Join::Claiming).then(|| Claim {
                                 shared,
                                 claimed: false,
                             });
@@ -454,8 +454,14 @@ impl Claim<'_> {
 }
 impl Drop for Claim<'_> {
     fn drop(&mut self) {
+        // Only the claim this guard holds is released.
         if !self.claimed {
-            self.shared.claim.store(UNCLAIMED, Ordering::SeqCst);
+            let _ = self.shared.claim.compare_exchange(
+                CLAIMING,
+                UNCLAIMED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
         }
     }
 }

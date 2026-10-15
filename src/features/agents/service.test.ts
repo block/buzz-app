@@ -27,6 +27,7 @@ import {
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
+import { readInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -84,6 +85,9 @@ async function setup({
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
+  resumes = false,
+  /** How `run` answers, from the first delivery on. */
+  answer = undefined as AgentType<Config>["run"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -114,7 +118,8 @@ async function setup({
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
   });
-  const run = vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>();
+  const run =
+    vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
     id: "echo",
     title: "Echo",
@@ -169,6 +174,7 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
+    ...(resumes ? { resumes } : {}),
   };
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -4270,6 +4276,170 @@ it("catches a kind 9 watch up on what it missed, oldest first in batches, and no
   } finally {
     vi.useRealTimers();
   }
+});
+
+describe("a turn closing or reloading the app stopped", () => {
+  const working = () => new Promise<void>(() => {});
+  const mention = () =>
+    eventDto(
+      message(author, channel, "Echo, go on", nowSeconds(), [["p", bot]]),
+    );
+  const resumedOf = (run: {
+    mock: { calls: readonly (readonly unknown[])[] };
+  }) =>
+    run.mock.calls.map(([input]) => {
+      const { trigger } = input as { trigger: Trigger };
+      return trigger.type === "mention"
+        ? `${trigger.event.content}${trigger.resumed ? " (resumed)" : ""}`
+        : trigger.type;
+    });
+  /** The storage the next app start finds: the last one's as it went, which
+   * its later writes do not reach. */
+  const reopen = (from: AgentStore) => {
+    const next = memoryStorage();
+    for (const key of from.keys()) next.setItem(key, from.get(key) ?? "");
+    return next;
+  };
+  /** An app that stopped while Echo worked on `asked`, as it left storage. */
+  const stopped = async (asked: RelayEvent) => {
+    const first = await setup({ identities: [echo], resumes: true });
+    first.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    first.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+    await settle();
+    expect(readInterrupted(first.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
+    first.connect(false);
+    return reopen(first.storage);
+  };
+  const names = (agents: readonly Agent[]) => agents.map((a) => a.name);
+
+  it("waits for the owner, is given again once resumed, and is forgotten when it settles", async () => {
+    const asked = mention();
+    let finish = () => {};
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) =>
+        workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    });
+    await settle();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    expect(second.run).not.toHaveBeenCalled();
+
+    second.service.resumeInterrupted();
+    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(second.run.mock.calls[0]?.[0]).toMatchObject({ channelId: channel });
+    // Saved while it works, so stopping again first loses it to neither.
+    const again = await setup({
+      storage: reopen(second.storage),
+      identities: [echo],
+      resumes: true,
+    });
+    await settle();
+    expect(names(again.service.snapshot().interrupted)).toEqual(["Echo"]);
+    finish();
+    await vi.waitFor(() => expect(readInterrupted(second.storage)).toEqual({}));
+    second.connect(false);
+
+    const third = await setup({
+      storage: reopen(second.storage),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    expect(third.service.snapshot().interrupted).toEqual([]);
+    third.service.resumeInterrupted();
+    await settle();
+    expect(third.run).not.toHaveBeenCalled();
+  });
+
+  it("is forgotten when the owner does not resume it", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    second.service.dismissInterrupted();
+    expect(second.service.snapshot().interrupted).toEqual([]);
+    expect(readInterrupted(second.storage)).toEqual({});
+    second.service.resumeInterrupted();
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+  });
+
+  it("stays saved when it cannot be read again, and is given on the next try", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.read);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.recover();
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("is forgotten when another copy of the app holds the agent", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    second.native.claim.mockResolvedValue(false);
+    second.service.resumeInterrupted();
+    await vi.waitFor(() => expect(readInterrupted(second.storage)).toEqual({}));
+    expect(second.run).not.toHaveBeenCalled();
+  });
+
+  it("is not saved for a type that does not resume", async () => {
+    const { service, run, emit, storage } = await setup({ resumes: false });
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(({ workingUntil }) => workingUntil(working()));
+    emit({ events: [mention()], channelId: channel });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await settle();
+    expect(readInterrupted(storage)).toEqual({});
+  });
 });
 
 it("bounds a catch-up turn by its messages' size, and sends a larger one alone", async () => {

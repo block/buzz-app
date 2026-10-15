@@ -120,6 +120,7 @@ import {
   writeCheckpoints,
   type Checkpoints,
 } from "./catch-up";
+import { readInterrupted, writeInterrupted } from "./interrupted";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 
@@ -355,8 +356,10 @@ export type CaughtUp = Readonly<{
   classifier?: ClassifierOutcome;
 }>;
 export type Trigger =
-  /** Directly addressed: a chat message that mentions the agent. */
-  | Readonly<{ type: "mention"; event: RelayEvent }>
+  /** Directly addressed: a chat message that mentions the agent. `resumed`
+   * when its turn was working as the app closed or reloaded, which stopped it
+   * partway, and the owner chose to resume it (see `AgentType.resumes`). */
+  | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -575,6 +578,11 @@ export type AgentType<Config = unknown> = {
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
+  /** Its turns run in this page, so closing or reloading the app stops them.
+   * With this, a mention turn still working then is kept, and given to `run`
+   * again marked `resumed` if the owner chooses to resume it, to carry on in
+   * the conversation's saved session. */
+  resumes?: boolean;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
@@ -649,6 +657,9 @@ export type AgentsSnapshot = Readonly<{
   /** Every agent kept running here, whichever community is selected: the
    * viewer's agents in each joined community not disconnected. */
   running: readonly Agent[];
+  /** Running agents that were working when the app last closed or reloaded,
+   * until the owner resumes or forgets those turns. */
+  interrupted: readonly Agent[];
   /** The owner's teams on this device, in any community. */
   teams: readonly Team[];
   error?: string;
@@ -724,6 +735,11 @@ export type Agents = {
   tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Gives each `interrupted` agent again the turns it was working on, each
+   * once its community connects. */
+  resumeInterrupted(): void;
+  /** Forgets the turns `interrupted` agents were working on. */
+  dismissInterrupted(): void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The agent as `run` holds it, outside any run: for one of the calling
@@ -1123,6 +1139,7 @@ export class AgentsService extends Service implements Agents {
       classifierKey: "checking",
       agents: [],
       running: [],
+      interrupted: [],
       teams: this.teamList,
     });
     this.configStore = new AgentConfigStore(storage);
@@ -1152,6 +1169,14 @@ export class AgentsService extends Service implements Agents {
             },
           );
           savedProgress = checkpoints;
+        },
+      },
+      interrupted: {
+        read: () => readInterrupted(this.storage),
+        write: (turns) => {
+          void writeInterrupted(this.storage, turns).catch((error) =>
+            console.warn("Agent turns in progress were not saved", error),
+          );
         },
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
@@ -1301,6 +1326,7 @@ export class AgentsService extends Service implements Agents {
           ...this.state,
           agents: Object.freeze([]),
           running: Object.freeze([]),
+          interrupted: Object.freeze([]),
         });
         this.notify();
       };
@@ -1370,6 +1396,14 @@ export class AgentsService extends Service implements Agents {
     return () => {
       this.listeners.delete(listener);
     };
+  };
+  resumeInterrupted = () => {
+    this.runners.resumeInterrupted();
+    this.update();
+  };
+  dismissInterrupted = () => {
+    this.runners.dismissInterrupted();
+    this.update();
   };
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
@@ -2994,17 +3028,21 @@ export class AgentsService extends Service implements Agents {
       identities.filter((identity) => !identity.deleting),
       new Map(this.types().map((type) => [type.key, type])),
     );
+    const left = this.runners.interrupted();
+    const interrupted = running.filter((agent) => left.has(agent.pubkey));
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
       next.every((agent, index) => agent === prior[index]);
     if (
       !same(agents, this.state.agents) ||
-      !same(running, this.state.running)
+      !same(running, this.state.running) ||
+      !same(interrupted, this.state.interrupted)
     ) {
       this.state = Object.freeze({
         ...this.state,
         agents: Object.freeze(agents),
         running: Object.freeze(running),
+        interrupted: Object.freeze(interrupted),
       });
       this.notify();
     }

@@ -107,9 +107,13 @@ export function fakeRelay(origin = "https://relay.example.test") {
         };
       }),
     },
-    read: vi.fn(async (filters: readonly ReadFilter[]) =>
-      filters[0]?.kinds?.includes(9) ? page(history, filters[0]) : [...listed],
-    ),
+    read: vi.fn(async (filters: readonly ReadFilter[]) => {
+      const ids = filters[0]?.ids;
+      if (ids) return history.filter((event) => ids.includes(event.id));
+      return filters[0]?.kinds?.includes(9)
+        ? page(history, filters[0])
+        : [...listed];
+    }),
     channelWrites: {
       starting: (_id: string): Promise<void> | undefined => undefined,
     },

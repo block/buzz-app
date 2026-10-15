@@ -69,6 +69,7 @@ import {
   type Checkpoint,
   type Stream,
 } from "./catch-up";
+import type { Interrupted } from "./interrupted";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -323,6 +324,12 @@ export type RunnerHost = {
     /** Throws when storage refuses it. */
     write(checkpoints: Readonly<Record<string, Checkpoint>>): void;
   };
+  /** Mention turns working when the page went away, as saved. */
+  interrupted: {
+    read(): Interrupted;
+    /** Throws when storage refuses it. */
+    write(turns: Interrupted): void;
+  };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
@@ -417,8 +424,36 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** Mention turns working now, which closing or reloading the app would
+   * stop, and those the app left working last time until they are given
+   * again or forgotten, as saved. */
+  private turns: Interrupted;
+  /** The turns the app left working last time, by agent, until the owner
+   * forgets them, or resumes them and each agent's are read again. */
+  private left: Interrupted;
+  /** The owner chose to resume `left`. */
+  private resuming = false;
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
+    this.turns = this.left = host.interrupted.read();
+  }
+
+  /** Agents with turns the app left working last time, until the owner
+   * resumes or forgets them. */
+  interrupted(): ReadonlySet<string> {
+    return new Set(this.resuming ? [] : Object.keys(this.left));
+  }
+  /** Gives each agent again the turns it was left working on, once its
+   * community is connected. */
+  resumeInterrupted() {
+    this.resuming = true;
+    for (const runner of this.runners.values()) this.resumeTurns(runner);
+  }
+  /** Forgets the turns the app left working last time. */
+  dismissInterrupted() {
+    for (const [pubkey, turns] of Object.entries(this.left))
+      this.unmark(pubkey, Object.keys(turns));
+    this.left = {};
   }
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
@@ -595,7 +630,7 @@ export class AgentRunners {
     this.passes.get(runner.pubkey)?.controller.abort();
     this.passes.delete(runner.pubkey);
     this.host.activity.clear(undefined, runner.pubkey);
-    runner.queues.mention.length = 0;
+    this.dropMentions(runner);
     this.dropWatchWork(runner);
     runner.held.clear();
     runner.backlog.length = 0;
@@ -846,6 +881,7 @@ export class AgentRunners {
       changed = true;
     };
     for (const runner of this.runners.values()) {
+      this.resumeTurns(runner);
       const agent = this.host.agent(runner.pubkey);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
@@ -900,6 +936,90 @@ export class AgentRunners {
       void this.readMissed(runner, next, reading, since);
     }
     if (changed) this.saveCheckpoints();
+  }
+  /** Once the owner chose to resume them, gives the agent again the mention
+   * turns the app left it working on, when its community is connected: each
+   * read again from the relay, as only its id was saved. Each stays saved
+   * until its new turn ends, so closing the app again first loses none; one
+   * the relay no longer has, or that was given meanwhile, is forgotten. A
+   * failed read leaves them for the next try. */
+  private resumeTurns(runner: Runner) {
+    const left = this.left[runner.pubkey];
+    const agent = this.host.ready(runner.pubkey);
+    const community = agent && this.host.community(agent);
+    if (
+      !this.resuming ||
+      !left ||
+      !agent ||
+      !runner.type ||
+      community?.connection.since === undefined
+    )
+      return;
+    const { [runner.pubkey]: _, ...rest } = this.left;
+    this.left = rest;
+    const ids = Object.keys(left);
+    if (!runner.type.resumes) return this.unmark(runner.pubkey, ids);
+    void community.session
+      .read([{ ids, limit: ids.length }], {
+        signal: community.controller.signal,
+        fresh: true,
+      })
+      .then(
+        (events) => {
+          // Given meanwhile, a turn's own run forgets it when it settles.
+          const kept = new Set<string>();
+          for (const event of events.filter(hasEventProof) as RelayEvent[]) {
+            const channel = left[event.id];
+            if (channel === undefined) continue;
+            if (this.hasSeen(runner, event.id, channelOf(event))) {
+              kept.add(event.id);
+              continue;
+            }
+            this.markSeen(runner, event.id, channelOf(event));
+            const queued = this.enqueue(runner, {
+              trigger: { type: "mention", event, resumed: true },
+              ...(channel ? { channelId: channel } : {}),
+            });
+            if (queued) kept.add(event.id);
+          }
+          this.unmark(
+            runner.pubkey,
+            ids.filter((id) => !kept.has(id)),
+          );
+        },
+        (error) => {
+          this.left = { ...this.left, [runner.pubkey]: left };
+          if (!community.controller.signal.aborted)
+            console.warn(
+              `Agent ${agent.name} could not resume its turns`,
+              error,
+            );
+        },
+      );
+  }
+  /** Saves the mention `id` as working, in `channel` or "" without one. */
+  private mark(pubkey: string, id: string, channel: string) {
+    this.saveTurns({
+      ...this.turns,
+      [pubkey]: { ...this.turns[pubkey], [id]: channel },
+    });
+  }
+  private unmark(pubkey: string, ids: readonly string[]) {
+    const { [pubkey]: turns = {}, ...rest } = this.turns;
+    const kept = Object.fromEntries(
+      Object.entries(turns).filter(([id]) => !ids.includes(id)),
+    );
+    this.saveTurns(
+      Object.keys(kept).length ? { ...rest, [pubkey]: kept } : rest,
+    );
+  }
+  private saveTurns(turns: Interrupted) {
+    this.turns = turns;
+    try {
+      this.host.interrupted.write(turns);
+    } catch (error) {
+      console.warn("Agent turns in progress were not saved", error);
+    }
   }
   /** Reads each stream's missed events through `upper`, a window at a time,
    * and delivers them oldest first, in batches, saving its checkpoint after
@@ -1624,6 +1744,7 @@ export class AgentRunners {
     };
   }
 
+  /** Queues `job`, or drops it when the lane is full; returns whether queued. */
   private enqueue(runner: Runner, job: Job) {
     const now = Date.now();
     const lane = laneOf(job.trigger);
@@ -1653,12 +1774,21 @@ export class AgentRunners {
       console.warn(
         `Agent ${this.host.agent(runner.pubkey)?.name} dropped an event`,
       );
-      return;
+      return false;
     }
     rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
     queue.push(job);
     void this.drain(runner);
+    return true;
+  }
+  /** Drops the queued mentions, forgetting the resumed ones saved as working. */
+  private dropMentions(runner: Runner) {
+    const resumed = runner.queues.mention.flatMap(({ trigger }) =>
+      trigger.type === "mention" && trigger.resumed ? [trigger.event.id] : [],
+    );
+    runner.queues.mention.length = 0;
+    if (resumed.length) this.unmark(runner.pubkey, resumed);
   }
 
   private showWork(runner: Runner, job: Job) {
@@ -1699,7 +1829,7 @@ export class AgentRunners {
       if (!agent || !type || !run) {
         if (agent) {
           this.host.activity.clear(undefined, runner.pubkey);
-          runner.queues.mention.length = 0;
+          this.dropMentions(runner);
           runner.queues.watch.length = 0;
         }
         await this.release(runner);
@@ -1714,7 +1844,7 @@ export class AgentRunners {
       if (!(await this.claim(runner))) {
         this.host.activity.clear(undefined, runner.pubkey);
         runner.activityClaimed = false;
-        runner.queues.mention.length = 0;
+        this.dropMentions(runner);
         runner.queues.watch.length = 0;
         break;
       }
@@ -1934,6 +2064,9 @@ export class AgentRunners {
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
+    // Saved while it works, so a reload that stops it gives it again.
+    const resumable = event && runner.type?.resumes ? event.id : undefined;
+    if (resumable) this.mark(runner.pubkey, resumable, channel ?? "");
     let typing: (() => void) | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
@@ -1962,6 +2095,7 @@ export class AgentRunners {
       lifetime.removeEventListener("abort", abort);
       runner.working--;
       typing?.();
+      if (resumable) this.unmark(runner.pubkey, [resumable]);
     };
     const abort = () => {
       work?.remove();

@@ -24,9 +24,22 @@ Terms:
 | Watch tags are sent in the catch-up read | Yes | No. The relay applies most tag filters after its page limit, so a tagged read can return an empty page while older matches remain. The watch's own match still checks the tags, so results are the same. | Intended difference |
 | Catch-up order | Newest page first, oldest first inside each page | Reads the whole window, then delivers strictly oldest first | Intended difference |
 | Catch-up delivery | One event per turn | Batches of up to 64 messages or 64 Ki JSON characters (about 16k–32k tokens) per turn | Intended difference |
-| The agent is told that an event comes from catch-up | Yes | Yes, for every agent type with standalone turns (Claude Code and Codex) | Same |
-| Timers | Yes | Yes, for every agent type with standalone turns (Claude Code and Codex) | Same |
+| The agent is told that an event comes from catch-up | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
+| Timers | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
 | Watch events from people other than the owner | The watch sees them | The watch sees them as data. The owner check (`fromOwner`) applies only to mentions. | Same |
+
+## Known limit
+
+Interests run beside each other once their jobs are queued. Two steps before
+the queue still go one job at a time, so a busy Interest can delay the others:
+
+- Live events that waited while their watch caught up are released oldest
+  first. When the oldest one does not fit, the ones after it wait too, even
+  for other Interests.
+- Catch-up reads one watch at a time. A watch whose Interest has no room
+  waits, and so do the watches after it and their live events.
+
+Nothing is lost: the delayed work goes on when the busy Interest has room.
 
 ## Not yet compared
 

@@ -385,7 +385,10 @@ test.describe("personal recipients", () => {
       releaseHead();
       await page
         .locator(`[data-message-id="${link.id}"]`)
-        .getByRole("link", { name: "Open Beta", exact: true })
+        .getByRole("link", {
+          name: `Open Session: ${other.slice(0, 8)}`,
+          exact: true,
+        })
         .click();
       const linkedSession = page.getByRole("tabpanel", {
         name: "Beta",

@@ -481,7 +481,7 @@ export class GooseRuntime {
         ...appClient(handle, {
           spawn: this.spawn,
           cwd: entry.config.workspace,
-          memories: () => this.memories(pubkey),
+          memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
           await handle.remember(slug, body, after);
@@ -537,7 +537,7 @@ export class GooseRuntime {
       return entry.memory.value;
     let value: string | null | undefined;
     try {
-      const memories = await this.memories(pubkey);
+      const memories = await this.memories(pubkey, "core");
       value = memories.find((memory) => memory.slug === "core")?.body ?? null;
     } catch (error) {
       console.warn("goose could not read the agent's memory", error);
@@ -546,45 +546,30 @@ export class GooseRuntime {
     return value;
   }
 
-  /** The agent's memory, read back through the owner's session: it is
-   * encrypted to the owner, so no agent key is needed to read it. */
-  private memories(pubkey: string): Promise<readonly Memory[]> {
-    let reading = this.reading.get(pubkey);
+  /** The agent's memory, or only entry `slug`, read back through the owner's
+   * session: it is encrypted to the owner, so no agent key is needed. */
+  private memories(pubkey: string, slug?: string): Promise<readonly Memory[]> {
+    const key = `${pubkey}\0${slug ?? ""}`;
+    let reading = this.reading.get(key);
     if (!reading) {
-      reading = this.readMemories(pubkey).finally(() =>
-        this.reading.delete(pubkey),
+      reading = this.readMemories(pubkey, slug).finally(() =>
+        this.reading.delete(key),
       );
-      this.reading.set(pubkey, reading);
+      this.reading.set(key, reading);
     }
     return reading;
   }
-  private async readMemories(pubkey: string): Promise<readonly Memory[]> {
+  private async readMemories(
+    pubkey: string,
+    slug?: string,
+  ): Promise<readonly Memory[]> {
     const snapshot = this.relay(pubkey)?.snapshot();
     if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const view = snapshot.session.agentMemories.open(pubkey);
-    try {
-      const done = new Promise<void>((resolve) => {
-        const settled = () =>
-          !["idle", "loading"].includes(view.snapshot().status) && resolve();
-        view.subscribe(settled);
-        settled();
-      });
-      void view.refresh();
-      await Promise.race([
-        done,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Memory read timed out")),
-            MEMORY_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      view.dispose();
-    }
+    const listing = await snapshot.session.agentMemories.read(
+      pubkey,
+      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      slug,
+    );
+    return listing.entries;
   }
 }

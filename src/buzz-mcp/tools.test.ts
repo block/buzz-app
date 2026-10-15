@@ -285,6 +285,11 @@ it("writes memory under mem/, newer than the entry it replaces", async () => {
   await expect(
     callTool(client, {}, "mem_get", { slug: "notes" }),
   ).resolves.toBe("old");
+  // Both read the one entry by its slug, not the whole listing.
+  expect(vi.mocked(client.memories).mock.calls).toEqual([
+    ["mem/notes"],
+    ["mem/notes"],
+  ]);
 });
 
 it("answers MCP requests, reporting a failed call as a tool error", async () => {

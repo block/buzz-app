@@ -7,7 +7,11 @@ plaintext decryption to the renderer.
 
 The caller supplies only an exact agent public key. The host captures the current
 relay and fixes the owner to the authenticated viewer, querying kind 30174 with
-`authors=[agent]`, `#p=[viewer]`. Self-profile requests are unsupported: being the
+`authors=[agent]`, `#p=[viewer]`. A read of one entry (`core` at session start,
+`mem_get <slug>`, `mem_set`'s lookup) adds `#d=[address]`, the HMAC address of
+the slug, so it never depends on the size of the rest of the memory. The native
+host pages the full listing newest first with `until`; the development broker
+answers one page and the session narrows it to the requested entry. Self-profile requests are unsupported: being the
 viewed agent does not identify its owner. No inventory, name, avatar shape or
 profile marker grants access. Remote-owned agents need no local instance.
 
@@ -28,8 +32,11 @@ credential loader is copied into the plugin.
 
 ## Budgets and lifetime
 
-- 256 returned envelopes; hitting the cap marks the result potentially incomplete.
-- 2 MiB streamed upstream/DTO response; 1 MiB retained decoded entry data.
+- Native reads ask for 16 envelopes a page (a body is at most 64 KiB, so a page
+  fits the 2 MiB response cap) and stop at 4096 envelopes; hitting that cap, or
+  a page that brings nothing new, marks the result potentially incomplete.
+- 8 MiB retained decoded entry data. The development broker still answers one
+  256-envelope query with a 2 MiB response and 1 MiB of decoded data.
 - Ten-second fetch/decode deadline, plus a ten-second incoming upload deadline.
 - Four mounted views per session; no periodic refresh or startup requests.
 - Oversized input fails closed, not silently truncated before head selection.

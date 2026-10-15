@@ -595,7 +595,8 @@ export class ClaudeRuntime {
           appClient(handle, {
             spawn: this.spawn,
             cwd,
-            memories: async () => (await this.memories(pubkey)).entries,
+            memories: async (slug) =>
+              (await this.memories(pubkey, slug)).entries,
             remembered: () => this.forget(pubkey),
           });
         const context =
@@ -638,14 +639,16 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's memory, as its community's reads give it. */
-  private memories(pubkey: string) {
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
+  private memories(pubkey: string, slug?: string) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
       AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      slug,
     );
   }
   /** The agent's `core` memory for a new session's prompt: its text, `null`
@@ -653,7 +656,7 @@ export class ClaudeRuntime {
    * starts without it. */
   private async core(pubkey: string) {
     try {
-      return coreOf(await this.memories(pubkey));
+      return coreOf(await this.memories(pubkey, "core"));
     } catch (error) {
       console.warn("Claude could not read the agent's memory", error);
       return undefined;

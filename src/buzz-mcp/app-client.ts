@@ -17,7 +17,7 @@ export function appClient(
     spawn: Spawn;
     /** Where relative paths start: the agent's working directory. */
     cwd: string;
-    memories(): Promise<readonly Memory[]>;
+    memories(slug?: string): Promise<readonly Memory[]>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
     /** Reject operations after the owning turn or community has ended. */
@@ -52,9 +52,9 @@ export function appClient(
       check();
       return readFile(options.spawn, options.cwd, path, options.signal);
     },
-    memories: () => {
+    memories: (slug) => {
       check();
-      return options.memories();
+      return options.memories(slug);
     },
     remember: async (slug, body, after) => {
       check();

@@ -185,13 +185,19 @@ export function nodeClient(
         throw new Error(`${path} is outside ${options.root}`);
       return new Uint8Array(await readFile(full));
     },
-    async memories() {
+    async memories(slug) {
       const key = conversation();
       const events = eventsDto(
         await request(
           "/query",
           JSON.stringify([
-            { kinds: [30174], authors: [pubkey], "#p": [owner], limit: 5000 },
+            {
+              kinds: [30174],
+              authors: [pubkey],
+              "#p": [owner],
+              ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
+              limit: 5000,
+            },
           ]),
         ),
       );
@@ -224,9 +230,7 @@ export function nodeClient(
     },
     async remember(slug, body, after) {
       const key = conversation();
-      const d = createHmac("sha256", key)
-        .update(`agent-memory/v1/d-tag\0${slug}`)
-        .digest("hex");
+      const d = memoryAddress(key, slug);
       const plaintext = JSON.stringify(
         slug === "core" ? { slug, profile: body } : { slug, value: body },
       );
@@ -245,4 +249,11 @@ export function nodeClient(
       );
     },
   };
+}
+
+/** The `d` tag of memory `slug`, an HMAC under the conversation key. */
+function memoryAddress(key: Uint8Array, slug: string) {
+  return createHmac("sha256", key)
+    .update(`agent-memory/v1/d-tag\0${slug}`)
+    .digest("hex");
 }

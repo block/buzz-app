@@ -826,8 +826,8 @@ export class CodexRuntime {
       cwd: turn.workspace,
       check,
       signal: turn.signal,
-      memories: async () => {
-        const { entries } = await this.memories(owner, turn.signal);
+      memories: async (slug) => {
+        const { entries } = await this.memories(owner, turn.signal, slug);
         check();
         return entries;
       },
@@ -861,17 +861,19 @@ export class CodexRuntime {
       ],
     };
   }
-  /** The agent's memory, as its community's reads give it. */
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
   private async memories(
     request: Pick<Request, "scope" | "agent">,
     signal: AbortSignal,
+    slug?: string,
   ) {
     const { pubkey } = request.agent;
     const reads = this.reads(pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
     const { connection } = reads;
-    const listing = await this.memoryReads.read(reads, pubkey, signal);
+    const listing = await this.memoryReads.read(reads, pubkey, signal, slug);
     signal.throwIfAborted();
     const current = this.reads(pubkey);
     if (current?.scope !== request.scope || current.connection !== connection)
@@ -885,7 +887,7 @@ export class CodexRuntime {
     signal: AbortSignal,
   ) {
     try {
-      return coreOf(await this.memories(request, signal));
+      return coreOf(await this.memories(request, signal, "core"));
     } catch (error) {
       signal.throwIfAborted();
       console.warn("Codex could not read the agent's memory", error);

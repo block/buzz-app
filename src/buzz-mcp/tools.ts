@@ -520,17 +520,17 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async mem_get(tools, args) {
-    const entries = await tools.client.memories();
     const slug = text(args.slug);
     if (!slug)
       return (
-        entries
+        (await tools.client.memories())
           .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
           .join("\n") || "No memory."
       );
     const key = memorySlug(slug);
     return (
-      entries.find((entry) => entry.slug === key)?.body ?? `No memory ${key}.`
+      (await tools.client.memories(key)).find((entry) => entry.slug === key)
+        ?.body ?? `No memory ${key}.`
     );
   },
 
@@ -538,7 +538,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
     // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories().catch(() => [])).find(
+    const current = (await tools.client.memories(key).catch(() => [])).find(
       (entry) => entry.slug === key,
     );
     await tools.client.remember(key, body, current?.createdAt ?? 0);

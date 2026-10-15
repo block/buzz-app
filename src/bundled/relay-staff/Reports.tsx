@@ -18,6 +18,7 @@ import type {
   StaffOutcome,
   StaffRequest,
 } from "../../features/relay-staff/contract";
+import { unresolved } from "../../features/relay-staff/contract";
 import {
   NamesSource,
   Person,
@@ -223,9 +224,20 @@ function ReportDetail({
   };
   // The detail, not the action forms, handles finished writes: a form is
   // gone once its action changes the report's status.
-  const resolve = useWrite<ResolveRequest>(`resolve ${id}`, (outcome) => {
+  const resolve = useWrite<ResolveRequest>(`resolve ${id}`, (outcome, sent) => {
     if (outcome.ok) {
       notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");
+      return changed();
+    }
+    // Dismiss and Escalate carry no replay protection on the relay: a retry
+    // after the report was reopened would close the new cycle too. Drop the
+    // held request and ask for a fresh decision against the reloaded report.
+    if (decisionOnly(sent.action) && unresolved(outcome)) {
+      resolve.discard();
+      notify(
+        "The relay did not confirm the result. Check the report and decide again.",
+        "error",
+      );
       return changed();
     }
     notify(describe(outcome.failure), "error");
@@ -233,13 +245,28 @@ function ReportDetail({
     // a recorded enforcement failure: show the report as it is now.
     changed();
   });
+  // A reopen's 200 confirms the original reopen, not the current status: a
+  // retry is answered `open` even if the report was resolved again since.
+  // The reloaded report decides what to announce.
+  const [reopened, setReopened] = useState<number | null>(null);
   const reopen = useWrite<ReopenRequest>(`reopen ${id}`, (outcome) => {
-    notify(
-      outcome.ok ? "Report reopened" : describe(outcome.failure),
-      outcome.ok ? "success" : "error",
-    );
+    if (outcome.ok) setReopened(detail.settled);
+    else notify(describe(outcome.failure), "error");
     changed();
   });
+  useEffect(() => {
+    if (reopened === null || detail.state === "loading") return;
+    if (detail.settled <= reopened) return;
+    setReopened(null);
+    if (detail.state !== "ok") return;
+    const now = detail.value.status;
+    notify(
+      now === "open" || now === "processing"
+        ? "Report reopened"
+        : `Your reopen went through, but the report has since been ${now}.`,
+      "success",
+    );
+  }, [reopened, detail, notify]);
   useWrite<CancelRequest>(`cancel ${id}`, (outcome) => {
     notify(
       outcome.ok
@@ -249,11 +276,13 @@ function ReportDetail({
     );
     changed();
   });
-  // The relay replays a request id only while the report is still in the
-  // state it acted on, so a held write whose report has moved on can only
-  // conflict, or answer without acting. Release it: a resolve once the report
-  // is past processing, a reopen once it is open again. Either form then
-  // offers a fresh choice.
+  // An enforcement resolve replays its request id only while the report is
+  // `processing`; a reopen replays its original success even after the report
+  // is resolved again. A held write whose report has moved on can only
+  // conflict or answer without acting, so release it: a resolve once the
+  // report is past processing, a reopen once it is open again. A resolve that
+  // landed and whose report was reopened before we saw it stays held, and its
+  // Retry keeps failing; Discard is the way out.
   const status = detail.state === "ok" ? detail.value.status : null;
   const active = status === "open" || status === "processing";
   const releaseResolve =
@@ -573,4 +602,9 @@ function WriteError({
       {describe(outcome.failure)}
     </p>
   );
+}
+
+/** Report decisions the relay applies without deduplicating `requestId`. */
+function decisionOnly(action: ReportAction) {
+  return action === "dismiss" || action === "escalate";
 }

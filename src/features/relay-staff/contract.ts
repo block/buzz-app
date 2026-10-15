@@ -193,9 +193,11 @@ export type ReportsQuery = {
 /**
  * Every admin call the app can make. Writes carry their full frozen intent,
  * including `requestId`: mint it once per operation and reuse it on every
- * retry of an ambiguous outcome. The relay replays a report write's
- * `requestId` only while the report is still in the state it acted on, so a
- * held resolve or reopen is released once the report has moved on.
+ * retry of an ambiguous outcome. Report writes follow three relay rules: an
+ * enforcement resolve replays its `requestId` only while the report is
+ * `processing`; a reopen replays its original success even after the report
+ * is resolved again; Dismiss and Escalate don't deduplicate, so an uncertain
+ * one is dropped and the user decides again.
  */
 export type StaffRequest =
   | { route: "probe" }

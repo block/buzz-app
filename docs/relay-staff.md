@@ -127,12 +127,28 @@ anything else settles it, including a request native code never sent. After one,
 only the relay's own answer to a request that was sent settles it: a retry that
 was never sent, was refused for authorization, or was answered with an empty
 404 or 405 (an old node mid-deploy), leaves the write held with
-the same `requestId`. The relay replays a report write's `requestId` only while
-the report is still in the state that write acted on, so the report page
-reloads the report after any failed resolve or reopen, and releases a held
-resolve once the report is past `processing`, or a held reopen once it is open
-again; the form then offers a fresh choice. Resolve and reopen each have
-**Discard**, and show the last failure beside **Retry**. A request native code refuses before sending, such as a reason too long for
+the same `requestId`. Report writes follow three relay rules:
+
+- an enforcement resolve replays its `requestId` only while the report is
+  `processing`;
+- a reopen replays its original success even after the report is resolved
+  again;
+- Dismiss and Escalate don't deduplicate: they move an open report to closed
+  whatever the `requestId`.
+
+So the report page reloads the report after any failed resolve or reopen. It
+releases a held resolve once the report is past `processing`, and a held reopen
+once it is open again; the form then offers a fresh choice. A reopen's success
+confirms the original reopen, not the current status, so the page announces it
+from the reloaded report: if the report was resolved again in between, it says
+so instead of "Report reopened". An uncertain Dismiss or Escalate is never
+retried: the page drops it, reloads the report and asks for a fresh decision,
+since a retry after someone reopened the report would close the new cycle too.
+Automatic release doesn't cover every transition: if an uncertain resolve
+landed and the report was reopened before the page read it, the report is open
+again, the held resolve's **Retry** keeps failing, and **Discard** is the way
+out. Resolve and reopen each have **Discard**, and show the last failure beside
+**Retry**. A request native code refuses before sending, such as a reason too long for
 the relay's 4,096-byte body limit, is `notSent`, so the form stays editable. `request_id_conflict` is shown as an error and is never
 resent under a new ID without the user starting a new action.
 

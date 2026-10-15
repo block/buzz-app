@@ -223,15 +223,18 @@ only staff, because only the answer says who is staff. It goes to whatever
 admin host the relay advertises, which can differ from the community's
 connection host and need not share its domain. That host learns the active
 public key, the client's IP address and that Settings was opened; no private
-key, login token or community data is sent. The NIP-98 signature covers only
-that URL and method and expires within NIP-98's short time window, so it can't
-be replayed elsewhere. A relay that names another deployment's real admin host
-can at most show that deployment's own staff its console inside the wrong
-relay's Settings, without seeing that traffic; each console screen names the
-admin host in its subtitle, which limits the confusion. This is accepted
-because the relay itself already knows the key, the IP address and the session
-(signing in to it proves the key), so the role check reveals nothing a relay
-the user connected to doesn't already have. It repeats each time Settings
+key, login token or community data is sent. The NIP-98 signature is bound to
+that URL, method and body and carries a timestamp, so it can't be used for any
+other request, and a conforming server rejects it after a short window (this
+relay allows ±60 seconds); the recipient can still keep it. A relay that names
+another deployment's real admin host lets that deployment's staff see and act
+on that deployment from inside the wrong relay's Settings, subject to that
+deployment's permissions; the relay that named it receives none of that
+traffic. The practical risk is confusion about which deployment is being
+administered, and each console screen names the admin host in its subtitle,
+which limits it. This is accepted because the user already trusts the relay to
+name its admin host, and sending that host the key, the IP address and when
+Settings was opened is part of that trust. It repeats each time Settings
 opens, re-reading the advertised admin host first, and each newly selected
 identity or relay is checked once while Settings stays open. Other re-checks
 (a 401 or 403, Check again, changing your own staff entry) are listed in

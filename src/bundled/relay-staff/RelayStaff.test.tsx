@@ -3333,6 +3333,7 @@ it("a held delete or timeout keeps its own fields after the card remounts", asyn
   }
 });
 
+type ResolveSent = Extract<StaffRequest, { route: "resolveReport" }>;
 const ambiguous = fail({
   category: "ambiguous",
   status: null,
@@ -3419,6 +3420,56 @@ it("a held reopen is released once the report is open again", async () => {
   expect(screen.queryByRole("button", { name: "Retry reopen" })).toBeNull();
 });
 
+it("a retried reopen that landed before a re-resolve does not claim the report is open", async () => {
+  const resolved = { ...report, status: "resolved" };
+  routes.listReports = () => ok([resolved]);
+  routes.getReport = () => ok(resolved);
+  let first = true;
+  routes.reopenReport = () => {
+    if (!first) return ok({ status: "open" });
+    first = false;
+    // The reopen lands, its answer is lost, and another moderator resolves
+    // the report before our reload sees it open.
+    return ambiguous;
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen report" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry reopen" }));
+  expect(
+    await screen.findByText(
+      "Your reopen went through, but the report has since been resolved.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Report reopened")).toBeNull();
+  expect(
+    await screen.findByRole("button", { name: "Reopen report" }),
+  ).toBeVisible();
+});
+
+it("an uncertain Dismiss asks for a fresh decision instead of a held Retry", async () => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  routes.resolveReport = () => ambiguous;
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Dismiss" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Dismiss/ }));
+  expect(
+    await screen.findByText(
+      "The relay did not confirm the result. Check the report and decide again.",
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(sent("getReport").length).toBeGreaterThan(1));
+  // The reloaded report shows a fresh form: nothing is resent until the
+  // user decides again.
+  fireEvent.click(await screen.findByRole("radio", { name: "Dismiss" }));
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  expect(sent("resolveReport")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Dismiss/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
+  const [a, b] = sent("resolveReport") as ResolveSent[];
+  expect(a?.requestId).not.toBe(b?.requestId);
+});
+
 it("a direct-action error shows only on the community it was sent to", async () => {
   routes.listCommunities = () =>
     ok({
@@ -3459,6 +3510,34 @@ it("opening Settings again re-reads the advertised admin host", async () => {
   );
   await waitFor(() => expect(contexts.at(-1)?.origin).toBe(advertised));
   expect(sent("probe")).toHaveLength(2);
+});
+
+it("reopening Settings checks only after the fresh admin-host lookup", async () => {
+  const moved = "https://admin2.example.com";
+  let answer = (_origin: string) => {};
+  let advertised: Promise<string> = Promise.resolve(origin);
+  const local = { ...backend, discover: () => advertised };
+  const staff = createStaff(local, () => ({ relay, signer }));
+  const open = () =>
+    cards(staff, (node) => node).map((card) => card.visibility?.ensure());
+  const close = (releases: ReturnType<typeof open>) => {
+    for (const release of releases) release?.();
+  };
+  const first = open();
+  await waitFor(() => expect(staff.visible()).toBe(true));
+  close(first);
+  calls = [];
+  contexts = [];
+  advertised = new Promise((resolve) => {
+    answer = resolve;
+  });
+  open();
+  staff.refresh();
+  await act(async () => {});
+  expect(sent("probe")).toHaveLength(0);
+  await act(async () => answer(moved));
+  await waitFor(() => expect(sent("probe")).toHaveLength(1));
+  expect(contexts.map((c) => c.origin)).toEqual([moved]);
 });
 
 it("a gateway sign-in page on the role check is unreachable, not denied", async () => {

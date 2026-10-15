@@ -47,6 +47,11 @@ export function createStaff(
   /** Latest discovery; an older one's answer is dropped. */
   let discovering = 0;
   /**
+   * True while the latest discovery is out. Every automatic check waits for
+   * it, so none is signed for a host the fresh answer may no longer name.
+   */
+  let looking = false;
+  /**
    * Reads the relay's advertised admin host. `force` re-reads a relay already
    * known, keeping its current host on screen until the new answer lands, so
    * a changed or newly enabled admin API shows without a restart.
@@ -54,6 +59,8 @@ export function createStaff(
   const discover = (force = false) => {
     const relay = target()?.relay ?? null;
     if (!backend.available || !relay) {
+      discovering++;
+      looking = false;
       if (discovery) {
         discovery = null;
         emit();
@@ -63,6 +70,7 @@ export function createStaff(
     const known = discovery?.relay === relay && discovery.origin !== "error";
     if (known && (!force || discovery?.origin === "pending")) return;
     const attempt = ++discovering;
+    looking = true;
     if (!known) {
       discovery = { relay, origin: "pending" };
       emit();
@@ -77,7 +85,9 @@ export function createStaff(
     relay: string,
     origin: Discovery["origin"],
   ) => {
-    if (attempt !== discovering || discovery?.relay !== relay) return;
+    if (attempt !== discovering) return;
+    looking = false;
+    if (discovery?.relay !== relay) return;
     if (discovery.origin !== origin) {
       discovery = { relay, origin };
       emit();
@@ -103,7 +113,7 @@ export function createStaff(
   const check = () => {
     const now = context();
     const id = contextKey();
-    if (!retained || !now || !id || checked.has(id)) return;
+    if (looking || !retained || !now || !id || checked.has(id)) return;
     checked.add(id);
     void probe(now, true);
   };
@@ -164,8 +174,8 @@ export function createStaff(
       const opening = retained++ === 0;
       if (opening) checked.clear();
       discover(opening);
-      // On opening, the re-read's answer runs the check, for the host it names.
-      if (!opening) check();
+      // While a re-read is out, its answer runs the check, for the host it names.
+      check();
       let released = false;
       return () => {
         if (released) return;
@@ -207,7 +217,8 @@ export function createStaff(
      */
     reprobe(context: StaffContext) {
       const now = contextKey();
-      if (!retained || now !== `${key(context)} ${context.relay}`) return;
+      if (looking || !retained || now !== `${key(context)} ${context.relay}`)
+        return;
       void probe(context, true);
     },
   };

@@ -1529,7 +1529,7 @@ it("gives a tool the partial listing a slow native read answers", async () => {
   }
 });
 
-it("launches a session with no config requests; the only call is the conversation's name lookup", async () => {
+it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {
   const f = setup();
   // Every relay-facing call the runtime can make, by name.
   const requests = {

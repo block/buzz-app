@@ -1,6 +1,10 @@
 import { createLocalAgentActivity } from "./local-activity";
-import { AgentConfigStore } from "./agent-config";
-import { resolveStart } from "./agent-start";
+import {
+  AgentConfigStore,
+  type SettingsSchema,
+  type Subject,
+} from "./agent-config";
+import { type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -401,6 +405,12 @@ export type AgentProvider = Readonly<{
   /** Provider-owned recovery/progress controls and optional saved defaults. */
   DialogBody: ComponentType<{ onClose(): void }>;
 }>;
+/** The artifact types an agent's config channel binding has made synced. */
+export type ConfigBinding = Readonly<{
+  settings?: Readonly<{ mode: Mode; subject: Subject }>;
+  instructions?: Readonly<{ mode: Mode; subject: Subject }>;
+}>;
+
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
@@ -441,6 +451,15 @@ export type AgentType<Config = unknown> = {
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** The settings that sync across devices and how they merge into this
+   * device's config. Without it, the type's settings never sync. */
+  syncedSettings?: Readonly<{
+    schema: SettingsSchema;
+    withSynced(
+      config: Config,
+      settings: Readonly<Record<string, string>>,
+    ): Config;
+  }>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
@@ -902,6 +921,9 @@ export class AgentsService extends Service implements Agents {
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
     private readonly jev: ClassifierNative | undefined = nativeClassifier(),
+    /** Which artifact types an agent has synced, from its config channel
+     * binding. Unset, every agent starts `local`. */
+    private readonly configBinding?: (agent: Agent) => ConfigBinding,
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
@@ -942,13 +964,36 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(identity);
       },
       write: (record) => this.write(record),
-      // No agent has a config channel yet, so every type starts `local`.
-      start: (agent) =>
-        resolveStart({
+      start: (agent) => {
+        const { settings, instructions } = this.configBinding?.(agent) ?? {};
+        const merge = this.types().find(
+          (type) => type.key === agent.type,
+        )?.syncedSettings;
+        if (settings && !merge)
+          return {
+            ok: false,
+            state: "invalid",
+            reason: "This agent type has no synced settings",
+          };
+        return resolveStart({
           store: this.configStore,
           local: agent.config as object,
           agentType: agent.type,
-        }),
+          ...(settings && merge
+            ? {
+                settings: {
+                  ...settings,
+                  schema: merge.schema,
+                  withSynced: merge.withSynced as (
+                    config: object,
+                    synced: Readonly<Record<string, string>>,
+                  ) => object,
+                },
+              }
+            : {}),
+          ...(instructions ? { instructions } : {}),
+        });
+      },
       team: (pubkey) =>
         teamPrompt(
           this.teamList,

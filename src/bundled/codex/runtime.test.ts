@@ -3132,7 +3132,7 @@ it("a converted stream uses threaded replies despite an agent owner's retained M
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
 
-it("starts a thread and a turn with zero relay requests beyond the turn's message-context reads", async () => {
+it("method calls: a thread and a turn make no relay-session call beyond the turn's message-context reads (launch-boundary.test.ts runs the real service path)", async () => {
   const f = fixture();
   const session = f.snapshot.session;
   // Every relay-facing call the runtime can make, by name.

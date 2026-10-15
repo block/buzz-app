@@ -399,9 +399,11 @@ test("message activity opens a grouped preview and the agent's profile without l
       const box = await summary.boundingBox();
       expect(box.x + box.width).toBeLessThanOrEqual(width);
       expect(
-        await summary.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
+        // The mirrored decorative connector extends beyond the control's right
+        // edge. Measure content overflow independently of that pseudo-element.
+        await summary
+          .locator(".buzz-button-label")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
       ).toBe(true);
       await page.screenshot({
         path: testInfo.outputPath(

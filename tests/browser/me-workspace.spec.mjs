@@ -41,6 +41,31 @@ test("Me opens video review and Escape returns to its opener", async ({
   await expect(review).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
+test("Me opens image review with its comments", async ({ page, app }) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/attachment-media/still.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me image", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.png", "m image/png"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  const opener = work.getByRole("link", { name: "Open image attachment" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Image viewer" });
+  await expect(
+    review.getByRole("button", { name: "Show comments" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });

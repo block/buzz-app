@@ -636,6 +636,8 @@ test("comment actions revealed while the drawer slides realign when it settles",
   await actions.evaluate((bar) =>
     Promise.all(bar.getAnimations().map((animation) => animation.finished)),
   );
+  // The animated gap queues a resize-observer positioning frame after entry.
+  await expect.poll(anchoring).toMatchObject({ anchored: true });
   const moving = await anchoring();
   expect(moving.anchored).toBe(true);
   await page.evaluate(() => {

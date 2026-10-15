@@ -635,7 +635,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   const view = render(<f.tabs.ProviderDialogBody onClose={onClose} />);
   const user = userEvent.setup();
 
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("High");
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(/^High$/);
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
     await screen.findByRole("option", { name: "Low · Default" }),
@@ -655,7 +655,18 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   await waitFor(() =>
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "Low · Default",
+  );
+});
+it("shows the configured inherited model and thinking in the closed agent controls", async () => {
+  const f = fixture({ configured: { model: "model-b" } });
+  render(<f.tabs.SettingsTab {...f.props()} />);
+  await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+  expect(screen.getByLabelText("Model")).toHaveTextContent("Model B · Default");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
+    "Medium · Default",
+  );
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
@@ -664,7 +675,7 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low · Default");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(

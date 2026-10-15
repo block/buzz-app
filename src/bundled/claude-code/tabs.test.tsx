@@ -685,7 +685,7 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Automatic");
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -713,6 +713,7 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   await user.click(
     await screen.findByRole("option", { name: "Automatic · Default" }),
   );
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });

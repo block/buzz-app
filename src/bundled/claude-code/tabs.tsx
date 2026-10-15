@@ -884,7 +884,6 @@ export function createTabs({
         />
         <Select
           label="Thinking"
-          valueLabel={draft.effort ? undefined : "Automatic"}
           variant="preference"
           value={draft.effort}
           groups={[{ label: "", options: effortOptions }]}

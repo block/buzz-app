@@ -559,9 +559,6 @@ export function createTabs(
           />
           <Select
             label="Default thinking"
-            valueLabel={
-              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
-            }
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -897,11 +894,7 @@ export function createTabs(
             models={choices(data)}
             value={draft.model}
             defaultModel={
-              data?.models.find(
-                (model) => model.model === providerDefaults.model,
-              )?.model ??
-              data?.models.find((model) => model.isDefault)?.model ??
-              providerDefaults.model
+              catalogModel(providerDefaults.model, data)?.model ?? ""
             }
             defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
             defaultDescription="Following the provider's model default"
@@ -913,11 +906,6 @@ export function createTabs(
           />
           <Select
             label="Thinking"
-            valueLabel={
-              draft.effort
-                ? undefined
-                : codexDefaultEffortLabel(effective.effort, selected)
-            }
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}

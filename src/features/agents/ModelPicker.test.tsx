@@ -206,8 +206,8 @@ it("lists the inherited default once with its catalog copy", async () => {
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Opus");
-  expect(control()).not.toHaveTextContent("Default");
+  expect(control()).toHaveTextContent("Opus · Default");
+  expect(screen.getByTitle("Opus · Default")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(2);
@@ -231,6 +231,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
+  expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
     name: "Opus · Default",
@@ -265,7 +266,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Sonnet");
+  expect(control()).toHaveTextContent("Sonnet · Default");
   await user.click(control());
   expect(
     await screen.findByRole("option", { name: "Sonnet · Default" }),

@@ -6,7 +6,13 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
-import { AgentSessions, IDLE_MS, type Launch, ServerPool } from "./sessions";
+import {
+  AgentSessions,
+  IDLE_MS,
+  type Launch,
+  ServerPool,
+  SharedProcess,
+} from "./sessions";
 
 const tools: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -14,6 +20,7 @@ const tools: ToolServer = async (_conversation, message) => ({
   result: {},
 });
 
+/** A goose shared by agents, and its first agent's sessions. */
 const setup = (
   initial: Partial<Launch> = {},
   hold = false,
@@ -36,45 +43,47 @@ const setup = (
     ...(silent && { silent }),
     providers: [{ providerId: "openai", defaultModel: "gpt-default" }],
   });
-  let settings: Launch = {
-    workspace: "~/.buzz",
-    systemPrompt: "prompt",
-    ...initial,
+  const process = new SharedProcess(
+    fake.spawn,
+    serve ? serve(fake.serve) : fake.serve,
+  );
+  /** Another agent in the same goose. */
+  const agent = (
+    initial: Partial<Launch> = {},
+    agentTools: ToolServer = tools,
+    onChange?: () => void,
+  ) => {
+    let settings: Launch = {
+      workspace: "~/.buzz",
+      systemPrompt: "prompt",
+      ...initial,
+    };
+    let choice: Choice = { provider: "", model: "" };
+    const sessions = new AgentSessions({
+      spawn: fake.spawn,
+      tools: agentTools,
+      process,
+      pool,
+      ...(onChange && { onChange }),
+      launch: async () => settings,
+      choice: () => choice,
+      fingerprint: () =>
+        JSON.stringify([settings.workspace, settings.systemPrompt]),
+    });
+    return {
+      sessions,
+      change: (next: Partial<Launch>, reconfigure = true) => {
+        settings = { ...settings, ...next };
+        if (reconfigure) sessions.reconfigure();
+      },
+      /** Picks a provider and model, as saving the agent's settings does. */
+      choose: (next: Choice) => {
+        choice = next;
+        sessions.reconfigure();
+      },
+    };
   };
-  let choice: Choice = { provider: "", model: "" };
-  /** A setting only the process was started with. */
-  let started = "";
-  const sessions = new AgentSessions({
-    spawn: fake.spawn,
-    tools,
-    serve: serve ? serve(fake.serve) : fake.serve,
-    pool,
-    ...(onChange && { onChange }),
-    launch: async () => settings,
-    choice: () => choice,
-    processFingerprint: () => JSON.stringify([settings.workspace, started]),
-    fingerprint: () =>
-      JSON.stringify([settings.workspace, settings.systemPrompt]),
-  });
-  return {
-    fake,
-    sessions,
-    pool,
-    change: (next: Partial<Launch>, reconfigure = true) => {
-      settings = { ...settings, ...next };
-      if (reconfigure) sessions.reconfigure();
-    },
-    /** Changes a setting only the process was started with. */
-    restart: (next: string) => {
-      started = next;
-      sessions.reconfigure();
-    },
-    /** Picks a provider and model, as saving the agent's settings does. */
-    choose: (next: Choice) => {
-      choice = next;
-      sessions.reconfigure();
-    },
-  };
+  return { fake, pool, process, agent, ...agent(initial, tools, onChange) };
 };
 
 afterEach(() => {
@@ -127,8 +136,36 @@ describe("AgentSessions", () => {
   it("opens sessions in the workspace as an absolute path", async () => {
     const { fake, sessions } = setup();
     await sessions.deliver("a", "one", 1);
-    expect(fake.geese[0]?.options.cwd).toBe("/home/test/.buzz");
+    expect(fake.geese[0]?.options.cwd).toBe("/home/test");
     expect(fake.geese[0]?.opened[0]?.cwd).toBe("/home/test/.buzz");
+  });
+
+  it("opens every agent's sessions in one goose, each in its workspace with its tools", async () => {
+    const { fake, sessions, agent } = setup();
+    const ada = vi.fn(tools);
+    const bo = vi.fn(tools);
+    const first = agent({ workspace: "~/ada" }, ada);
+    const second = agent({ workspace: "/work/bo" }, bo);
+    await first.sessions.deliver("chan/root", "one", 1);
+    await second.sessions.deliver("chan/root", "two", 2);
+    await sessions.deliver("chan/root", "three", 3);
+    expect(fake.geese).toHaveLength(1);
+    const [goose] = fake.geese;
+    expect(goose?.opened.map((session) => session.cwd)).toEqual([
+      "/home/test/ada",
+      "/work/bo",
+      "/home/test/.buzz",
+    ]);
+    await goose?.mcp("session-2", "tools/list");
+    expect(ada).not.toHaveBeenCalled();
+    expect(bo).toHaveBeenCalledWith("chan/root", {
+      id: expect.anything(),
+      method: "tools/list",
+      params: {},
+    });
+    await goose?.mcp("session-1", "tools/list");
+    expect(ada).toHaveBeenCalledOnce();
+    expect(bo).toHaveBeenCalledOnce();
   });
 
   it("opens one session for messages that arrive together", async () => {
@@ -226,6 +263,21 @@ describe("AgentSessions", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it("runs a turn on the model its message asked for, and the next on the agent's", async () => {
+    const { fake, sessions, choose } = setup();
+    choose({ provider: "openai", model: "" });
+    await sessions.deliver("a", "one", 1, { model: "gpt-4.1" });
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 model=gpt-4.1",
+      "session-1 model=gpt-default",
+    ]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+  });
+
   it("fails a turn goose cannot switch, and switches at the next", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);
@@ -245,73 +297,19 @@ describe("AgentSessions", () => {
     expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
   });
 
-  it("restarts the process for a new workspace once nothing runs in it", async () => {
+  it("reopens an idle session in a new workspace, in the same goose", async () => {
     const { fake, sessions, change } = setup();
     await sessions.deliver("a", "one", 1);
-    const [first] = fake.geese;
-    if (first) first.hold = true;
-    const working = sessions.deliver("b", "two", 2);
-    await flush(30);
     change({ workspace: "~/other" });
-    await flush(30);
-    // `a` was idle, so it closed; `b` keeps the old process while it works.
-    expect(first?.closed).toEqual(["session-1"]);
-    expect(first?.killed).toBe(false);
-    await sessions.deliver("c", "three", 3);
-    expect(fake.geese).toHaveLength(2);
-    expect(fake.geese[1]?.options.cwd).toBe("/home/test/other");
-    first?.turns.at(-1)?.finish();
-    await working;
-    await flush(30);
-    expect(first?.killed).toBe(true);
-  });
-
-  it("keeps a process whose settings change while a session opens in it", async () => {
-    let gate: Promise<void> | undefined;
-    const { fake, sessions, restart } = setup({}, false, {
-      serve: (serve) => async (handler) => {
-        await gate;
-        return serve(handler);
-      },
-    });
-    await sessions.deliver("a", "one", 1);
-    let release!: () => void;
-    gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const opening = sessions.deliver("b", "two", 2);
-    await flush(30);
-    restart("other");
-    await flush(30);
-    const [first] = fake.geese;
-    expect(first?.killed).toBe(false);
-    release();
-    await expect(opening).resolves.toEqual({ ok: true });
-    expect(first?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
-    // Nothing runs in it any more, so it stops.
-    await flush(30);
-    expect(first?.killed).toBe(true);
-  });
-
-  it("stops an old process once idle after its settings come back", async () => {
-    vi.useFakeTimers();
-    const { fake, sessions, restart } = setup();
-    await sessions.deliver("a", "one", 1);
-    const [a1] = fake.geese;
-    if (a1) a1.hold = true;
-    const working = sessions.deliver("a", "two", 2);
-    await flush(30);
-    restart("other");
-    await sessions.deliver("b", "three", 3);
-    restart("");
-    await sessions.deliver("c", "four", 4);
-    const [, b, a2] = fake.geese;
-    expect(b?.killed).toBe(true);
-    a1?.turns.at(-1)?.finish();
-    await working;
-    await vi.advanceTimersByTimeAsync(IDLE_MS);
-    expect(a1?.killed).toBe(true);
-    expect(a2?.killed).toBe(false);
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese).toHaveLength(1);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.opened.map((session) => session.cwd)).toEqual([
+      "/home/test/.buzz",
+      "/home/test/other",
+    ]);
+    expect(goose?.killed).toBe(false);
   });
 
   it("closes a quiet conversation's session", async () => {
@@ -324,15 +322,23 @@ describe("AgentSessions", () => {
     expect(sessions.seen("a")).toBe(0);
   });
 
-  it("starts goose again after it exits", async () => {
-    const { fake, sessions } = setup();
+  it("drops every agent's sessions when goose exits, and starts it again", async () => {
+    const { fake, sessions, agent } = setup();
+    const other = agent();
     await sessions.deliver("a", "one", 1);
+    await other.sessions.deliver("a", "two", 2);
     fake.geese[0]?.exit(1, "crashed");
     await flush(30);
-    await expect(sessions.deliver("a", "two", 2)).resolves.toEqual({
+    expect(sessions.snapshot()).toEqual([]);
+    expect(other.sessions.snapshot()).toEqual([]);
+    await expect(sessions.deliver("a", "three", 3)).resolves.toEqual({
+      ok: true,
+    });
+    await expect(other.sessions.deliver("a", "four", 4)).resolves.toEqual({
       ok: true,
     });
     expect(fake.geese).toHaveLength(2);
+    expect(fake.geese[1]?.opened).toHaveLength(2);
   });
 
   it("reports why goose could not start", async () => {
@@ -340,17 +346,50 @@ describe("AgentSessions", () => {
     const sessions = new AgentSessions({
       spawn: fake.spawn,
       tools,
-      serve: fake.serve,
+      process: new SharedProcess(fake.spawn, fake.serve),
       pool: new ServerPool(),
       launch: async () => ({ workspace: "/w", systemPrompt: "" }),
       choice: () => ({ provider: "", model: "" }),
-      processFingerprint: () => "",
       fingerprint: () => "",
     });
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
       error: expect.stringMatching(/HTTP MCP/),
     });
+  });
+
+  it("starts no goose for an agent removed while its sessions open", async () => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const launch = vi.fn(async () => {
+      await held;
+      return { workspace: "/w", systemPrompt: "" };
+    });
+    const sessions = new AgentSessions({
+      spawn: fake.spawn,
+      tools,
+      process: new SharedProcess(fake.spawn, fake.serve),
+      pool: new ServerPool(),
+      launch,
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const delivering = sessions.deliver("a", "one", 1);
+    const once = sessions.runOnce("watch/x", () => "look");
+    await flush(30);
+    expect(launch).toHaveBeenCalledTimes(2);
+    sessions.dispose();
+    release();
+    await expect(delivering).resolves.toEqual({
+      ok: false,
+      error: "goose was stopped",
+    });
+    await expect(once).resolves.toMatchObject({ ok: false });
+    await flush(30);
+    expect(fake.geese).toEqual([]);
   });
 
   it("runs a one-off turn in a session it then closes", async () => {
@@ -537,22 +576,25 @@ describe("AgentSessions", () => {
 
   it("closes the least recently used idle session of any agent to make room", async () => {
     const pool = new ServerPool(2);
-    const one = setup({}, false, { pool });
-    const two = setup({}, true, { pool });
-    await one.sessions.deliver("a", "one", 1);
-    await one.sessions.deliver("b", "two", 2);
-    await one.sessions.deliver("a", "three", 3);
+    const { fake, sessions: one, agent } = setup({}, false, { pool });
+    const two = agent().sessions;
+    await one.deliver("a", "one", 1);
+    await one.deliver("b", "two", 2);
+    await one.deliver("a", "three", 3);
     // `b` is now the least recently used.
-    const working = two.sessions.deliver("c", "four", 4);
+    const [goose] = fake.geese;
+    if (goose) goose.hold = true;
+    const working = two.deliver("c", "four", 4);
     await flush(30);
-    expect(one.fake.geese[0]?.closed).toEqual(["session-2"]);
-    expect(one.sessions.snapshot().map((live) => live.key)).toEqual(["a"]);
+    expect(goose?.closed).toEqual(["session-2"]);
+    expect(one.snapshot().map((live) => live.key)).toEqual(["a"]);
     // `c` is working, so `a` closes for the next.
-    await one.sessions.deliver("d", "five", 5);
-    expect(one.fake.geese[0]?.closed).toEqual(["session-2", "session-1"]);
-    expect(two.fake.geese[0]?.closed).toEqual([]);
+    if (goose) goose.hold = false;
+    await one.deliver("d", "five", 5);
+    expect(goose?.closed).toEqual(["session-2", "session-1"]);
+    expect(two.snapshot().map((live) => live.key)).toEqual(["c"]);
     expect(pool.size).toBe(2);
-    two.fake.geese[0]?.turns[0]?.finish();
+    goose?.turns.find((turn) => turn.text === "four")?.finish();
     await working;
   });
 
@@ -601,14 +643,25 @@ describe("AgentSessions", () => {
     expect(sessions.snapshot().map((live) => live.key)).toEqual(["b"]);
   });
 
-  it("stops its processes when disposed", async () => {
-    const { fake, sessions } = setup();
-    await sessions.deliver("a", "one", 1);
-    sessions.dispose();
+  it("closes only its own sessions when disposed, ending their turns", async () => {
+    const { fake, sessions, agent } = setup();
+    const other = agent();
+    await other.sessions.deliver("a", "one", 1);
+    const [goose] = fake.geese;
+    if (goose) goose.hold = true;
+    const working = sessions.deliver("a", "two", 2);
     await flush(30);
-    expect(fake.geese[0]?.killed).toBe(true);
-    await expect(sessions.deliver("a", "two", 2)).resolves.toMatchObject({
+    sessions.dispose();
+    await expect(working).resolves.toEqual({
+      ok: false,
+      error: "The session was closed",
+    });
+    await flush(30);
+    expect(goose?.closed).toEqual(["session-2"]);
+    expect(goose?.killed).toBe(false);
+    await expect(sessions.deliver("a", "three", 3)).resolves.toMatchObject({
       ok: false,
     });
+    expect(other.sessions.snapshot().map((live) => live.key)).toEqual(["a"]);
   });
 });

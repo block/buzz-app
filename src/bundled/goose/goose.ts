@@ -1,8 +1,8 @@
-// One `goose-acp` process for one agent, driven over ACP's line-delimited
-// JSON-RPC. Each conversation the agent is in is one ACP session in it. Each
-// session gets its own loopback HTTP MCP server for the Buzz tools, which the
-// app serves and answers: goose is given its address and token in
-// `session/new`, never a Buzz key.
+// One `goose-acp` process, driven over ACP's line-delimited JSON-RPC. Each
+// conversation an agent is in is one ACP session in it, in the agent's
+// workspace. Each session gets its own loopback HTTP MCP server for its agent's
+// Buzz tools, which the app serves and answers: goose is given its address and
+// token in `session/new`, never a Buzz key.
 import type {
   HostMcpServer,
   HostProcess,
@@ -111,7 +111,6 @@ export class GooseProcess {
 
   private constructor(
     private readonly process: HostProcess,
-    private readonly tools: ToolServer,
     private readonly serve: ServeMcp | undefined,
   ) {
     this.exited = process.exited.then((code) => {
@@ -138,7 +137,6 @@ export class GooseProcess {
     launch: Readonly<{
       cwd: string;
       env?: Readonly<Record<string, string | null>>;
-      tools: ToolServer;
       serve?: ServeMcp;
     }>,
   ) {
@@ -154,7 +152,7 @@ export class GooseProcess {
         ? new Error("goose-acp is missing from this Buzz build.")
         : error;
     });
-    goose = new GooseProcess(process, launch.tools, launch.serve);
+    goose = new GooseProcess(process, launch.serve);
     for (const data of early) goose.read(data);
     try {
       const init = (await goose.request(
@@ -187,14 +185,15 @@ export class GooseProcess {
   }
 
   /** Opens a new session in `cwd`, named `title`, whose system prompt has
-   * `systemPrompt` appended. A `bare` one has no tools at all. Each turn runs
-   * on the provider and model `choice` gives as it starts. */
+   * `systemPrompt` appended. `tools` answers its Buzz tools; without them it
+   * has no tools at all. Each turn runs on the provider and model `choice`
+   * gives as it starts. */
   async open(
     launch: Readonly<{
       cwd: string;
       systemPrompt: string;
       title?: string;
-      bare?: boolean;
+      tools?: ToolServer;
       choice?: () => Choice;
     }>,
   ): Promise<GooseSession> {
@@ -202,9 +201,10 @@ export class GooseProcess {
     let server: HostMcpServer | undefined;
     // goose connects while it opens the session, before it is known here.
     let session: GooseSession | undefined;
-    if (!launch.bare) {
+    const { tools } = launch;
+    if (tools) {
       if (!this.serve) throw new Error("This goose serves no Buzz tools");
-      server = await this.serve((message) => this.mcp(session, message));
+      server = await this.serve((message) => this.mcp(tools, session, message));
     }
     const buzz = server && {
       type: "http",
@@ -278,7 +278,7 @@ export class GooseProcess {
 
   /** Ends a session. Its turn, if any, is cancelled first. */
   async close(session: GooseSession) {
-    this.sessions.delete(session.id);
+    if (!this.sessions.delete(session.id)) return;
     session.fail("The session was closed");
     void session.server?.close();
     if (!this.alive) return;
@@ -397,12 +397,13 @@ export class GooseProcess {
    * response; a notification gets none. A final `send` that succeeded ends
    * its turn. The host answers a throw with an internal error. */
   private async mcp(
+    tools: ToolServer,
     session: GooseSession | undefined,
     message: unknown,
   ): Promise<Wire | undefined> {
     const { id, method = "", params } = (message ?? {}) as Wire;
     if (id === undefined || id === null) return undefined;
-    const response = (await this.tools(session?.conversation, {
+    const response = (await tools(session?.conversation, {
       id,
       method,
       params,
@@ -423,7 +424,8 @@ export class GooseProcess {
 }
 
 /** One conversation's ACP session. Messages sent while a turn runs are
- * steered into it; one that arrives as the turn ends runs as the next turn. */
+ * steered into it; one that arrives as the turn ends, or asks for another
+ * model, runs as the next turn. */
 export class GooseSession {
   /** The conversation it serves. */
   conversation: string | undefined;
@@ -435,7 +437,10 @@ export class GooseSession {
   /** A `session/prompt` is in flight. */
   private prompting = false;
   private steering = 0;
-  private readonly queue: string[] = [];
+  /** Turns to run, each with the model it was asked for, if any. */
+  private readonly queue: { text: string; model?: string }[] = [];
+  /** The model the running turn runs on; empty is its provider's default. */
+  private model = "";
   /** Messages sent and not yet answered. */
   private pending = 0;
   private waiters: Waiter[] = [];
@@ -468,9 +473,14 @@ export class GooseSession {
     return !this.closed;
   }
 
-  /** Sends one user message. Resolves when it, and anything sent after it,
-   * has been answered, or a final `send` ended the work. */
-  send(text: string, activity: ActivityReceipt = {}): Promise<Settled> {
+  /** Sends one user message, whose turn runs on `model` of the provider when
+   * given. Resolves when it, and anything sent after it, has been answered,
+   * or a final `send` ended the work. */
+  send(
+    text: string,
+    activity: ActivityReceipt = {},
+    model?: string,
+  ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
     this.pending++;
@@ -479,9 +489,15 @@ export class GooseSession {
       waiter = resolve;
       this.waiters.push(resolve);
     });
-    if (this.prompting) void this.steer(text, activity, waiter);
+    // A steer cannot change the model, and must not pass a queued turn.
+    if (
+      this.prompting &&
+      !this.queue.length &&
+      (!model || model === this.model)
+    )
+      void this.steer(text, activity, waiter);
     else {
-      this.queue.push(text);
+      this.queue.push({ text, ...(model ? { model } : {}) });
       this.acknowledge(activity, waiter);
       void this.pump();
     }
@@ -558,7 +574,7 @@ export class GooseSession {
           // The turn ended, or another took its place: run it as the next.
         }
       }
-      this.queue.push(text);
+      this.queue.push({ text });
       this.acknowledge(activity, waiter);
     } finally {
       this.steering--;
@@ -572,9 +588,9 @@ export class GooseSession {
     this.prompting = true;
     try {
       while (this.queue.length && !this.closed) {
-        const text = this.queue.shift() ?? "";
+        const { text, model } = this.queue.shift() ?? { text: "" };
         try {
-          await this.select();
+          await this.select(model);
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],
@@ -593,11 +609,14 @@ export class GooseSession {
     if (!this.steering && !this.closed) this.done();
   }
 
-  /** Puts the session on the provider and model chosen now. A steer joins
-   * the running turn, so a change waits for the next. */
-  private async select() {
-    const want = this.choice?.();
-    if (!want) return;
+  /** Puts the session on the provider and model chosen now, or `model` of
+   * that provider. A steer joins the running turn, so a change waits for the
+   * next. */
+  private async select(model?: string) {
+    const chosen = this.choice?.();
+    if (!chosen) return;
+    const want = model ? { ...chosen, model } : chosen;
+    this.model = want.model;
     if (
       want.provider !== this.chosen.provider ||
       (this.chosen.model && !want.model)

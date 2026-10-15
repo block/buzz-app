@@ -123,7 +123,7 @@ function setup(
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
-  const deliver = (event: RelayEvent) =>
+  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
     runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
@@ -131,6 +131,7 @@ function setup(
       config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
+      ...extra,
     } as unknown as Delivery);
   const goose = () => fake.geese.find((process) => process.turns.length);
   const runOnce = (key: string, prompt: string) =>
@@ -330,6 +331,39 @@ describe("GooseRuntime", () => {
       "session-1",
     ]);
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
+  });
+
+  it("runs a mention on the model its owner picked", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander hi"), {
+      config: { ...DEFAULT_CONFIG, provider: "openai" },
+      model: "o3",
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual(["session-1 model=o3"]);
+  });
+
+  it("keeps goose while another agent runs, and stops it with the last", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
+    const running = (...agents: (typeof agent)[]) =>
+      runtime.sync(
+        agents.map(
+          (item) => ({ ...item, config: DEFAULT_CONFIG }) as unknown as Agent,
+        ),
+      );
+    running(agent, other);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    running(other);
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.killed).toBe(false);
+    running();
+    await flush(30);
+    expect(goose?.killed).toBe(true);
+    expect(fake.geese).toHaveLength(1);
   });
 
   it("fails a session mention it cannot place until the placement can be read", async () => {

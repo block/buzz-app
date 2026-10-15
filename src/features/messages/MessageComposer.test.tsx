@@ -4701,7 +4701,7 @@ it("inserts readable literal mention links without new notification recipients d
     );
   });
   const labels = ["@Honey", ...names.map((name) => `@${name}`)].map((label) =>
-    label.replaceAll("\n", " "),
+    label.replace(/[\r\n]+/g, " "),
   );
   // Each selection stays one literal label on its own exact identity link.
   const readable = (body: string) => {

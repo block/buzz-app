@@ -444,14 +444,15 @@ it.each(["ready", "connecting"] as const)(
   },
 );
 
-it.each([true, false])(
-  "uses only the invoking section for placement (group: %s)",
-  async (fromGroup) => {
+it.each(["Laptop", "Channels", "Starred"])(
+  "uses only the invoking section for placement (%s)",
+  async (section) => {
+    const fromGroup = section === "Laptop";
     const preferences = createSidebarPreferencesStore(
       async () => ({
         sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
         assignments: { beta: "laptop" },
-        starred: [],
+        starred: ["alpha"],
         muted: [],
       }),
       true,
@@ -479,9 +480,23 @@ it.each([true, false])(
       await screen.findByRole("button", { name: /Laptop/ });
       // An active grouped channel must not make the general Channels + inherit it.
       const header = screen.getByRole("button", {
-        name: fromGroup ? /Laptop/ : "More actions for Channels",
+        name: `More actions for ${section}`,
       }).parentElement;
       assert.exists(header);
+      if (section === "Starred") {
+        const icon = screen
+          .getByLabelText("Starred")
+          .querySelector("[data-sidebar-group-icon]");
+        const emoji = screen
+          .getByLabelText("Laptop")
+          .querySelector("[data-sidebar-group-icon]");
+        assert.exists(icon);
+        assert.exists(emoji);
+        expect(icon).toHaveAttribute("class", emoji.className);
+        expect(icon).toHaveAttribute("aria-hidden", "true");
+        expect(icon.querySelector("svg")).toBeInTheDocument();
+        expect(icon).not.toHaveTextContent("★");
+      }
       fireEvent.click(
         within(header).getByRole("button", { name: "Create channel" }),
       );

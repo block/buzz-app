@@ -1143,6 +1143,7 @@ function ReadySidebar({
                     )
                   }
                   createChannel={
+                    section.key === "starred" ||
                     isChannelSectionKey(section.key)
                       ? {
                           available: queries.channelCreation.available,

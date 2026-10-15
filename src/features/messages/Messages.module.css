@@ -2459,11 +2459,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   );
 }
 /* Leave a separate floating lane when the composer has an activity pill. */
-:is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
-.jumpToLatest,
-[data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
-  > .feed
-  .jumpToLatest {
+.jumpToLatest[data-activity-lane] {
   top: calc(
     100% +
     var(--history-bottom-inset) -

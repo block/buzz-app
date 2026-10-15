@@ -17,6 +17,7 @@ import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
 import { ThreadPanel } from "./ThreadPanel";
+const noTyping: readonly never[] = [];
 
 vi.mock("./use-reading", () => ({
   Reading: () => null,
@@ -129,6 +130,7 @@ function setup(messageId = "root") {
     thread: () => view,
     profiles: { ensure: async () => {} },
     agentChoices: createAgentLibrary(undefined).queries,
+    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
     messages: { retry: () => {} },
     media: () => undefined,
     unread: {

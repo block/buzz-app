@@ -20,12 +20,14 @@ import type { PageNavigation } from "../navigation/service";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
+import type { TypingEntry } from "../relay/typing";
 import type {
   ChannelList,
   ChannelMessage,
   ChannelSummary,
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
+const noTyping: readonly never[] = [];
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -196,6 +198,7 @@ function messagesHarness(
     thread,
     profiles: { ensure },
     agentChoices: createAgentLibrary(undefined).queries,
+    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
     messages: { retry: vi.fn() },
     media: () => undefined,
     unread: {
@@ -831,6 +834,52 @@ it("counts replies recovered after a completed traversal, not initial history pa
   ];
   h.render();
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
+});
+
+it("reserves the jump button's activity lane only for agents working in this thread of a live channel", () => {
+  const h = messagesHarness();
+  const listeners = new Set<() => void>();
+  let typing: readonly TypingEntry[] = [];
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const agent = "a".repeat(64);
+  const library = { identities: [{ pubkey: agent }] };
+  let list: ChannelList = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General" }],
+  };
+  Object.assign(h.session, {
+    typing: { snapshot: () => typing, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    channels: { list: () => list, subscribeList: subscribe },
+  });
+  const publish = (entries: readonly TypingEntry[]) =>
+    act(() => {
+      typing = entries;
+      for (const listener of listeners) listener();
+    });
+  h.render();
+  h.scroll(500);
+  const jump = screen
+    .getByRole("button", { name: "Jump to latest" })
+    .closest("[data-visible]");
+  expect(jump).not.toHaveAttribute("data-activity-lane");
+  publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
+  expect(jump).toHaveAttribute("data-activity-lane");
+  // Channel-level activity shows in the channel composer, not this thread's.
+  publish([{ pubkey: agent, channelId: "channel" }]);
+  expect(jump).not.toHaveAttribute("data-activity-lane");
+  // A cached channel's composer mounts no TypingIndicator, so no lane.
+  list = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General", cached: true }],
+  };
+  publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
+  expect(jump).not.toHaveAttribute("data-activity-lane");
 });
 
 it("transfers keyboard focus to the thread history before removing the jump button", () => {

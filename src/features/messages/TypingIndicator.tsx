@@ -30,6 +30,38 @@ const noSubscribe = () => () => {};
 const noActivity = () => undefined;
 const noRows: readonly never[] = [];
 
+/** Agents working in one conversation, over existing stores; no reads or capture. */
+export function useConversationAgents(
+  session: RelaySession,
+  channelId: string,
+  threadRootId: string | undefined,
+) {
+  const replaced = useReplacedTypers(session, channelId, threadRootId);
+  const entries = useSyncExternalStore(
+    session.typing.subscribe,
+    session.typing.snapshot,
+  );
+  const activity = useSyncExternalStore(
+    session.agentActivity?.subscribe ?? noSubscribe,
+    session.agentActivity?.snapshot ?? noActivity,
+  );
+  const choices = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+  );
+  const ownedAgents = useMemo(
+    () => new Set(choices.identities.map(({ pubkey }) => pubkey)),
+    [choices],
+  );
+  const details = useMemo(
+    () =>
+      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
+    [activity, entries, ownedAgents, channelId, threadRootId],
+  );
+  const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
+  return { details, entries, replaced, agents };
+}
+
 /** Floating conversation activity over existing stores; no reads or capture. */
 export function TypingIndicator({
   session,
@@ -48,32 +80,15 @@ export function TypingIndicator({
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
 }) {
-  const replaced = useReplacedTypers(session, channelId, threadRootId);
-  const entries = useSyncExternalStore(
-    session.typing.subscribe,
-    session.typing.snapshot,
-  );
-  const activity = useSyncExternalStore(
-    session.agentActivity?.subscribe ?? noSubscribe,
-    session.agentActivity?.snapshot ?? noActivity,
+  const { details, entries, replaced, agents } = useConversationAgents(
+    session,
+    channelId,
+    threadRootId,
   );
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
-  );
-  const choices = useSyncExternalStore(
-    session.agentChoices.subscribe,
-    session.agentChoices.snapshot,
-  );
-  const ownedAgents = useMemo(
-    () => new Set(choices.identities.map(({ pubkey }) => pubkey)),
-    [choices],
-  );
-  const details = useMemo(
-    () =>
-      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
-    [activity, entries, ownedAgents, channelId, threadRootId],
   );
   // Read only the already-loaded channel window to name threads. No ensure/read.
   const needsRows = details.size > 0 && !threadRootId;
@@ -89,7 +104,6 @@ export function TypingIndicator({
     [session, channelId, needsRows],
   );
   const rows = useSyncExternalStore(subscribeRows, getRows);
-  const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
   const firstAgent = agents[0];
   const humans = entries.filter(
     (entry) =>

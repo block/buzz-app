@@ -160,6 +160,8 @@ export function ModelPicker({
     includeDefault && selected.id === ""
       ? `Default · ${selected.label}`
       : selected.label;
+  const cardDefault =
+    compact && appearance === "subtle" && includeDefault && selected.id === "";
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {
@@ -173,7 +175,14 @@ export function ModelPicker({
         <Select
           label="Model"
           value={selected.id}
-          valueLabel={loading ? "Loading models…" : selectedLabel}
+          valueLabel={
+            loading
+              ? "Loading models…"
+              : cardDefault
+                ? selected.label
+                : selectedLabel
+          }
+          valueSuffix={!loading && cardDefault ? " · Default" : undefined}
           valueTitle={loading ? "Loading models…" : selectedLabel}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           variant={compact ? "compact" : "preference"}

@@ -206,6 +206,16 @@
     flex: 1;
     gap: var(--space-row-gap);
   }
+  .buzz-select-value-text {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  /* Agent cards keep inheritance visible without truncating the source text. */
+  .buzz-select-value-suffix {
+    flex: none;
+    white-space: pre;
+  }
   .buzz-select-leading {
     display: flex;
     flex: none;

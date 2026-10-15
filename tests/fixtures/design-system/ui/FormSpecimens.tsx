@@ -436,6 +436,7 @@ export function SelectExamples() {
         </div>
         <Select
           label="Card workspace"
+          valueSuffix=" · Default"
           variant="compact"
           appearance="subtle"
           leading={<CodeIcon size={16} aria-hidden="true" />}

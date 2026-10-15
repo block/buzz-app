@@ -691,7 +691,10 @@ boundary and a visually hidden accessible
 label, bounded single-line value, and full choice text in the popup and value hint.
 Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
 selection-mark slot in every option so selecting the widest label cannot resize it.
-The caller owns its column width. `align="end"` anchors a trailing choice popup
+Compact choices can pass `valueSuffix` for short metadata that must stay visible,
+such as an agent card's Default source. It sits directly after the value on the
+same line; only the value truncates. Keep the full choice in the popup and value
+hint. The caller owns its column width. `align="end"` anchors a trailing choice popup
 to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
 when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger

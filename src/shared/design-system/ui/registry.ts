@@ -812,6 +812,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "disabled",
       "align: start | center | end",
       "compact subtle",
+      "compact value suffix",
       "leading icon",
     ],
     status: "proposed",

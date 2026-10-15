@@ -33,6 +33,7 @@ export function Select({
   placeholder,
   valueLabel,
   valueTitle,
+  valueSuffix,
   leading,
   align = "start",
   appearance = "outlined",
@@ -47,6 +48,8 @@ export function Select({
   /** Compact display text; option labels retain their full meaning. */
   valueLabel?: string | undefined;
   valueTitle?: string;
+  /** Compact metadata stays visible while the selected value truncates. */
+  valueSuffix?: string | undefined;
   /** Decorative identity artwork shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
@@ -141,23 +144,30 @@ export function Select({
                       {leading}
                     </span>
                   )}
-                  <BaseSelect.Value
-                    className={
-                      variant === "compact" ? "buzz-select-value" : undefined
-                    }
-                    title={
-                      variant === "compact"
-                        ? (valueTitle ??
-                          items.find((item) => item.value === value)?.label)
-                        : undefined
-                    }
-                    placeholder={
-                      selectedValue === null ? placeholder : undefined
-                    }
-                    data-placeholder={selectedValue === null ? "" : undefined}
-                  >
-                    {valueLabel}
-                  </BaseSelect.Value>
+                  <span className="buzz-select-value-text">
+                    <BaseSelect.Value
+                      className={
+                        variant === "compact" ? "buzz-select-value" : undefined
+                      }
+                      title={
+                        variant === "compact"
+                          ? (valueTitle ??
+                            items.find((item) => item.value === value)?.label)
+                          : undefined
+                      }
+                      placeholder={
+                        selectedValue === null ? placeholder : undefined
+                      }
+                      data-placeholder={selectedValue === null ? "" : undefined}
+                    >
+                      {valueLabel}
+                    </BaseSelect.Value>
+                    {variant === "compact" && valueSuffix && (
+                      <span className="buzz-select-value-suffix">
+                        {valueSuffix}
+                      </span>
+                    )}
+                  </span>
                 </span>
                 {!(variant === "compact" && appearance === "subtle") && (
                   <BaseSelect.Icon>

@@ -289,7 +289,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   ).toHaveAttribute("aria-selected", "true");
 });
 
-it("shows inherited defaults on compact cards and follows updated defaults", async () => {
+it("keeps a Default suffix beside inherited card models as defaults change", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();
   const props = {
@@ -304,7 +304,13 @@ it("shows inherited defaults on compact cards and follows updated defaults", asy
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
-  expect(control()).toHaveTextContent(/^Default · GPT-6.1-Sol$/);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol · Default$/);
+  expect(control().querySelector(".buzz-select-value")).toHaveTextContent(
+    /^GPT-6.1-Sol$/,
+  );
+  expect(
+    control().querySelector(".buzz-select-value-suffix"),
+  ).toHaveTextContent("· Default");
   expect(screen.getByTitle("Default · GPT-6.1-Sol")).toBeVisible();
   await user.click(control());
   expect(
@@ -313,9 +319,14 @@ it("shows inherited defaults on compact cards and follows updated defaults", asy
   await user.keyboard("{Escape}");
 
   view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
-  expect(control()).toHaveTextContent(/^Default · GPT-6.1-Astra$/);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Astra · Default$/);
   expect(onChange).not.toHaveBeenCalled();
 
   view.rerender(<ModelPicker {...props} value="gpt-6.1-sol" />);
   expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
+
+  view.rerender(<ModelPicker {...props} loading />);
+  expect(control()).toHaveTextContent("Loading models…");
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
 });

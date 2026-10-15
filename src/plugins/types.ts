@@ -12,6 +12,7 @@ export type PluginInfo = {
   error: string | null;
   readmeRevision?: string | null;
   iconRevision?: string | null;
+  iconJpgRevision?: string | null;
 };
 export type Catalog = {
   profile: string;
@@ -38,12 +39,14 @@ export type ImportPreview = {
     publisher?: string | null;
     readmeRevision?: string | null;
     iconRevision?: string | null;
+    iconJpgRevision?: string | null;
   }[];
   warnings: string[];
 };
 export type PluginContent = {
   readme: string | null;
   iconPng: number[] | null;
+  iconJpg: number[] | null;
 };
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;

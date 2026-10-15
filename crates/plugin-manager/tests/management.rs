@@ -21,6 +21,110 @@ fn install_error(manager: &Manager, source: &std::path::Path) -> String {
         Err(error) => error,
     }
 }
+
+fn jpg(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = vec![];
+    image::codecs::jpeg::JpegEncoder::new(&mut bytes)
+        .write_image(
+            &vec![128; width as usize * height as usize * 3],
+            width,
+            height,
+            ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    bytes
+}
+
+#[test]
+fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
+    let (temp, manager, source) = fixture();
+    let key = SecretKey::generate().to_secret_hex();
+    let png_bytes = png(1, 1);
+    let first_jpg = jpg(2, 1);
+    fs::write(source.join("icon.png"), &png_bytes).unwrap();
+    fs::write(source.join("icon.jpg"), &first_jpg).unwrap();
+    sign_release(&source, &key).unwrap();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    let content = manager.content("example.page", &first.revision).unwrap();
+    assert_eq!(content.icon_png.as_deref(), Some(png_bytes.as_slice()));
+    assert_eq!(content.icon_jpg.as_deref(), Some(first_jpg.as_slice()));
+    assert!(first.icon_jpg_revision.is_some());
+
+    fs::write(source.join("icon.jpg"), jpg(1, 2)).unwrap();
+    sign_release(&source, &key).unwrap();
+    let second = manager
+        .reload("example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_ne!(first.icon_jpg_revision, second.icon_jpg_revision);
+    assert_eq!(first.icon_revision, second.icon_revision);
+    assert_eq!(first.publisher, second.publisher);
+
+    // A different, valid JPEG still fails the signature check when substituted.
+    let mut artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(source.join("plugin.artifact.json")).unwrap()).unwrap();
+    use base64::Engine as _;
+    artifact["icon_jpg"] =
+        serde_json::json!(base64::engine::general_purpose::STANDARD.encode(&first_jpg));
+    fs::write(
+        source.join("plugin.artifact.json"),
+        serde_json::to_vec(&artifact).unwrap(),
+    )
+    .unwrap();
+    assert!(install_error(&manager, &source).contains("plugin release x tag"));
+
+    let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+    let rolled_back = reopened
+        .change("rollback", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(rolled_back.icon_jpg_revision, first.icon_jpg_revision);
+    let content = reopened.content("example.page", &first.revision).unwrap();
+    assert_eq!(content.icon_jpg.as_deref(), Some(first_jpg.as_slice()));
+    assert_eq!(content.icon_png.as_deref(), Some(png_bytes.as_slice()));
+}
+
+#[test]
+fn jpeg_only_packages_validate_type_decode_and_resource_bounds() {
+    let (_temp, manager, source) = fixture();
+    let bytes = jpg(1, 1);
+    fs::write(source.join("icon.jpg"), &bytes).unwrap();
+    let plugin = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    let content = manager.content("example.page", &plugin.revision).unwrap();
+    assert!(content.icon_png.is_none());
+    assert_eq!(content.icon_jpg.as_deref(), Some(bytes.as_slice()));
+    for (bytes, expected) in [
+        (png(1, 1), "JPEG"),
+        (vec![0xff, 0xd8, 0xff, 0xe0], "valid JPEG"),
+        (vec![0; 1024 * 1024 + 1], "size limit"),
+        (jpg(4097, 1), "dimensions"),
+        (jpg(1025, 1024), "1,048,576"),
+    ] {
+        fs::write(source.join("icon.jpg"), bytes).unwrap();
+        assert!(
+            install_error(&manager, &source).contains(expected),
+            "{expected}"
+        );
+    }
+}
 fn fixture() -> (tempfile::TempDir, Manager, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();

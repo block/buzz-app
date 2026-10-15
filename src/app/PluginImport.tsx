@@ -293,6 +293,14 @@ export function PluginImport({
                       !!existing,
                     )}
                   </li>
+                  <li>
+                    {contentChange(
+                      "icon.jpg",
+                      candidate.iconJpgRevision,
+                      existing?.iconJpgRevision,
+                      !!existing,
+                    )}
+                  </li>
                 </ul>
                 <p className="m-0 text-caption text-muted">
                   Supplied by the plugin publisher; inclusion is not an

@@ -29,6 +29,7 @@ pub struct Candidate {
     pub publisher: Option<String>,
     pub readme_revision: Option<String>,
     pub icon_revision: Option<String>,
+    pub icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +89,7 @@ impl PreparedImport {
                     publisher: release.publisher(),
                     readme_revision: artifact.readme_revision(),
                     icon_revision: artifact.icon_revision()?,
+                    icon_jpg_revision: artifact.jpg_revision()?,
                 });
                 self.artifacts.insert(path, release);
             }
@@ -230,6 +232,7 @@ fn artifact_from_source(directory: &cap_std::fs::Dir, relative: &Path) -> Result
         read_source_file(directory, &relative.join("plugin.js"))?,
         read_optional_source_file(directory, &relative.join("README.md"), MAX_README_BYTES)?,
         read_optional_source_bytes(directory, &relative.join("icon.png"), MAX_ICON_BYTES)?,
+        read_optional_source_bytes(directory, &relative.join("icon.jpg"), MAX_ICON_BYTES)?,
     )
 }
 
@@ -585,7 +588,11 @@ impl Git {
                     .get(&format!("{parent}icon.png"))
                     .map(|oid| self.read_blob_limited(oid, MAX_ICON_BYTES as u64))
                     .transpose()?;
-                artifact_from_parts(&manifest, code, readme, icon).map(|bytes| Release {
+                let jpg = blobs
+                    .get(&format!("{parent}icon.jpg"))
+                    .map(|oid| self.read_blob_limited(oid, MAX_ICON_BYTES as u64))
+                    .transpose()?;
+                artifact_from_parts(&manifest, code, readme, icon, jpg).map(|bytes| Release {
                     bytes,
                     signature: None,
                 })
@@ -931,6 +938,11 @@ mod tests {
         plugin(&repo, "plugins/two", "example.two");
         fs::write(repo.join("plugins/two/README.md"), "# Two").unwrap();
         fs::write(repo.join("plugins/two/icon.png"), png()).unwrap();
+        let mut jpg = vec![];
+        image::codecs::jpeg::JpegEncoder::new(&mut jpg)
+            .write_image(&[128, 128, 128], 1, 1, ExtendedColorType::Rgb8)
+            .unwrap();
+        fs::write(repo.join("plugins/two/icon.jpg"), &jpg).unwrap();
         fs::write(
             repo.join("package.json"),
             r#"{"scripts":{"postinstall":"exit 1"}}"#,
@@ -980,6 +992,7 @@ mod tests {
             .unwrap();
         assert!(with_assets.readme_revision.is_some());
         assert!(with_assets.icon_revision.is_some());
+        assert!(with_assets.icon_jpg_revision.is_some());
         assert_eq!(prepared.preview.commit.as_ref().unwrap().len(), 40);
         let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].bytes.clone()).unwrap();
         assert!(text.contains("first"));
@@ -999,6 +1012,14 @@ mod tests {
             .module("example.one", &installed.revision)
             .unwrap()
             .contains("first"));
+        prepared
+            .install(&manager, &prepared.preview.token, "plugins/two")
+            .unwrap();
+        let content = manager
+            .content("example.two", &with_assets.revision)
+            .unwrap();
+        assert_eq!(content.icon_jpg.as_deref(), Some(jpg.as_slice()));
+        assert_eq!(content.icon_png.as_deref(), Some(png().as_slice()));
     }
     #[test]
     fn signed_folder_import_load_reload_and_publisher_continuity() {

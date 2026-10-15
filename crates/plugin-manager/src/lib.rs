@@ -310,6 +310,8 @@ struct Installed {
     readme_revision: Option<String>,
     #[serde(default)]
     icon_revision: Option<String>,
+    #[serde(default)]
+    icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -354,6 +356,8 @@ struct Artifact {
     readme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icon_png: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_jpg: Option<String>,
 }
 impl Artifact {
     fn readme_revision(&self) -> Option<String> {
@@ -367,6 +371,15 @@ impl Artifact {
     }
     fn icon_revision(&self) -> Result<Option<String>> {
         Ok(self.icon_bytes()?.as_deref().map(hash))
+    }
+    fn jpg_bytes(&self) -> Result<Option<Vec<u8>>> {
+        self.icon_jpg
+            .as_deref()
+            .map(|value| BASE64.decode(value).map_err(err))
+            .transpose()
+    }
+    fn jpg_revision(&self) -> Result<Option<String>> {
+        Ok(self.jpg_bytes()?.as_deref().map(hash))
     }
 }
 #[derive(Clone)]
@@ -471,6 +484,7 @@ pub struct PluginInfo {
     pub publisher: Option<String>,
     pub readme_revision: Option<String>,
     pub icon_revision: Option<String>,
+    pub icon_jpg_revision: Option<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -478,6 +492,7 @@ pub struct PluginInfo {
 pub struct PluginContent {
     pub readme: Option<String>,
     pub icon_png: Option<Vec<u8>>,
+    pub icon_jpg: Option<Vec<u8>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -648,6 +663,7 @@ impl Manager {
                     publisher: None,
                     readme_revision: None,
                     icon_revision: None,
+                    icon_jpg_revision: None,
                 }
             })
             .collect();
@@ -686,6 +702,7 @@ impl Manager {
                 publisher,
                 readme_revision: p.readme_revision,
                 icon_revision: p.icon_revision,
+                icon_jpg_revision: p.icon_jpg_revision,
             });
         }
         Ok(Catalog {
@@ -704,6 +721,7 @@ impl Manager {
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
         let icon_revision = artifact.icon_revision()?;
+        let icon_jpg_revision = artifact.jpg_revision()?;
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
@@ -746,6 +764,7 @@ impl Manager {
                     enabled,
                     readme_revision,
                     icon_revision,
+                    icon_jpg_revision,
                 },
             );
             self.save(&registry)?;
@@ -798,6 +817,7 @@ impl Manager {
                         p.current_source = previous_source;
                         p.readme_revision = a.readme_revision();
                         p.icon_revision = a.icon_revision()?;
+                        p.icon_jpg_revision = a.jpg_revision()?;
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -849,6 +869,7 @@ impl Manager {
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
         let icon_revision = artifact.icon_revision()?;
+        let icon_jpg_revision = artifact.jpg_revision()?;
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
@@ -910,6 +931,7 @@ impl Manager {
             plugin.previous_source = previous_source;
             plugin.readme_revision = readme_revision;
             plugin.icon_revision = icon_revision;
+            plugin.icon_jpg_revision = icon_jpg_revision;
             self.save(&registry)?;
         }
         self.catalog()
@@ -933,9 +955,11 @@ impl Manager {
         }
         let artifact = self.artifact(id, revision, plugin.current_signature.as_ref())?;
         let icon_png = artifact.icon_bytes()?;
+        let icon_jpg = artifact.jpg_bytes()?;
         Ok(PluginContent {
             readme: artifact.readme,
             icon_png,
+            icon_jpg,
         })
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
@@ -999,7 +1023,8 @@ impl Release {
         let artifact: Artifact = serde_json::from_slice(&self.bytes).map_err(err)?;
         artifact.manifest.validate()?;
         validate_readme(artifact.readme.as_deref())?;
-        validate_icon(artifact.icon_bytes()?.as_deref())?;
+        validate_icon(artifact.icon_bytes()?.as_deref(), image::ImageFormat::Png)?;
+        validate_icon(artifact.jpg_bytes()?.as_deref(), image::ImageFormat::Jpeg)?;
         if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
@@ -1063,13 +1088,14 @@ fn validate_candidate_path(path: &str) -> Result<PathBuf> {
 }
 #[cfg(test)]
 fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
-    artifact_from_parts(manifest, code, None, None)
+    artifact_from_parts(manifest, code, None, None, None)
 }
 fn artifact_from_parts(
     manifest: &str,
     code: String,
     readme: Option<String>,
     icon_png: Option<Vec<u8>>,
+    icon_jpg: Option<Vec<u8>>,
 ) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;
     manifest.validate()?;
@@ -1080,12 +1106,14 @@ fn artifact_from_parts(
         return Err("Plugin module is empty".into());
     }
     validate_readme(readme.as_deref())?;
-    validate_icon(icon_png.as_deref())?;
+    validate_icon(icon_png.as_deref(), image::ImageFormat::Png)?;
+    validate_icon(icon_jpg.as_deref(), image::ImageFormat::Jpeg)?;
     let bytes = serde_json::to_vec(&Artifact {
         manifest,
         code,
         readme,
         icon_png: icon_png.map(|bytes| BASE64.encode(bytes)),
+        icon_jpg: icon_jpg.map(|bytes| BASE64.encode(bytes)),
     })
     .map_err(err)?;
     if bytes.len() as u64 > LIMIT {
@@ -1101,33 +1129,41 @@ fn validate_readme(readme: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn validate_icon(icon: Option<&[u8]>) -> Result<()> {
+fn validate_icon(icon: Option<&[u8]>, format: image::ImageFormat) -> Result<()> {
     let Some(bytes) = icon else { return Ok(()) };
+    let name = if format == image::ImageFormat::Png {
+        "icon.png"
+    } else {
+        "icon.jpg"
+    };
+    let kind = if format == image::ImageFormat::Png {
+        "PNG"
+    } else {
+        "JPEG"
+    };
     if bytes.len() > MAX_ICON_BYTES {
-        return Err("icon.png exceeds 1 MiB".into());
+        return Err(format!("{name} exceeds 1 MiB"));
     }
-    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Err("icon.png must be a PNG image".into());
+    if image::guess_format(bytes).ok() != Some(format) {
+        return Err(format!("{name} must be a {kind} image"));
     }
-    let reader =
-        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let (width, height) = reader
         .into_dimensions()
-        .map_err(|_| "icon.png must be a valid PNG image")?;
+        .map_err(|_| format!("{name} must be a valid {kind} image"))?;
     if width == 0
         || height == 0
         || width > MAX_ICON_DIMENSION
         || height > MAX_ICON_DIMENSION
         || u64::from(width) * u64::from(height) > MAX_ICON_PIXELS
     {
-        return Err(
-            "icon.png dimensions must be 1–4096 pixels per side and at most 1,048,576 pixels"
-                .into(),
-        );
+        return Err(format!(
+            "{name} dimensions must be 1–4096 pixels per side and at most 1,048,576 pixels"
+        ));
     }
     // Dimensions bound decoded allocation before the full decode verifies the image body.
-    image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .map_err(|_| "icon.png must be a valid PNG image")?;
+    image::load_from_memory_with_format(bytes, format)
+        .map_err(|_| format!("{name} must be a valid {kind} image"))?;
     Ok(())
 }
 
@@ -1247,6 +1283,7 @@ mod tests {
         assert_eq!(artifact.manifest.id, "example.page");
         assert!(artifact.readme.is_none());
         assert!(artifact.icon_png.is_none());
+        assert!(artifact.icon_jpg.is_none());
     }
 
     #[test]

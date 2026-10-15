@@ -27,6 +27,7 @@ it("shows exact declared access and changes before an enabled update", async () 
         revision: "two",
         readmeRevision: "readme-two",
         iconRevision: null,
+        iconJpgRevision: "jpg-two",
         manifest: {
           id: "example.plugin",
           name: "Example",
@@ -102,6 +103,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   ).toBeVisible();
   expect(screen.getByText("README.md included (changed)")).toBeVisible();
   expect(screen.getByText("icon.png removed")).toBeVisible();
+  expect(screen.getByText("icon.jpg included (new)")).toBeVisible();
   expect(screen.getByText(/not an endorsement by Buzz/)).toBeVisible();
   expect(
     screen.getByText(

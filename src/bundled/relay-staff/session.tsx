@@ -198,6 +198,7 @@ export function useWrite<R extends StaffRequest, M = unknown>(
     run: (fresh?: R) => void writes.run(key, send, fresh),
     freeze: (request: R, meta: M) => writes.freeze(key, request, meta),
     discard: () => writes.discard(key),
+    release: (requestId: string) => writes.release(key, requestId),
   };
 }
 

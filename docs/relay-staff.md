@@ -148,7 +148,9 @@ Automatic release doesn't cover every transition: if an uncertain resolve
 landed and someone else reopened the report before the page read it, the
 report is open again, the held resolve's **Retry** keeps failing, and
 **Discard** is the way out. A successful **Cancel and reopen** from the page
-itself proves the resolve landed and was undone, so it drops the held resolve.
+names the action it undid, and drops the held resolve when its `requestId`
+matches; a resolve still being sent is dropped once its attempt finishes. A
+newer resolve with a different `requestId` stays held.
 A reopen announcement survives a failed reload and is made by the next
 successful read. Resolve and reopen each have **Discard**, and show the last failure beside
 **Retry**. A request native code refuses before sending, such as a reason too long for

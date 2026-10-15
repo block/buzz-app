@@ -268,9 +268,11 @@ function ReportDetail({
     );
   }, [reopened, detail, notify]);
   useWrite<CancelRequest>(`cancel ${id}`, (outcome) => {
-    // A cancel proves a held resolve landed and was undone; on `open` the
-    // relay would reject its request id, so a fresh decision must start over.
-    if (outcome.ok) resolve.discard();
+    // A cancel proves the action it names landed and was undone; on `open`
+    // the relay would reject that request id. Release the held resolve only
+    // if it is that action: a newer resolve keeps its own uncertain outcome.
+    const undone = outcome.ok ? outcome.value.activeAction?.requestId : null;
+    if (undone) resolve.release(undone);
     notify(
       outcome.ok
         ? "Enforcement cancelled. The report is open again."
@@ -286,7 +288,7 @@ function ReportDetail({
   // report is past processing, a reopen once it is open again. A resolve that
   // landed and whose report was reopened by someone else before we saw it
   // stays held, and its Retry keeps failing; Discard is the way out. Our own
-  // Cancel and reopen releases it directly.
+  // Cancel and reopen releases it when the action it undid is that resolve.
   const status = detail.state === "ok" ? detail.value.status : null;
   const active = status === "open" || status === "processing";
   const releaseResolve =

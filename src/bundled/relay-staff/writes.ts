@@ -19,6 +19,8 @@ export type Held<R extends StaffRequest = StaffRequest, M = unknown> = {
   sent: R | null;
   /** The last attempt finished and no open view has handled it yet. */
   unseen: boolean;
+  /** Released while sending: dropped once that attempt finishes. */
+  released?: boolean;
 };
 
 /**
@@ -84,6 +86,18 @@ export function createWrites() {
       if (!entries.get(key)?.sending) set(key, null);
     },
     /**
+     * Drops the held write under `key` if it carries `requestId`: the relay
+     * showed that operation is over. One still sending is dropped once its
+     * attempt finishes, so an in-flight write is never discarded early.
+     */
+    release(key: string, requestId: string) {
+      const entry = entries.get(key);
+      const request = entry?.request;
+      if (!request || !("requestId" in request)) return;
+      if (request.requestId !== requestId) return;
+      set(key, entry.sending ? { ...entry, released: true } : null);
+    },
+    /**
      * Sends the held request under `key` unchanged. A request without a
      * `requestId` carries no identity to preserve, so `fresh` replaces it.
      */
@@ -108,7 +122,12 @@ export function createWrites() {
       };
       set(key, start);
       const outcome = await send(request);
-      if (entries.get(key)?.request !== request) return outcome;
+      const current = entries.get(key);
+      if (current?.request !== request) return outcome;
+      if (current.released) {
+        set(key, null);
+        return outcome;
+      }
       const done = {
         ...start,
         sending: false,

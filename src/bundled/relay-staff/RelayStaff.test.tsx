@@ -501,23 +501,38 @@ it("cancels a failed enforcement by its action id", async () => {
   await waitFor(() => expect(sent("getReport").length).toBeGreaterThan(1));
 });
 
+// The resolve lands, its answer is lost, and enforcement then fails: the
+// report waits in `processing` on the failed action carrying its request id.
+function failEnforcement(sent: StaffRequest) {
+  const requestId = (sent as ResolveSent).requestId;
+  return {
+    ...report,
+    status: "processing",
+    actionId: "act1",
+    activeAction: { ...failedAction, requestId },
+  };
+}
+
+// The relay's cancel answer names the action it undid.
+function cancelled(requestId: string) {
+  return ok({
+    status: "open",
+    activeAction: { ...failedAction, requestId, status: "cancelled" },
+  });
+}
+
 it("a held resolve is released by a successful Cancel and reopen", async () => {
   let current: typeof report & Record<string, unknown> = report;
   routes.listReports = () => ok([current]);
   routes.getReport = () => ok(current);
-  routes.resolveReport = () => {
-    // The resolve lands, its answer is lost, and enforcement then fails.
-    current = {
-      ...report,
-      status: "processing",
-      actionId: "act1",
-      activeAction: failedAction,
-    };
+  routes.resolveReport = (request) => {
+    current = failEnforcement(request);
     return fail({ category: "ambiguous", status: 502 });
   };
   routes.cancelReport = () => {
+    const undone = (current.activeAction as { requestId: string }).requestId;
     current = report;
-    return ok({ status: "open", activeAction: null });
+    return cancelled(undone);
   };
   await openReport();
   fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
@@ -531,6 +546,74 @@ it("a held resolve is released by a successful Cancel and reopen", async () => {
   await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
   const [a, b] = sent("resolveReport") as ResolveSent[];
   expect(a?.requestId).not.toBe(b?.requestId);
+});
+
+it("a resolve Retry still sending when Cancel succeeds is released once it settles", async () => {
+  let current: typeof report & Record<string, unknown> = report;
+  routes.listReports = () => ok([current]);
+  routes.getReport = () => ok(current);
+  routes.resolveReport = () => fail({ category: "ambiguous", status: 502 });
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  // The Retry lands and its enforcement fails, but its answer is held.
+  const retry = holdNext("resolveReport", () => ok(report));
+  fireEvent.click(await screen.findByRole("button", { name: /Retry: Ban/ }));
+  await retry.started();
+  const [first] = sent("resolveReport") as ResolveSent[];
+  current = failEnforcement(first as StaffRequest);
+  routes.cancelReport = () => {
+    current = report;
+    return cancelled(first?.requestId ?? "");
+  };
+  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Cancel and reopen" }),
+  );
+  await waitFor(() => expect(sent("cancelReport")).toHaveLength(1));
+  await retry.release(fail({ category: "ambiguous", status: 502 }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(3));
+  const ids = (sent("resolveReport") as ResolveSent[]).map((r) => r.requestId);
+  expect(ids[1]).toBe(ids[0]);
+  expect(ids[2]).not.toBe(ids[0]);
+});
+
+it("a slow Cancel answer leaves a newer uncertain resolve held", async () => {
+  let current: typeof report & Record<string, unknown> = report;
+  routes.listReports = () => ok([current]);
+  routes.getReport = () => ok(current);
+  routes.resolveReport = (request) => {
+    current = failEnforcement(request);
+    return fail({ category: "ambiguous", status: 502 });
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  // The cancel commits on the relay, but its answer is slow.
+  const cancel = holdNext("cancelReport", () => ok(report));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Cancel and reopen" }),
+  );
+  await cancel.started();
+  current = report;
+  routes.resolveReport = () => fail({ category: "ambiguous", status: 502 });
+  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await screen.findByRole("button", { name: /Retry: Ban/ });
+  const [a, b] = sent("resolveReport") as ResolveSent[];
+  await cancel.release(cancelled(a?.requestId ?? ""));
+  fireEvent.click(await screen.findByRole("button", { name: /Retry: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(3));
+  const [, , again] = sent("resolveReport") as ResolveSent[];
+  expect(b?.requestId).not.toBe(a?.requestId);
+  expect(again?.requestId).toBe(b?.requestId);
 });
 
 it("changes feedback status and previews and saves attachments", async () => {

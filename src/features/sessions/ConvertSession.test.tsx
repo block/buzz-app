@@ -486,7 +486,7 @@ it.each([false, true])(
       );
     }
     expect(
-      screen.getByText("Channel converted. Finish removing it from Me."),
+      screen.getByText("Channel converted. Finish removing it from Solo."),
     ).toBeVisible();
     expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
@@ -567,7 +567,9 @@ it("finishes removal when another details consumer confirmed the uncertain conve
 it("offers explicit removal-only recovery for a retained ordinary channel without an in-process receipt", async () => {
   const h = setup("");
   expect(sessionConversion(h.session, id)).toBeUndefined();
-  const move = await screen.findByRole("button", { name: "Move to Messages" });
+  const move = await screen.findByRole("button", {
+    name: "Move to Multiplayer",
+  });
   expect(screen.queryByRole("radio")).toBeNull();
   fireEvent.click(move);
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());

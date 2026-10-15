@@ -1341,7 +1341,7 @@ it("fails a session mention it cannot place until the placement can be read", as
   await expect(
     deliver({ type: "mention", event: mention("1") }),
   ).rejects.toThrow(
-    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
   );
   await flush(10);
   expect(placement.refresh).toHaveBeenCalledOnce();

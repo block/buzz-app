@@ -92,6 +92,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     )
     .click();
   await expect(link).toBeFocused();
+  // Closing the thread widens the timeline. Its rows re-measure, and the
+  // scroller compensates over several scroll events, longer on a slow runner.
+  // Virtua holds the list's pointer events off for 150ms after each one, so a
+  // still pointer leaves the link and nothing re-enters it. Wait for idle.
+  await virtuaIdle(page);
   await link.hover();
   await expect(
     preview.getByText("Broadcast reply", { exact: true }),
@@ -154,11 +159,14 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   );
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toBeVisible();
-  // The append scrolls the timeline to re-pin the bottom. Virtua holds the
-  // list's pointer events off for 150ms after each scroll event and the row can
-  // still move, so a click issued now can miss its target. Wait for idle first.
-  await virtuaIdle(page);
-  await link.click();
+  // Virtua holds the list's pointer events off for 150ms after every scroll
+  // event, and a late scroll can land after the timeline looks settled. A click
+  // whose release falls in that hold reaches the scroller, not the link, and
+  // Playwright's retries scroll the list again. This test is about activation,
+  // not hit testing: activate by keyboard, which no scroll can intercept.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Enter");
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
@@ -234,6 +242,72 @@ test("a message link's context menu opens its thread as a tab without leaving th
     .click();
   await expect(thread).toHaveCount(0);
   await expect(link).toBeFocused();
+});
+
+// Browser-only: real scroll events and real layout under a still pointer.
+test("a hovered message preview survives scroll anchoring and closes when its link scrolls away", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const target = history.find((row) => row.content === "Broadcast reply");
+  const message = app.append(
+    "primary",
+    "alpha",
+    `Open <buzz://message?channel=alpha&id=${target.id}>.`,
+  );
+  const link = page
+    .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
+    .getByRole("link", { name: "Alpha", exact: true });
+  await expect(link).toBeVisible();
+  await virtuaIdle(page);
+  const preview = page.getByLabel("Message preview", { exact: true });
+  await link.hover();
+  await expect(
+    preview.getByText("Broadcast reply", { exact: true }),
+  ).toBeVisible();
+  const scroller = page.locator('[data-channel-timeline="alpha"]');
+  // Each change ends with its real scroll event and the next frame.
+  const scroll = (change) =>
+    scroller.evaluate(
+      (element, change) =>
+        new Promise((resolve) => {
+          element.addEventListener(
+            "scroll",
+            () => requestAnimationFrame(resolve),
+            { once: true },
+          );
+          if (change === "anchor") {
+            // Content above the link grows and the scroller compensates, as
+            // when rows are re-measured after the thread pane closes.
+            element.style.paddingTop = "40px";
+            element.scrollTop += 40;
+          } else element.scrollTop -= 40;
+        }),
+      change,
+    );
+  // Record any dismissal: a browser can reopen the preview from its own
+  // pointer update after the scroll, which would hide a close here.
+  const closed = await preview.evaluateHandle((popup) => {
+    const seen = { closed: false };
+    new MutationObserver(() => {
+      if (!popup.isConnected || !popup.hasAttribute("data-open"))
+        seen.closed = true;
+    }).observe(popup, { attributes: true });
+    return seen;
+  });
+  const before = await link.boundingBox();
+  await scroll("anchor");
+  expect(await link.boundingBox()).toEqual(before);
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(resolve)),
+  );
+  expect(await closed.evaluate(({ closed }) => closed)).toBe(false);
+  await expect(preview).toHaveAttribute("data-open", "");
+  // A still pointer cannot report that its link scrolled away from it.
+  await scroll("away");
+  await expect(preview).toHaveCount(0);
 });
 
 // Retained DOM, scroll geometry, focus, and CSS motion need a real browser.
@@ -400,9 +474,10 @@ test("a mixed-case Buzz scheme activates in-app instead of falling through to an
   );
   const link = row.getByRole("link", { name: "#Beta", exact: true });
   await expect(link).toBeVisible();
-  // Same post-append click as above: wait out Virtua's re-pin first.
-  await virtuaIdle(page);
-  await link.click();
+  // Same post-append activation as above: keyboard, not a pointer click.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Enter");
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();

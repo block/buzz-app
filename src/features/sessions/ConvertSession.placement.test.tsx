@@ -229,7 +229,7 @@ it("retains recovery on a failed Me read after conversion, reopens and removes w
     "Me catalog unavailable",
   );
   expect(
-    screen.getByText("Channel converted. Finish removing it from Me."),
+    screen.getByText("Channel converted. Finish removing it from Solo."),
   ).toBeVisible();
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);
   expect(f.converted).not.toHaveBeenCalled();
@@ -309,14 +309,14 @@ it("a fresh view exposes removal-only recovery in the actual Me row menu", async
     within(row).getByRole("button", { name: "Actions for Work" }),
   );
   await user.click(
-    await screen.findByRole("menuitem", { name: "Move to Messages" }),
+    await screen.findByRole("menuitem", { name: "Move to Multiplayer" }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Move to Messages",
+    name: "Move to Multiplayer",
   });
   expect(within(dialog).queryByRole("radio")).toBeNull();
   await user.click(
-    within(dialog).getByRole("button", { name: "Move to Messages" }),
+    within(dialog).getByRole("button", { name: "Move to Multiplayer" }),
   );
   await waitFor(() => expect(opened).toHaveBeenCalledExactlyOnceWith(id));
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([30078]);

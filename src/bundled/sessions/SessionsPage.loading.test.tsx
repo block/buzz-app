@@ -11,7 +11,9 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
-import { keypair, signed } from "../../features/relay/testing";
+import { keypair, profile, signed } from "../../features/relay/testing";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
+import { matchesEvent } from "../../features/relay/projection";
 type KitSnapshot = ReturnType<
   ReturnType<typeof createRelaySession>["session"]["mePlacement"]["snapshot"]
 >;
@@ -44,6 +46,7 @@ function fixture(
   status: KitSnapshot["status"] = "ready",
   retained = true,
   type: "session" | "stream" = "session",
+  otherMembers: readonly string[] = [],
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -54,13 +57,21 @@ function fixture(
     },
   );
   const viewer = keypair();
+  const relayAuthor = keypair();
+  const query = vi.fn(
+    async (_filters: readonly ReadFilter[]): Promise<RelayEvent[]> => [],
+  );
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
-      relayAuthor: keypair().pubkey,
+      relayAuthor: relayAuthor.pubkey,
       scope: "https://test.example",
       media: () => undefined,
-      query: async () => [],
+      query,
+      memberAdministration: {
+        sign: async (event) => signed(viewer, event),
+        publish: async () => {},
+      },
       writer: {
         kinds: [9, 9000],
         sign: async (event) => signed(viewer, event),
@@ -82,7 +93,7 @@ function fixture(
     name: "Planning",
     channelType: type,
     private: true as const,
-    members: [viewer.pubkey],
+    members: [viewer.pubkey, ...otherMembers],
   };
   let list = {
     status: retained ? ("ready" as const) : ("loading" as const),
@@ -192,6 +203,9 @@ function fixture(
   return {
     mount,
     page,
+    viewer,
+    relayAuthor,
+    query,
     abort,
     set,
     run,
@@ -206,13 +220,98 @@ function fixture(
     state,
   };
 }
+it("keeps the current audience and removal controls available after Share fails to move a chat", async () => {
+  const person = keypair();
+  // Start with an existing member; grant confirmation is covered by SessionShare tests.
+  const f = fixture("ready", true, "session", [person.pubkey]);
+  f.query.mockImplementation(async (filters) =>
+    [
+      signed(f.relayAuthor, {
+        kind: 39002,
+        content: "",
+        tags: [
+          ["d", id],
+          ["p", f.viewer.pubkey, "", "owner"],
+          ["p", person.pubkey, "", "member"],
+        ],
+      }),
+      signed(f.relayAuthor, {
+        kind: 39000,
+        content: "",
+        tags: [["d", id], ["t", "stream"], ["private"], ["name", "Planning"]],
+      }),
+      signed(f.relayAuthor, {
+        kind: 39001,
+        content: "",
+        tags: [
+          ["d", id],
+          ["p", f.viewer.pubkey, "owner"],
+        ],
+      }),
+      profile(f.viewer, { name: "Viewer" }),
+      profile(person, { name: "Aria" }),
+    ].filter((event) => filters.some((filter) => matchesEvent(event, filter))),
+  );
+  f.update({
+    ...f.state,
+    entries: [
+      {
+        eventId: "placement",
+        createdAt: 1,
+        record: {
+          version: 2,
+          community: "https://test.example",
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "me",
+            groups: [],
+            assignments: {},
+            channels: [id],
+          },
+        },
+      },
+    ],
+  });
+  // Populate the real session's access evidence, not only the page's retained list.
+  await f.session.read([{ kinds: [39000, 39002], "#d": [id], limit: 2 }]);
+  f.set.mockRejectedValue(new Error("Placement refused"));
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const share = screen.getByRole("dialog", { name: "Share conversation" });
+  const submit = within(share).getByRole("button", { name: "Share" });
+  await waitFor(() => expect(submit).toBeEnabled());
+  await user.click(submit);
+  expect(await within(share).findByRole("alert")).toHaveTextContent(
+    "Placement refused",
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(f.open).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Channel members" }));
+  const members = screen.getByRole("dialog", { name: "Channel members" });
+  await user.click(
+    await within(members).findByRole("button", { name: "Actions for Aria" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove from channel" }),
+  );
+  const confirmation = screen.getByRole("dialog", {
+    name: "Remove member from channel",
+  });
+  expect(
+    within(confirmation).getByRole("button", { name: "Remove member" }),
+  ).toBeEnabled();
+});
+
 it.each([false, true])(
   "keeps retained transcript available while Me placement loads (retained=%s)",
   (retained) => {
     const f = fixture("loading", retained);
     f.mount();
-    expect(screen.getByText("Loading Me placement…")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry Me" })).toBeNull();
+    expect(screen.getByText("Loading Solo chats…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry Solo" })).toBeNull();
     if (retained) {
       expect(screen.getByLabelText("Channel message history")).toBeVisible();
       expect(
@@ -234,7 +333,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
       transient: true,
     }),
   );
-  expect(screen.queryByRole("button", { name: "Retry Me" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry Solo" })).toBeNull();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(f.refresh).not.toHaveBeenCalled();
   act(() =>
@@ -242,7 +341,7 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   );
   expect(screen.getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-  await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
+  await userEvent.click(screen.getByRole("button", { name: "Retry Solo" }));
   expect(f.refresh).toHaveBeenCalledOnce();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>
@@ -343,7 +442,7 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   const f = fixture();
   f.mount();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Open in Messages" }));
+  await user.click(screen.getByRole("button", { name: "Open in Multiplayer" }));
   expect(f.open).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ kind: "conversation", channelId: id }),
   );
@@ -423,7 +522,7 @@ it.each([false, true])(
     expect(screen.queryByRole("button", { name: /^Project:/ })).toBeNull();
     if (!retained)
       expect(
-        screen.getByText("This conversation is in Messages."),
+        screen.getByText("This conversation is in Multiplayer."),
       ).toBeVisible();
   },
 );

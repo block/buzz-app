@@ -175,7 +175,7 @@ export function ConvertSession({
           );
         if (!session.mePlacement.available)
           throw new Error(
-            "Me placement is unavailable on this connection. Try conversion on a supported connection.",
+            "Solo placement is unavailable on this connection. Try conversion on a supported connection.",
           );
         if (!base && !receipt) return;
         exact = sessionConversion(session, id) ?? {
@@ -196,7 +196,7 @@ export function ConvertSession({
           active.throwIfAborted();
           if (session.mePlacement.snapshot().status !== "ready")
             throw new Error(
-              "Me placement could not be read. Retry before converting.",
+              "Solo placement could not be read. Retry before converting.",
             );
           if (action === "check") await details.check(id, active);
           else if (action === "finish") {
@@ -230,11 +230,13 @@ export function ConvertSession({
           session.mePlacement.snapshot().status !== "ready" ||
           session.mePlacement.has(id)
         )
-          throw new Error("Removal from Me could not be confirmed.");
+          throw new Error("Removal from Solo could not be confirmed.");
         updateSessionConversion(session, id, undefined);
         if (!active.aborted) {
           notify(
-            exact.removalOnly ? "Moved to Messages." : "Converted to channel.",
+            exact.removalOnly
+              ? "Moved to Multiplayer."
+              : "Converted to channel.",
             "success",
           );
           close();
@@ -263,11 +265,11 @@ export function ConvertSession({
   return (
     <Dialog
       open
-      title={removalOnly ? "Move to Messages" : "Convert to channel"}
+      title={removalOnly ? "Move to Multiplayer" : "Convert to channel"}
       description={
         removalOnly
-          ? "Remove this conversation from your Me workspace and open it in Messages. Channel settings, history and members stay the same."
-          : "Move this conversation from Me to Messages. History, Canvas, members and lifetime stay the same."
+          ? "Remove this conversation from Solo and open it in Multiplayer. Channel settings, history and members stay the same."
+          : "Move this conversation from Solo to Multiplayer. History, Canvas, members and lifetime stay the same."
       }
       onOpenChange={(open) => {
         if (!open) close();
@@ -285,7 +287,7 @@ export function ConvertSession({
               disabled={busy || !!receipt?.running || !!signal?.aborted}
               onClick={() => void run("finish")}
             >
-              {removalOnly ? "Move to Messages" : "Finish conversion"}
+              {removalOnly ? "Move to Multiplayer" : "Finish conversion"}
             </Button>
           ) : attempt?.status === "unconfirmed" && matchingAttempt ? (
             <Button
@@ -346,7 +348,7 @@ export function ConvertSession({
         </Field>
       )}
       {converted && !removalOnly && (
-        <p role="status">Channel converted. Finish removing it from Me.</p>
+        <p role="status">Channel converted. Finish removing it from Solo.</p>
       )}
       {sharing && !converted && (
         <p role="status">

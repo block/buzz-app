@@ -54,6 +54,6 @@ export function conversionLabel(session: RelaySession, id: string) {
     ? "Finish conversion"
     : session.channels.list().channels.find((channel) => channel.id === id)
           ?.channelType === "stream"
-      ? "Move to Messages"
+      ? "Move to Multiplayer"
       : "Convert to channel";
 }

@@ -3057,7 +3057,7 @@ it("fails a session mention it cannot place until the placement can be read", as
   const placement = f.snapshot.session.mePlacement;
   placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
-    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
   );
   expect(placement.refresh).toHaveBeenCalledOnce();
   expect(f.starts()).toEqual([]);

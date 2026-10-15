@@ -287,12 +287,7 @@ const catalogModel = (model: string, data?: Catalog) => {
 const providerDefaultLabel = (model: string, data?: Catalog) => {
   const selected = catalogModel(model, data);
   const name = selected?.displayName || selected?.model;
-  return name || model || "Codex recommended";
-};
-const recommendedLabel = (data?: Catalog) => {
-  const selected = catalogModel("", data);
-  const name = selected?.displayName || selected?.model;
-  return name ? `Codex recommended · ${name}` : "Codex recommended";
+  return name || model || "Recommended";
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
@@ -509,7 +504,7 @@ export function createTabs(
                 options: [
                   {
                     value: "",
-                    label: recommendedLabel(data),
+                    label: "Recommended",
                     description: "Follows Codex's recommendation.",
                     disabled: !nativeModel,
                   },

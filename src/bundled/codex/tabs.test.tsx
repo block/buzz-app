@@ -442,7 +442,7 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Default model" }));
   expect(
-    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
+    await screen.findByRole("option", { name: "Recommended" }),
   ).toHaveAccessibleDescription("Follows Codex's recommendation.");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
@@ -524,7 +524,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   const user = userEvent.setup();
   const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Codex recommended · Model A",
+    "Recommended",
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
     "Default · Low",
@@ -532,11 +532,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   await user.click(screen.getByLabelText("Default model"));
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(3);
-  for (const [index, name] of [
-    "Codex recommended · Model A",
-    "Model A",
-    "Model B",
-  ].entries())
+  for (const [index, name] of ["Recommended", "Model A", "Model B"].entries())
     expect(options[index]).toHaveAccessibleName(name);
   await user.click(screen.getByRole("option", { name: "Model B" }));
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
@@ -558,9 +554,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent("Model B");
   await user.click(screen.getByLabelText("Default model"));
-  await user.click(
-    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Recommended" }));
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(f.provider.resolve(defaults).model).toBe("");
   expect(
@@ -578,7 +572,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   await f.provider.check();
   await waitFor(() =>
     expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Codex recommended · Model A",
+      "Recommended",
     ),
   );
 });

@@ -462,9 +462,9 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -487,17 +487,17 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   const onClose = vi.fn();
   render(<Provider onClose={onClose} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
-  expect(defaultModel).toHaveTextContent("Claude default (Opus 5.5)");
+  expect(defaultModel).toHaveTextContent("Recommended");
   await user.click(defaultModel);
   expect(
     await screen.findByRole("option", {
-      name: "Claude default (Opus 5.5)",
+      name: "Recommended",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
   // Every model Claude lists is offered, not only the aliases.

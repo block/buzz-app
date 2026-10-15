@@ -441,9 +441,6 @@ export function createTabs({
             { id: draftDefault, label: resolvedModelName(draftDefault) },
           ]
         : listed;
-    const nativeLabel = nativeModel?.resolvedModel
-      ? `Claude default (${resolvedModelName(nativeModel.resolvedModel)})`
-      : "Claude default";
     const latestOutputLine = state.output
       .replaceAll("\r", "\n")
       .split("\n")
@@ -565,7 +562,7 @@ export function createTabs({
                 options: [
                   {
                     value: "",
-                    label: nativeLabel,
+                    label: "Recommended",
                     description: nativeModel
                       ? "Following Claude Code's recommendation"
                       : undefined,
@@ -577,7 +574,6 @@ export function createTabs({
                 ],
               },
             ]}
-            {...(draftDefault === "" ? { valueLabel: nativeLabel } : {})}
             {...(state.modelsChecking
               ? { description: "Loading Claude's models…" }
               : {})}

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { stopRoutes } from "./playwright-test.mjs";
 import { open } from "./timeline.mjs";
 
 // The shell owns the divider; the inner aside excludes its 1px border.
@@ -205,6 +206,7 @@ test("sidebar width updates across open windows without losing a draft", async (
     await other.reload();
     await expect.poll(() => sidebarWidth(settings)).toBe(236);
   } finally {
+    await stopRoutes(context);
     await other.close();
   }
 });

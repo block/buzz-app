@@ -379,7 +379,7 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const chat = (name) => sidebar.getByRole("button", { name, exact: true });
   const inProject = (name) =>
     sidebar

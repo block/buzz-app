@@ -152,7 +152,7 @@
   flex: 1;
   min-width: 0;
 }
-.sidebar .organizedRow > [data-variant="row"] {
+.sidebar .organizedRow > div > [data-variant="row"] {
   padding-inline-start: var(--session-row-inset);
 }
 

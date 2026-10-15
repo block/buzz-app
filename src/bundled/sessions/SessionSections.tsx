@@ -237,233 +237,235 @@ export function SessionSections({
           );
         }}
       >
-      {sections
-        .filter((section) => !personal || section.id || section.rows.length)
-        .map((section) => (
-          <DropSection
-            sectionKey={DROP + section.id}
-            key={section.id}
-            className={styles.section}
-            data-project={personal && section.id ? "" : undefined}
-            open={!collapsed.includes(section.id)}
-            onOpenChange={(open) => toggle(section.id, open)}
-            data-animate={animate || undefined}
-          >
-            <SessionActionsMenu
-              id={`section-${section.id}`}
-              title={section.name}
-              className={styles.sectionHeader}
-              enabled={!!section.id}
-              trailing={
-                <div className={styles.sectionActions}>
-                  {onNew && (
-                    <IconButton
-                      data-session-row-action=""
-                      size="compact"
-                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                      title={personal ? "New chat" : "New session"}
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                      onClick={() => onNew(section.id || undefined)}
-                    />
-                  )}
-                </div>
-              }
-              content={
-                <>
-                  <MenuItem onClick={() => setSettingsFor(section)}>
-                    {personal ? "Project settings…" : "Session settings…"}
-                  </MenuItem>
-                  <MenuItem
-                    tone="danger"
-                    data-delete-session-section=""
-                    disabled={!preferences.sectionRemovalWritable || !!deleting}
-                    onClick={() => {
-                      setDeleting(section.id);
-                      setDeleteError("");
-                      void preferences
-                        .removeSection(section.id)
-                        .catch((error: unknown) => {
-                          setDeleteError(
-                            error instanceof Error
-                              ? error.message
-                              : "Section could not be deleted. Try again.",
-                          );
-                        })
-                        .finally(() => setDeleting(undefined));
-                    }}
-                  >
-                    {personal ? "Delete project" : "Delete section"}
-                  </MenuItem>
-                </>
-              }
+        {sections
+          .filter((section) => !personal || section.id || section.rows.length)
+          .map((section) => (
+            <DropSection
+              sectionKey={DROP + section.id}
+              key={section.id}
+              className={styles.section}
+              data-project={personal && section.id ? "" : undefined}
+              open={!collapsed.includes(section.id)}
+              onOpenChange={(open) => toggle(section.id, open)}
+              data-animate={animate || undefined}
             >
-              <Collapsible.Trigger
-                type="button"
-                className={styles.sectionHeading}
-                aria-expanded={!collapsed.includes(section.id)}
-                onClick={(event) => setAnimate(event.detail > 0)}
+              <SessionActionsMenu
+                id={`section-${section.id}`}
+                title={section.name}
+                className={styles.sectionHeader}
+                enabled={!!section.id}
+                trailing={
+                  <div className={styles.sectionActions}>
+                    {onNew && (
+                      <IconButton
+                        data-session-row-action=""
+                        size="compact"
+                        aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                        title={personal ? "New chat" : "New session"}
+                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                        onClick={() => onNew(section.id || undefined)}
+                      />
+                    )}
+                  </div>
+                }
+                content={
+                  <>
+                    <MenuItem onClick={() => setSettingsFor(section)}>
+                      {personal ? "Project settings…" : "Session settings…"}
+                    </MenuItem>
+                    <MenuItem
+                      tone="danger"
+                      data-delete-session-section=""
+                      disabled={
+                        !preferences.sectionRemovalWritable || !!deleting
+                      }
+                      onClick={() => {
+                        setDeleting(section.id);
+                        setDeleteError("");
+                        void preferences
+                          .removeSection(section.id)
+                          .catch((error: unknown) => {
+                            setDeleteError(
+                              error instanceof Error
+                                ? error.message
+                                : "Section could not be deleted. Try again.",
+                            );
+                          })
+                          .finally(() => setDeleting(undefined));
+                      }}
+                    >
+                      {personal ? "Delete project" : "Delete section"}
+                    </MenuItem>
+                  </>
+                }
               >
-                <span className={styles.sectionName}>{section.name}</span>
-                <span
-                  className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                  aria-hidden="true"
+                <Collapsible.Trigger
+                  type="button"
+                  className={styles.sectionHeading}
+                  aria-expanded={!collapsed.includes(section.id)}
+                  onClick={(event) => setAnimate(event.detail > 0)}
                 >
-                  <CaretDownIcon size={15} strokeWidth={2.5} />
-                </span>
-              </Collapsible.Trigger>
-            </SessionActionsMenu>
-            <Collapsible.Panel className={styles.sectionPanel}>
-              {section.rows.map((item) => (
-                <SessionActionsMenu
-                  key={item.id}
-                  id={item.id}
-                  title={item.title}
-                  className={styles.organizedRow}
-                  content={
-                    <>
-                      {personal && (
-                        <MenuItem
-                          onClick={() => setSharing({ id: item.id, visit })}
-                        >
-                          Share…
-                        </MenuItem>
-                      )}
-                      <MenuItem
-                        disabled={
-                          !session.channelDetails?.available ||
-                          !!channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          )?.readOnly
-                        }
-                        onClick={() => setRenaming(item)}
-                      >
-                        <MenuIcon>
-                          <PencilSimpleIcon size={16} />
-                        </MenuIcon>
-                        Rename
-                      </MenuItem>
-                      <MenuSubmenu>
-                        <MenuSubmenuTrigger disabled={!preferences.writable}>
-                          <MenuIcon>
-                            <FolderSimpleIcon size={16} />
-                          </MenuIcon>
-                          {personal ? "Move to" : "Section"}
-                        </MenuSubmenuTrigger>
-                        <MenuSubmenuPopup aria-label="Session section">
-                          {section.id && (
-                            <MenuItem onClick={() => move(item.id)}>
-                              {personal ? "Chats" : "Sessions"}
-                            </MenuItem>
-                          )}
-                          {groups.map((group) => (
-                            <MenuItem
-                              key={group.id}
-                              onClick={() => move(item.id, group.id)}
-                            >
-                              {group.name}
-                            </MenuItem>
-                          ))}
-                          <MenuItem onClick={() => setCreatingFor(item)}>
-                            {personal ? "New project…" : "New section…"}
-                          </MenuItem>
-                        </MenuSubmenuPopup>
-                      </MenuSubmenu>
-                      <MenuSubmenu>
-                        <MenuSubmenuTrigger>
-                          <MenuIcon>
-                            <CopyIcon size={16} />
-                          </MenuIcon>
-                          Copy
-                        </MenuSubmenuTrigger>
-                        <MenuSubmenuPopup
-                          aria-label={personal ? "Copy chat" : "Copy session"}
-                        >
+                  <span className={styles.sectionName}>{section.name}</span>
+                  <span
+                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                    aria-hidden="true"
+                  >
+                    <CaretDownIcon size={15} strokeWidth={2.5} />
+                  </span>
+                </Collapsible.Trigger>
+              </SessionActionsMenu>
+              <Collapsible.Panel className={styles.sectionPanel}>
+                {section.rows.map((item) => (
+                  <SessionActionsMenu
+                    key={item.id}
+                    id={item.id}
+                    title={item.title}
+                    className={styles.organizedRow}
+                    content={
+                      <>
+                        {personal && (
                           <MenuItem
-                            onClick={() =>
-                              void copy(
-                                item.title,
-                                personal ? "Chat name" : "Session name",
-                              )
-                            }
+                            onClick={() => setSharing({ id: item.id, visit })}
                           >
-                            Copy {personal ? "chat" : "session"} name
+                            Share…
                           </MenuItem>
-                          <MenuItem
-                            onClick={() =>
-                              void copy(
-                                item.id,
-                                personal ? "Chat ID" : "Session ID",
-                              )
-                            }
-                          >
-                            Copy {personal ? "chat" : "session"} ID
-                          </MenuItem>
-                          <MenuItem
-                            onClick={() =>
-                              void copy(
-                                `buzz://channel/${encodeURIComponent(item.id)}`,
-                                "Session link",
-                              )
-                            }
-                          >
-                            Copy link to session
-                          </MenuItem>
-                        </MenuSubmenuPopup>
-                      </MenuSubmenu>
-
-                      {personal && (
+                        )}
                         <MenuItem
                           disabled={
-                            !session.canvas.available ||
+                            !session.channelDetails?.available ||
                             !!channels.channels.find(
                               (channel) => channel.id === item.id,
                             )?.readOnly
                           }
-                          onClick={() => setSessionSettings(item)}
+                          onClick={() => setRenaming(item)}
                         >
                           <MenuIcon>
-                            <GearIcon size={16} />
+                            <PencilSimpleIcon size={16} />
                           </MenuIcon>
-                          Chat settings…
+                          Rename
                         </MenuItem>
-                      )}
-                    </>
-                  }
-                >
-                  <DraggableChannel
-                    channelId={item.id}
-                    sectionKey={DROP + section.id}
-                  >
-                    {renderSession(item)}
-                  </DraggableChannel>
-                </SessionActionsMenu>
-              ))}
-              {!section.rows.length &&
-                section.id &&
-                (onNew ? (
-                  // An empty project offers its way out instead of an empty state.
-                  <NavigationItem
-                    variant="row"
-                    label={personal ? "New chat" : "New session"}
-                    aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                    title={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                    icon={
-                      <span className="shell-page-icon">
-                        <PlusIcon size={16} strokeWidth={2.5} />
-                      </span>
+                        <MenuSubmenu>
+                          <MenuSubmenuTrigger disabled={!preferences.writable}>
+                            <MenuIcon>
+                              <FolderSimpleIcon size={16} />
+                            </MenuIcon>
+                            {personal ? "Move to" : "Section"}
+                          </MenuSubmenuTrigger>
+                          <MenuSubmenuPopup aria-label="Session section">
+                            {section.id && (
+                              <MenuItem onClick={() => move(item.id)}>
+                                {personal ? "Chats" : "Sessions"}
+                              </MenuItem>
+                            )}
+                            {groups.map((group) => (
+                              <MenuItem
+                                key={group.id}
+                                onClick={() => move(item.id, group.id)}
+                              >
+                                {group.name}
+                              </MenuItem>
+                            ))}
+                            <MenuItem onClick={() => setCreatingFor(item)}>
+                              {personal ? "New project…" : "New section…"}
+                            </MenuItem>
+                          </MenuSubmenuPopup>
+                        </MenuSubmenu>
+                        <MenuSubmenu>
+                          <MenuSubmenuTrigger>
+                            <MenuIcon>
+                              <CopyIcon size={16} />
+                            </MenuIcon>
+                            Copy
+                          </MenuSubmenuTrigger>
+                          <MenuSubmenuPopup
+                            aria-label={personal ? "Copy chat" : "Copy session"}
+                          >
+                            <MenuItem
+                              onClick={() =>
+                                void copy(
+                                  item.title,
+                                  personal ? "Chat name" : "Session name",
+                                )
+                              }
+                            >
+                              Copy {personal ? "chat" : "session"} name
+                            </MenuItem>
+                            <MenuItem
+                              onClick={() =>
+                                void copy(
+                                  item.id,
+                                  personal ? "Chat ID" : "Session ID",
+                                )
+                              }
+                            >
+                              Copy {personal ? "chat" : "session"} ID
+                            </MenuItem>
+                            <MenuItem
+                              onClick={() =>
+                                void copy(
+                                  `buzz://channel/${encodeURIComponent(item.id)}`,
+                                  "Session link",
+                                )
+                              }
+                            >
+                              Copy link to session
+                            </MenuItem>
+                          </MenuSubmenuPopup>
+                        </MenuSubmenu>
+
+                        {personal && (
+                          <MenuItem
+                            disabled={
+                              !session.canvas.available ||
+                              !!channels.channels.find(
+                                (channel) => channel.id === item.id,
+                              )?.readOnly
+                            }
+                            onClick={() => setSessionSettings(item)}
+                          >
+                            <MenuIcon>
+                              <GearIcon size={16} />
+                            </MenuIcon>
+                            Chat settings…
+                          </MenuItem>
+                        )}
+                      </>
                     }
-                    onClick={() => onNew(section.id)}
-                  />
-                ) : (
-                  <p className={styles.listMessage}>
-                    {personal
-                      ? "No chats in this project."
-                      : "No sessions in this section."}
-                  </p>
+                  >
+                    <DraggableChannel
+                      channelId={item.id}
+                      sectionKey={DROP + section.id}
+                    >
+                      {renderSession(item)}
+                    </DraggableChannel>
+                  </SessionActionsMenu>
                 ))}
-            </Collapsible.Panel>
-          </DropSection>
-        ))}
+                {!section.rows.length &&
+                  section.id &&
+                  (onNew ? (
+                    // An empty project offers its way out instead of an empty state.
+                    <NavigationItem
+                      variant="row"
+                      label={personal ? "New chat" : "New session"}
+                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      title={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      icon={
+                        <span className="shell-page-icon">
+                          <PlusIcon size={16} strokeWidth={2.5} />
+                        </span>
+                      }
+                      onClick={() => onNew(section.id)}
+                    />
+                  ) : (
+                    <p className={styles.listMessage}>
+                      {personal
+                        ? "No chats in this project."
+                        : "No sessions in this section."}
+                    </p>
+                  ))}
+              </Collapsible.Panel>
+            </DropSection>
+          ))}
       </ChannelSidebarDnd>
       {sharing && sharingChannel && (
         <SessionShare

@@ -60,10 +60,11 @@ tool's name, description or schema changes, so edit those deliberately.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
-the mention. It also owns watches and timers.
-`src/features/agent-harness/wakes.ts` queues each wake in its Interest's lane
-(`lanes.ts`), checks that it is still current before and while its prompt is
-built, and passes it to the type's optional `runOnce`. That runs one turn with
+the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
+Interest's turns one at a time, up to 8 Interests at once, beside the mention
+lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
+it is still current before and while its prompt is built, and passes it to the
+type's optional `runOnce`. That runs one turn with
 no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to

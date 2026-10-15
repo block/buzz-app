@@ -14,7 +14,6 @@ import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
 
@@ -480,16 +479,13 @@ function fixture(
       },
     });
   };
-  // The runner's lanes for this agent.
-  const lanes = new Lanes();
   /** Hands over a watch or timer as the agent runner does: a standalone turn
-   * in its Interest's lane. */
+   * in its Interest's lane, which the runner holds. */
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
     if (trigger.type === "mention") throw new Error("Expected a wake");
     delivery.workingUntil(
       wake(
-        lanes,
         delivery.agent,
         trigger,
         delivery.current,
@@ -2776,7 +2772,7 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
   });
 });
 
-it("drops a waiting wake that is no longer current, and queues wakes per Interest", async () => {
+it("drops a wake that is no longer current", async () => {
   const f = fixture();
   f.attention.on = true;
   const watch = {
@@ -2806,17 +2802,11 @@ it("drops a waiting wake that is no longer current, and queues wakes per Interes
       },
     });
   };
-  let second = true;
-  const secondCurrent = vi.fn(() => second);
   await deliver(() => true);
-  await deliver(secondCurrent);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  // The second waits in the Interest's lane while the first runs: a free
-  // lane would have asked it at once whether it is still current ...
-  expect(secondCurrent).not.toHaveBeenCalled();
-  // ... and is dropped once its watch is no longer wanted.
-  second = false;
   await f.complete(0, "");
+  // One whose watch is no longer wanted does not run.
+  await deliver(() => false);
   await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({
     ok: true,
   });

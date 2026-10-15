@@ -17,7 +17,6 @@ import {
   type ReadFilter,
   type RelayEvent,
 } from "../relay/events";
-import { LANE_LIMIT, Lanes } from "../agent-harness/lanes";
 import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
@@ -75,6 +74,14 @@ import {
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
 const QUEUE_LIMIT = 32;
+/** The longest run deadline an agent type may ask for. */
+export const TIMEOUT_LIMIT_MS = 30 * 60_000;
+/** Janet's lanes for attention work: an Interest's turns run one at a time,
+ * in order, and at most this many Interests run at once, beside mentions. */
+const INTEREST_LANES = 8;
+/** Attention jobs one Interest can have waiting, of the QUEUE_LIMIT, as in
+ * Janet, so one busy Interest cannot fill the queue. */
+const INTEREST_LIMIT = 8;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
 /** Watched events each agent keeps while their channel's roster is only the one
@@ -167,6 +174,11 @@ type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
 type Lane = "mention" | "watch";
 const laneOf = (trigger: Trigger): Lane =>
   trigger.type === "mention" ? "mention" : "watch";
+/** The Interest whose lane runs the attention job, or undefined for a mention. */
+const interestOf = (trigger: Trigger) =>
+  trigger.type === "mention"
+    ? undefined
+    : (trigger.type === "timer" ? trigger.timer : trigger.watch).interest_id;
 const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
 /** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
@@ -239,16 +251,16 @@ type Runner = {
   activityClaimed?: boolean;
   /** Advances each time attention is seen off, which voids queued watch work. */
   epoch: number;
-  /** Watch and timer turns for a type with `runOnce`, one lane per Interest. */
-  lanes: Lanes;
-  /** Watch jobs taken from the queue and not yet given to their lane. */
-  handing: number;
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
   /** Classified watch events not yet queued or dropped. Each counts against
    * the queue and rate room a catch-up page needs. */
   classifying: number;
+  /** Classified jobs not yet queued or dropped, by the Interest they go to. */
+  readonly classifyingIn: Map<string, number>;
+  /** Lanes running a job now: "mention", or an attention job's Interest. */
+  readonly busy: Set<string>;
   /** The last classified event's release: results queue in arrival order. */
   classified: Promise<void>;
   compiled?: {
@@ -409,15 +421,12 @@ export class AgentRunners {
       ) {
         runner.epoch++;
         this.dropWatchWork(runner);
-        runner.lanes.clear();
       }
       if (!runner)
         this.runners.set(identity.pubkey, this.runner(identity, type));
       else if (runner.type !== type) {
         runner.controller.abort();
         runner.controller = new AbortController();
-        runner.lanes.stop();
-        runner.lanes = new Lanes();
         runner.type = type;
         void this.drain(runner);
       }
@@ -523,9 +532,9 @@ export class AgentRunners {
       held: new Map(),
       mayHold: true,
       epoch: 0,
-      lanes: new Lanes(),
-      handing: 0,
       classifying: 0,
+      classifyingIn: new Map(),
+      busy: new Set(),
       classified: Promise.resolve(),
     };
   }
@@ -538,7 +547,6 @@ export class AgentRunners {
     runner.held.clear();
     runner.backlog.length = 0;
     runner.controller.abort();
-    runner.lanes.stop();
   }
   /** The runner's event watches for the agent's current attention. */
   private watches(runner: Runner, agent: Agent) {
@@ -620,23 +628,28 @@ export class AgentRunners {
     if (runner.seenIn.size > SEEN_CHANNELS)
       runner.seenIn.delete(runner.seenIn.keys().next().value as string);
   }
-  /** The most watch jobs an idle agent takes at once. A type with `runOnce`
-   * hands each to an Interest's lane, which keeps fewer waiting than the
-   * queue does. Turns waiting in every lane count against one lane's limit,
-   * so no lane fills and drops one. */
-  private watchLimit(runner: Runner) {
-    return runner.type?.runOnce ? LANE_LIMIT : QUEUE_LIMIT;
-  }
-  /** Whether the agent can take `jobs` more jobs, `classified` of them first
-   * through the classifier, without dropping any. Events still being
-   * classified will take queue and rate room too, and queued watch jobs lane
-   * room. */
+  /** Whether the agent can take `mentions` more mentions and an attention
+   * job for each of `interests`, `classified` of them first through the
+   * classifier, without dropping any. Events still being classified will
+   * take queue and rate room too. */
   private fits(
     runner: Runner,
     mentions: number,
-    watches: number,
+    interests: readonly string[],
     classified: number,
   ) {
+    const watches = interests.length;
+    const adding = new Map<string, number>();
+    for (const interest of interests)
+      adding.set(interest, (adding.get(interest) ?? 0) + 1);
+    for (const [interest, count] of adding)
+      if (
+        this.waitingIn(runner, interest) +
+          (runner.classifyingIn.get(interest) ?? 0) +
+          count >
+        INTEREST_LIMIT
+      )
+        return false;
     const admitted = (lane: Lane) => {
       const rate = runner.rates[lane];
       return Date.now() - rate.windowStart >= RATE_WINDOW_MS
@@ -647,24 +660,36 @@ export class AgentRunners {
     return (
       mention.length + mentions <= QUEUE_LIMIT &&
       admitted("mention") + mentions <= RATE_LIMIT &&
-      watch.length +
-        runner.classifying +
-        (runner.type?.runOnce ? runner.handing + runner.lanes.pending : 0) +
-        watches <=
-        this.watchLimit(runner) &&
+      watch.length + runner.classifying + watches <= QUEUE_LIMIT &&
       runner.classifying + classified <= CLASSIFY_LIMIT &&
       admitted("watch") + runner.classifying + watches <= RATE_LIMIT
     );
+  }
+  /** Attention jobs waiting for the Interest's lane. */
+  private waitingIn(runner: Runner, interest: string) {
+    let count = 0;
+    for (const job of runner.queues.watch)
+      if (interestOf(job.trigger) === interest) count++;
+    return count;
   }
   /** Whether the agent has room for every job `triggers` make. One that
    * makes more jobs than an idle agent takes goes when it is idle, and loses
    * the excess as live delivery would. */
   private takes(runner: Runner, triggers: readonly Trigger[]) {
     const mentions = triggers.filter((t) => t.type === "mention").length;
+    // At most what one Interest holds, and what the queue does.
+    const counts = new Map<string, number>();
+    const interests = triggers
+      .flatMap((t) => interestOf(t) ?? [])
+      .filter((interest) => {
+        const count = (counts.get(interest) ?? 0) + 1;
+        counts.set(interest, count);
+        return count <= INTEREST_LIMIT;
+      });
     return this.fits(
       runner,
       Math.min(mentions, QUEUE_LIMIT),
-      Math.min(triggers.length - mentions, this.watchLimit(runner)),
+      interests.slice(0, QUEUE_LIMIT),
       Math.min(
         triggers.reduce((sum, t) => sum + classifications(t), 0),
         CLASSIFY_LIMIT,
@@ -680,7 +705,15 @@ export class AgentRunners {
     // First the live events held back while their watch caught up.
     while (runner.later.length) {
       const job = runner.later[0] as Job;
-      if (!this.fits(runner, 0, 1, classifications(job.trigger))) return;
+      if (
+        !this.fits(
+          runner,
+          0,
+          [interestOf(job.trigger) as string],
+          classifications(job.trigger),
+        )
+      )
+        return;
       runner.later.shift();
       this.submit(runner, agent, job);
     }
@@ -980,7 +1013,14 @@ export class AgentRunners {
       const size = sizeOf(event);
       if (taken && bytes + size > CATCH_UP_BATCH_CHARS) break;
       if (
-        !this.fits(runner, nextMentions.length, nextWatches.size, classified)
+        !this.fits(
+          runner,
+          nextMentions.length,
+          [...nextWatches.values()].map(
+            (list) => (list[0] as WatchTrigger).watch.interest_id,
+          ),
+          classified,
+        )
       ) {
         if (!taken) this.fanOut(runner, agent, event, triggers, slug, skipped);
         break;
@@ -1024,8 +1064,16 @@ export class AgentRunners {
     for (const trigger of triggers) {
       if (trigger.type !== "watch") continue;
       const more = trigger.watch.classifier ? 1 : 0;
+      const interests = [...watches.values()].map(
+        (list) => (list[0] as WatchTrigger).watch.interest_id,
+      );
       if (
-        !this.fits(runner, mentions.length, watches.size + 1, classified + more)
+        !this.fits(
+          runner,
+          mentions.length,
+          [...interests, trigger.watch.interest_id],
+          classified + more,
+        )
       )
         break;
       watches.set(trigger.slug, [trigger]);
@@ -1231,6 +1279,13 @@ export class AgentRunners {
       return;
     }
     runner.classifying += events.length;
+    const interest = trigger.watch.interest_id;
+    const count = (by: number) => {
+      const next = (runner.classifyingIn.get(interest) ?? 0) + by;
+      if (next) runner.classifyingIn.set(interest, next);
+      else runner.classifyingIn.delete(interest);
+    };
+    count(1);
     const lifetime = runner.controller.signal;
     // Whether this runner, as it is now, should still act on the event.
     const live = () =>
@@ -1280,6 +1335,7 @@ export class AgentRunners {
           });
       } finally {
         runner.classifying -= events.length;
+        count(-1);
       }
     })();
   }
@@ -1447,7 +1503,11 @@ export class AgentRunners {
   // run starts, so no timer has more than one occurrence waiting, and one removed,
   // disabled or expired meanwhile never runs. The longest-waiting timer runs first,
   // so one whose runs outlast its interval cannot hold back the others.
-  private dueTimer(runner: Runner, agent: Agent): Job | undefined {
+  private dueTimer(
+    runner: Runner,
+    agent: Agent,
+    idle: (interest: string) => boolean,
+  ): Job | undefined {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
     const now = seconds();
@@ -1469,6 +1529,8 @@ export class AgentRunners {
       const state = timerState(timer, saved, now);
       if (state !== saved) timers = { ...timers, [object.slug]: state };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
+      // Its Interest's lane is busy: it goes once that lane is free.
+      if (!idle(timer.interest_id)) continue;
       if (!next || state.nextDue < next.state.nextDue)
         next = { slug: object.slug, timer, object, state };
     }
@@ -1510,7 +1572,13 @@ export class AgentRunners {
       rate.windowStart = now;
       rate.admitted = 0;
     }
-    if (queue.length >= QUEUE_LIMIT || rate.admitted >= RATE_LIMIT) {
+    const interest = interestOf(job.trigger);
+    if (
+      queue.length >= QUEUE_LIMIT ||
+      rate.admitted >= RATE_LIMIT ||
+      (interest !== undefined &&
+        this.waitingIn(runner, interest) >= INTEREST_LIMIT)
+    ) {
       if (runner.activityClaimed) {
         this.showWork(runner, job);
         job.work?.finish({
@@ -1547,11 +1615,15 @@ export class AgentRunners {
     });
   }
 
-  // One run at a time per agent: mentions in arrival order, then watch work in
-  // arrival order, then a due timer.
-  // Each job runs the agent as it is when the job starts. While its community's
-  // session is not live the queue pauses and update() resumes it; a type that cannot run drops what is queued. A run that ignores
-  // its deadline stops holding the queue when the deadline passes; it is not
+  // Mentions run one at a time, in arrival order. Beside them, attention work
+  // runs in Janet's lanes: each Interest's jobs one at a time, in arrival
+  // order and then a due timer, and at most INTEREST_LANES Interests at once;
+  // a freed lane goes to the oldest waiting job. Each job runs the agent as it
+  // is when the job starts. While its community's session is not live the
+  // queue pauses and update() resumes it; a type that cannot run drops what is
+  // queued. A mention run that ignores its deadline stops holding its lane
+  // when the deadline passes; an Interest's lane is held until its work
+  // settles, so its turns never overlap, up to TIMEOUT_LIMIT_MS. Runs are not
   // otherwise fenced.
   private async drain(runner: Runner) {
     if (runner.running || runner.transitioning) return;
@@ -1589,113 +1661,159 @@ export class AgentRunners {
       if (this.host.ready(runner.pubkey) !== agent || runner.type !== type)
         continue;
       runner.activityClaimed = true;
-      for (const queued of [...runner.queues.mention, ...runner.queues.watch])
-        this.showWork(runner, queued);
-      const queued =
-        runner.queues.mention.shift() ?? runner.queues.watch.shift();
-      const job = queued
-        ? this.current(runner, agent, queued)
-        : this.dueTimer(runner, agent);
-      if (queued && !job) continue;
-      if (!job) break;
-      const lifetime = runner.controller.signal;
-      const signal = AbortSignal.any([
-        lifetime,
-        AbortSignal.timeout(type.timeoutMs ?? 60_000),
-      ]);
-      const handle: AgentHandle = Object.freeze({
-        pubkey: agent.pubkey,
-        name: agent.name,
-        owner: agent.owner,
-        publish: (event: AgentEventTemplate) => this.publish(runner, event),
-        query: (filters: readonly object[]) =>
-          this.require().query(agent.pubkey, filters),
-        upload: (data: string, mime: string) =>
-          this.require().upload(agent.pubkey, data, mime),
-        media: (url: string) => this.require().media(agent.pubkey, url),
-        remember: async (slug: string, body: string, after: number) => {
-          const event = await this.require().remember(
-            agent.pubkey,
-            slug,
-            body,
-            after,
-          );
-          this.host.remembered(agent.pubkey, slug, body);
-          return event;
-        },
-        templates: () => this.host.templates(agent),
-        tabs: () => this.host.tabs(agent),
-        attention: this.attention(agent.pubkey),
-      });
-      const working = this.working(runner, job, agent);
-      // A wake is not in its lane until it is handed there below.
-      const handing = job.trigger.type !== "mention" && !!type.runOnce;
-      if (handing) runner.handing++;
-      const completion = Promise.resolve().then(async () => {
-        const pick = await pickFor(job.trigger, agent, type);
-        const team = this.host.team(agent.pubkey);
-        signal.throwIfAborted();
-        const delivery = Object.freeze({
-          trigger: job.trigger,
-          ...(job.channelId ? { channelId: job.channelId } : {}),
-          agent: handle,
-          config: agent.config,
-          ...pick,
-          ...(team ? { team } : {}),
-          signal,
-          workingUntil: working.hold,
-          ignored: () => job.work?.remove(),
-          acknowledged: () => job.work?.started(),
-          superseded: () => job.work?.supersede(),
-          step: (tool: string, target?: string) => job.work?.step(tool, target),
-          current: () => !lifetime.aborted && this.stillCurrent(runner, job),
-        });
-        const { trigger } = job;
-        const runOnce = type.runOnce?.bind(type);
-        if (trigger.type === "mention" || !runOnce) return run(delivery);
-        // A watch or timer is a standalone turn in its Interest's lane.
-        const { lanes } = runner;
-        delivery.workingUntil(
-          wake(
-            lanes,
-            handle,
-            trigger,
-            () => lanes === runner.lanes && delivery.current(),
-            (key, prompt) =>
-              standalone(lifetime, (signal) =>
-                runOnce({ delivery, key, signal, prompt }),
-              ),
-            type.title,
-          ),
-        );
-      });
-      // Handover expiry releases the queue, never the actual work's outcome.
-      void completion.then(
-        () => working.release(),
-        (error) => working.release({ ok: false, error: message(error) }),
-      );
-      if (handing)
-        void completion
-          .catch(() => {})
-          .then(() => {
-            runner.handing--;
-          });
-      try {
-        await Promise.race([
-          completion,
-          new Promise<never>((_, reject) => {
-            if (signal.aborted) reject(signal.reason);
-            signal.addEventListener("abort", () => reject(signal.reason), {
-              once: true,
-            });
-          }),
-        ]);
-      } catch (error) {
-        if (!lifetime.aborted)
-          console.error(`Agent run failed: ${agent.name}`, error);
-      }
+      for (const queued of runner.queues.mention) this.showWork(runner, queued);
+      const next = this.next(runner, agent);
+      if (!next) break;
+      // Taking a job made room: held and backlogged work may go in now.
+      this.admit(runner);
+      if (next.job) this.start(runner, agent, type, run, next.lane, next.job);
     }
     runner.running = false;
+  }
+  /** The job a free lane starts next, taken from its queue; its `job` is
+   * undefined when the one taken is no longer current. */
+  private next(
+    runner: Runner,
+    agent: Agent,
+  ): { lane: string; job: Job | undefined } | undefined {
+    const { mention, watch } = runner.queues;
+    if (mention.length && !runner.busy.has("mention"))
+      return {
+        lane: "mention",
+        job: this.current(runner, agent, mention.shift() as Job),
+      };
+    const attention = runner.busy.size - (runner.busy.has("mention") ? 1 : 0);
+    if (attention >= INTEREST_LANES) return undefined;
+    const lane = (job: Job) => `interest/${interestOf(job.trigger)}`;
+    const index = watch.findIndex((job) => !runner.busy.has(lane(job)));
+    if (index >= 0) {
+      const [queued] = watch.splice(index, 1) as [Job];
+      return { lane: lane(queued), job: this.current(runner, agent, queued) };
+    }
+    // A due timer, of an Interest with nothing running or waiting.
+    const timer = this.dueTimer(
+      runner,
+      agent,
+      (interest) =>
+        !runner.busy.has(`interest/${interest}`) &&
+        !watch.some((job) => interestOf(job.trigger) === interest),
+    );
+    return timer && { lane: lane(timer), job: timer };
+  }
+  /** Runs `job` in `lane`, holding the lane until it may take another. */
+  private start(
+    runner: Runner,
+    agent: Agent,
+    type: RegisteredAgentType,
+    run: NonNullable<RegisteredAgentType["run"]>,
+    lane: string,
+    job: Job,
+  ) {
+    runner.busy.add(lane);
+    const lifetime = runner.controller.signal;
+    const signal = AbortSignal.any([
+      lifetime,
+      AbortSignal.timeout(type.timeoutMs ?? 60_000),
+    ]);
+    const handle: AgentHandle = Object.freeze({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      owner: agent.owner,
+      publish: (event: AgentEventTemplate) => this.publish(runner, event),
+      query: (filters: readonly object[]) =>
+        this.require().query(agent.pubkey, filters),
+      upload: (data: string, mime: string) =>
+        this.require().upload(agent.pubkey, data, mime),
+      media: (url: string) => this.require().media(agent.pubkey, url),
+      remember: async (slug: string, body: string, after: number) => {
+        const event = await this.require().remember(
+          agent.pubkey,
+          slug,
+          body,
+          after,
+        );
+        this.host.remembered(agent.pubkey, slug, body);
+        return event;
+      },
+      templates: () => this.host.templates(agent),
+      tabs: () => this.host.tabs(agent),
+      attention: this.attention(agent.pubkey),
+    });
+    const working = this.working(runner, job, agent);
+    const completion = Promise.resolve().then(async () => {
+      const pick = await pickFor(job.trigger, agent, type);
+      const team = this.host.team(agent.pubkey);
+      signal.throwIfAborted();
+      const delivery = Object.freeze({
+        trigger: job.trigger,
+        ...(job.channelId ? { channelId: job.channelId } : {}),
+        agent: handle,
+        config: agent.config,
+        ...pick,
+        ...(team ? { team } : {}),
+        signal,
+        workingUntil: working.hold,
+        ignored: () => job.work?.remove(),
+        acknowledged: () => job.work?.started(),
+        superseded: () => job.work?.supersede(),
+        step: (tool: string, target?: string) => job.work?.step(tool, target),
+        current: () => !lifetime.aborted && this.stillCurrent(runner, job),
+      });
+      const { trigger } = job;
+      const runOnce = type.runOnce?.bind(type);
+      if (trigger.type === "mention" || !runOnce) return run(delivery);
+      // A watch or timer is a standalone turn; this lane is held until it ends.
+      delivery.workingUntil(
+        wake(
+          handle,
+          trigger,
+          delivery.current,
+          (key, prompt) =>
+            standalone(lifetime, (signal) =>
+              runOnce({ delivery, key, signal, prompt }),
+            ),
+          type.title,
+        ),
+      );
+    });
+    // Handover expiry releases the queue, never the actual work's outcome.
+    void completion.then(
+      () => working.release(),
+      (error) => working.release({ ok: false, error: message(error) }),
+    );
+    const aborted = new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+    });
+    const returned = Promise.race([completion, aborted]).catch((error) => {
+      if (!lifetime.aborted)
+        console.error(`Agent run failed: ${agent.name}`, error);
+    });
+    // An Interest's next turn waits for all of this one's work, however it
+    // handed it off, as Janet's lanes do.
+    const held =
+      lane === "mention"
+        ? returned
+        : returned.then(() =>
+            Promise.race([
+              working.settled,
+              new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                  console.warn(
+                    `Agent ${agent.name} ${lane} is still working; its lane goes on`,
+                  );
+                  resolve();
+                }, TIMEOUT_LIMIT_MS);
+                void working.settled.then(() => clearTimeout(timer));
+              }),
+            ]),
+          );
+    void held.then(() => {
+      runner.busy.delete(lane);
+      void this.drain(runner);
+    });
   }
 
   /** Counts a run as working until it and everything it handed to
@@ -1728,10 +1846,15 @@ export class AgentRunners {
     let holds = 1;
     let outcome: WorkOutcome = { ok: true };
     const lifetime = runner.controller.signal;
+    let stopped!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      stopped = resolve;
+    });
     runner.working++;
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
+      stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
       typing?.();
@@ -1764,6 +1887,8 @@ export class AgentRunners {
       }
     };
     return {
+      /** Settles once the run and all it handed off have, or it is retired. */
+      settled,
       hold(pending: PromiseLike<unknown>) {
         if (holds <= 0) return;
         holds++;

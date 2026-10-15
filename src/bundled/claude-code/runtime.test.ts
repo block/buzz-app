@@ -18,7 +18,6 @@ import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
-import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
 
 afterEach(() => {
@@ -195,10 +194,9 @@ function setup(
     } as unknown as Delivery;
     if (trigger.type === "mention") return runtime.run(delivery);
     // A watch or timer, as the agent runner hands it over: a standalone turn
-    // in its Interest's lane.
+    // in its Interest's lane, which the runner holds.
     workingUntil(
       wake(
-        lanes,
         agent as unknown as Delivery["agent"],
         trigger,
         delivery.current,
@@ -207,8 +205,6 @@ function setup(
       ),
     );
   };
-  // The runner's lanes for this agent.
-  const lanes = new Lanes();
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
   return {
@@ -226,7 +222,6 @@ function setup(
     agent,
     workingUntil,
     attention,
-    lanes,
     objects,
     stale,
     session,
@@ -1027,91 +1022,6 @@ it("runs a watch on anyone's event as a one-off turn that sees it as data", asyn
   expect(published).toEqual([]);
 });
 
-it("runs one turn at a time for an Interest, two at once, and frees a slot after each turn", async () => {
-  const { deliver, claudes, runtime } = setup([], { hold: true });
-  for (const trigger of [
-    timer("a1", "a"),
-    timer("a2", "a"),
-    timer("b1", "b"),
-    timer("c1", "c"),
-  ])
-    await deliver(trigger);
-  await flush(10);
-  const working = () =>
-    claudes()
-      .filter((process) => process.prompts.length && !process.killed)
-      .map((process) => /Timer: (\w+)/.exec(process.prompts[0] ?? "")?.[1])
-      .sort();
-  const finish = (id: string) =>
-    claudes()
-      .find((process) => process.prompts[0]?.includes(`Timer: ${id}`))
-      ?.finish();
-  expect(working()).toEqual(["a1", "b1"]);
-  expect(
-    runtime
-      .sessions(self)
-      .map((session) => session.key)
-      .sort(),
-  ).toEqual(["timer/a1 #1", "timer/b1 #2"]);
-  // Interest c has waited longest, so it runs before a's second turn.
-  finish("a1");
-  await flush(10);
-  expect(working()).toEqual(["b1", "c1"]);
-  finish("b1");
-  await flush(10);
-  expect(working()).toEqual(["a2", "c1"]);
-});
-
-it("skips a waiting turn whose watch was disabled or removed, or whose agent's attention went off", async () => {
-  const { deliver, claudes, objects, attention } = setup([], { hold: true });
-  for (const trigger of [
-    timer("a1", "a"),
-    timer("a2", "a"),
-    timer("a3", "a"),
-    timer("a4", "a"),
-  ])
-    await deliver(trigger);
-  await flush(10);
-  objects.set("watch/a2", { ...objects.get("watch/a2"), enabled: false });
-  objects.delete("watch/a3");
-  const prompted = () =>
-    claudes()
-      .filter((process) => process.prompts.length)
-      .map((process) => /Timer: (\w+)/.exec(process.prompts[0] ?? "")?.[1]);
-  attention.on = false;
-  claudes()
-    .find((process) => process.prompts[0]?.includes("Timer: a1"))
-    ?.finish();
-  await flush(20);
-  expect(prompted()).toEqual(["a1"]);
-});
-
-it("counts a wake as working until it ends or is dropped", async () => {
-  const { deliver, claudes, workingUntil, lanes } = setup([], { hold: true });
-  await deliver(timer("first", "ops"));
-  await deliver(timer("second", "ops"));
-  await flush(10);
-  const [first, second] = workingUntil.mock.calls.map(([done]) => {
-    const state = { settled: false };
-    void Promise.resolve(done).then(() => {
-      state.settled = true;
-    });
-    return state;
-  });
-  await flush(5);
-  expect([first?.settled, second?.settled]).toEqual([false, false]);
-  // Turned off, the runner clears the lanes: the waiting turn is dropped;
-  // the running one still works.
-  lanes.clear();
-  await flush(5);
-  expect([first?.settled, second?.settled]).toEqual([false, true]);
-  claudes()
-    .find((process) => process.prompts[0]?.includes("Timer: first"))
-    ?.finish();
-  await flush(20);
-  expect(first?.settled).toBe(true);
-});
-
 it("asks again whether a wake should run once it has a process", async () => {
   let release!: () => void;
   const starting = new Promise<void>((resolve) => {
@@ -1129,27 +1039,6 @@ it("asks again whether a wake should run once it has a process", async () => {
       process.prompts.some((prompt) => prompt.includes("Timer: waits")),
     ),
   ).toBe(false);
-});
-
-it("drops a waiting watch turn the host says no longer matches", async () => {
-  const { deliver, claudes, stale } = setup([], { hold: true });
-  const watch = (id: string) =>
-    ({
-      type: "watch",
-      event: message(id, `event ${id}`),
-      slug: `watch/${id}`,
-      watch: { type: "event", interest_id: "ops" },
-    }) as Delivery["trigger"];
-  await deliver(watch("first"));
-  await deliver(watch("second"));
-  await flush(10);
-  // An earlier turn tightened the second watch while the first held the lane.
-  stale.add("watch/second");
-  claudes()
-    .find((process) => process.prompts[0]?.includes('watch "first"'))
-    ?.finish();
-  await flush(20);
-  expect(claudes().filter((process) => process.prompts.length)).toHaveLength(1);
 });
 
 it("gives up a one-off turn that runs past its deadline", async () => {

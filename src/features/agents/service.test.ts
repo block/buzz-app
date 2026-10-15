@@ -1390,7 +1390,7 @@ it("keeps room for mentions however much watch work waits", async () => {
   run.mockImplementationOnce(() => blocked);
   emit({ events: [event("first")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  // More watch work than its queue holds, then a mention.
+  // More watch work than its Interest holds, then a mention.
   emit({
     events: Array.from({ length: 40 }, (_, i) =>
       event(`w${i}x`, { created_at: 101 + i }),
@@ -1409,11 +1409,121 @@ it("keeps room for mentions however much watch work waits", async () => {
   });
   await settle();
   unblock();
-  // The mention is heard next; the watch queue kept its own 32.
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(34));
+  // The mention is heard next; the watch's Interest kept its own 8.
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(10));
   await settle();
-  expect(run).toHaveBeenCalledTimes(34);
+  expect(run).toHaveBeenCalledTimes(10);
   expect(turns(run).slice(0, 3)).toEqual(["watch", "mention", "watch"]);
+});
+
+it("runs one turn at a time for an Interest, Interests and mentions beside each other, and frees a lane to the oldest waiting job", async () => {
+  const { service, run, emit } = await setup({ identities: [echo] });
+  const watch = (interest: string, kind: number) => ({
+    type: "event" as const,
+    interest_id: interest,
+    enabled: true,
+    since: 1,
+    channels: [channel],
+    kinds: [kind],
+  });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": null,
+      "watch/a": watch("a", 9),
+      "watch/b": watch("b", 11),
+    },
+  });
+  await settle();
+  const pending = new Map<string, () => void>();
+  run.mockImplementation(
+    ({ trigger }) =>
+      new Promise<void>((resolve) => {
+        pending.set(
+          trigger.type === "timer" || trigger.type === "catch-up"
+            ? trigger.slug
+            : trigger.event.content,
+          resolve,
+        );
+      }),
+  );
+  const working = () => [...pending.keys()].sort();
+  const finish = async (content: string) => {
+    pending.get(content)?.();
+    pending.delete(content);
+    await settle();
+  };
+  emit({
+    events: [
+      event("a1", { content: "a1", created_at: 101 }),
+      event("a2", { content: "a2", created_at: 102 }),
+      event("b1", { content: "b1", kind: 11, created_at: 103 }),
+      event("b2", { content: "b2", kind: 11, created_at: 104 }),
+    ],
+  });
+  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
+  // A mention runs beside the busy Interests.
+  emit({
+    events: [
+      event("named", {
+        content: "named",
+        created_at: 105,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1", "named"]));
+  await finish("b1");
+  expect(working()).toEqual(["a1", "b2", "named"]);
+  await finish("a1");
+  expect(working()).toEqual(["a2", "b2", "named"]);
+  await finish("a2");
+  await finish("b2");
+  await finish("named");
+  expect(run).toHaveBeenCalledTimes(5);
+});
+
+it("runs at most eight Interests at once, and the oldest waiting one next", async () => {
+  const { service, run, emit } = await setup({ identities: [echo] });
+  const attention: Record<string, object | null> = { "watch/channel": null };
+  for (let i = 0; i < 10; i++)
+    attention[`watch/w${i}`] = {
+      type: "event",
+      interest_id: `i${i}`,
+      enabled: true,
+      since: 1,
+      channels: [channel],
+      kinds: [20 + i],
+    };
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: attention as never,
+  });
+  await settle();
+  const pending = new Map<string, () => void>();
+  run.mockImplementation(
+    ({ trigger }) =>
+      new Promise<void>((resolve) => {
+        if (trigger.type === "watch")
+          pending.set(trigger.event.content, resolve);
+      }),
+  );
+  emit({
+    events: Array.from({ length: 10 }, (_, i) =>
+      event(`e${i}`, { content: `e${i}`, kind: 20 + i, created_at: 101 + i }),
+    ),
+  });
+  await vi.waitFor(() => expect(pending.size).toBe(8));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(8);
+  pending.get("e3")?.();
+  pending.delete("e3");
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(9));
+  expect(pending.has("e8")).toBe(true);
+  expect(pending.has("e9")).toBe(false);
 });
 
 it("passes the model and effort its owner asked for, and no other", async () => {

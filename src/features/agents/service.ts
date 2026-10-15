@@ -1,5 +1,5 @@
 import { createLocalAgentActivity } from "./local-activity";
-import { AgentRunners, type Connection } from "./runner";
+import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
@@ -662,7 +662,6 @@ const serializable = (value: unknown) => {
 };
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
-const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
